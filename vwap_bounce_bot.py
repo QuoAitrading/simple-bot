@@ -39,6 +39,7 @@ CONFIG = {
         "band_2": 2.0
     },
     "risk_reward_ratio": 1.5,
+    "stop_buffer_ticks": 2,  # Buffer beyond band for stop placement
     
     # System Settings
     "dry_run": True,
@@ -295,7 +296,11 @@ def initialize_state(symbol: str):
         
         # Trend filter
         "trend_ema": None,
-        "trend_direction": None,  # 'UP', 'DOWN', or None
+        "trend_direction": None,  # 'up', 'down', or 'neutral'
+        
+        # Signal tracking
+        "last_signal": None,
+        "signal_bar_price": None,  # Track price of bar that generated signal
         
         # Daily tracking
         "trading_day": None,
@@ -409,6 +414,10 @@ def update_1min_bar(symbol: str, price: float, volume: int, dt: datetime):
             state[symbol]["bars_1min"].append(current_bar)
             # Calculate VWAP after new bar is added
             calculate_vwap(symbol)
+            # Check for exit conditions if position is active
+            check_exit_conditions(symbol)
+            # Check for entry signals if no position
+            check_for_signals(symbol)
         
         # Start new bar
         state[symbol]["current_1min_bar"] = {
@@ -488,14 +497,16 @@ def update_trend_filter(symbol: str):
     if ema is not None:
         state[symbol]["trend_ema"] = ema
         
-        # Determine trend direction
+        # Determine trend direction with neutral zone (half tick)
         current_price = closes[-1]
-        if current_price > ema:
-            state[symbol]["trend_direction"] = "UP"
-        elif current_price < ema:
-            state[symbol]["trend_direction"] = "DOWN"
+        half_tick = CONFIG["tick_size"] / 2.0
+        
+        if current_price > ema + half_tick:
+            state[symbol]["trend_direction"] = "up"
+        elif current_price < ema - half_tick:
+            state[symbol]["trend_direction"] = "down"
         else:
-            state[symbol]["trend_direction"] = None
+            state[symbol]["trend_direction"] = "neutral"
         
         logger.debug(f"Trend EMA: {ema:.2f}, Direction: {state[symbol]['trend_direction']}")
 
@@ -583,6 +594,362 @@ def calculate_vwap(symbol: str):
                 f"U1: {state[symbol]['vwap_bands']['upper_1']:.2f}, "
                 f"L1: {state[symbol]['vwap_bands']['lower_1']:.2f}, "
                 f"L2: {state[symbol]['vwap_bands']['lower_2']:.2f}")
+
+
+# ============================================================================
+# PHASE SEVEN: Signal Generation Logic
+# ============================================================================
+
+def check_for_signals(symbol: str):
+    """
+    Check for trading signals on each completed 1-minute bar.
+    Called after VWAP calculation is complete.
+    
+    Args:
+        symbol: Instrument symbol
+    """
+    # Check if within trading hours
+    if not is_trading_hours():
+        logger.info("Outside trading hours, skipping signal check")
+        return
+    
+    # Check if already have a position
+    if state[symbol]["position"]["active"]:
+        logger.info("Position already active, skipping signal generation")
+        return
+    
+    # Check daily trade limit
+    if state[symbol]["daily_trade_count"] >= CONFIG["max_trades_per_day"]:
+        logger.info(f"Daily trade limit reached ({CONFIG['max_trades_per_day']}), stopping for the day")
+        return
+    
+    # Check daily loss limit
+    if state[symbol]["daily_pnl"] <= -CONFIG["daily_loss_limit"]:
+        logger.warning(f"Daily loss limit hit (${state[symbol]['daily_pnl']:.2f}), stopping for the day")
+        return
+    
+    # Get required data
+    if len(state[symbol]["bars_1min"]) < 2:
+        logger.info(f"Not enough bars for signal: {len(state[symbol]['bars_1min'])}/2")
+        return  # Need at least 2 bars to check for bounce
+    
+    vwap_bands = state[symbol]["vwap_bands"]
+    trend = state[symbol]["trend_direction"]
+    
+    # Check if VWAP bands are calculated
+    if any(v is None for v in vwap_bands.values()):
+        logger.info("VWAP bands not yet calculated")
+        return
+    
+    if trend is None or trend == "neutral":
+        logger.info(f"Trend not established or neutral: {trend}")
+        return
+    
+    # Get latest bars
+    prev_bar = state[symbol]["bars_1min"][-2]
+    current_bar = state[symbol]["bars_1min"][-1]
+    
+    logger.debug(f"Signal check: trend={trend}, prev_low={prev_bar['low']:.2f}, "
+                f"current_close={current_bar['close']:.2f}, lower_band_2={vwap_bands['lower_2']:.2f}")
+    
+    # Long signal: trend is up, price touched/crossed below lower band 2, then closed back above it
+    if trend == "up":
+        # Check if previous bar touched lower band 2
+        touched_lower = prev_bar["low"] <= vwap_bands["lower_2"]
+        # Check if current bar closed back above lower band 2
+        bounced_back = current_bar["close"] > vwap_bands["lower_2"]
+        
+        logger.debug(f"Long check: touched_lower={touched_lower}, bounced_back={bounced_back}")
+        
+        if touched_lower and bounced_back:
+            logger.info(f"LONG SIGNAL: Bounce off lower band 2 with uptrend")
+            logger.info(f"  Price: {current_bar['close']:.2f}, Lower Band 2: {vwap_bands['lower_2']:.2f}")
+            logger.info(f"  Trend: {trend}, EMA: {state[symbol]['trend_ema']:.2f}")
+            execute_entry(symbol, "long", current_bar["close"])
+            return
+    
+    # Short signal: trend is down, price touched/crossed above upper band 2, then closed back below it
+    if trend == "down":
+        # Check if previous bar touched upper band 2
+        touched_upper = prev_bar["high"] >= vwap_bands["upper_2"]
+        # Check if current bar closed back below upper band 2
+        bounced_back = current_bar["close"] < vwap_bands["upper_2"]
+        
+        if touched_upper and bounced_back:
+            logger.info(f"SHORT SIGNAL: Bounce off upper band 2 with downtrend")
+            logger.info(f"  Price: {current_bar['close']:.2f}, Upper Band 2: {vwap_bands['upper_2']:.2f}")
+            logger.info(f"  Trend: {trend}, EMA: {state[symbol]['trend_ema']:.2f}")
+            execute_entry(symbol, "short", current_bar["close"])
+            return
+
+
+# ============================================================================
+# PHASE EIGHT: Position Sizing
+# ============================================================================
+
+def calculate_position_size(symbol: str, side: str, entry_price: float) -> Tuple[int, float, float]:
+    """
+    Calculate position size based on risk management rules.
+    
+    Args:
+        symbol: Instrument symbol
+        side: 'long' or 'short'
+        entry_price: Expected entry price
+    
+    Returns:
+        Tuple of (contracts, stop_price, target_price)
+    """
+    # Get account equity
+    equity = get_account_equity()
+    
+    # Calculate risk allowance (0.1% of equity)
+    risk_dollars = equity * CONFIG["risk_per_trade"]
+    logger.info(f"Account equity: ${equity:.2f}, Risk allowance: ${risk_dollars:.2f}")
+    
+    # Determine stop price
+    vwap_bands = state[symbol]["vwap_bands"]
+    tick_size = CONFIG["tick_size"]
+    buffer_ticks = 2  # 2 tick buffer beyond band
+    
+    if side == "long":
+        # Stop below lower band 2
+        stop_price = vwap_bands["lower_2"] - (buffer_ticks * tick_size)
+    else:  # short
+        # Stop above upper band 2
+        stop_price = vwap_bands["upper_2"] + (buffer_ticks * tick_size)
+    
+    stop_price = round_to_tick(stop_price)
+    
+    # Calculate stop distance in ticks
+    stop_distance = abs(entry_price - stop_price)
+    ticks_at_risk = stop_distance / tick_size
+    
+    # Calculate risk per contract
+    tick_value = CONFIG["tick_value"]
+    risk_per_contract = ticks_at_risk * tick_value
+    
+    # Calculate number of contracts
+    if risk_per_contract > 0:
+        contracts = int(risk_dollars / risk_per_contract)
+    else:
+        contracts = 0
+    
+    # Cap at max contracts
+    contracts = min(contracts, CONFIG["max_contracts"])
+    
+    if contracts == 0:
+        logger.warning(f"Position size too small: risk=${risk_per_contract:.2f}, allowance=${risk_dollars:.2f}")
+        return 0, stop_price, None
+    
+    # Calculate target price (1.5:1 risk/reward)
+    target_distance = stop_distance * CONFIG["risk_reward_ratio"]
+    if side == "long":
+        target_price = entry_price + target_distance
+    else:
+        target_price = entry_price - target_distance
+    
+    target_price = round_to_tick(target_price)
+    
+    logger.info(f"Position sizing: {contracts} contract(s)")
+    logger.info(f"  Entry: ${entry_price:.2f}, Stop: ${stop_price:.2f}, Target: ${target_price:.2f}")
+    logger.info(f"  Risk: {ticks_at_risk:.1f} ticks (${risk_per_contract:.2f})")
+    logger.info(f"  Reward: {target_distance/tick_size:.1f} ticks ({CONFIG['risk_reward_ratio']}:1 R/R)")
+    
+    return contracts, stop_price, target_price
+
+
+# ============================================================================
+# PHASE NINE: Entry Execution
+# ============================================================================
+
+def execute_entry(symbol: str, side: str, entry_price: float):
+    """
+    Execute entry order with stop loss and target.
+    
+    Args:
+        symbol: Instrument symbol
+        side: 'long' or 'short'
+        entry_price: Approximate entry price
+    """
+    # Calculate position size
+    contracts, stop_price, target_price = calculate_position_size(symbol, side, entry_price)
+    
+    if contracts == 0:
+        logger.warning("Cannot enter trade - position size is zero")
+        return
+    
+    # Place market order
+    order_side = "BUY" if side == "long" else "SELL"
+    entry_time = datetime.now(pytz.timezone(CONFIG["timezone"]))
+    
+    logger.info(f"=" * 60)
+    logger.info(f"ENTERING {side.upper()} POSITION")
+    logger.info(f"  Time: {entry_time.strftime('%Y-%m-%d %H:%M:%S %Z')}")
+    logger.info(f"  Symbol: {symbol}")
+    logger.info(f"  Contracts: {contracts}")
+    logger.info(f"  Entry Price: ${entry_price:.2f}")
+    logger.info(f"  Stop Loss: ${stop_price:.2f}")
+    logger.info(f"  Target: ${target_price:.2f}")
+    
+    # Place market order
+    order = place_market_order(symbol, order_side, contracts)
+    
+    if order is None:
+        logger.error("Failed to place entry order")
+        return
+    
+    # Update position tracking
+    state[symbol]["position"] = {
+        "active": True,
+        "side": side,
+        "quantity": contracts,
+        "entry_price": entry_price,
+        "stop_price": stop_price,
+        "target_price": target_price,
+        "entry_time": entry_time,
+        "order_id": order.get("order_id")
+    }
+    
+    # Place stop loss order
+    stop_side = "SELL" if side == "long" else "BUY"
+    stop_order = place_stop_order(symbol, stop_side, contracts, stop_price)
+    
+    if stop_order:
+        state[symbol]["position"]["stop_order_id"] = stop_order.get("order_id")
+        logger.info(f"Stop loss order placed: {stop_order.get('order_id')}")
+    
+    # Increment daily trade counter
+    state[symbol]["daily_trade_count"] += 1
+    
+    logger.info(f"Position opened successfully (Trade {state[symbol]['daily_trade_count']}/{CONFIG['max_trades_per_day']})")
+    logger.info("=" * 60)
+
+
+# ============================================================================
+# PHASE TEN: Exit Management
+# ============================================================================
+
+def check_exit_conditions(symbol: str):
+    """
+    Check exit conditions for open position on each bar.
+    
+    Args:
+        symbol: Instrument symbol
+    """
+    if not state[symbol]["position"]["active"]:
+        return
+    
+    position = state[symbol]["position"]
+    
+    if len(state[symbol]["bars_1min"]) == 0:
+        return
+    
+    current_bar = state[symbol]["bars_1min"][-1]
+    side = position["side"]
+    entry_price = position["entry_price"]
+    stop_price = position["stop_price"]
+    target_price = position["target_price"]
+    
+    # Check for stop hit
+    if side == "long":
+        if current_bar["low"] <= stop_price:
+            execute_exit(symbol, stop_price, "stop_loss")
+            return
+    else:  # short
+        if current_bar["high"] >= stop_price:
+            execute_exit(symbol, stop_price, "stop_loss")
+            return
+    
+    # Check for target reached
+    if side == "long":
+        if current_bar["high"] >= target_price:
+            execute_exit(symbol, target_price, "target_reached")
+            return
+    else:  # short
+        if current_bar["low"] <= target_price:
+            execute_exit(symbol, target_price, "target_reached")
+            return
+    
+    # Check for signal reversal
+    vwap_bands = state[symbol]["vwap_bands"]
+    trend = state[symbol]["trend_direction"]
+    
+    if side == "long" and trend == "up":
+        # If price crosses back above upper band 2, bounce is complete
+        if current_bar["close"] > vwap_bands["upper_2"]:
+            execute_exit(symbol, current_bar["close"], "signal_reversal")
+            return
+    
+    if side == "short" and trend == "down":
+        # If price crosses back below lower band 1, bounce is complete
+        if current_bar["close"] < vwap_bands["lower_1"]:
+            execute_exit(symbol, current_bar["close"], "signal_reversal")
+            return
+
+
+def execute_exit(symbol: str, exit_price: float, reason: str):
+    """
+    Execute exit order and update P&L.
+    
+    Args:
+        symbol: Instrument symbol
+        exit_price: Exit price
+        reason: Reason for exit (stop_loss, target_reached, signal_reversal)
+    """
+    position = state[symbol]["position"]
+    
+    if not position["active"]:
+        return
+    
+    # Place closing market order
+    order_side = "SELL" if position["side"] == "long" else "BUY"
+    exit_time = datetime.now(pytz.timezone(CONFIG["timezone"]))
+    
+    logger.info("=" * 60)
+    logger.info(f"EXITING {position['side'].upper()} POSITION")
+    logger.info(f"  Reason: {reason.replace('_', ' ').title()}")
+    logger.info(f"  Time: {exit_time.strftime('%Y-%m-%d %H:%M:%S %Z')}")
+    
+    # Calculate P&L
+    entry_price = position["entry_price"]
+    contracts = position["quantity"]
+    tick_size = CONFIG["tick_size"]
+    tick_value = CONFIG["tick_value"]
+    
+    if position["side"] == "long":
+        price_change = exit_price - entry_price
+    else:
+        price_change = entry_price - exit_price
+    
+    ticks = price_change / tick_size
+    pnl = ticks * tick_value * contracts
+    
+    logger.info(f"  Entry: ${entry_price:.2f}, Exit: ${exit_price:.2f}")
+    logger.info(f"  Ticks: {ticks:+.1f}, P&L: ${pnl:+.2f}")
+    
+    # Place exit order
+    order = place_market_order(symbol, order_side, contracts)
+    
+    if order:
+        logger.info(f"Exit order placed: {order.get('order_id')}")
+    
+    # Update daily P&L
+    state[symbol]["daily_pnl"] += pnl
+    
+    logger.info(f"Daily P&L: ${state[symbol]['daily_pnl']:+.2f}")
+    logger.info(f"Trades today: {state[symbol]['daily_trade_count']}/{CONFIG['max_trades_per_day']}")
+    logger.info("=" * 60)
+    
+    # Reset position tracking
+    state[symbol]["position"] = {
+        "active": False,
+        "side": None,
+        "quantity": 0,
+        "entry_price": None,
+        "stop_price": None,
+        "target_price": None,
+        "entry_time": None
+    }
 
 
 # ============================================================================
