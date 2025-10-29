@@ -146,12 +146,46 @@ The bot maintains state for:
 
 ```
 simple-bot/
-├── vwap_bounce_bot.py    # Main bot implementation
-├── requirements.txt       # Python dependencies
-├── .env.example          # Environment variable template
-├── .gitignore           # Git ignore patterns
-└── README.md            # This file
+├── vwap_bounce_bot.py      # Main bot implementation (all 10 phases)
+├── test_complete_cycle.py  # Complete trading cycle demonstration
+├── test_phases_6_10.py     # Phases 6-10 specific tests
+├── test_bot.py             # Original validation tests
+├── example_simulation.py   # Basic simulation example
+├── requirements.txt        # Python dependencies
+├── .env.example           # Environment variable template
+├── .gitignore            # Git ignore patterns
+└── README.md             # This file
 ```
+
+## Trading Strategy Components
+
+### Phase 6: Trend Filter
+- **50-period EMA** on 15-minute bars
+- **Smoothing factor**: 2/(period+1) ≈ 0.039
+- **Trend states**: "up" (price > EMA + 0.5 tick), "down" (price < EMA - 0.5 tick), "neutral"
+
+### Phase 7: Signal Generation
+- **Long signal**: Uptrend + price touches lower band 2 + bounces back above
+- **Short signal**: Downtrend + price touches upper band 2 + bounces back below
+- **Filters**: Trading hours, position status, daily limits
+
+### Phase 8: Position Sizing
+- **Risk allocation**: 0.1% of account equity per trade
+- **Stop placement**: 2 ticks beyond entry band
+- **Contract calculation**: Risk allowance / (ticks at risk × tick value)
+- **Cap**: Maximum 1 contract
+
+### Phase 9: Entry Execution
+- **Order type**: Market orders (BUY for long, SELL for short)
+- **Stop loss**: Immediate placement at calculated stop price
+- **Target**: 1.5:1 risk/reward ratio
+- **Tracking**: Full position state with entry time, prices, order IDs
+
+### Phase 10: Exit Management
+- **Stop hit**: Bar low/high breaches stop price
+- **Target reached**: Price touches target level  
+- **Signal reversal**: Counter-movement through opposite bands
+- **P&L tracking**: Tick-based profit/loss calculation
 
 ## SDK Integration Points
 
@@ -189,7 +223,7 @@ Log levels:
 
 ## Development Status
 
-**Current Phase**: Complete implementation of Phases 1-5
+**Current Phase**: All 10 phases complete and tested ✅
 
 ✅ **Completed**:
 - Phase 1: Project setup and configuration
@@ -197,13 +231,35 @@ Log levels:
 - Phase 3: State management structures
 - Phase 4: Data processing pipeline
 - Phase 5: VWAP calculation with bands
+- **Phase 6: Trend filter with 50-period EMA**
+- **Phase 7: Signal generation logic**
+- **Phase 8: Position sizing algorithm**
+- **Phase 9: Entry execution with stops**
+- **Phase 10: Exit management (stop/target/reversal)**
 
 🔄 **Pending**:
-- Strategy logic for trade entry/exit signals
-- Position management and P&L tracking
 - TopStep SDK actual integration (requires SDK package)
-- Backtesting and optimization
-- Live testing in dry run mode
+- Live market data feed integration
+- Backtesting framework
+- Performance optimization
+- Production deployment configuration
+
+## Testing
+
+Run the complete trading cycle test:
+```bash
+python3 test_complete_cycle.py
+```
+
+This demonstrates:
+- Trend establishment with 52 15-minute bars
+- VWAP calculation with 20 1-minute bars
+- Signal generation (bounce off lower band 2)
+- Position entry with stop and target
+- Exit on signal reversal
+- P&L calculation and tracking
+
+Expected output shows successful trade execution with all phases working together.
 
 ## Safety Notes
 
