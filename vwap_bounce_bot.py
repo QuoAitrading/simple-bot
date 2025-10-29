@@ -429,7 +429,12 @@ def initialize_state(symbol: str):
             "total_pnl": 0.0,
             "largest_win": 0.0,
             "largest_loss": 0.0,
-            "pnl_variance": 0.0
+            "pnl_variance": 0.0,
+            # Phase 20: Position duration statistics
+            "trade_durations": [],  # List of durations in minutes
+            "force_flattened_count": 0,  # Trades closed due to time limit
+            "after_noon_entries": 0,  # Entries after 12 PM
+            "after_noon_force_flattened": 0  # After-noon entries force-closed
         },
         
         # Position tracking
@@ -1400,6 +1405,25 @@ def execute_exit(symbol: str, exit_price: float, reason: str):
     # Update daily P&L
     state[symbol]["daily_pnl"] += pnl
     
+    # Phase 20: Track position duration
+    if position["entry_time"] is not None:
+        duration_seconds = (exit_time - position["entry_time"]).total_seconds()
+        duration_minutes = duration_seconds / 60.0
+        state[symbol]["session_stats"]["trade_durations"].append(duration_minutes)
+        
+        # Track if this was a forced flatten due to time
+        if reason in time_based_reasons:
+            state[symbol]["session_stats"]["force_flattened_count"] += 1
+        
+        # Track after-noon entries
+        entry_hour = position["entry_time"].hour
+        if entry_hour >= 12:
+            state[symbol]["session_stats"]["after_noon_entries"] += 1
+            if reason in time_based_reasons:
+                state[symbol]["session_stats"]["after_noon_force_flattened"] += 1
+        
+        logger.info(f"  Position Duration: {duration_minutes:.1f} minutes")
+    
     # Phase 13: Update session statistics
     update_session_stats(symbol, pnl)
     
@@ -1837,6 +1861,52 @@ def log_session_summary(symbol: str):
             logger.info(f"Target Wait Success Rate: {target_success_rate:.1f}%")
         logger.info("="*60)
     
+    # Phase Twenty: Position duration statistics
+    if len(stats['trade_durations']) > 0:
+        logger.info("="*60)
+        logger.info("POSITION DURATION ANALYSIS (Phase 20)")
+        
+        avg_duration = sum(stats['trade_durations']) / len(stats['trade_durations'])
+        min_duration = min(stats['trade_durations'])
+        max_duration = max(stats['trade_durations'])
+        
+        logger.info(f"Average Position Duration: {avg_duration:.1f} minutes")
+        logger.info(f"Shortest Trade: {min_duration:.1f} minutes")
+        logger.info(f"Longest Trade: {max_duration:.1f} minutes")
+        
+        # Calculate force flatten statistics
+        total_trades = len(stats['trades'])
+        force_flatten_pct = (stats['force_flattened_count'] / total_trades * 100) if total_trades > 0 else 0
+        logger.info(f"Force Flattened: {stats['force_flattened_count']}/{total_trades} ({force_flatten_pct:.1f}%)")
+        
+        if force_flatten_pct > 30:
+            logger.warning("⚠️  >30% force-flattened - trade duration too long for time window")
+            logger.warning("   Consider: earlier entry cutoff or faster profit targets")
+        else:
+            logger.info("✅ <30% force-flattened - acceptable duration")
+        
+        # After-noon entry analysis
+        if stats['after_noon_entries'] > 0:
+            after_noon_flatten_pct = (stats['after_noon_force_flattened'] / 
+                                      stats['after_noon_entries'] * 100)
+            logger.info(f"After-Noon Entries: {stats['after_noon_entries']}")
+            logger.info(f"After-Noon Force Flattened: {stats['after_noon_force_flattened']} "
+                       f"({after_noon_flatten_pct:.1f}%)")
+            
+            if after_noon_flatten_pct > 50:
+                logger.warning("⚠️  >50% of after-noon entries force-flattened")
+                logger.warning("   Entry window may be too late - avg duration {:.1f} min vs time remaining"
+                              .format(avg_duration))
+        
+        # Time compatibility analysis
+        # If entering at 2 PM, we have 2.75 hours (165 min) until 4:45 PM flatten
+        time_to_flatten_at_2pm = 165  # minutes from 2 PM to 4:45 PM
+        if avg_duration > time_to_flatten_at_2pm * 0.8:
+            logger.warning("⚠️  Average duration uses >80% of available time window")
+            logger.warning(f"   Avg duration {avg_duration:.1f} min vs {time_to_flatten_at_2pm} min available at 2 PM")
+        
+        logger.info("="*60)
+    
     logger.info("="*60)
 
 
@@ -2096,6 +2166,106 @@ This 15-minute window is when most bot failures happen due to:
 - Lower liquidity
 
 Active monitoring provides safety net for automation failures.
+"""
+
+
+# ============================================================================
+# PHASE TWENTY: Position Duration Statistics & Complete Summary
+# ============================================================================
+
+"""
+Phase Twenty: Position Duration Statistics & Time-Window Compatibility
+
+Track how long positions stay open on average to ensure compatibility with
+time-based flatten requirements:
+
+1. Position Duration Tracking:
+   - Record duration (minutes) for every closed position
+   - Calculate average, min, max duration
+   - Compare against available time window
+
+2. Force Flatten Analysis:
+   - Count trades force-flattened due to time limits
+   - Calculate percentage: force_flattened / total_trades
+   - RED FLAG if >30% are force-flattened
+   
+3. After-Noon Entry Analysis:
+   - Track entries after 12 PM (noon)
+   - Calculate force-flatten rate for after-noon entries
+   - If entering at 2 PM with 3-hour avg duration, you'll be force-flattened
+   
+4. Time Window Compatibility:
+   - Entry at 2 PM → 165 minutes until 4:45 PM deadline
+   - If avg duration >132 min (80% of 165), trades run out of time
+   - Recommend: move entry cutoff earlier OR use faster targets
+
+5. Strategic Adjustments Based on Data:
+   - If most trades close in 30 min → plenty of buffer time
+   - If most trades take 2-3 hours → cutting it close, risk force-flatten
+   - Solution A: Earlier entry cutoff (12 PM instead of 2:30 PM)
+   - Solution B: Faster targets (1:1 R/R instead of 1.5:1)
+   - The data tells you which adjustment fits your strategy
+
+Complete Time-Based Logic Summary
+==================================
+
+Your bot operates in distinct time-based modes controlling all actions:
+
+TIME WINDOWS (All times Eastern Time):
+- Before 9:00 AM: SLEEP - Bot inactive, waiting for market open
+- 9:00 AM - 9:30 AM: PRE-OPEN - Entry allowed, overnight VWAP active
+- 9:30 AM: VWAP RESET - Clears 1-min bars, aligns with stock market open
+- 9:00 AM - 2:30 PM: ENTRY WINDOW - Full signal evaluation and entry allowed
+- 2:30 PM - 4:30 PM: EXIT ONLY - Manage positions, NO new entries
+- 3:00 PM: EXIT TIGHTENING - 1:1 R/R targets instead of 1.5:1
+- 3:30 PM: EARLY LOSS CUTS - Cut losses <75% of stop distance
+- 4:30 PM - 4:45 PM: FLATTEN MODE - Aggressive forced closing, escalating urgency
+- 4:40 PM: FORCE CLOSE PROFITS - Lock in any gain immediately
+- 4:42 PM: FORCE CUT SMALL LOSSES - Accept small loss <50% of stop
+- 4:45 PM: EMERGENCY DEADLINE - Force close ANY remaining position
+- After 4:45 PM: VERIFY FLAT - Check no overnight positions, shut down
+- 5:00 PM: ABSOLUTE DEADLINE - Emergency flatten if position still exists
+
+FRIDAY-SPECIFIC RULES:
+- 1:00 PM: NO new trades (weekend gap protection begins)
+- 2:00 PM: Take ANY profit on existing positions
+- 3:00 PM: FORCE CLOSE all positions (61-hour weekend gap avoidance)
+
+DAILY RESETS:
+- 9:30 AM: VWAP reset (stock market alignment for equity indexes)
+- 9:30 AM: Daily counters reset on date change (trade count, P&L, loss limits)
+- 15-minute trend bars: NO reset (overnight trend carries forward)
+
+CRITICAL SAFETY RULES:
+1. NO OVERNIGHT POSITIONS - Ever. Zero exceptions. Account-destroying risk.
+2. NO WEEKEND POSITIONS - Force close by 3 PM Friday, 66-hour gap risk.
+3. SETTLEMENT AVOIDANCE - Flatten by 4:45 PM to avoid 4:45-5:00 PM manipulation.
+4. TIMEZONE ENFORCEMENT - All decisions use America/New_York, not system time.
+5. DST AWARENESS - pytz handles spring forward / fall back automatically.
+6. AUDIT TRAIL - Every time-based action logged with timestamp and reason.
+
+WHY THIS MATTERS FOR PROP FIRMS:
+TopStep's rules are designed to fail traders who don't respect:
+- Daily settlement (5 PM ET reset)
+- Overnight gap exposure
+- Weekend event risk
+- Daily loss limits (restart at 5 PM, not midnight)
+
+By building time constraints into core logic, you protect against:
+- Gap risk from overnight news (Asia/Europe markets, economic data)
+- Weekend geopolitical events (can't control, can't trade out)
+- Settlement skew manipulation (institutional games in final 30 seconds)
+- Starting day already halfway to loss limit (overnight position losses carry forward)
+
+This time-based framework is NOT OPTIONAL for prop firm trading.
+It's the difference between controlled risk and catastrophic account blowups.
+Being in a position when you shouldn't be is the #1 futures trading killer.
+
+VALIDATION:
+- Phase 20 statistics tell you if your strategy fits the time windows
+- If >30% force-flattened: strategy incompatible with time constraints
+- Adjust entry cutoff earlier OR use faster profit targets
+- After-noon entries especially risky - limited time to work
 """
 
 
