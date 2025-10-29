@@ -14,7 +14,7 @@ import pytz
 
 # Import bot modules
 from config import load_config, log_config
-from monitoring import setup_logging, HealthChecker, HealthCheckServer, MetricsCollector, AlertManager, AuditLogger
+from monitoring import setup_logging, HealthChecker, HealthCheckServer, MetricsCollector, AuditLogger
 from backtesting import BacktestConfig, BacktestEngine, ReportGenerator
 
 
@@ -298,9 +298,6 @@ def run_live_trading(args, bot_config):
     # Initialize metrics collector
     metrics_collector = MetricsCollector()
     
-    # Initialize alert manager
-    alert_manager = AlertManager(config_dict)
-    
     # Initialize audit logger
     audit_logger = AuditLogger()
     
@@ -314,7 +311,6 @@ def run_live_trading(args, bot_config):
         
     except Exception as e:
         logger.error(f"Bot error: {e}", exc_info=True)
-        alert_manager.send_alert('critical', 'Bot Crash', str(e))
         
     finally:
         # Cleanup

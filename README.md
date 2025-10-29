@@ -11,7 +11,6 @@ The VWAP Bounce Bot subscribes to real-time tick data, aggregates it into bars, 
 - ✨ **Enhanced Logging** - Structured JSON logging with sensitive data protection
 - ✨ **Health Checks** - HTTP endpoint for monitoring bot status
 - ✨ **Metrics Collection** - Track performance metrics and API latency
-- ✨ **Alerting System** - Configurable alerts for critical events
 - ✨ **Dual Mode** - Run in live trading or backtesting mode
 
 ## Features
@@ -105,7 +104,6 @@ The bot will:
 - Start health check server on port 8080 (http://localhost:8080/health)
 - Log to `./logs/vwap_bot.log` (JSON format with rotation)
 - Track performance metrics
-- Send alerts for critical events
 
 #### Backtesting Mode
 
@@ -296,7 +294,7 @@ simple-bot/
 - **Trading re-enable**: Resets daily limit flags for new day
 
 ### Phase 12: Safety Mechanisms
-- **Daily loss limit**: $400 with critical alert and trading stop
+- **Daily loss limit**: $400 with trading stop enforcement
 - **Maximum drawdown**: 2% of starting equity monitoring
 - **Time-based kill switch**: 4 PM ET market close shutdown
 - **Connection health**: 60-second tick timeout detection

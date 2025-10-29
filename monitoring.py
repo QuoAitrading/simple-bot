@@ -1,6 +1,6 @@
 """
 Enhanced Logging and Monitoring for VWAP Bounce Bot
-Provides structured logging, health checks, metrics collection, and alerting
+Provides structured logging, health checks, and metrics collection
 """
 
 import json
@@ -400,86 +400,6 @@ class MetricsCollector:
     def get_metrics(self) -> Dict[str, Any]:
         """Get current metrics as dictionary"""
         return asdict(self.metrics)
-
-
-@dataclass
-class Alert:
-    """Alert notification"""
-    level: str  # 'info', 'warning', 'critical'
-    title: str
-    message: str
-    timestamp: datetime = field(default_factory=datetime.utcnow)
-    acknowledged: bool = False
-    
-
-class AlertManager:
-    """Manages alerts and notifications"""
-    
-    def __init__(self, config: Dict[str, Any]):
-        self.config = config
-        self.logger = logging.getLogger(__name__)
-        self.alerts: List[Alert] = []
-        self.alert_handlers: List[Callable[[Alert], None]] = []
-        
-    def add_handler(self, handler: Callable[[Alert], None]) -> None:
-        """Add an alert handler (e.g., email, SMS, webhook)"""
-        self.alert_handlers.append(handler)
-        
-    def send_alert(self, level: str, title: str, message: str) -> None:
-        """Send an alert through all registered handlers"""
-        alert = Alert(level=level, title=title, message=message)
-        self.alerts.append(alert)
-        
-        # Log the alert
-        if level == 'critical':
-            self.logger.critical(f"ALERT: {title} - {message}")
-        elif level == 'warning':
-            self.logger.warning(f"ALERT: {title} - {message}")
-        else:
-            self.logger.info(f"ALERT: {title} - {message}")
-            
-        # Send through handlers
-        for handler in self.alert_handlers:
-            try:
-                handler(alert)
-            except Exception as e:
-                self.logger.error(f"Error sending alert: {e}")
-                
-    def check_daily_loss_limit(self, daily_pnl: float, limit: float) -> None:
-        """Check if approaching daily loss limit"""
-        if daily_pnl <= -limit * 0.8:  # 80% of limit
-            self.send_alert(
-                'warning',
-                'Daily Loss Limit Approaching',
-                f'Current P&L: ${daily_pnl:+.2f}, Limit: ${-limit:.2f}'
-            )
-            
-    def check_max_drawdown(self, current_dd_pct: float, max_dd_pct: float) -> None:
-        """Check if max drawdown exceeded"""
-        if current_dd_pct >= max_dd_pct:
-            self.send_alert(
-                'critical',
-                'Max Drawdown Exceeded',
-                f'Current drawdown: {current_dd_pct:.2f}%, Max: {max_dd_pct:.2f}%'
-            )
-            
-    def check_api_connection(self, time_since_tick: float) -> None:
-        """Check API connection status"""
-        if time_since_tick > 60:
-            self.send_alert(
-                'critical',
-                'API Connection Lost',
-                f'No ticks received for {time_since_tick:.0f} seconds'
-            )
-            
-    def check_data_feed_lag(self, lag_seconds: float) -> None:
-        """Check data feed lag"""
-        if lag_seconds > 5:
-            self.send_alert(
-                'warning',
-                'Data Feed Lag',
-                f'Data is lagging by {lag_seconds:.1f} seconds'
-            )
 
 
 class AuditLogger:

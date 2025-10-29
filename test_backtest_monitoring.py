@@ -19,7 +19,7 @@ from backtesting import (
 )
 from monitoring import (
     setup_logging, HealthChecker, HealthCheckStatus,
-    MetricsCollector, AlertManager, AuditLogger,
+    MetricsCollector, AuditLogger,
     StructuredFormatter, SensitiveDataFilter
 )
 
@@ -382,48 +382,6 @@ class TestMetricsCollector(unittest.TestCase):
         self.assertEqual(metrics['total_trades_today'], 3)
 
 
-class TestAlertManager(unittest.TestCase):
-    """Test alert management"""
-    
-    def setUp(self):
-        """Setup test environment"""
-        self.config = {}
-        self.manager = AlertManager(self.config)
-        self.alerts_received = []
-        
-        def test_handler(alert):
-            self.alerts_received.append(alert)
-            
-        self.manager.add_handler(test_handler)
-        
-    def test_send_alert(self):
-        """Test sending alerts"""
-        self.manager.send_alert('warning', 'Test Alert', 'This is a test')
-        
-        self.assertEqual(len(self.alerts_received), 1)
-        alert = self.alerts_received[0]
-        self.assertEqual(alert.level, 'warning')
-        self.assertEqual(alert.title, 'Test Alert')
-        
-    def test_check_daily_loss_limit(self):
-        """Test daily loss limit alert"""
-        self.manager.check_daily_loss_limit(daily_pnl=-160.0, limit=200.0)
-        
-        # Should trigger warning at 80% of limit
-        self.assertEqual(len(self.alerts_received), 1)
-        alert = self.alerts_received[0]
-        self.assertEqual(alert.level, 'warning')
-        
-    def test_check_max_drawdown(self):
-        """Test max drawdown alert"""
-        self.manager.check_max_drawdown(current_dd_pct=5.5, max_dd_pct=5.0)
-        
-        # Should trigger critical alert
-        self.assertEqual(len(self.alerts_received), 1)
-        alert = self.alerts_received[0]
-        self.assertEqual(alert.level, 'critical')
-
-
 class TestSensitiveDataFilter(unittest.TestCase):
     """Test sensitive data filtering"""
     
@@ -514,7 +472,6 @@ def run_tests():
     suite.addTests(loader.loadTestsFromTestCase(TestPerformanceMetrics))
     suite.addTests(loader.loadTestsFromTestCase(TestHealthChecker))
     suite.addTests(loader.loadTestsFromTestCase(TestMetricsCollector))
-    suite.addTests(loader.loadTestsFromTestCase(TestAlertManager))
     suite.addTests(loader.loadTestsFromTestCase(TestSensitiveDataFilter))
     suite.addTests(loader.loadTestsFromTestCase(TestReportGenerator))
     
