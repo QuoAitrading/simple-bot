@@ -10,67 +10,34 @@ from collections import deque
 from typing import Any, Dict, List, Optional, Tuple, Callable
 import pytz
 
-# Configuration Dictionary
-CONFIG: Dict[str, Any] = {
-    # Trading Parameters
-    "instrument": "MES",
-    "timezone": "America/New_York",
-    
-    # Enhanced Time Parameters (Phase One)
-    "entry_window_start": time(9, 0),      # 9:00 AM ET - signals enabled
-    "entry_window_end": time(14, 30),      # 2:30 PM ET - signals disabled
-    "warning_time": time(16, 30),          # 4:30 PM ET - flatten mode begins
-    "forced_flatten_time": time(16, 45),   # 4:45 PM ET - force close positions
-    "shutdown_time": time(17, 0),          # 5:00 PM ET - bot shutdown
-    "vwap_reset_time": time(9, 30),        # 9:30 AM ET - VWAP daily reset
-    # Note: VWAP resets at 9:30 AM (stock market open) while entry window starts at 9:00 AM.
-    # This allows overnight VWAP to carry into early trading (9:00-9:30 AM), then resets
-    # at market open for proper equity index alignment.
-    
-    # Phase 9-14: Advanced Safety Parameters
-    "proactive_stop_buffer_ticks": 2,      # Close proactively when within N ticks of stop
-    "friday_entry_cutoff": time(13, 0),    # 1:00 PM ET - no new trades on Friday
-    "friday_close_target": time(15, 0),    # 3:00 PM ET - target close time on Friday
-    
-    # Risk Management
-    "risk_per_trade": 0.001,  # 0.1% of account equity
-    "max_contracts": 1,
-    "max_trades_per_day": 5,
-    "daily_loss_limit": 400.0,  # Conservative limit before TopStep's $1000
-    
-    # Instrument Specifications (MES)
-    "tick_size": 0.25,
-    "tick_value": 1.25,
-    
-    # Strategy Parameters
-    "trend_filter_period": 50,  # bars
-    "trend_timeframe": 15,  # minutes
-    "vwap_timeframe": 1,  # minutes
-    "vwap_sd_multipliers": {
-        "band_1": 1.0,
-        "band_2": 2.0
-    },
-    "risk_reward_ratio": 1.5,
-    "stop_buffer_ticks": 2,  # Buffer beyond band for stop placement
-    "flatten_buffer_ticks": 2,  # Ticks worse than bid/offer for flatten orders
-    
-    # Safety Mechanisms (Phase 12)
-    "max_drawdown_percent": 2.0,  # Maximum total drawdown percentage
-    "tick_timeout_seconds": 60,  # Max seconds without tick during market hours
-    
-    # System Settings
-    "dry_run": True,
-    "log_file": "vwap_bounce_bot.log",
-    "max_tick_storage": 10000,
-    "max_bars_storage": 200
-}
+# Import new production modules
+from config import load_config, BotConfiguration
+from broker_interface import create_broker, BrokerInterface
+from event_loop import EventLoop, EventType, EventPriority, TimerManager
+from error_recovery import ErrorRecoveryManager, ErrorType as RecoveryErrorType
+
+# Load configuration from environment and config module
+_bot_config = load_config()
+_bot_config.validate()  # Validate configuration at startup
+
+# Convert BotConfiguration to dictionary for backward compatibility with existing code
+CONFIG: Dict[str, Any] = _bot_config.to_dict()
 
 # String constants
 MSG_LIVE_TRADING_NOT_IMPLEMENTED = "Live trading not implemented - SDK integration required"
 SEPARATOR_LINE = "=" * 60
 
-# Global SDK client instance
-sdk_client = None
+# Global broker instance (replaces sdk_client)
+broker: Optional[BrokerInterface] = None
+
+# Global event loop instance
+event_loop: Optional[EventLoop] = None
+
+# Global error recovery manager
+recovery_manager: Optional[ErrorRecoveryManager] = None
+
+# Global timer manager
+timer_manager: Optional[TimerManager] = None
 
 # State management dictionary
 state: Dict[str, Any] = {}
@@ -110,57 +77,64 @@ logger = setup_logging()
 # PHASE TWO: SDK Integration
 # ============================================================================
 
-def initialize_sdk() -> Optional[Dict[str, Any]]:
+def initialize_broker() -> None:
     """
-    Initialize the TopStep SDK client using environment variable token.
-    Returns the initialized client or exits if token is missing.
+    Initialize the broker interface using configuration.
+    Uses TopStep broker with error recovery and circuit breaker.
     """
-    global sdk_client
+    global broker, recovery_manager
     
-    token = os.getenv("TOPSTEP_API_TOKEN")
-    if not token:
-        logger.error("TOPSTEP_API_TOKEN environment variable not found!")
-        logger.error("Please set your API token: export TOPSTEP_API_TOKEN='your_token_here'")
-        exit(1)
+    logger.info("Initializing broker interface...")
     
-    try:
-        # Placeholder for actual SDK initialization
-        # sdk_client = TopStepSDK(api_token=token)
-        logger.info("SDK client initialized successfully")
-        logger.warning("Running in simulation mode - actual SDK not imported")
-        sdk_client = {"mock": True, "token": token}  # Mock client for now
-        return sdk_client
-    except Exception as e:
-        logger.error(f"Failed to initialize SDK: {e}")
-        exit(1)
+    # Create error recovery manager
+    recovery_manager = ErrorRecoveryManager(CONFIG)
+    
+    # Create broker using configuration
+    broker = create_broker(_bot_config.api_token)
+    
+    # Connect with error recovery
+    breaker = recovery_manager.get_circuit_breaker("broker_connection")
+    success, result = breaker.call(broker.connect)
+    
+    if not success:
+        logger.error("Failed to connect to broker")
+        raise RuntimeError("Broker connection failed")
+    
+    logger.info("Broker connected successfully")
 
 
 def get_account_equity() -> float:
     """
-    Fetch current account equity from SDK.
-    Returns account equity/balance.
+    Fetch current account equity from broker.
+    Returns account equity/balance with error handling.
     """
-    if sdk_client is None:
-        logger.error("SDK client not initialized")
+    if broker is None:
+        logger.error("Broker not initialized")
         return 0.0
     
     try:
-        # Placeholder for actual SDK call
-        # account_info = sdk_client.get_account_info()
-        # equity = account_info.get('equity') or account_info.get('balance')
+        # Use circuit breaker for account query
+        breaker = recovery_manager.get_circuit_breaker("account_query")
+        success, equity = breaker.call(broker.get_account_equity)
         
-        # Mock equity for development
-        equity = 50000.0
-        logger.info(f"Account equity: ${equity:.2f}")
-        return equity
+        if success:
+            logger.info(f"Account equity: ${equity:.2f}")
+            return equity
+        else:
+            logger.error("Failed to get account equity")
+            return 0.0
     except Exception as e:
         logger.error(f"Error fetching account equity: {e}")
+        action = recovery_manager.handle_error(
+            RecoveryErrorType.SDK_CRASH,
+            {"error": str(e), "function": "get_account_equity"}
+        )
         return 0.0
 
 
 def place_market_order(symbol: str, side: str, quantity: int) -> Optional[Dict[str, Any]]:
     """
-    Place a market order through the SDK.
+    Place a market order through the broker interface.
     
     Args:
         symbol: Instrument symbol (e.g., 'MES')
@@ -183,25 +157,43 @@ def place_market_order(symbol: str, side: str, quantity: int) -> Optional[Dict[s
             "dry_run": True
         }
     
-    try:
-        # Placeholder for actual SDK call
-        # order = sdk_client.create_market_order(
-        #     symbol=symbol,
-        #     side=side,
-        #     quantity=quantity
-        # )
-        # return order
-        
-        logger.warning(MSG_LIVE_TRADING_NOT_IMPLEMENTED)
+    if broker is None:
+        logger.error("Broker not initialized")
         return None
+    
+    try:
+        # Use circuit breaker for order placement
+        breaker = recovery_manager.get_circuit_breaker("order_placement")
+        success, order = breaker.call(broker.place_market_order, symbol, side, quantity)
+        
+        if success and order:
+            # Post order fill event to event loop
+            if event_loop:
+                event_loop.post_event(
+                    EventType.ORDER_FILL,
+                    EventPriority.HIGH,
+                    {"order": order, "symbol": symbol}
+                )
+            return order
+        else:
+            logger.error("Market order placement failed")
+            action = recovery_manager.handle_error(
+                RecoveryErrorType.ORDER_REJECTION,
+                {"symbol": symbol, "side": side, "quantity": quantity}
+            )
+            return None
     except Exception as e:
         logger.error(f"Error placing market order: {e}")
+        action = recovery_manager.handle_error(
+            RecoveryErrorType.SDK_CRASH,
+            {"error": str(e), "function": "place_market_order"}
+        )
         return None
 
 
 def place_stop_order(symbol: str, side: str, quantity: int, stop_price: float) -> Optional[Dict[str, Any]]:
     """
-    Place a stop order through the SDK.
+    Place a stop order through the broker interface.
     
     Args:
         symbol: Instrument symbol
@@ -226,26 +218,36 @@ def place_stop_order(symbol: str, side: str, quantity: int, stop_price: float) -
             "dry_run": True
         }
     
-    try:
-        # Placeholder for actual SDK call
-        # order = sdk_client.create_stop_order(
-        #     symbol=symbol,
-        #     side=side,
-        #     quantity=quantity,
-        #     stop_price=stop_price
-        # )
-        # return order
-        
-        logger.warning(MSG_LIVE_TRADING_NOT_IMPLEMENTED)
+    if broker is None:
+        logger.error("Broker not initialized")
         return None
+    
+    try:
+        # Use circuit breaker for order placement
+        breaker = recovery_manager.get_circuit_breaker("order_placement")
+        success, order = breaker.call(broker.place_stop_order, symbol, side, quantity, stop_price)
+        
+        if success and order:
+            return order
+        else:
+            logger.error("Stop order placement failed")
+            action = recovery_manager.handle_error(
+                RecoveryErrorType.ORDER_REJECTION,
+                {"symbol": symbol, "side": side, "quantity": quantity, "stop_price": stop_price}
+            )
+            return None
     except Exception as e:
         logger.error(f"Error placing stop order: {e}")
+        action = recovery_manager.handle_error(
+            RecoveryErrorType.SDK_CRASH,
+            {"error": str(e), "function": "place_stop_order"}
+        )
         return None
 
 
 def place_limit_order(symbol: str, side: str, quantity: int, limit_price: float) -> Optional[Dict[str, Any]]:
     """
-    Place a limit order through the SDK.
+    Place a limit order through the broker interface.
     Phase Seven: Used for aggressive flatten orders to avoid market order slippage.
     
     Args:
@@ -271,26 +273,36 @@ def place_limit_order(symbol: str, side: str, quantity: int, limit_price: float)
             "dry_run": True
         }
     
-    try:
-        # Placeholder for actual SDK call
-        # order = sdk_client.create_limit_order(
-        #     symbol=symbol,
-        #     side=side,
-        #     quantity=quantity,
-        #     limit_price=limit_price
-        # )
-        # return order
-        
-        logger.warning(MSG_LIVE_TRADING_NOT_IMPLEMENTED)
+    if broker is None:
+        logger.error("Broker not initialized")
         return None
+    
+    try:
+        # Use circuit breaker for order placement
+        breaker = recovery_manager.get_circuit_breaker("order_placement")
+        success, order = breaker.call(broker.place_limit_order, symbol, side, quantity, limit_price)
+        
+        if success and order:
+            return order
+        else:
+            logger.error("Limit order placement failed")
+            action = recovery_manager.handle_error(
+                RecoveryErrorType.ORDER_REJECTION,
+                {"symbol": symbol, "side": side, "quantity": quantity, "limit_price": limit_price}
+            )
+            return None
     except Exception as e:
         logger.error(f"Error placing limit order: {e}")
+        action = recovery_manager.handle_error(
+            RecoveryErrorType.SDK_CRASH,
+            {"error": str(e), "function": "place_limit_order"}
+        )
         return None
 
 
 def get_position_quantity(symbol: str) -> int:
     """
-    Query SDK for current position quantity.
+    Query broker for current position quantity.
     Phase Eight: Used to check for partial fills.
     
     Args:
@@ -307,21 +319,45 @@ def get_position_quantity(symbol: str) -> int:
             return qty if side == "long" else -qty
         return 0
     
-    try:
-        # Placeholder for actual SDK call
-        # position = sdk_client.get_position(symbol=symbol)
-        # return position.get('quantity', 0)
-        
-        logger.warning("Live position query not implemented - SDK integration required")
+    if broker is None:
+        logger.error("Broker not initialized")
         return 0
+    
+    try:
+        # Use circuit breaker for position query
+        breaker = recovery_manager.get_circuit_breaker("account_query")
+        success, quantity = breaker.call(broker.get_position_quantity, symbol)
+        
+        if success:
+            # Check for position discrepancy
+            if state.get(symbol) and state[symbol]["position"]["active"]:
+                expected_qty = state[symbol]["position"]["quantity"]
+                expected_side = state[symbol]["position"]["side"]
+                expected = expected_qty if expected_side == "long" else -expected_qty
+                
+                if quantity != expected:
+                    logger.warning(f"Position discrepancy: Expected {expected}, got {quantity}")
+                    action = recovery_manager.handle_error(
+                        RecoveryErrorType.POSITION_DISCREPANCY,
+                        {"symbol": symbol, "expected": expected, "actual": quantity}
+                    )
+            
+            return quantity
+        else:
+            logger.error("Failed to get position quantity")
+            return 0
     except Exception as e:
         logger.error(f"Error querying position: {e}")
+        action = recovery_manager.handle_error(
+            RecoveryErrorType.SDK_CRASH,
+            {"error": str(e), "function": "get_position_quantity"}
+        )
         return 0
 
 
 def subscribe_market_data(symbol: str, callback: Callable[[str, float, int, int], None]) -> None:
     """
-    Subscribe to real-time market data for a symbol.
+    Subscribe to real-time market data for a symbol through broker interface.
     
     Args:
         symbol: Instrument symbol
@@ -333,17 +369,25 @@ def subscribe_market_data(symbol: str, callback: Callable[[str, float, int, int]
         logger.info(f"Mock subscription to {symbol} - callback registered")
         return
     
+    if broker is None:
+        logger.error("Broker not initialized")
+        return
+    
     try:
-        # Placeholder for actual SDK call
-        # sdk_client.subscribe_ticks(symbol=symbol, callback=callback)
-        logger.warning("Live data subscription not implemented - SDK integration required")
+        # Subscribe through broker interface
+        broker.subscribe_market_data(symbol, callback)
+        logger.info(f"Subscribed to market data for {symbol}")
     except Exception as e:
         logger.error(f"Error subscribing to market data: {e}")
+        action = recovery_manager.handle_error(
+            RecoveryErrorType.DATA_FEED_INTERRUPTION,
+            {"symbol": symbol, "error": str(e)}
+        )
 
 
 def fetch_historical_bars(symbol: str, timeframe: int, count: int) -> List[Dict[str, Any]]:
     """
-    Fetch historical bars for initial trend calculation.
+    Fetch historical bars for initial trend calculation through broker interface.
     
     Args:
         symbol: Instrument symbol
@@ -355,20 +399,31 @@ def fetch_historical_bars(symbol: str, timeframe: int, count: int) -> List[Dict[
     """
     logger.info(f"Fetching {count} historical {timeframe}min bars for {symbol}")
     
-    try:
-        # Placeholder for actual SDK call
-        # bars = sdk_client.get_historical_bars(
-        #     symbol=symbol,
-        #     interval=f"{timeframe}m",
-        #     limit=count
-        # )
-        # return bars
-        
-        # Mock data for development
-        logger.warning("Returning mock historical data - SDK integration required")
+    if CONFIG["dry_run"]:
+        logger.info("Dry run mode - returning empty bars")
         return []
+    
+    if broker is None:
+        logger.error("Broker not initialized")
+        return []
+    
+    try:
+        # Fetch through broker interface
+        breaker = recovery_manager.get_circuit_breaker("market_data")
+        success, bars = breaker.call(broker.fetch_historical_bars, symbol, f"{timeframe}m", count)
+        
+        if success and bars:
+            logger.info(f"Fetched {len(bars)} bars")
+            return bars
+        else:
+            logger.warning("Failed to fetch historical bars")
+            return []
     except Exception as e:
         logger.error(f"Error fetching historical bars: {e}")
+        action = recovery_manager.handle_error(
+            RecoveryErrorType.SDK_CRASH,
+            {"error": str(e), "function": "fetch_historical_bars"}
+        )
         return []
 
 
@@ -459,7 +514,7 @@ def initialize_state(symbol: str) -> None:
 
 def on_tick(symbol: str, price: float, volume: int, timestamp_ms: int) -> None:
     """
-    Handle incoming tick data.
+    Handle incoming tick data by posting to event loop.
     
     Args:
         symbol: Instrument symbol
@@ -467,38 +522,27 @@ def on_tick(symbol: str, price: float, volume: int, timestamp_ms: int) -> None:
         volume: Tick volume
         timestamp_ms: Timestamp in milliseconds
     """
-    if symbol not in state:
-        initialize_state(symbol)
-    
-    # Phase 12: Update last tick time for connection health check
-    tz = pytz.timezone(CONFIG["timezone"])
-    dt = datetime.fromtimestamp(timestamp_ms / 1000.0, tz=tz)
-    bot_status["last_tick_time"] = dt
-    
-    # Create tick object
-    tick = {
-        "price": price,
-        "volume": volume,
-        "timestamp": timestamp_ms
-    }
-    
-    # Append to tick storage
-    state[symbol]["ticks"].append(tick)
-    
-    # Phase Three: Check for VWAP reset at 9:30 AM ET
-    check_vwap_reset(symbol, dt)
-    
-    # Phase 11: Check for daily reset
-    check_daily_reset(symbol, dt)
-    
-    # Phase Eleven: Critical safety check - NO positions past 5 PM
-    check_no_overnight_positions(symbol)
-    
-    # Update 1-minute bars
-    update_1min_bar(symbol, price, volume, dt)
-    
-    # Update 15-minute bars
-    update_15min_bar(symbol, price, volume, dt)
+    # Post tick data to event loop for processing
+    if event_loop:
+        event_loop.post_event(
+            EventType.TICK_DATA,
+            EventPriority.MEDIUM,
+            {
+                "symbol": symbol,
+                "price": price,
+                "volume": volume,
+                "timestamp": timestamp_ms
+            }
+        )
+    else:
+        # Fallback if event loop not initialized (shouldn't happen in production)
+        logger.warning("Event loop not initialized, processing tick directly")
+        handle_tick_event({
+            "symbol": symbol,
+            "price": price,
+            "volume": volume,
+            "timestamp": timestamp_ms
+        })
 
 
 def update_1min_bar(symbol: str, price: float, volume: int, dt: datetime) -> None:
@@ -2622,7 +2666,9 @@ VALIDATION:
 # ============================================================================
 
 def main() -> None:
-    """Main bot execution"""
+    """Main bot execution with event loop integration"""
+    global event_loop, timer_manager
+    
     logger.info(SEPARATOR_LINE)
     logger.info("VWAP Bounce Bot Starting")
     logger.info(SEPARATOR_LINE)
@@ -2640,8 +2686,8 @@ def main() -> None:
     # Phase Fifteen: Validate timezone configuration
     validate_timezone_configuration()
     
-    # Initialize SDK
-    initialize_sdk()
+    # Initialize broker (replaces initialize_sdk)
+    initialize_broker()
     
     # Phase 12: Record starting equity for drawdown monitoring
     bot_status["starting_equity"] = get_account_equity()
@@ -2662,15 +2708,164 @@ def main() -> None:
         state[symbol]["bars_15min"].extend(historical_bars)
         update_trend_filter(symbol)
     
+    # Initialize event loop
+    logger.info("Initializing event loop...")
+    event_loop = EventLoop(bot_status, CONFIG)
+    
+    # Register event handlers
+    event_loop.register_handler(EventType.TICK_DATA, handle_tick_event)
+    event_loop.register_handler(EventType.TIME_CHECK, handle_time_check_event)
+    event_loop.register_handler(EventType.VWAP_RESET, handle_vwap_reset_event)
+    event_loop.register_handler(EventType.FLATTEN_MODE, handle_flatten_mode_event)
+    event_loop.register_handler(EventType.SHUTDOWN, handle_shutdown_event)
+    
+    # Register shutdown handlers for cleanup
+    event_loop.register_shutdown_handler(cleanup_on_shutdown)
+    
+    # Initialize timer manager for periodic events
+    tz = pytz.timezone(CONFIG["timezone"])
+    timer_manager = TimerManager(event_loop, CONFIG, tz)
+    timer_manager.start()
+    
     # Subscribe to market data
     subscribe_market_data(symbol, on_tick)
     
     logger.info("Bot initialization complete")
-    logger.info("Waiting for market data...")
+    logger.info("Starting event loop...")
+    logger.info("Press Ctrl+C for graceful shutdown")
+    logger.info(SEPARATOR_LINE)
     
-    # In a real implementation, this would run indefinitely
-    # For now, we just show the structure is ready
-    logger.info("Bot is ready to process ticks through on_tick() callback")
+    # Run event loop (blocks until shutdown signal)
+    try:
+        event_loop.run()
+    except KeyboardInterrupt:
+        logger.info("Keyboard interrupt received")
+    finally:
+        logger.info("Event loop stopped")
+        
+        # Print final metrics
+        metrics = event_loop.get_metrics()
+        logger.info("Event Loop Metrics:")
+        logger.info(f"  Total iterations: {metrics['total_iterations']}")
+        logger.info(f"  Events processed: {metrics['events_processed']}")
+        logger.info(f"  Max queue depth: {metrics['max_queue_depth']}")
+        logger.info(f"  Stall count: {metrics['stall_count']}")
+
+
+# ============================================================================
+# EVENT HANDLERS
+# ============================================================================
+
+def handle_tick_event(data: Dict[str, Any]) -> None:
+    """Handle tick data event from event loop"""
+    symbol = data["symbol"]
+    price = data["price"]
+    volume = data["volume"]
+    timestamp_ms = data["timestamp"]
+    
+    if symbol not in state:
+        initialize_state(symbol)
+    
+    # Phase 12: Update last tick time for connection health check
+    tz = pytz.timezone(CONFIG["timezone"])
+    dt = datetime.fromtimestamp(timestamp_ms / 1000.0, tz=tz)
+    bot_status["last_tick_time"] = dt
+    
+    # Monitor data feed health
+    if recovery_manager:
+        recovery_manager.data_feed_monitor.record_tick(symbol)
+    
+    # Create tick object
+    tick = {
+        "price": price,
+        "volume": volume,
+        "timestamp": timestamp_ms
+    }
+    
+    # Append to tick storage
+    state[symbol]["ticks"].append(tick)
+    
+    # Update 1-minute bars
+    update_1min_bar(symbol, price, volume, dt)
+    
+    # Update 15-minute bars
+    update_15min_bar(symbol, price, volume, dt)
+
+
+def handle_time_check_event(data: Dict[str, Any]) -> None:
+    """Handle time-based checks event"""
+    symbol = CONFIG["instrument"]
+    if symbol in state:
+        tz = pytz.timezone(CONFIG["timezone"])
+        current_time = datetime.now(tz).time()
+        
+        # Check for daily reset
+        check_daily_reset(symbol, datetime.now(tz))
+        
+        # Critical safety check - NO positions past 5 PM
+        check_no_overnight_positions(symbol)
+
+
+def handle_vwap_reset_event(data: Dict[str, Any]) -> None:
+    """Handle VWAP reset event"""
+    symbol = CONFIG["instrument"]
+    if symbol in state:
+        tz = pytz.timezone(CONFIG["timezone"])
+        check_vwap_reset(symbol, datetime.now(tz))
+
+
+def handle_flatten_mode_event(data: Dict[str, Any]) -> None:
+    """Handle flatten mode activation event"""
+    logger.warning("Flatten mode activated - initiating position closure")
+    bot_status["flatten_mode"] = True
+    
+    # If position is active, start flatten process
+    symbol = CONFIG["instrument"]
+    if symbol in state and state[symbol]["position"]["active"]:
+        logger.warning(f"Active position detected - executing flatten")
+        # The exit conditions check will handle the flatten
+
+
+def handle_shutdown_event(data: Dict[str, Any]) -> None:
+    """Handle shutdown event"""
+    logger.info("Shutdown event received")
+    bot_status["trading_enabled"] = False
+
+
+def cleanup_on_shutdown() -> None:
+    """Cleanup tasks on shutdown"""
+    logger.info("Running cleanup tasks...")
+    
+    # Save state to disk
+    if recovery_manager:
+        try:
+            recovery_manager.save_state(state)
+            logger.info("State saved successfully")
+        except Exception as e:
+            logger.error(f"Error saving state: {e}")
+    
+    # Disconnect broker
+    if broker and broker.is_connected():
+        try:
+            broker.disconnect()
+            logger.info("Broker disconnected")
+        except Exception as e:
+            logger.error(f"Error disconnecting broker: {e}")
+    
+    # Stop timer manager
+    if timer_manager:
+        try:
+            timer_manager.stop()
+            logger.info("Timer manager stopped")
+        except Exception as e:
+            logger.error(f"Error stopping timer manager: {e}")
+    
+    # Log session summary
+    symbol = CONFIG["instrument"]
+    if symbol in state:
+        log_session_summary(symbol)
+    
+    logger.info("Cleanup complete")
 
 
 if __name__ == "__main__":

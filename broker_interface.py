@@ -1,13 +1,22 @@
 """
 Broker Interface Abstraction Layer
-Provides clean separation between trading strategy and broker execution.
+Provides clean separation between trading strategy and broker execution with TopStep SDK integration.
 """
 
 from abc import ABC, abstractmethod
-from typing import Dict, Any, Optional, Callable
+from typing import Dict, Any, Optional, Callable, List
 from datetime import datetime
 import logging
 import time
+
+# Import TopStep SDK (Project-X)
+try:
+    from project_x_py import ProjectX, ProjectXConfig, TradingSuite, TradingSuiteConfig
+    from project_x_py import OrderSide, OrderType
+    TOPSTEP_SDK_AVAILABLE = True
+except ImportError:
+    TOPSTEP_SDK_AVAILABLE = False
+    logging.warning("TopStep SDK (project-x-py) not installed - broker operations will not work")
 
 
 logger = logging.getLogger(__name__)
@@ -145,7 +154,7 @@ class BrokerInterface(ABC):
 
 class TopStepBroker(BrokerInterface):
     """
-    TopStep SDK broker implementation.
+    TopStep SDK broker implementation using Project-X SDK.
     Wraps TopStep API calls with error handling and retry logic.
     """
     
@@ -166,8 +175,14 @@ class TopStepBroker(BrokerInterface):
         self.failure_count = 0
         self.circuit_breaker_threshold = 5
         
-        # SDK client (will be initialized on connect)
-        self.sdk_client = None
+        # TopStep SDK client (Project-X)
+        self.sdk_client: Optional[ProjectX] = None
+        self.trading_suite: Optional[TradingSuite] = None
+        
+        if not TOPSTEP_SDK_AVAILABLE:
+            logger.error("TopStep SDK (project-x-py) not installed!")
+            logger.error("Install with: pip install project-x-py")
+            raise RuntimeError("TopStep SDK not available")
     
     def connect(self) -> bool:
         """Connect to TopStep SDK."""
@@ -176,16 +191,30 @@ class TopStepBroker(BrokerInterface):
             return False
         
         try:
-            logger.info("Connecting to TopStep SDK...")
-            # TODO: Initialize actual SDK client
-            # from topstep_sdk import TopStepClient
-            # self.sdk_client = TopStepClient(api_token=self.api_token, timeout=self.timeout)
-            # self.connected = self.sdk_client.connect()
+            logger.info("Connecting to TopStep SDK (Project-X)...")
             
-            # Placeholder implementation
-            logger.warning("TopStep SDK not yet integrated - using placeholder")
-            self.connected = True
-            return True
+            # Initialize SDK client
+            config = ProjectXConfig(api_key=self.api_token)
+            self.sdk_client = ProjectX(config)
+            
+            # Initialize trading suite for order management
+            suite_config = TradingSuiteConfig(
+                api_key=self.api_token,
+                environment="production"
+            )
+            self.trading_suite = TradingSuite(suite_config)
+            
+            # Test connection by getting account info
+            account = self.sdk_client.get_account()
+            if account:
+                logger.info(f"Connected to TopStep - Account: {account.account_id}")
+                self.connected = True
+                self.failure_count = 0
+                return True
+            else:
+                logger.error("Failed to retrieve account info")
+                self._record_failure()
+                return False
             
         except Exception as e:
             logger.error(f"Failed to connect to TopStep SDK: {e}")
@@ -195,10 +224,11 @@ class TopStepBroker(BrokerInterface):
     def disconnect(self) -> None:
         """Disconnect from TopStep SDK."""
         try:
+            if self.trading_suite:
+                # Close any active connections
+                self.trading_suite = None
             if self.sdk_client:
-                # TODO: Actual SDK disconnect
-                # self.sdk_client.disconnect()
-                pass
+                self.sdk_client = None
             self.connected = False
             logger.info("Disconnected from TopStep SDK")
         except Exception as e:
@@ -206,14 +236,15 @@ class TopStepBroker(BrokerInterface):
     
     def get_account_equity(self) -> float:
         """Get account equity from TopStep."""
-        if not self.connected:
+        if not self.connected or not self.sdk_client:
             logger.error("Cannot get equity: not connected")
             return 0.0
         
         try:
-            # TODO: Actual SDK call
-            # return self.sdk_client.get_account_equity()
-            logger.warning("TopStep SDK not integrated - returning placeholder value")
+            account = self.sdk_client.get_account()
+            if account:
+                equity = float(account.balance or 0.0)
+                return equity
             return 0.0
         except Exception as e:
             logger.error(f"Error getting account equity: {e}")
@@ -222,122 +253,199 @@ class TopStepBroker(BrokerInterface):
     
     def get_position_quantity(self, symbol: str) -> int:
         """Get position quantity from TopStep."""
-        if not self.connected:
+        if not self.connected or not self.sdk_client:
             logger.error("Cannot get position: not connected")
             return 0
         
         try:
-            # TODO: Actual SDK call
-            # return self.sdk_client.get_position_quantity(symbol)
-            logger.warning("TopStep SDK not integrated - returning 0")
-            return 0
+            positions = self.sdk_client.get_positions()
+            for pos in positions:
+                if pos.instrument.symbol == symbol:
+                    # Return signed quantity (positive for long, negative for short)
+                    qty = int(pos.quantity)
+                    return qty if pos.position_type.value == "LONG" else -qty
+            return 0  # No position found
         except Exception as e:
             logger.error(f"Error getting position quantity: {e}")
             self._record_failure()
             return 0
     
     def place_market_order(self, symbol: str, side: str, quantity: int) -> Optional[Dict[str, Any]]:
-        """Place market order through TopStep SDK."""
-        if not self.connected:
+        """Place market order using TopStep SDK."""
+        if not self.connected or not self.trading_suite:
             logger.error("Cannot place order: not connected")
             return None
         
-        for attempt in range(self.max_retries):
-            try:
-                # TODO: Actual SDK call
-                # order = self.sdk_client.place_market_order(symbol=symbol, side=side, quantity=quantity)
-                # return order
-                logger.warning("TopStep SDK not integrated - order not placed")
+        try:
+            # Convert side to SDK enum
+            order_side = OrderSide.BUY if side.upper() == "BUY" else OrderSide.SELL
+            
+            # Place market order
+            order_response = self.trading_suite.place_market_order(
+                symbol=symbol,
+                side=order_side,
+                quantity=quantity
+            )
+            
+            if order_response and order_response.order:
+                order = order_response.order
+                return {
+                    "order_id": order.order_id,
+                    "symbol": symbol,
+                    "side": side,
+                    "quantity": quantity,
+                    "type": "MARKET",
+                    "status": order.status.value,
+                    "filled_quantity": order.filled_quantity or 0,
+                    "avg_fill_price": order.avg_fill_price or 0.0
+                }
+            else:
+                logger.error("Market order placement failed")
+                self._record_failure()
                 return None
-            except Exception as e:
-                logger.error(f"Error placing market order (attempt {attempt + 1}/{self.max_retries}): {e}")
-                if attempt < self.max_retries - 1:
-                    time.sleep(1 * (attempt + 1))  # Exponential backoff
-                else:
-                    self._record_failure()
-        
-        return None
+                
+        except Exception as e:
+            logger.error(f"Error placing market order: {e}")
+            self._record_failure()
+            return None
     
-    def place_limit_order(self, symbol: str, side: str, quantity: int, 
-                         limit_price: float) -> Optional[Dict[str, Any]]:
-        """Place limit order through TopStep SDK."""
-        if not self.connected:
+    def place_limit_order(self, symbol: str, side: str, quantity: int, limit_price: float) -> Optional[Dict[str, Any]]:
+        """Place limit order using TopStep SDK."""
+        if not self.connected or not self.trading_suite:
             logger.error("Cannot place order: not connected")
             return None
         
-        for attempt in range(self.max_retries):
-            try:
-                # TODO: Actual SDK call
-                # order = self.sdk_client.place_limit_order(
-                #     symbol=symbol, side=side, quantity=quantity, limit_price=limit_price
-                # )
-                # return order
-                logger.warning("TopStep SDK not integrated - order not placed")
+        try:
+            # Convert side to SDK enum
+            order_side = OrderSide.BUY if side.upper() == "BUY" else OrderSide.SELL
+            
+            # Place limit order
+            order_response = self.trading_suite.place_limit_order(
+                symbol=symbol,
+                side=order_side,
+                quantity=quantity,
+                limit_price=limit_price
+            )
+            
+            if order_response and order_response.order:
+                order = order_response.order
+                return {
+                    "order_id": order.order_id,
+                    "symbol": symbol,
+                    "side": side,
+                    "quantity": quantity,
+                    "type": "LIMIT",
+                    "limit_price": limit_price,
+                    "status": order.status.value,
+                    "filled_quantity": order.filled_quantity or 0
+                }
+            else:
+                logger.error("Limit order placement failed")
+                self._record_failure()
                 return None
-            except Exception as e:
-                logger.error(f"Error placing limit order (attempt {attempt + 1}/{self.max_retries}): {e}")
-                if attempt < self.max_retries - 1:
-                    time.sleep(1 * (attempt + 1))
-                else:
-                    self._record_failure()
-        
-        return None
+                
+        except Exception as e:
+            logger.error(f"Error placing limit order: {e}")
+            self._record_failure()
+            return None
     
-    def place_stop_order(self, symbol: str, side: str, quantity: int, 
-                        stop_price: float) -> Optional[Dict[str, Any]]:
-        """Place stop order through TopStep SDK."""
-        if not self.connected:
+    def place_stop_order(self, symbol: str, side: str, quantity: int, stop_price: float) -> Optional[Dict[str, Any]]:
+        """Place stop order using TopStep SDK."""
+        if not self.connected or not self.trading_suite:
             logger.error("Cannot place order: not connected")
             return None
         
-        for attempt in range(self.max_retries):
-            try:
-                # TODO: Actual SDK call
-                # order = self.sdk_client.place_stop_order(
-                #     symbol=symbol, side=side, quantity=quantity, stop_price=stop_price
-                # )
-                # return order
-                logger.warning("TopStep SDK not integrated - order not placed")
+        try:
+            # Convert side to SDK enum
+            order_side = OrderSide.BUY if side.upper() == "BUY" else OrderSide.SELL
+            
+            # Place stop order
+            order_response = self.trading_suite.place_stop_order(
+                symbol=symbol,
+                side=order_side,
+                quantity=quantity,
+                stop_price=stop_price
+            )
+            
+            if order_response and order_response.order:
+                order = order_response.order
+                return {
+                    "order_id": order.order_id,
+                    "symbol": symbol,
+                    "side": side,
+                    "quantity": quantity,
+                    "type": "STOP",
+                    "stop_price": stop_price,
+                    "status": order.status.value
+                }
+            else:
+                logger.error("Stop order placement failed")
+                self._record_failure()
                 return None
-            except Exception as e:
-                logger.error(f"Error placing stop order (attempt {attempt + 1}/{self.max_retries}): {e}")
-                if attempt < self.max_retries - 1:
-                    time.sleep(1 * (attempt + 1))
-                else:
-                    self._record_failure()
-        
-        return None
+                
+        except Exception as e:
+            logger.error(f"Error placing stop order: {e}")
+            self._record_failure()
+            return None
     
     def subscribe_market_data(self, symbol: str, callback: Callable[[str, float, int, int], None]) -> None:
-        """Subscribe to market data through TopStep SDK."""
-        if not self.connected:
+        """Subscribe to real-time market data."""
+        if not self.connected or not self.sdk_client:
             logger.error("Cannot subscribe: not connected")
             return
         
         try:
-            # TODO: Actual SDK call
-            # self.sdk_client.subscribe_market_data(symbol=symbol, callback=callback)
-            logger.warning("TopStep SDK not integrated - subscription not active")
+            # Subscribe to realtime data
+            realtime_client = self.sdk_client.get_realtime_client()
+            if realtime_client:
+                # Subscribe to trades/quotes for the symbol
+                realtime_client.subscribe_trades(
+                    symbol,
+                    lambda trade: callback(
+                        trade.instrument.symbol,
+                        float(trade.price),
+                        int(trade.size),
+                        int(trade.timestamp.timestamp() * 1000)
+                    )
+                )
+                logger.info(f"Subscribed to market data for {symbol}")
+            else:
+                logger.error("Failed to get realtime client")
         except Exception as e:
             logger.error(f"Error subscribing to market data: {e}")
             self._record_failure()
     
-    def fetch_historical_bars(self, symbol: str, timeframe: int, count: int) -> list:
-        """Fetch historical bars through TopStep SDK."""
-        if not self.connected:
+    def fetch_historical_bars(self, symbol: str, timeframe: str, count: int) -> List[Dict[str, Any]]:
+        """Fetch historical bars from TopStep."""
+        if not self.connected or not self.sdk_client:
             logger.error("Cannot fetch bars: not connected")
             return []
         
         try:
-            # TODO: Actual SDK call
-            # return self.sdk_client.fetch_historical_bars(symbol=symbol, timeframe=timeframe, count=count)
-            logger.warning("TopStep SDK not integrated - returning empty list")
+            # Fetch historical data
+            bars = self.sdk_client.get_historical_bars(
+                symbol=symbol,
+                interval=timeframe,
+                limit=count
+            )
+            
+            if bars:
+                return [
+                    {
+                        "timestamp": bar.timestamp,
+                        "open": float(bar.open),
+                        "high": float(bar.high),
+                        "low": float(bar.low),
+                        "close": float(bar.close),
+                        "volume": int(bar.volume)
+                    }
+                    for bar in bars
+                ]
             return []
         except Exception as e:
             logger.error(f"Error fetching historical bars: {e}")
             self._record_failure()
             return []
-    
     def is_connected(self) -> bool:
         """Check if connected to TopStep SDK."""
         return self.connected and not self.circuit_breaker_open
