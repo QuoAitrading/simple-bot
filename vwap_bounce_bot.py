@@ -366,7 +366,7 @@ def subscribe_market_data(symbol: str, callback: Callable[[str, float, int, int]
     logger.info(f"{'[DRY RUN] ' if CONFIG['dry_run'] else ''}Subscribing to market data: {symbol}")
     
     if CONFIG["dry_run"]:
-        logger.info(f"Mock subscription to {symbol} - callback registered")
+        logger.info(f"Dry run mode - simulating subscription to {symbol}")
         return
     
     if broker is None:
