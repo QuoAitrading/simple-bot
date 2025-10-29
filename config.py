@@ -60,8 +60,11 @@ class BotConfiguration:
     log_file: str = "vwap_bounce_bot.log"
     max_bars_storage: int = 200
     
-    # Broker Configuration
+    # Broker Configuration (only for live trading)
     api_token: Optional[str] = None
+    
+    # Operational mode
+    backtest_mode: bool = False  # When True, runs in backtest mode without broker
     
     # Environment
     environment: str = "production"  # "development", "staging", "production"
@@ -116,9 +119,9 @@ class BotConfiguration:
         if not 0 < self.max_drawdown_percent <= 100:
             errors.append(f"max_drawdown_percent must be between 0 and 100, got {self.max_drawdown_percent}")
         
-        # Validate broker configuration - API token is required
-        if not self.api_token:
-            errors.append("api_token is required for TopStep broker")
+        # Validate broker configuration - API token is required unless in backtest mode
+        if not self.backtest_mode and not self.api_token:
+            errors.append("api_token is required for TopStep broker (not required in backtest_mode)")
         
         # Validate environment
         if self.environment not in ["development", "staging", "production"]:
@@ -240,7 +243,7 @@ def get_production_config() -> BotConfiguration:
     return config
 
 
-def load_config(environment: Optional[str] = None) -> BotConfiguration:
+def load_config(environment: Optional[str] = None, backtest_mode: bool = False) -> BotConfiguration:
     """
     Load configuration based on environment.
     
@@ -252,6 +255,7 @@ def load_config(environment: Optional[str] = None) -> BotConfiguration:
     Args:
         environment: Environment name ("development", "staging", "production")
                     If None, uses BOT_ENVIRONMENT env var or defaults to "development"
+        backtest_mode: If True, API token is not required (for backtesting)
     
     Returns:
         Validated BotConfiguration instance
@@ -270,6 +274,9 @@ def load_config(environment: Optional[str] = None) -> BotConfiguration:
         config = get_staging_config()
     else:
         config = get_development_config()
+    
+    # Set backtest mode
+    config.backtest_mode = backtest_mode
     
     # Override with environment variables
     env_config = load_from_env()
@@ -301,8 +308,12 @@ def log_config(config: BotConfiguration, logger) -> None:
     logger.info("CONFIGURATION")
     logger.info("=" * 60)
     logger.info(f"Environment: {config.environment}")
-    logger.info(f"Broker: TopStep")
-    logger.info(f"Dry Run: {config.dry_run}")
+    
+    # Only show broker info in live mode
+    if not config.backtest_mode:
+        logger.info(f"Broker: TopStep")
+        logger.info(f"Dry Run: {config.dry_run}")
+    
     logger.info(f"Instrument: {config.instrument}")
     logger.info(f"Timezone: {config.timezone}")
     logger.info(f"Risk per Trade: {config.risk_per_trade * 100:.1f}%")
@@ -317,9 +328,11 @@ def log_config(config: BotConfiguration, logger) -> None:
     logger.info(f"Flatten Time: {config.flatten_time} ET")
     logger.info(f"Forced Flatten: {config.forced_flatten_time} ET")
     
-    # Never log API tokens
-    if config.api_token:
-        logger.info("API Token: *** (configured)")
+    # API token info (only relevant for live trading)
+    if config.backtest_mode:
+        logger.info("Mode: Backtest (no API/broker connection needed)")
+    elif config.api_token:
+        logger.info("API Token: *** (configured for live trading)")
     else:
         logger.info("API Token: (not configured)")
     

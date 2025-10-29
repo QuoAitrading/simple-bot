@@ -6,15 +6,12 @@ An event-driven mean reversion trading bot for futures trading (MES) that execut
 
 The VWAP Bounce Bot subscribes to real-time tick data, aggregates it into bars, calculates VWAP with standard deviation bands, determines trend direction, and executes mean reversion trades when price touches extreme bands while aligned with the trend.
 
-## Architecture
-
-### Five-Phase Implementation
-
-1. **Project Setup** - Configuration and risk management parameters
-2. **SDK Integration** - TopStep SDK wrapper functions for trading operations
-3. **State Management** - Data structures for ticks, bars, positions, and P&L tracking
-4. **Data Processing Pipeline** - Real-time tick handling and bar aggregation
-5. **VWAP Calculation** - Volume-weighted average price with standard deviation bands
+**New in Phase 12 & 13:**
+- ✨ **Backtesting Framework** - Test strategies on historical data with realistic order simulation
+- ✨ **Enhanced Logging** - Structured JSON logging with sensitive data protection
+- ✨ **Health Checks** - HTTP endpoint for monitoring bot status
+- ✨ **Metrics Collection** - Track performance metrics and API latency
+- ✨ **Dual Mode** - Run in live trading or backtesting mode
 
 ## Features
 
@@ -22,8 +19,11 @@ The VWAP Bounce Bot subscribes to real-time tick data, aggregates it into bars, 
 - **Risk Management**: Conservative 0.1% risk per trade with daily loss limits
 - **Trend Filter**: 50-period EMA on 15-minute bars
 - **VWAP Bands**: Two standard deviation bands for entry signals
-- **Trading Hours**: 10:00 AM - 3:30 PM ET (avoiding open/close chaos)
+- **Trading Hours**: 9:00 AM - 2:30 PM ET entry window
 - **Dry Run Mode**: Test strategies without risking capital
+- **Backtesting Engine**: Validate strategies on historical data
+- **Health Monitoring**: HTTP endpoint for health checks and metrics
+- **Structured Logging**: JSON logs with log rotation and sensitive data filtering
 
 ## Configuration
 
@@ -81,31 +81,156 @@ cp .env.example .env
 
 ## Usage
 
-### Running in Dry Run Mode (Default)
+### Quick Start
 
-Test the bot without executing real trades:
+The bot now supports two modes: **Live Trading** and **Backtesting**.
 
+#### Live Trading Mode
+
+Test with dry-run (paper trading):
 ```bash
 export TOPSTEP_API_TOKEN='your_token_here'
-python vwap_bounce_bot.py
+python main.py --mode live --dry-run
 ```
 
-### Running in Live Mode
-
-⚠️ **WARNING**: Only use live mode after thorough testing in dry run mode!
-
-Edit `vwap_bounce_bot.py` and set:
-```python
-CONFIG = {
-    ...
-    "dry_run": False,
-    ...
-}
-```
-
-Then run:
+Run in production (requires confirmation):
 ```bash
-python vwap_bounce_bot.py
+export TOPSTEP_API_TOKEN='your_token_here'
+export CONFIRM_LIVE_TRADING=1  # Required safety check
+python main.py --mode live
+```
+
+The bot will:
+- Start health check server on port 8080 (http://localhost:8080/health)
+- Log to `./logs/vwap_bot.log` (JSON format with rotation)
+- Track performance metrics
+
+#### Backtesting Mode
+
+**Backtesting runs completely independently of the broker API.**  
+No API token needed - it replays historical data bar-by-bar (1-minute bars by default).
+
+**Parameter Optimization:**
+
+Find optimal strategy parameters using grid search and walk-forward analysis:
+
+```python
+from parameter_optimization import ParameterOptimizer
+
+# Define parameter ranges to optimize
+param_ranges = {
+    'vwap_period': [20, 30, 40, 50, 60],
+    'band_multiplier': [0.5, 1.0, 1.5, 2.0],
+    'stop_loss_ticks': [5, 8, 10, 12, 15],
+    'target_ticks': [10, 15, 20, 25, 30]
+}
+
+# Run grid search
+optimizer = ParameterOptimizer(config, bot_config, param_ranges)
+results = optimizer.grid_search(vwap_strategy, metric='sharpe_ratio', n_jobs=4)
+print(f"Best parameters: {results.best_params}")
+
+# Run walk-forward analysis (prevents overfitting)
+wf_results = optimizer.walk_forward_analysis(vwap_strategy, window_size_days=30)
+```
+
+**Basic Backtesting:**
+
+Run backtest on last 7 days:
+```bash
+# No API token required for backtesting!
+python main.py --mode backtest --days 7
+```
+
+Run backtest with specific date range:
+```bash
+python main.py --mode backtest --start 2024-01-01 --end 2024-01-31
+```
+
+Generate and save backtest report:
+```bash
+python main.py --mode backtest --days 30 --report backtest_results.txt
+```
+
+**Optional: Use tick-by-tick replay for more accurate simulation:**
+```bash
+python main.py --mode backtest --days 7 --use-tick-data
+```
+
+**How it works:**
+1. **Bar-by-bar mode (default)**: Replays 1-minute bars sequentially
+2. **Tick-by-tick mode (optional)**: Replays each tick as if it's happening live
+3. Loads historical data from CSV files (no broker connection)
+4. Bot executes strategy on historical data
+5. Simulates realistic order fills with slippage
+6. 100% offline simulation - no API needed
+
+### Fetch Real Historical Data
+
+**IMPORTANT: Use REAL data from TopStep, not mock/simulated data**
+
+Fetch real market data from TopStep API:
+```bash
+# Set your TopStep API token
+export TOPSTEP_API_TOKEN='your_real_token_here'
+
+# Fetch real historical data
+python fetch_historical_data.py --symbol MES --days 30
+```
+
+This fetches REAL market data from TopStep and saves to `./historical_data/`:
+- MES_ticks.csv - Real tick-level data (or finest granularity available)
+- MES_1min.csv - Real 1-minute bars
+- MES_15min.csv - Real 15-minute bars
+
+**NO MOCK OR SIMULATED DATA** - All data comes from actual TopStep market feeds.
+
+### Command-Line Options
+
+```
+usage: main.py [-h] [--mode {live,backtest}] [--dry-run] [--start START]
+               [--end END] [--days DAYS] [--data-path DATA_PATH]
+               [--initial-equity INITIAL_EQUITY] [--report REPORT]
+               [--symbol SYMBOL] [--environment {development,staging,production}]
+               [--health-check-port HEALTH_CHECK_PORT] [--no-health-check]
+               [--log-level {DEBUG,INFO,WARNING,ERROR,CRITICAL}]
+
+Options:
+  --mode {live,backtest}    Trading mode (default: live)
+  --dry-run                 Paper trading mode (no real orders)
+  --start START             Backtest start date (YYYY-MM-DD)
+  --end END                 Backtest end date (YYYY-MM-DD)
+  --days DAYS               Backtest for last N days
+  --data-path DATA_PATH     Historical data directory
+  --initial-equity EQUITY   Initial equity for backtesting
+  --report REPORT           Save backtest report to file
+  --symbol SYMBOL           Trading symbol (default: MES)
+  --environment ENV         Environment config (development/staging/production)
+  --health-check-port PORT  Health check HTTP port (default: 8080)
+  --no-health-check         Disable health check server
+  --log-level LEVEL         Logging level (default: INFO)
+```
+
+### Health Check Endpoint
+
+When running in live mode, the bot exposes a health check endpoint:
+
+```bash
+curl http://localhost:8080/health
+```
+
+Response format:
+```json
+{
+  "healthy": true,
+  "timestamp": "2024-01-15T10:30:00.000Z",
+  "checks": {
+    "bot_status": true,
+    "broker_connection": true,
+    "data_feed": true
+  },
+  "messages": ["All systems operational"]
+}
 ```
 
 ## How It Works
@@ -151,7 +276,7 @@ simple-bot/
 ├── test_phases_11_14.py    # Safety and monitoring tests (Phases 11-14)
 ├── test_phases_6_10.py     # Phases 6-10 specific tests
 ├── test_bot.py             # Original validation tests
-├── example_simulation.py   # Basic simulation example
+├── example_usage.py         # Usage examples and demonstrations
 ├── requirements.txt        # Python dependencies
 ├── .env.example           # Environment variable template
 ├── .gitignore            # Git ignore patterns
@@ -195,7 +320,7 @@ simple-bot/
 - **Trading re-enable**: Resets daily limit flags for new day
 
 ### Phase 12: Safety Mechanisms
-- **Daily loss limit**: $400 with critical alert and trading stop
+- **Daily loss limit**: $400 with trading stop enforcement
 - **Maximum drawdown**: 2% of starting equity monitoring
 - **Time-based kill switch**: 4 PM ET market close shutdown
 - **Connection health**: 60-second tick timeout detection
