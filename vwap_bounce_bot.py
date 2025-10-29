@@ -14,10 +14,6 @@ import pytz
 CONFIG = {
     # Trading Parameters
     "instrument": "MES",
-    "trading_window": {
-        "start": time(10, 0),  # 10:00 AM ET (legacy, use entry_window_start instead)
-        "end": time(15, 30)    # 3:30 PM ET (legacy, use entry_window_end instead)
-    },
     "timezone": "America/New_York",
     
     # Enhanced Time Parameters (Phase One)
@@ -60,8 +56,6 @@ CONFIG = {
     
     # Safety Mechanisms (Phase 12)
     "max_drawdown_percent": 2.0,  # Maximum total drawdown percentage
-    "market_close_time": time(17, 0),  # 5:00 PM ET - shutdown time (aligned with shutdown_time)
-    "daily_reset_time": time(8, 0),  # 8:00 AM ET - daily reset (legacy)
     "tick_timeout_seconds": 60,  # Max seconds without tick during market hours
     
     # System Settings
@@ -1708,18 +1702,20 @@ def check_safety_conditions(symbol: str) -> Tuple[bool, Optional[str]]:
                 bot_status["stop_reason"] = "max_drawdown_exceeded"
             return False, f"Max drawdown exceeded: {drawdown_percent:.2f}%"
     
-    # Check time-based kill switch (after 4 PM ET)
-    market_close = CONFIG["market_close_time"]
-    if current_time.time() >= market_close:
+    # Check time-based kill switch - use shutdown_time from new time management
+    if current_time.time() >= CONFIG["shutdown_time"]:
         if bot_status["trading_enabled"]:
             logger.warning(f"Market closed - Shutting down bot at {current_time.time()}")
             bot_status["trading_enabled"] = False
             bot_status["stop_reason"] = "market_closed"
         return False, "Market closed"
     
-    # Check connection health (no ticks in 60 seconds during market hours)
+    # Check connection health (no ticks in 60 seconds during trading hours)
+    # Use get_trading_state instead of legacy is_trading_hours
     if bot_status["last_tick_time"] is not None:
-        if is_trading_hours(current_time):
+        trading_state = get_trading_state(current_time)
+        # Check for tick timeout during any active trading state (not before_open or closed)
+        if trading_state not in ["before_open", "closed"]:
             time_since_tick = (current_time - bot_status["last_tick_time"]).total_seconds()
             if time_since_tick > CONFIG["tick_timeout_seconds"]:
                 logger.error(f"DATA FEED ISSUE: No tick in {time_since_tick:.0f} seconds")
@@ -1954,21 +1950,7 @@ def update_session_stats(symbol: str, pnl: float):
 # UTILITY FUNCTIONS
 # ============================================================================
 
-def is_trading_hours(dt: datetime = None) -> bool:
-    """
-    Check if current time is within trading window.
-    
-    Args:
-        dt: Datetime to check (defaults to now)
-    
-    Returns:
-        True if within trading hours
-    """
-    if dt is None:
-        dt = datetime.now(pytz.timezone(CONFIG["timezone"]))
-    
-    current_time = dt.time()
-    return CONFIG["trading_window"]["start"] <= current_time <= CONFIG["trading_window"]["end"]
+
 
 
 def round_to_tick(price: float) -> float:
@@ -2283,7 +2265,10 @@ def main():
     logger.info("="*60)
     logger.info(f"Mode: {'DRY RUN' if CONFIG['dry_run'] else 'LIVE TRADING'}")
     logger.info(f"Instrument: {CONFIG['instrument']}")
-    logger.info(f"Trading Window: {CONFIG['trading_window']['start']} - {CONFIG['trading_window']['end']} ET")
+    logger.info(f"Entry Window: {CONFIG['entry_window_start']} - {CONFIG['entry_window_end']} ET")
+    logger.info(f"Flatten Mode: {CONFIG['warning_time']} ET")
+    logger.info(f"Force Close: {CONFIG['forced_flatten_time']} ET")
+    logger.info(f"Shutdown: {CONFIG['shutdown_time']} ET")
     logger.info(f"Max Trades/Day: {CONFIG['max_trades_per_day']}")
     logger.info(f"Daily Loss Limit: ${CONFIG['daily_loss_limit']}")
     logger.info(f"Max Drawdown: {CONFIG['max_drawdown_percent']}%")
