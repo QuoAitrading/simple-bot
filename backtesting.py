@@ -76,8 +76,20 @@ class HistoricalDataLoader:
                 for row in reader:
                     timestamp = datetime.fromisoformat(row['timestamp'])
                     
+                    # Make timestamps timezone-aware if they aren't
+                    if timestamp.tzinfo is None:
+                        timestamp = pytz.UTC.localize(timestamp)
+                    
+                    # Convert config dates to timezone-aware if needed
+                    start_date = self.config.start_date
+                    end_date = self.config.end_date
+                    if start_date.tzinfo is None:
+                        start_date = pytz.UTC.localize(start_date)
+                    if end_date.tzinfo is None:
+                        end_date = pytz.UTC.localize(end_date)
+                    
                     # Filter by date range
-                    if self.config.start_date <= timestamp <= self.config.end_date:
+                    if start_date <= timestamp <= end_date:
                         ticks.append({
                             'timestamp': timestamp,
                             'price': float(row['price']),
@@ -116,8 +128,20 @@ class HistoricalDataLoader:
                 for row in reader:
                     timestamp = datetime.fromisoformat(row['timestamp'])
                     
+                    # Make timestamps timezone-aware if they aren't
+                    if timestamp.tzinfo is None:
+                        timestamp = pytz.UTC.localize(timestamp)
+                    
+                    # Convert config dates to timezone-aware if needed
+                    start_date = self.config.start_date
+                    end_date = self.config.end_date
+                    if start_date.tzinfo is None:
+                        start_date = pytz.UTC.localize(start_date)
+                    if end_date.tzinfo is None:
+                        end_date = pytz.UTC.localize(end_date)
+                    
                     # Filter by date range
-                    if self.config.start_date <= timestamp <= self.config.end_date:
+                    if start_date <= timestamp <= end_date:
                         bars.append({
                             'timestamp': timestamp,
                             'open': float(row['open']),

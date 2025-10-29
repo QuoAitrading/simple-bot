@@ -269,6 +269,12 @@ def main():
     """Main entry point"""
     args = parse_arguments()
     
+    # For backtesting mode, API token is not required
+    if args.mode == 'backtest':
+        # Set a dummy token for validation
+        if not os.getenv('TOPSTEP_API_TOKEN'):
+            os.environ['TOPSTEP_API_TOKEN'] = 'BACKTEST_MODE_NO_TOKEN_NEEDED'
+    
     # Load configuration
     bot_config = load_config(environment=args.environment)
     
