@@ -7,72 +7,43 @@ import os
 import logging
 from datetime import datetime, time, timedelta
 from collections import deque
-from typing import Dict, List, Optional, Tuple, Callable
+from typing import Any, Dict, List, Optional, Tuple, Callable
 import pytz
 
-# Configuration Dictionary
-CONFIG = {
-    # Trading Parameters
-    "instrument": "MES",
-    "timezone": "America/New_York",
-    
-    # Enhanced Time Parameters (Phase One)
-    "entry_window_start": time(9, 0),      # 9:00 AM ET - signals enabled
-    "entry_window_end": time(14, 30),      # 2:30 PM ET - signals disabled
-    "warning_time": time(16, 30),          # 4:30 PM ET - flatten mode begins
-    "forced_flatten_time": time(16, 45),   # 4:45 PM ET - force close positions
-    "shutdown_time": time(17, 0),          # 5:00 PM ET - bot shutdown
-    "vwap_reset_time": time(9, 30),        # 9:30 AM ET - VWAP daily reset
-    # Note: VWAP resets at 9:30 AM (stock market open) while entry window starts at 9:00 AM.
-    # This allows overnight VWAP to carry into early trading (9:00-9:30 AM), then resets
-    # at market open for proper equity index alignment.
-    
-    # Phase 9-14: Advanced Safety Parameters
-    "proactive_stop_buffer_ticks": 2,      # Close proactively when within N ticks of stop
-    "friday_entry_cutoff": time(13, 0),    # 1:00 PM ET - no new trades on Friday
-    "friday_close_target": time(15, 0),    # 3:00 PM ET - target close time on Friday
-    
-    # Risk Management
-    "risk_per_trade": 0.001,  # 0.1% of account equity
-    "max_contracts": 1,
-    "max_trades_per_day": 5,
-    "daily_loss_limit": 400.0,  # Conservative limit before TopStep's $1000
-    
-    # Instrument Specifications (MES)
-    "tick_size": 0.25,
-    "tick_value": 1.25,
-    
-    # Strategy Parameters
-    "trend_filter_period": 50,  # bars
-    "trend_timeframe": 15,  # minutes
-    "vwap_timeframe": 1,  # minutes
-    "vwap_sd_multipliers": {
-        "band_1": 1.0,
-        "band_2": 2.0
-    },
-    "risk_reward_ratio": 1.5,
-    "stop_buffer_ticks": 2,  # Buffer beyond band for stop placement
-    "flatten_buffer_ticks": 2,  # Ticks worse than bid/offer for flatten orders
-    
-    # Safety Mechanisms (Phase 12)
-    "max_drawdown_percent": 2.0,  # Maximum total drawdown percentage
-    "tick_timeout_seconds": 60,  # Max seconds without tick during market hours
-    
-    # System Settings
-    "dry_run": True,
-    "log_file": "vwap_bounce_bot.log",
-    "max_tick_storage": 10000,
-    "max_bars_storage": 200
-}
+# Import new production modules
+from config import load_config, BotConfiguration
+from broker_interface import create_broker, BrokerInterface
+from event_loop import EventLoop, EventType, EventPriority, TimerManager
+from error_recovery import ErrorRecoveryManager, ErrorType as RecoveryErrorType
 
-# Global SDK client instance
-sdk_client = None
+# Load configuration from environment and config module
+_bot_config = load_config()
+_bot_config.validate()  # Validate configuration at startup
+
+# Convert BotConfiguration to dictionary for backward compatibility with existing code
+CONFIG: Dict[str, Any] = _bot_config.to_dict()
+
+# String constants
+MSG_LIVE_TRADING_NOT_IMPLEMENTED = "Live trading not implemented - SDK integration required"
+SEPARATOR_LINE = "=" * 60
+
+# Global broker instance (replaces sdk_client)
+broker: Optional[BrokerInterface] = None
+
+# Global event loop instance
+event_loop: Optional[EventLoop] = None
+
+# Global error recovery manager
+recovery_manager: Optional[ErrorRecoveryManager] = None
+
+# Global timer manager
+timer_manager: Optional[TimerManager] = None
 
 # State management dictionary
-state = {}
+state: Dict[str, Any] = {}
 
 # Global tracking for safety mechanisms (Phase 12)
-bot_status = {
+bot_status: Dict[str, Any] = {
     "trading_enabled": True,
     "starting_equity": None,
     "last_tick_time": None,
@@ -86,7 +57,7 @@ bot_status = {
 }
 
 
-def setup_logging():
+def setup_logging() -> logging.Logger:
     """Configure logging for the bot"""
     logging.basicConfig(
         level=logging.INFO,
@@ -106,57 +77,64 @@ logger = setup_logging()
 # PHASE TWO: SDK Integration
 # ============================================================================
 
-def initialize_sdk():
+def initialize_broker() -> None:
     """
-    Initialize the TopStep SDK client using environment variable token.
-    Returns the initialized client or exits if token is missing.
+    Initialize the broker interface using configuration.
+    Uses TopStep broker with error recovery and circuit breaker.
     """
-    global sdk_client
+    global broker, recovery_manager
     
-    token = os.getenv("TOPSTEP_API_TOKEN")
-    if not token:
-        logger.error("TOPSTEP_API_TOKEN environment variable not found!")
-        logger.error("Please set your API token: export TOPSTEP_API_TOKEN='your_token_here'")
-        exit(1)
+    logger.info("Initializing broker interface...")
     
-    try:
-        # Placeholder for actual SDK initialization
-        # sdk_client = TopStepSDK(api_token=token)
-        logger.info("SDK client initialized successfully")
-        logger.warning("Running in simulation mode - actual SDK not imported")
-        sdk_client = {"mock": True, "token": token}  # Mock client for now
-        return sdk_client
-    except Exception as e:
-        logger.error(f"Failed to initialize SDK: {e}")
-        exit(1)
+    # Create error recovery manager
+    recovery_manager = ErrorRecoveryManager(CONFIG)
+    
+    # Create broker using configuration
+    broker = create_broker(_bot_config.api_token)
+    
+    # Connect with error recovery
+    breaker = recovery_manager.get_circuit_breaker("broker_connection")
+    success, result = breaker.call(broker.connect)
+    
+    if not success:
+        logger.error("Failed to connect to broker")
+        raise RuntimeError("Broker connection failed")
+    
+    logger.info("Broker connected successfully")
 
 
 def get_account_equity() -> float:
     """
-    Fetch current account equity from SDK.
-    Returns account equity/balance.
+    Fetch current account equity from broker.
+    Returns account equity/balance with error handling.
     """
-    if sdk_client is None:
-        logger.error("SDK client not initialized")
+    if broker is None:
+        logger.error("Broker not initialized")
         return 0.0
     
     try:
-        # Placeholder for actual SDK call
-        # account_info = sdk_client.get_account_info()
-        # equity = account_info.get('equity') or account_info.get('balance')
+        # Use circuit breaker for account query
+        breaker = recovery_manager.get_circuit_breaker("account_query")
+        success, equity = breaker.call(broker.get_account_equity)
         
-        # Mock equity for development
-        equity = 50000.0
-        logger.info(f"Account equity: ${equity:.2f}")
-        return equity
+        if success:
+            logger.info(f"Account equity: ${equity:.2f}")
+            return equity
+        else:
+            logger.error("Failed to get account equity")
+            return 0.0
     except Exception as e:
         logger.error(f"Error fetching account equity: {e}")
+        action = recovery_manager.handle_error(
+            RecoveryErrorType.SDK_CRASH,
+            {"error": str(e), "function": "get_account_equity"}
+        )
         return 0.0
 
 
-def place_market_order(symbol: str, side: str, quantity: int) -> Optional[Dict]:
+def place_market_order(symbol: str, side: str, quantity: int) -> Optional[Dict[str, Any]]:
     """
-    Place a market order through the SDK.
+    Place a market order through the broker interface.
     
     Args:
         symbol: Instrument symbol (e.g., 'MES')
@@ -179,25 +157,43 @@ def place_market_order(symbol: str, side: str, quantity: int) -> Optional[Dict]:
             "dry_run": True
         }
     
-    try:
-        # Placeholder for actual SDK call
-        # order = sdk_client.create_market_order(
-        #     symbol=symbol,
-        #     side=side,
-        #     quantity=quantity
-        # )
-        # return order
-        
-        logger.warning("Live trading not implemented - SDK integration required")
+    if broker is None:
+        logger.error("Broker not initialized")
         return None
+    
+    try:
+        # Use circuit breaker for order placement
+        breaker = recovery_manager.get_circuit_breaker("order_placement")
+        success, order = breaker.call(broker.place_market_order, symbol, side, quantity)
+        
+        if success and order:
+            # Post order fill event to event loop
+            if event_loop:
+                event_loop.post_event(
+                    EventType.ORDER_FILL,
+                    EventPriority.HIGH,
+                    {"order": order, "symbol": symbol}
+                )
+            return order
+        else:
+            logger.error("Market order placement failed")
+            action = recovery_manager.handle_error(
+                RecoveryErrorType.ORDER_REJECTION,
+                {"symbol": symbol, "side": side, "quantity": quantity}
+            )
+            return None
     except Exception as e:
         logger.error(f"Error placing market order: {e}")
+        action = recovery_manager.handle_error(
+            RecoveryErrorType.SDK_CRASH,
+            {"error": str(e), "function": "place_market_order"}
+        )
         return None
 
 
-def place_stop_order(symbol: str, side: str, quantity: int, stop_price: float) -> Optional[Dict]:
+def place_stop_order(symbol: str, side: str, quantity: int, stop_price: float) -> Optional[Dict[str, Any]]:
     """
-    Place a stop order through the SDK.
+    Place a stop order through the broker interface.
     
     Args:
         symbol: Instrument symbol
@@ -222,26 +218,36 @@ def place_stop_order(symbol: str, side: str, quantity: int, stop_price: float) -
             "dry_run": True
         }
     
-    try:
-        # Placeholder for actual SDK call
-        # order = sdk_client.create_stop_order(
-        #     symbol=symbol,
-        #     side=side,
-        #     quantity=quantity,
-        #     stop_price=stop_price
-        # )
-        # return order
-        
-        logger.warning("Live trading not implemented - SDK integration required")
+    if broker is None:
+        logger.error("Broker not initialized")
         return None
+    
+    try:
+        # Use circuit breaker for order placement
+        breaker = recovery_manager.get_circuit_breaker("order_placement")
+        success, order = breaker.call(broker.place_stop_order, symbol, side, quantity, stop_price)
+        
+        if success and order:
+            return order
+        else:
+            logger.error("Stop order placement failed")
+            action = recovery_manager.handle_error(
+                RecoveryErrorType.ORDER_REJECTION,
+                {"symbol": symbol, "side": side, "quantity": quantity, "stop_price": stop_price}
+            )
+            return None
     except Exception as e:
         logger.error(f"Error placing stop order: {e}")
+        action = recovery_manager.handle_error(
+            RecoveryErrorType.SDK_CRASH,
+            {"error": str(e), "function": "place_stop_order"}
+        )
         return None
 
 
-def place_limit_order(symbol: str, side: str, quantity: int, limit_price: float) -> Optional[Dict]:
+def place_limit_order(symbol: str, side: str, quantity: int, limit_price: float) -> Optional[Dict[str, Any]]:
     """
-    Place a limit order through the SDK.
+    Place a limit order through the broker interface.
     Phase Seven: Used for aggressive flatten orders to avoid market order slippage.
     
     Args:
@@ -267,26 +273,36 @@ def place_limit_order(symbol: str, side: str, quantity: int, limit_price: float)
             "dry_run": True
         }
     
-    try:
-        # Placeholder for actual SDK call
-        # order = sdk_client.create_limit_order(
-        #     symbol=symbol,
-        #     side=side,
-        #     quantity=quantity,
-        #     limit_price=limit_price
-        # )
-        # return order
-        
-        logger.warning("Live trading not implemented - SDK integration required")
+    if broker is None:
+        logger.error("Broker not initialized")
         return None
+    
+    try:
+        # Use circuit breaker for order placement
+        breaker = recovery_manager.get_circuit_breaker("order_placement")
+        success, order = breaker.call(broker.place_limit_order, symbol, side, quantity, limit_price)
+        
+        if success and order:
+            return order
+        else:
+            logger.error("Limit order placement failed")
+            action = recovery_manager.handle_error(
+                RecoveryErrorType.ORDER_REJECTION,
+                {"symbol": symbol, "side": side, "quantity": quantity, "limit_price": limit_price}
+            )
+            return None
     except Exception as e:
         logger.error(f"Error placing limit order: {e}")
+        action = recovery_manager.handle_error(
+            RecoveryErrorType.SDK_CRASH,
+            {"error": str(e), "function": "place_limit_order"}
+        )
         return None
 
 
 def get_position_quantity(symbol: str) -> int:
     """
-    Query SDK for current position quantity.
+    Query broker for current position quantity.
     Phase Eight: Used to check for partial fills.
     
     Args:
@@ -303,21 +319,45 @@ def get_position_quantity(symbol: str) -> int:
             return qty if side == "long" else -qty
         return 0
     
-    try:
-        # Placeholder for actual SDK call
-        # position = sdk_client.get_position(symbol=symbol)
-        # return position.get('quantity', 0)
-        
-        logger.warning("Live position query not implemented - SDK integration required")
+    if broker is None:
+        logger.error("Broker not initialized")
         return 0
+    
+    try:
+        # Use circuit breaker for position query
+        breaker = recovery_manager.get_circuit_breaker("account_query")
+        success, quantity = breaker.call(broker.get_position_quantity, symbol)
+        
+        if success:
+            # Check for position discrepancy
+            if state.get(symbol) and state[symbol]["position"]["active"]:
+                expected_qty = state[symbol]["position"]["quantity"]
+                expected_side = state[symbol]["position"]["side"]
+                expected = expected_qty if expected_side == "long" else -expected_qty
+                
+                if quantity != expected:
+                    logger.warning(f"Position discrepancy: Expected {expected}, got {quantity}")
+                    action = recovery_manager.handle_error(
+                        RecoveryErrorType.POSITION_DISCREPANCY,
+                        {"symbol": symbol, "expected": expected, "actual": quantity}
+                    )
+            
+            return quantity
+        else:
+            logger.error("Failed to get position quantity")
+            return 0
     except Exception as e:
         logger.error(f"Error querying position: {e}")
+        action = recovery_manager.handle_error(
+            RecoveryErrorType.SDK_CRASH,
+            {"error": str(e), "function": "get_position_quantity"}
+        )
         return 0
 
 
-def subscribe_market_data(symbol: str, callback: Callable):
+def subscribe_market_data(symbol: str, callback: Callable[[str, float, int, int], None]) -> None:
     """
-    Subscribe to real-time market data for a symbol.
+    Subscribe to real-time market data for a symbol through broker interface.
     
     Args:
         symbol: Instrument symbol
@@ -326,20 +366,28 @@ def subscribe_market_data(symbol: str, callback: Callable):
     logger.info(f"{'[DRY RUN] ' if CONFIG['dry_run'] else ''}Subscribing to market data: {symbol}")
     
     if CONFIG["dry_run"]:
-        logger.info(f"Mock subscription to {symbol} - callback registered")
+        logger.info(f"Dry run mode - simulating subscription to {symbol}")
+        return
+    
+    if broker is None:
+        logger.error("Broker not initialized")
         return
     
     try:
-        # Placeholder for actual SDK call
-        # sdk_client.subscribe_ticks(symbol=symbol, callback=callback)
-        logger.warning("Live data subscription not implemented - SDK integration required")
+        # Subscribe through broker interface
+        broker.subscribe_market_data(symbol, callback)
+        logger.info(f"Subscribed to market data for {symbol}")
     except Exception as e:
         logger.error(f"Error subscribing to market data: {e}")
+        action = recovery_manager.handle_error(
+            RecoveryErrorType.DATA_FEED_INTERRUPTION,
+            {"symbol": symbol, "error": str(e)}
+        )
 
 
-def fetch_historical_bars(symbol: str, timeframe: int, count: int) -> List[Dict]:
+def fetch_historical_bars(symbol: str, timeframe: int, count: int) -> List[Dict[str, Any]]:
     """
-    Fetch historical bars for initial trend calculation.
+    Fetch historical bars for initial trend calculation through broker interface.
     
     Args:
         symbol: Instrument symbol
@@ -351,20 +399,31 @@ def fetch_historical_bars(symbol: str, timeframe: int, count: int) -> List[Dict]
     """
     logger.info(f"Fetching {count} historical {timeframe}min bars for {symbol}")
     
-    try:
-        # Placeholder for actual SDK call
-        # bars = sdk_client.get_historical_bars(
-        #     symbol=symbol,
-        #     interval=f"{timeframe}m",
-        #     limit=count
-        # )
-        # return bars
-        
-        # Mock data for development
-        logger.warning("Returning mock historical data - SDK integration required")
+    if CONFIG["dry_run"]:
+        logger.info("Dry run mode - returning empty bars")
         return []
+    
+    if broker is None:
+        logger.error("Broker not initialized")
+        return []
+    
+    try:
+        # Fetch through broker interface
+        breaker = recovery_manager.get_circuit_breaker("market_data")
+        success, bars = breaker.call(broker.fetch_historical_bars, symbol, f"{timeframe}m", count)
+        
+        if success and bars:
+            logger.info(f"Fetched {len(bars)} bars")
+            return bars
+        else:
+            logger.warning("Failed to fetch historical bars")
+            return []
     except Exception as e:
         logger.error(f"Error fetching historical bars: {e}")
+        action = recovery_manager.handle_error(
+            RecoveryErrorType.SDK_CRASH,
+            {"error": str(e), "function": "fetch_historical_bars"}
+        )
         return []
 
 
@@ -372,7 +431,7 @@ def fetch_historical_bars(symbol: str, timeframe: int, count: int) -> List[Dict]
 # PHASE THREE: State Management
 # ============================================================================
 
-def initialize_state(symbol: str):
+def initialize_state(symbol: str) -> None:
     """
     Initialize state tracking for an instrument.
     
@@ -453,9 +512,9 @@ def initialize_state(symbol: str):
 # PHASE FOUR: Data Processing Pipeline
 # ============================================================================
 
-def on_tick(symbol: str, price: float, volume: int, timestamp_ms: int):
+def on_tick(symbol: str, price: float, volume: int, timestamp_ms: int) -> None:
     """
-    Handle incoming tick data.
+    Handle incoming tick data by posting to event loop.
     
     Args:
         symbol: Instrument symbol
@@ -463,41 +522,30 @@ def on_tick(symbol: str, price: float, volume: int, timestamp_ms: int):
         volume: Tick volume
         timestamp_ms: Timestamp in milliseconds
     """
-    if symbol not in state:
-        initialize_state(symbol)
-    
-    # Phase 12: Update last tick time for connection health check
-    tz = pytz.timezone(CONFIG["timezone"])
-    dt = datetime.fromtimestamp(timestamp_ms / 1000.0, tz=tz)
-    bot_status["last_tick_time"] = dt
-    
-    # Create tick object
-    tick = {
-        "price": price,
-        "volume": volume,
-        "timestamp": timestamp_ms
-    }
-    
-    # Append to tick storage
-    state[symbol]["ticks"].append(tick)
-    
-    # Phase Three: Check for VWAP reset at 9:30 AM ET
-    check_vwap_reset(symbol, dt)
-    
-    # Phase 11: Check for daily reset
-    check_daily_reset(symbol, dt)
-    
-    # Phase Eleven: Critical safety check - NO positions past 5 PM
-    check_no_overnight_positions(symbol)
-    
-    # Update 1-minute bars
-    update_1min_bar(symbol, price, volume, dt)
-    
-    # Update 15-minute bars
-    update_15min_bar(symbol, price, volume, dt)
+    # Post tick data to event loop for processing
+    if event_loop:
+        event_loop.post_event(
+            EventType.TICK_DATA,
+            EventPriority.MEDIUM,
+            {
+                "symbol": symbol,
+                "price": price,
+                "volume": volume,
+                "timestamp": timestamp_ms
+            }
+        )
+    else:
+        # Fallback if event loop not initialized (shouldn't happen in production)
+        logger.warning("Event loop not initialized, processing tick directly")
+        handle_tick_event({
+            "symbol": symbol,
+            "price": price,
+            "volume": volume,
+            "timestamp": timestamp_ms
+        })
 
 
-def update_1min_bar(symbol: str, price: float, volume: int, dt: datetime):
+def update_1min_bar(symbol: str, price: float, volume: int, dt: datetime) -> None:
     """
     Update or create 1-minute bars for VWAP calculation.
     
@@ -540,7 +588,7 @@ def update_1min_bar(symbol: str, price: float, volume: int, dt: datetime):
         current_bar["volume"] += volume
 
 
-def update_15min_bar(symbol: str, price: float, volume: int, dt: datetime):
+def update_15min_bar(symbol: str, price: float, volume: int, dt: datetime) -> None:
     """
     Update or create 15-minute bars for trend filter.
     
@@ -580,7 +628,7 @@ def update_15min_bar(symbol: str, price: float, volume: int, dt: datetime):
         current_bar["volume"] += volume
 
 
-def update_trend_filter(symbol: str):
+def update_trend_filter(symbol: str) -> None:
     """
     Update the trend filter using EMA of 15-minute bars.
     
@@ -645,7 +693,7 @@ def calculate_ema(values: List[float], period: int) -> Optional[float]:
 # PHASE FIVE: VWAP Calculation
 # ============================================================================
 
-def calculate_vwap(symbol: str):
+def calculate_vwap(symbol: str) -> None:
     """
     Calculate VWAP and standard deviation bands from 1-minute bars.
     VWAP is volume-weighted average price, reset daily.
@@ -704,33 +752,20 @@ def calculate_vwap(symbol: str):
 # PHASE SEVEN: Signal Generation Logic
 # ============================================================================
 
-def check_for_signals(symbol: str):
+def validate_signal_requirements(symbol: str, bar_time: datetime) -> Tuple[bool, Optional[str]]:
     """
-    Check for trading signals on each completed 1-minute bar.
-    Called after VWAP calculation is complete.
+    Validate that all requirements are met for signal generation.
     
     Args:
         symbol: Instrument symbol
+        bar_time: Current bar timestamp
+    
+    Returns:
+        Tuple of (is_valid, reason)
     """
-    # Phase 12: Check safety conditions first
-    is_safe, reason = check_safety_conditions(symbol)
-    if not is_safe:
-        logger.debug(f"Safety check failed: {reason}")
-        return
-    
-    # Get the latest bar to check its timestamp
-    if len(state[symbol]["bars_1min"]) == 0:
-        return
-    
-    latest_bar = state[symbol]["bars_1min"][-1]
-    bar_time = latest_bar["timestamp"]
-    
-    # Phase Two: Check trading state using centralized time check
+    # Check trading state
     trading_state = get_trading_state(bar_time)
-    
-    # Only generate signals during entry_window
     if trading_state != "entry_window":
-        # Phase Sixteen: Log time-based blocking
         if trading_state == "exit_only":
             log_time_based_action(
                 "entry_blocked",
@@ -738,88 +773,165 @@ def check_for_signals(symbol: str):
                 {"current_state": trading_state, "time": bar_time.strftime('%H:%M:%S')}
             )
         logger.debug(f"Not in entry window (state: {trading_state}), skipping signal check")
-        return
+        return False, f"Not in entry window: {trading_state}"
     
-    # Phase Fourteen: Friday position management - no new trades after 1 PM
-    if bar_time.weekday() == 4:  # Friday
-        if bar_time.time() >= CONFIG["friday_entry_cutoff"]:
-            # Phase Sixteen: Log Friday restriction
-            log_time_based_action(
-                "friday_entry_blocked",
-                f"Friday after {CONFIG['friday_entry_cutoff']}, no new trades to avoid weekend gap risk",
-                {"day": "Friday", "time": bar_time.strftime('%H:%M:%S')}
-            )
-            logger.info(f"Friday after {CONFIG['friday_entry_cutoff']} - no new trades (weekend gap risk)")
-            return
+    # Friday restriction
+    if bar_time.weekday() == 4 and bar_time.time() >= CONFIG["friday_entry_cutoff"]:
+        log_time_based_action(
+            "friday_entry_blocked",
+            f"Friday after {CONFIG['friday_entry_cutoff']}, no new trades to avoid weekend gap risk",
+            {"day": "Friday", "time": bar_time.strftime('%H:%M:%S')}
+        )
+        logger.info(f"Friday after {CONFIG['friday_entry_cutoff']} - no new trades (weekend gap risk)")
+        return False, "Friday entry cutoff"
     
-    # Check if already have a position
+    # Check if already have position
     if state[symbol]["position"]["active"]:
         logger.debug("Position already active, skipping signal generation")
-        return
+        return False, "Position active"
     
     # Check daily trade limit
     if state[symbol]["daily_trade_count"] >= CONFIG["max_trades_per_day"]:
         logger.warning(f"Daily trade limit reached ({CONFIG['max_trades_per_day']}), stopping for the day")
-        return
+        return False, "Daily trade limit"
     
-    # Check daily loss limit (redundant with safety check but keep for clarity)
+    # Check daily loss limit
     if state[symbol]["daily_pnl"] <= -CONFIG["daily_loss_limit"]:
         logger.warning(f"Daily loss limit hit (${state[symbol]['daily_pnl']:.2f}), stopping for the day")
-        return
+        return False, "Daily loss limit"
     
-    # Get required data
+    # Check data availability
     if len(state[symbol]["bars_1min"]) < 2:
         logger.info(f"Not enough bars for signal: {len(state[symbol]['bars_1min'])}/2")
-        return  # Need at least 2 bars to check for bounce
+        return False, "Insufficient bars"
     
+    # Check VWAP bands
     vwap_bands = state[symbol]["vwap_bands"]
-    trend = state[symbol]["trend_direction"]
-    
-    # Check if VWAP bands are calculated
     if any(v is None for v in vwap_bands.values()):
         logger.info("VWAP bands not yet calculated")
-        return
+        return False, "VWAP not ready"
     
+    # Check trend
+    trend = state[symbol]["trend_direction"]
     if trend is None or trend == "neutral":
         logger.info(f"Trend not established or neutral: {trend}")
+        return False, "Trend not established"
+    
+    return True, None
+
+
+def check_long_signal_conditions(symbol: str, prev_bar: Dict[str, Any], 
+                                 current_bar: Dict[str, Any]) -> bool:
+    """
+    Check if long signal conditions are met.
+    
+    Args:
+        symbol: Instrument symbol
+        prev_bar: Previous 1-minute bar
+        current_bar: Current 1-minute bar
+    
+    Returns:
+        True if long signal detected
+    """
+    trend = state[symbol]["trend_direction"]
+    vwap_bands = state[symbol]["vwap_bands"]
+    
+    if trend != "up":
+        return False
+    
+    # Check if previous bar touched lower band 2
+    touched_lower = prev_bar["low"] <= vwap_bands["lower_2"]
+    # Check if current bar closed back above lower band 2
+    bounced_back = current_bar["close"] > vwap_bands["lower_2"]
+    
+    logger.debug(f"Long check: touched_lower={touched_lower}, bounced_back={bounced_back}")
+    
+    if touched_lower and bounced_back:
+        logger.info("LONG SIGNAL: Bounce off lower band 2 with uptrend")
+        logger.info(f"  Price: {current_bar['close']:.2f}, Lower Band 2: {vwap_bands['lower_2']:.2f}")
+        logger.info(f"  Trend: {trend}, EMA: {state[symbol]['trend_ema']:.2f}")
+        return True
+    
+    return False
+
+
+def check_short_signal_conditions(symbol: str, prev_bar: Dict[str, Any], 
+                                  current_bar: Dict[str, Any]) -> bool:
+    """
+    Check if short signal conditions are met.
+    
+    Args:
+        symbol: Instrument symbol
+        prev_bar: Previous 1-minute bar
+        current_bar: Current 1-minute bar
+    
+    Returns:
+        True if short signal detected
+    """
+    trend = state[symbol]["trend_direction"]
+    vwap_bands = state[symbol]["vwap_bands"]
+    
+    if trend != "down":
+        return False
+    
+    # Check if previous bar touched upper band 2
+    touched_upper = prev_bar["high"] >= vwap_bands["upper_2"]
+    # Check if current bar closed back below upper band 2
+    bounced_back = current_bar["close"] < vwap_bands["upper_2"]
+    
+    if touched_upper and bounced_back:
+        logger.info("SHORT SIGNAL: Bounce off upper band 2 with downtrend")
+        logger.info(f"  Price: {current_bar['close']:.2f}, Upper Band 2: {vwap_bands['upper_2']:.2f}")
+        logger.info(f"  Trend: {trend}, EMA: {state[symbol]['trend_ema']:.2f}")
+        return True
+    
+    return False
+
+
+def check_for_signals(symbol: str) -> None:
+    """
+    Check for trading signals on each completed 1-minute bar.
+    Coordinates signal detection through helper functions.
+    
+    Args:
+        symbol: Instrument symbol
+    """
+    # Check safety conditions first
+    is_safe, reason = check_safety_conditions(symbol)
+    if not is_safe:
+        logger.debug(f"Safety check failed: {reason}")
         return
     
-    # Get latest bars
+    # Get the latest bar
+    if len(state[symbol]["bars_1min"]) == 0:
+        return
+    
+    latest_bar = state[symbol]["bars_1min"][-1]
+    bar_time = latest_bar["timestamp"]
+    
+    # Validate signal requirements
+    is_valid, reason = validate_signal_requirements(symbol, bar_time)
+    if not is_valid:
+        return
+    
+    # Get bars for signal check
     prev_bar = state[symbol]["bars_1min"][-2]
     current_bar = state[symbol]["bars_1min"][-1]
+    vwap_bands = state[symbol]["vwap_bands"]
+    trend = state[symbol]["trend_direction"]
     
     logger.debug(f"Signal check: trend={trend}, prev_low={prev_bar['low']:.2f}, "
                 f"current_close={current_bar['close']:.2f}, lower_band_2={vwap_bands['lower_2']:.2f}")
     
-    # Long signal: trend is up, price touched/crossed below lower band 2, then closed back above it
-    if trend == "up":
-        # Check if previous bar touched lower band 2
-        touched_lower = prev_bar["low"] <= vwap_bands["lower_2"]
-        # Check if current bar closed back above lower band 2
-        bounced_back = current_bar["close"] > vwap_bands["lower_2"]
-        
-        logger.debug(f"Long check: touched_lower={touched_lower}, bounced_back={bounced_back}")
-        
-        if touched_lower and bounced_back:
-            logger.info(f"LONG SIGNAL: Bounce off lower band 2 with uptrend")
-            logger.info(f"  Price: {current_bar['close']:.2f}, Lower Band 2: {vwap_bands['lower_2']:.2f}")
-            logger.info(f"  Trend: {trend}, EMA: {state[symbol]['trend_ema']:.2f}")
-            execute_entry(symbol, "long", current_bar["close"])
-            return
+    # Check for long signal
+    if check_long_signal_conditions(symbol, prev_bar, current_bar):
+        execute_entry(symbol, "long", current_bar["close"])
+        return
     
-    # Short signal: trend is down, price touched/crossed above upper band 2, then closed back below it
-    if trend == "down":
-        # Check if previous bar touched upper band 2
-        touched_upper = prev_bar["high"] >= vwap_bands["upper_2"]
-        # Check if current bar closed back below upper band 2
-        bounced_back = current_bar["close"] < vwap_bands["upper_2"]
-        
-        if touched_upper and bounced_back:
-            logger.info(f"SHORT SIGNAL: Bounce off upper band 2 with downtrend")
-            logger.info(f"  Price: {current_bar['close']:.2f}, Upper Band 2: {vwap_bands['upper_2']:.2f}")
-            logger.info(f"  Trend: {trend}, EMA: {state[symbol]['trend_ema']:.2f}")
-            execute_entry(symbol, "short", current_bar["close"])
-            return
+    # Check for short signal
+    if check_short_signal_conditions(symbol, prev_bar, current_bar):
+        execute_entry(symbol, "short", current_bar["close"])
+        return
 
 
 # ============================================================================
@@ -901,7 +1013,7 @@ def calculate_position_size(symbol: str, side: str, entry_price: float) -> Tuple
 # PHASE NINE: Entry Execution
 # ============================================================================
 
-def execute_entry(symbol: str, side: str, entry_price: float):
+def execute_entry(symbol: str, side: str, entry_price: float) -> None:
     """
     Execute entry order with stop loss and target.
     Phase Four: Double time check before placing entry order.
@@ -931,18 +1043,18 @@ def execute_entry(symbol: str, side: str, entry_price: float):
     trading_state = get_trading_state(entry_time)
     
     if trading_state != "entry_window":
-        logger.warning("=" * 60)
+        logger.warning(SEPARATOR_LINE)
         logger.warning("ENTRY ABORTED - No longer in entry window")
         logger.warning(f"  Current state: {trading_state}")
         logger.warning(f"  Time: {entry_time.strftime('%H:%M:%S %Z')}")
-        logger.warning(f"  Signal triggered but calculations took too long")
-        logger.warning("=" * 60)
+        logger.warning("  Signal triggered but calculations took too long")
+        logger.warning(SEPARATOR_LINE)
         return
     
     # Place market order
     order_side = "BUY" if side == "long" else "SELL"
     
-    logger.info(f"=" * 60)
+    logger.info(SEPARATOR_LINE)
     logger.info(f"ENTERING {side.upper()} POSITION")
     logger.info(f"  Time: {entry_time.strftime('%Y-%m-%d %H:%M:%S %Z')}")
     logger.info(f"  Symbol: {symbol}")
@@ -982,19 +1094,247 @@ def execute_entry(symbol: str, side: str, entry_price: float):
     state[symbol]["daily_trade_count"] += 1
     
     logger.info(f"Position opened successfully (Trade {state[symbol]['daily_trade_count']}/{CONFIG['max_trades_per_day']})")
-    logger.info("=" * 60)
+    logger.info(SEPARATOR_LINE)
 
 
 # ============================================================================
 # PHASE TEN: Exit Management
 # ============================================================================
 
-def check_exit_conditions(symbol: str):
+def check_stop_hit(symbol: str, current_bar: Dict[str, Any], position: Dict[str, Any]) -> Tuple[bool, Optional[float]]:
+    """
+    Check if stop loss has been hit.
+    
+    Args:
+        symbol: Instrument symbol
+        current_bar: Current 1-minute bar
+        position: Position dictionary
+    
+    Returns:
+        Tuple of (stop_hit, stop_price)
+    """
+    side = position["side"]
+    stop_price = position["stop_price"]
+    
+    if side == "long":
+        if current_bar["low"] <= stop_price:
+            return True, stop_price
+    else:  # short
+        if current_bar["high"] >= stop_price:
+            return True, stop_price
+    
+    return False, None
+
+
+def check_target_reached(symbol: str, current_bar: Dict[str, Any], position: Dict[str, Any], 
+                        bar_time: datetime) -> Tuple[bool, Optional[float]]:
+    """
+    Check if profit target has been reached, including time-based adjustments.
+    
+    Args:
+        symbol: Instrument symbol
+        current_bar: Current 1-minute bar
+        position: Position dictionary
+        bar_time: Current bar timestamp
+    
+    Returns:
+        Tuple of (target_reached, target_price)
+    """
+    side = position["side"]
+    target_price = position["target_price"]
+    entry_price = position["entry_price"]
+    stop_price = position["stop_price"]
+    
+    # Check regular target
+    if side == "long":
+        if current_bar["high"] >= target_price:
+            return True, target_price
+    else:  # short
+        if current_bar["low"] <= target_price:
+            return True, target_price
+    
+    # Phase Five: Time-based exit tightening after 3 PM
+    if bar_time.time() >= time(15, 0) and not bot_status["flatten_mode"]:
+        # After 3 PM - tighten profit taking to 1:1 R/R
+        stop_distance = abs(entry_price - stop_price)
+        tightened_target_distance = stop_distance  # 1:1 instead of 1.5:1
+        
+        if side == "long":
+            tightened_target = entry_price + tightened_target_distance
+            if current_bar["high"] >= tightened_target:
+                return True, tightened_target
+        else:  # short
+            tightened_target = entry_price - tightened_target_distance
+            if current_bar["low"] <= tightened_target:
+                return True, tightened_target
+    
+    return False, None
+
+
+def check_reversal_signal(symbol: str, current_bar: Dict[str, Any], position: Dict[str, Any]) -> Tuple[bool, Optional[float]]:
+    """
+    Check for signal reversal (price crossing back to opposite band).
+    
+    Args:
+        symbol: Instrument symbol
+        current_bar: Current 1-minute bar
+        position: Position dictionary
+    
+    Returns:
+        Tuple of (reversal_detected, exit_price)
+    """
+    if bot_status["flatten_mode"]:
+        return False, None
+    
+    vwap_bands = state[symbol]["vwap_bands"]
+    trend = state[symbol]["trend_direction"]
+    side = position["side"]
+    
+    if side == "long" and trend == "up":
+        # If price crosses back above upper band 2, bounce is complete
+        if current_bar["close"] > vwap_bands["upper_2"]:
+            return True, current_bar["close"]
+    
+    if side == "short" and trend == "down":
+        # If price crosses back below lower band 1, bounce is complete
+        if current_bar["close"] < vwap_bands["lower_1"]:
+            return True, current_bar["close"]
+    
+    return False, None
+
+
+def check_proactive_stop(symbol: str, current_bar: Dict[str, Any], position: Dict[str, Any]) -> Tuple[bool, Optional[float]]:
+    """
+    Check if position is within 2 ticks of stop during flatten mode.
+    Prevents last-moment stop hunting.
+    
+    Args:
+        symbol: Instrument symbol
+        current_bar: Current 1-minute bar
+        position: Position dictionary
+    
+    Returns:
+        Tuple of (should_close, flatten_price)
+    """
+    if not bot_status["flatten_mode"]:
+        return False, None
+    
+    side = position["side"]
+    stop_price = position["stop_price"]
+    tick_size = CONFIG["tick_size"]
+    proactive_buffer = CONFIG["proactive_stop_buffer_ticks"] * tick_size
+    
+    if side == "long":
+        # Check if within 2 ticks of stop price
+        if current_bar["close"] <= stop_price + proactive_buffer:
+            return True, get_flatten_price(symbol, side, current_bar["close"])
+    else:  # short
+        # Check if within 2 ticks of stop price
+        if current_bar["close"] >= stop_price - proactive_buffer:
+            return True, get_flatten_price(symbol, side, current_bar["close"])
+    
+    return False, None
+
+
+def check_time_based_exits(symbol: str, current_bar: Dict[str, Any], position: Dict[str, Any], 
+                           bar_time: datetime) -> Tuple[Optional[str], Optional[float]]:
+    """
+    Check all time-based exit conditions.
+    
+    Args:
+        symbol: Instrument symbol
+        current_bar: Current 1-minute bar
+        position: Position dictionary
+        bar_time: Current bar timestamp
+    
+    Returns:
+        Tuple of (exit_reason, exit_price) or (None, None)
+    """
+    side = position["side"]
+    entry_price = position["entry_price"]
+    stop_price = position["stop_price"]
+    tick_size = CONFIG["tick_size"]
+    tick_value = CONFIG["tick_value"]
+    
+    # Calculate unrealized P&L (used in multiple checks)
+    if side == "long":
+        price_change = current_bar["close"] - entry_price
+    else:
+        price_change = entry_price - current_bar["close"]
+    ticks = price_change / tick_size
+    unrealized_pnl = ticks * tick_value * position["quantity"]
+    
+    # Force close at forced_flatten_time (4:45 PM)
+    trading_state = get_trading_state(bar_time)
+    if trading_state == "closed":
+        return "emergency_forced_flatten", get_flatten_price(symbol, side, current_bar["close"])
+    
+    # Flatten mode: specific time-based exits
+    if bot_status["flatten_mode"]:
+        tz = pytz.timezone(CONFIG["timezone"])
+        current_time = datetime.now(tz)
+        
+        # 4:40 PM - close profitable positions immediately
+        if current_time.time() >= time(16, 40) and unrealized_pnl > 0:
+            return "time_based_profit_take", get_flatten_price(symbol, side, current_bar["close"])
+        
+        # 4:42 PM - close small losses
+        if current_time.time() >= time(16, 42):
+            stop_distance = abs(entry_price - stop_price)
+            if unrealized_pnl < 0 and abs(unrealized_pnl) < (stop_distance * tick_value * position["quantity"] / 2):
+                return "time_based_loss_cut", get_flatten_price(symbol, side, current_bar["close"])
+        
+        # Phase 10: Early profit lock after 4:40 PM
+        if current_time.time() >= time(16, 40) and unrealized_pnl > 0:
+            bot_status["early_close_saves"] += 1
+            return "early_profit_lock", get_flatten_price(symbol, side, current_bar["close"])
+        
+        # Flatten mode: aggressive profit/loss management
+        if side == "long":
+            profit_ticks = (current_bar["close"] - entry_price) / tick_size
+            midpoint = entry_price - (entry_price - stop_price) / 2
+            if profit_ticks > 1 or current_bar["close"] < midpoint:
+                return "flatten_mode_exit", get_flatten_price(symbol, side, current_bar["close"])
+        else:  # short
+            profit_ticks = (entry_price - current_bar["close"]) / tick_size
+            midpoint = entry_price + (stop_price - entry_price) / 2
+            if profit_ticks > 1 or current_bar["close"] > midpoint:
+                return "flatten_mode_exit", get_flatten_price(symbol, side, current_bar["close"])
+    
+    # Friday-specific exits
+    if bar_time.weekday() == 4:  # Friday
+        # Target close by 3 PM to avoid weekend gap risk
+        if bar_time.time() >= CONFIG["friday_close_target"]:
+            return "friday_weekend_protection", get_flatten_price(symbol, side, current_bar["close"])
+        
+        # After 2 PM on Friday, take any profit
+        if bar_time.time() >= time(14, 0) and unrealized_pnl > 0:
+            return "friday_profit_protection", get_flatten_price(symbol, side, current_bar["close"])
+    
+    # After 3:30 PM - cut losses early if less than 75% of stop distance
+    if bar_time.time() >= time(15, 30) and not bot_status["flatten_mode"]:
+        if side == "long":
+            current_loss_distance = entry_price - current_bar["close"]
+            stop_distance = entry_price - stop_price
+            if current_loss_distance > 0:  # In a loss
+                loss_percent = current_loss_distance / stop_distance
+                if loss_percent < 0.75:  # Less than 75% of stop distance
+                    return "early_loss_cut", current_bar["close"]
+        else:  # short
+            current_loss_distance = current_bar["close"] - entry_price
+            stop_distance = stop_price - entry_price
+            if current_loss_distance > 0:  # In a loss
+                loss_percent = current_loss_distance / stop_distance
+                if loss_percent < 0.75:  # Less than 75% of stop distance
+                    return "early_loss_cut", current_bar["close"]
+    
+    return None, None
+
+
+def check_exit_conditions(symbol: str) -> None:
     """
     Check exit conditions for open position on each bar.
-    Implements flatten mode for aggressive position closing.
-    Phase Five: Time-based exit tightening after 3 PM.
-    Phase Six: Enhanced flatten mode with minute-by-minute monitoring.
+    Coordinates various exit checks through helper functions.
     
     Args:
         symbol: Instrument symbol
@@ -1012,24 +1352,15 @@ def check_exit_conditions(symbol: str):
     side = position["side"]
     entry_price = position["entry_price"]
     stop_price = position["stop_price"]
-    target_price = position["target_price"]
     
     # Phase Two: Check trading state
     trading_state = get_trading_state(bar_time)
     
-    # Phase Six: Enhanced flatten mode with critical warnings
+    # Phase Six: Enhanced flatten mode activation
     if trading_state == "flatten_mode" and not bot_status["flatten_mode"]:
         bot_status["flatten_mode"] = True
         
-        # Phase Sixteen: Log flatten mode activation with position details
-        position_details = {
-            "side": position["side"],
-            "quantity": position["quantity"],
-            "entry_price": f"${position['entry_price']:.2f}",
-            "current_time": bar_time.strftime('%H:%M:%S %Z')
-        }
-        
-        # Calculate unrealized P&L for logging
+        # Log flatten mode activation with position details
         tick_size = CONFIG["tick_size"]
         tick_value = CONFIG["tick_value"]
         if side == "long":
@@ -1038,7 +1369,14 @@ def check_exit_conditions(symbol: str):
             price_change = entry_price - current_bar["close"]
         ticks = price_change / tick_size
         unrealized_pnl = ticks * tick_value * position["quantity"]
-        position_details["unrealized_pnl"] = f"${unrealized_pnl:+.2f}"
+        
+        position_details = {
+            "side": position["side"],
+            "quantity": position["quantity"],
+            "entry_price": f"${position['entry_price']:.2f}",
+            "current_time": bar_time.strftime('%H:%M:%S %Z'),
+            "unrealized_pnl": f"${unrealized_pnl:+.2f}"
+        }
         
         log_time_based_action(
             "flatten_mode_activated",
@@ -1046,11 +1384,11 @@ def check_exit_conditions(symbol: str):
             position_details
         )
         
-        logger.critical("=" * 60)
+        logger.critical(SEPARATOR_LINE)
         logger.critical("FLATTEN MODE ACTIVATED - POSITION MUST CLOSE IN 15 MINUTES")
-        logger.critical("=" * 60)
+        logger.critical(SEPARATOR_LINE)
     
-    # Phase Six: Minute-by-minute status logging during flatten mode
+    # Minute-by-minute status logging during flatten mode
     if bot_status["flatten_mode"]:
         tz = pytz.timezone(CONFIG["timezone"])
         current_time = datetime.now(tz)
@@ -1058,7 +1396,6 @@ def check_exit_conditions(symbol: str):
         forced_flatten_time = tz.localize(forced_flatten_time)
         minutes_remaining = (forced_flatten_time - current_time).total_seconds() / 60.0
         
-        # Calculate unrealized P&L
         tick_size = CONFIG["tick_size"]
         tick_value = CONFIG["tick_value"]
         if side == "long":
@@ -1070,136 +1407,53 @@ def check_exit_conditions(symbol: str):
         
         logger.warning(f"Flatten Mode Status: {minutes_remaining:.1f} min remaining, "
                       f"P&L: ${unrealized_pnl:+.2f}, Side: {side}, Qty: {position['quantity']}")
-        
-        # Phase Six: Time-based forced exits at specific times
-        if current_time.time() >= time(16, 40) and unrealized_pnl > 0:
-            # 4:40 PM - close profitable positions immediately
-            logger.critical("4:40 PM - Closing profitable position immediately")
-            flatten_price = get_flatten_price(symbol, side, current_bar["close"])
-            execute_exit(symbol, flatten_price, "time_based_profit_take")
-            return
-        
-        if current_time.time() >= time(16, 42):
-            # 4:42 PM - close small losses
-            stop_distance = abs(entry_price - stop_price)
-            if unrealized_pnl < 0 and abs(unrealized_pnl) < (stop_distance * tick_value * position["quantity"] / 2):
-                logger.critical("4:42 PM - Cutting small loss before settlement")
-                flatten_price = get_flatten_price(symbol, side, current_bar["close"])
-                execute_exit(symbol, flatten_price, "time_based_loss_cut")
-                return
     
-    # Force close at forced_flatten_time (4:45 PM)
-    if trading_state == "closed":
-        logger.critical("=" * 60)
-        logger.critical("EMERGENCY FORCED FLATTEN - 4:45 PM DEADLINE REACHED")
-        logger.critical("=" * 60)
-        # Phase Seven: Use aggressive limit order for forced flatten
-        flatten_price = get_flatten_price(symbol, side, current_bar["close"])
-        execute_exit(symbol, flatten_price, "emergency_forced_flatten")
+    # Check stop loss
+    stop_hit, price = check_stop_hit(symbol, current_bar, position)
+    if stop_hit:
+        execute_exit(symbol, price, "stop_loss")
         return
     
-    # Check for stop hit
-    if side == "long":
-        if current_bar["low"] <= stop_price:
-            execute_exit(symbol, stop_price, "stop_loss")
-            return
-    else:  # short
-        if current_bar["high"] >= stop_price:
-            execute_exit(symbol, stop_price, "stop_loss")
-            return
+    # Check proactive stop (during flatten mode)
+    should_close, price = check_proactive_stop(symbol, current_bar, position)
+    if should_close:
+        logger.warning(f"Proactive stop close: within {CONFIG['proactive_stop_buffer_ticks']} ticks of stop")
+        execute_exit(symbol, price, "proactive_stop")
+        return
     
-    # Phase Nine: Proactive stop handling during flatten mode
-    if bot_status["flatten_mode"]:
-        tick_size = CONFIG["tick_size"]
-        proactive_buffer = CONFIG["proactive_stop_buffer_ticks"] * tick_size
-        
-        if side == "long":
-            # Check if within 2 ticks of stop price
-            if current_bar["close"] <= stop_price + proactive_buffer:
-                logger.warning(f"Proactive stop close: within {CONFIG['proactive_stop_buffer_ticks']} ticks of stop")
-                flatten_price = get_flatten_price(symbol, side, current_bar["close"])
-                execute_exit(symbol, flatten_price, "proactive_stop")
-                return
-        else:  # short
-            # Check if within 2 ticks of stop price
-            if current_bar["close"] >= stop_price - proactive_buffer:
-                logger.warning(f"Proactive stop close: within {CONFIG['proactive_stop_buffer_ticks']} ticks of stop")
-                flatten_price = get_flatten_price(symbol, side, current_bar["close"])
-                execute_exit(symbol, flatten_price, "proactive_stop")
-                return
-    
-    # Check for target reached
-    if side == "long":
-        if current_bar["high"] >= target_price:
-            execute_exit(symbol, target_price, "target_reached")
-            # Phase 10: Track successful target wait
+    # Check target reached
+    target_hit, price = check_target_reached(symbol, current_bar, position, bar_time)
+    if target_hit:
+        if price == position["target_price"]:
+            execute_exit(symbol, price, "target_reached")
+            # Track successful target wait
             if bot_status["flatten_mode"]:
                 bot_status["target_wait_wins"] += 1
-            return
-    else:  # short
-        if current_bar["low"] <= target_price:
-            execute_exit(symbol, target_price, "target_reached")
-            # Phase 10: Track successful target wait
-            if bot_status["flatten_mode"]:
-                bot_status["target_wait_wins"] += 1
-            return
+        else:
+            # Tightened target
+            logger.info("Time-based tightened profit target reached (1:1 R/R after 3 PM)")
+            execute_exit(symbol, price, "tightened_target")
+        return
     
-    # Phase Ten: Profit target handling during flatten mode after 4:40 PM
-    if bot_status["flatten_mode"]:
-        tz = pytz.timezone(CONFIG["timezone"])
-        current_time = datetime.now(tz)
-        
-        if current_time.time() >= time(16, 40):
-            # Calculate current P&L
-            tick_size = CONFIG["tick_size"]
-            tick_value = CONFIG["tick_value"]
-            if side == "long":
-                price_change = current_bar["close"] - entry_price
-            else:
-                price_change = entry_price - current_bar["close"]
-            ticks = price_change / tick_size
-            unrealized_pnl = ticks * tick_value * position["quantity"]
-            
-            # If showing any profit past 4:40 PM, close immediately
-            if unrealized_pnl > 0:
-                logger.warning(f"Phase 10: Closing early at ${unrealized_pnl:+.2f} profit instead of waiting for target")
-                flatten_price = get_flatten_price(symbol, side, current_bar["close"])
-                bot_status["early_close_saves"] += 1
-                execute_exit(symbol, flatten_price, "early_profit_lock")
-                return
-    
-    # Phase Five: Time-based exit tightening after 3 PM
-    if bar_time.time() >= time(15, 0) and not bot_status["flatten_mode"]:
-        # After 3 PM - tighten profit taking to 1:1 R/R
-        stop_distance = abs(entry_price - stop_price)
-        tightened_target_distance = stop_distance  # 1:1 instead of 1.5:1
-        
-        if side == "long":
-            tightened_target = entry_price + tightened_target_distance
-            if current_bar["high"] >= tightened_target:
-                logger.info("Time-based tightened profit target reached (1:1 R/R after 3 PM)")
-                execute_exit(symbol, tightened_target, "tightened_target")
-                return
-        else:  # short
-            tightened_target = entry_price - tightened_target_distance
-            if current_bar["low"] <= tightened_target:
-                logger.info("Time-based tightened profit target reached (1:1 R/R after 3 PM)")
-                execute_exit(symbol, tightened_target, "tightened_target")
-                return
-    
-    # Phase Fourteen: Friday aggressive position management
-    if bar_time.weekday() == 4:  # Friday
-        # Target close by 3 PM to avoid weekend gap risk
-        if bar_time.time() >= CONFIG["friday_close_target"]:
-            logger.critical("=" * 60)
+    # Check time-based exits
+    reason, price = check_time_based_exits(symbol, current_bar, position, bar_time)
+    if reason:
+        # Log specific messages for certain exit types
+        if reason == "emergency_forced_flatten":
+            logger.critical(SEPARATOR_LINE)
+            logger.critical("EMERGENCY FORCED FLATTEN - 4:45 PM DEADLINE REACHED")
+            logger.critical(SEPARATOR_LINE)
+        elif reason == "time_based_profit_take":
+            logger.critical("4:40 PM - Closing profitable position immediately")
+        elif reason == "time_based_loss_cut":
+            logger.critical("4:42 PM - Cutting small loss before settlement")
+        elif reason == "early_profit_lock":
+            logger.warning(f"Phase 10: Closing early profit instead of waiting for target")
+        elif reason == "friday_weekend_protection":
+            logger.critical(SEPARATOR_LINE)
             logger.critical("FRIDAY 3 PM - CLOSING POSITION TO AVOID WEEKEND GAP RISK")
-            logger.critical("=" * 60)
-            flatten_price = get_flatten_price(symbol, side, current_bar["close"])
-            execute_exit(symbol, flatten_price, "friday_weekend_protection")
-            return
-        
-        # After 2 PM on Friday, be more aggressive about taking profits
-        if bar_time.time() >= time(14, 0):
+            logger.critical(SEPARATOR_LINE)
+        elif reason == "friday_profit_protection":
             tick_size = CONFIG["tick_size"]
             tick_value = CONFIG["tick_value"]
             if side == "long":
@@ -1208,78 +1462,30 @@ def check_exit_conditions(symbol: str):
                 price_change = entry_price - current_bar["close"]
             ticks = price_change / tick_size
             unrealized_pnl = ticks * tick_value * position["quantity"]
-            
-            # Take any profit after 2 PM Friday
-            if unrealized_pnl > 0:
-                logger.warning(f"Friday 2 PM+ - Taking ${unrealized_pnl:+.2f} profit to avoid weekend risk")
-                flatten_price = get_flatten_price(symbol, side, current_bar["close"])
-                execute_exit(symbol, flatten_price, "friday_profit_protection")
-                return
-    
-    # Phase Five: After 3:30 PM - cut losses early if less than 75% of stop distance
-    if bar_time.time() >= time(15, 30) and not bot_status["flatten_mode"]:
-        tick_size = CONFIG["tick_size"]
-        tick_value = CONFIG["tick_value"]
-        
-        if side == "long":
-            current_loss_distance = entry_price - current_bar["close"]
-            stop_distance = entry_price - stop_price
-            
-            if current_loss_distance > 0:  # In a loss
+            logger.warning(f"Friday 2 PM+ - Taking ${unrealized_pnl:+.2f} profit to avoid weekend risk")
+        elif reason == "early_loss_cut":
+            tick_size = CONFIG["tick_size"]
+            if side == "long":
+                current_loss_distance = entry_price - current_bar["close"]
+                stop_distance = entry_price - stop_price
                 loss_percent = current_loss_distance / stop_distance
-                if loss_percent < 0.75:  # Less than 75% of stop distance
-                    logger.warning(f"Time-based early loss cut (3:30 PM+): {loss_percent*100:.1f}% of stop distance")
-                    execute_exit(symbol, current_bar["close"], "early_loss_cut")
-                    return
-        else:  # short
-            current_loss_distance = current_bar["close"] - entry_price
-            stop_distance = stop_price - entry_price
-            
-            if current_loss_distance > 0:  # In a loss
+            else:
+                current_loss_distance = current_bar["close"] - entry_price
+                stop_distance = stop_price - entry_price
                 loss_percent = current_loss_distance / stop_distance
-                if loss_percent < 0.75:  # Less than 75% of stop distance
-                    logger.warning(f"Time-based early loss cut (3:30 PM+): {loss_percent*100:.1f}% of stop distance")
-                    execute_exit(symbol, current_bar["close"], "early_loss_cut")
-                    return
-    
-    # Flatten mode: More aggressive profit taking and loss cutting
-    if bot_status["flatten_mode"]:
-        # In flatten mode, take any profit or cut losses quickly
-        if side == "long":
-            profit_ticks = (current_bar["close"] - entry_price) / CONFIG["tick_size"]
-            # Take profit if we're up even 1 tick, or cut loss if down more than half the stop distance
-            midpoint = entry_price - (entry_price - stop_price) / 2
-            if profit_ticks > 1 or current_bar["close"] < midpoint:
-                logger.info(f"Flatten mode exit: profit_ticks={profit_ticks:.1f}")
-                flatten_price = get_flatten_price(symbol, side, current_bar["close"])
-                execute_exit(symbol, flatten_price, "flatten_mode_exit")
-                return
-        else:  # short
-            profit_ticks = (entry_price - current_bar["close"]) / CONFIG["tick_size"]
-            # Take profit if we're up even 1 tick, or cut loss if down more than half the stop distance
-            midpoint = entry_price + (stop_price - entry_price) / 2
-            if profit_ticks > 1 or current_bar["close"] > midpoint:
-                logger.info(f"Flatten mode exit: profit_ticks={profit_ticks:.1f}")
-                flatten_price = get_flatten_price(symbol, side, current_bar["close"])
-                execute_exit(symbol, flatten_price, "flatten_mode_exit")
-                return
-    
-    # Check for signal reversal (only when not in flatten mode)
-    if not bot_status["flatten_mode"]:
-        vwap_bands = state[symbol]["vwap_bands"]
-        trend = state[symbol]["trend_direction"]
+            logger.warning(f"Time-based early loss cut (3:30 PM+): {loss_percent*100:.1f}% of stop distance")
+        elif reason == "flatten_mode_exit":
+            profit_ticks = abs((current_bar["close"] - entry_price) / CONFIG["tick_size"]) if side == "long" else abs((entry_price - current_bar["close"]) / CONFIG["tick_size"])
+            logger.info(f"Flatten mode exit: profit_ticks={profit_ticks:.1f}")
         
-        if side == "long" and trend == "up":
-            # If price crosses back above upper band 2, bounce is complete
-            if current_bar["close"] > vwap_bands["upper_2"]:
-                execute_exit(symbol, current_bar["close"], "signal_reversal")
-                return
-        
-        if side == "short" and trend == "down":
-            # If price crosses back below lower band 1, bounce is complete
-            if current_bar["close"] < vwap_bands["lower_1"]:
-                execute_exit(symbol, current_bar["close"], "signal_reversal")
-                return
+        execute_exit(symbol, price, reason)
+        return
+    
+    # Check for signal reversal
+    reversal, price = check_reversal_signal(symbol, current_bar, position)
+    if reversal:
+        execute_exit(symbol, price, "signal_reversal")
+        return
 
 
 def get_flatten_price(symbol: str, side: str, current_price: float) -> float:
@@ -1308,31 +1514,17 @@ def get_flatten_price(symbol: str, side: str, current_price: float) -> float:
     return round_to_tick(flatten_price)
 
 
-def execute_exit(symbol: str, exit_price: float, reason: str):
+def calculate_pnl(position: Dict[str, Any], exit_price: float) -> Tuple[float, float]:
     """
-    Execute exit order and update P&L.
-    Phase Seven: Use aggressive limit orders during flatten mode.
-    Phase Eight: Handle partial fills with retries.
+    Calculate profit/loss for the exit.
     
     Args:
-        symbol: Instrument symbol
+        position: Position dictionary
         exit_price: Exit price
-        reason: Reason for exit (stop_loss, target_reached, signal_reversal, etc.)
+    
+    Returns:
+        Tuple of (ticks, pnl_dollars)
     """
-    position = state[symbol]["position"]
-    
-    if not position["active"]:
-        return
-    
-    order_side = "SELL" if position["side"] == "long" else "BUY"
-    exit_time = datetime.now(pytz.timezone(CONFIG["timezone"]))
-    
-    logger.info("=" * 60)
-    logger.info(f"EXITING {position['side'].upper()} POSITION")
-    logger.info(f"  Reason: {reason.replace('_', ' ').title()}")
-    logger.info(f"  Time: {exit_time.strftime('%Y-%m-%d %H:%M:%S %Z')}")
-    
-    # Calculate P&L
     entry_price = position["entry_price"]
     contracts = position["quantity"]
     tick_size = CONFIG["tick_size"]
@@ -1346,10 +1538,100 @@ def execute_exit(symbol: str, exit_price: float, reason: str):
     ticks = price_change / tick_size
     pnl = ticks * tick_value * contracts
     
-    logger.info(f"  Entry: ${entry_price:.2f}, Exit: ${exit_price:.2f}")
+    return ticks, pnl
+
+
+def update_position_statistics(symbol: str, position: Dict[str, Any], exit_time: datetime, 
+                               reason: str, time_based_reasons: List[str]) -> None:
+    """
+    Update position duration and statistics.
+    
+    Args:
+        symbol: Instrument symbol
+        position: Position dictionary
+        exit_time: Exit timestamp
+        reason: Exit reason
+        time_based_reasons: List of time-based exit reasons
+    """
+    if position["entry_time"] is None:
+        return
+    
+    duration_seconds = (exit_time - position["entry_time"]).total_seconds()
+    duration_minutes = duration_seconds / 60.0
+    state[symbol]["session_stats"]["trade_durations"].append(duration_minutes)
+    
+    # Track if this was a forced flatten due to time
+    if reason in time_based_reasons:
+        state[symbol]["session_stats"]["force_flattened_count"] += 1
+    
+    # Track after-noon entries
+    entry_hour = position["entry_time"].hour
+    if entry_hour >= 12:
+        state[symbol]["session_stats"]["after_noon_entries"] += 1
+        if reason in time_based_reasons:
+            state[symbol]["session_stats"]["after_noon_force_flattened"] += 1
+    
+    logger.info(f"  Position Duration: {duration_minutes:.1f} minutes")
+
+
+def handle_exit_orders(symbol: str, position: Dict[str, Any], exit_price: float, reason: str) -> None:
+    """
+    Handle exit order placement (flatten vs normal).
+    
+    Args:
+        symbol: Instrument symbol
+        position: Position dictionary
+        exit_price: Exit price
+        reason: Exit reason
+    """
+    order_side = "SELL" if position["side"] == "long" else "BUY"
+    contracts = position["quantity"]
+    
+    # Determine if flatten mode
+    is_flatten_mode = bot_status["flatten_mode"] or reason in [
+        "flatten_mode_exit", "time_based_profit_take", 
+        "time_based_loss_cut", "emergency_forced_flatten"
+    ]
+    
+    if is_flatten_mode:
+        logger.info("Using aggressive limit order strategy for flatten")
+        execute_flatten_with_limit_orders(symbol, order_side, contracts, exit_price, reason)
+    else:
+        # Normal exit - use market order
+        order = place_market_order(symbol, order_side, contracts)
+        if order:
+            logger.info(f"Exit order placed: {order.get('order_id')}")
+
+
+def execute_exit(symbol: str, exit_price: float, reason: str) -> None:
+    """
+    Execute exit order and update P&L.
+    Coordinates exit handling through helper functions.
+    
+    Args:
+        symbol: Instrument symbol
+        exit_price: Exit price
+        reason: Reason for exit (stop_loss, target_reached, signal_reversal, etc.)
+    """
+    position = state[symbol]["position"]
+    
+    if not position["active"]:
+        return
+    
+    exit_time = datetime.now(pytz.timezone(CONFIG["timezone"]))
+    
+    logger.info(SEPARATOR_LINE)
+    logger.info(f"EXITING {position['side'].upper()} POSITION")
+    logger.info(f"  Reason: {reason.replace('_', ' ').title()}")
+    logger.info(f"  Time: {exit_time.strftime('%Y-%m-%d %H:%M:%S %Z')}")
+    
+    # Calculate P&L
+    ticks, pnl = calculate_pnl(position, exit_price)
+    
+    logger.info(f"  Entry: ${position['entry_price']:.2f}, Exit: ${exit_price:.2f}")
     logger.info(f"  Ticks: {ticks:+.1f}, P&L: ${pnl:+.2f}")
     
-    # Phase Sixteen: Log time-based exits with detailed audit trail
+    # Log time-based exits with detailed audit trail
     time_based_reasons = [
         "flatten_mode_exit", "time_based_profit_take", "time_based_loss_cut",
         "emergency_forced_flatten", "tightened_target", "early_loss_cut",
@@ -1362,8 +1644,8 @@ def execute_exit(symbol: str, exit_price: float, reason: str):
             "exit_price": f"${exit_price:.2f}",
             "pnl": f"${pnl:+.2f}",
             "side": position["side"],
-            "quantity": contracts,
-            "entry_price": f"${entry_price:.2f}"
+            "quantity": position["quantity"],
+            "entry_price": f"${position['entry_price']:.2f}"
         }
         
         reason_descriptions = {
@@ -1385,48 +1667,21 @@ def execute_exit(symbol: str, exit_price: float, reason: str):
             exit_details
         )
     
-    # Phase Seven: Use aggressive limit orders during flatten mode
-    is_flatten_mode = bot_status["flatten_mode"] or reason in ["flatten_mode_exit", "time_based_profit_take", 
-                                                                 "time_based_loss_cut", "emergency_forced_flatten"]
-    
-    if is_flatten_mode:
-        logger.info("Using aggressive limit order strategy for flatten")
-        execute_flatten_with_limit_orders(symbol, order_side, contracts, exit_price, reason)
-    else:
-        # Normal exit - use market order
-        order = place_market_order(symbol, order_side, contracts)
-        
-        if order:
-            logger.info(f"Exit order placed: {order.get('order_id')}")
+    # Handle exit orders
+    handle_exit_orders(symbol, position, exit_price, reason)
     
     # Update daily P&L
     state[symbol]["daily_pnl"] += pnl
     
-    # Phase 20: Track position duration
-    if position["entry_time"] is not None:
-        duration_seconds = (exit_time - position["entry_time"]).total_seconds()
-        duration_minutes = duration_seconds / 60.0
-        state[symbol]["session_stats"]["trade_durations"].append(duration_minutes)
-        
-        # Track if this was a forced flatten due to time
-        if reason in time_based_reasons:
-            state[symbol]["session_stats"]["force_flattened_count"] += 1
-        
-        # Track after-noon entries
-        entry_hour = position["entry_time"].hour
-        if entry_hour >= 12:
-            state[symbol]["session_stats"]["after_noon_entries"] += 1
-            if reason in time_based_reasons:
-                state[symbol]["session_stats"]["after_noon_force_flattened"] += 1
-        
-        logger.info(f"  Position Duration: {duration_minutes:.1f} minutes")
+    # Update position statistics
+    update_position_statistics(symbol, position, exit_time, reason, time_based_reasons)
     
-    # Phase 13: Update session statistics
+    # Update session statistics
     update_session_stats(symbol, pnl)
     
     logger.info(f"Daily P&L: ${state[symbol]['daily_pnl']:+.2f}")
     logger.info(f"Trades today: {state[symbol]['daily_trade_count']}/{CONFIG['max_trades_per_day']}")
-    logger.info("=" * 60)
+    logger.info(SEPARATOR_LINE)
     
     # Reset position tracking
     state[symbol]["position"] = {
@@ -1440,10 +1695,83 @@ def execute_exit(symbol: str, exit_price: float, reason: str):
     }
 
 
-def execute_flatten_with_limit_orders(symbol: str, order_side: str, contracts: int, 
-                                       base_price: float, reason: str):
+def calculate_aggressive_price(base_price: float, order_side: str, attempt: int) -> float:
     """
-    Phase Seven & Eight: Execute flatten using aggressive limit orders with partial fill handling.
+    Calculate increasingly aggressive limit price based on attempt number.
+    
+    Args:
+        base_price: Base price for limit orders
+        order_side: 'BUY' or 'SELL'
+        attempt: Current attempt number (1-indexed)
+    
+    Returns:
+        Aggressive limit price
+    """
+    tick_size = CONFIG["tick_size"]
+    ticks_aggressive = attempt
+    
+    if order_side == "SELL":
+        # Selling - go below bid
+        limit_price = base_price - (ticks_aggressive * tick_size)
+    else:  # BUY
+        # Buying - go above offer
+        limit_price = base_price + (ticks_aggressive * tick_size)
+    
+    return round_to_tick(limit_price)
+
+
+def wait_for_fill(symbol: str, attempt: int, max_attempts: int) -> int:
+    """
+    Wait for order to fill and return current position quantity.
+    
+    Args:
+        symbol: Instrument symbol
+        attempt: Current attempt number
+        max_attempts: Maximum number of attempts
+    
+    Returns:
+        Current position quantity (0 if fully closed)
+    """
+    import time as time_module
+    
+    if attempt < max_attempts:
+        wait_seconds = 5 if attempt < 5 else 2  # Shorter waits as we get more urgent
+        logger.debug(f"Waiting {wait_seconds} seconds for fill...")
+        time_module.sleep(wait_seconds)
+    
+    return get_position_quantity(symbol)
+
+
+def handle_partial_fill(current_qty: int, contracts: int, attempt: int) -> int:
+    """
+    Handle partial fill and return remaining contracts.
+    
+    Args:
+        current_qty: Current position quantity from broker
+        contracts: Original number of contracts
+        attempt: Current attempt number
+    
+    Returns:
+        Number of contracts still remaining
+    """
+    if current_qty == 0:
+        logger.info("Position fully closed")
+        return 0
+    else:
+        filled_contracts = contracts - abs(current_qty)
+        if filled_contracts > 0:
+            logger.warning(f"Partial fill: {filled_contracts} of {contracts} filled, {abs(current_qty)} remaining")
+            return abs(current_qty)
+        else:
+            logger.warning(f"No fill on attempt {attempt}, retrying with more aggressive price")
+            return abs(current_qty)
+
+
+def execute_flatten_with_limit_orders(symbol: str, order_side: str, contracts: int, 
+                                       base_price: float, reason: str) -> None:
+    """
+    Execute flatten using aggressive limit orders with partial fill handling.
+    Main orchestration function that coordinates helpers.
     
     Args:
         symbol: Instrument symbol
@@ -1452,9 +1780,6 @@ def execute_flatten_with_limit_orders(symbol: str, order_side: str, contracts: i
         base_price: Base price for limit orders
         reason: Exit reason
     """
-    import time as time_module
-    
-    tick_size = CONFIG["tick_size"]
     remaining_contracts = contracts
     attempt = 0
     max_attempts = 10
@@ -1463,17 +1788,7 @@ def execute_flatten_with_limit_orders(symbol: str, order_side: str, contracts: i
         attempt += 1
         
         # Calculate aggressive limit price
-        # Start 1 tick aggressive, increase by 1 tick each attempt
-        ticks_aggressive = attempt
-        
-        if order_side == "SELL":
-            # Selling - go below bid
-            limit_price = base_price - (ticks_aggressive * tick_size)
-        else:  # BUY
-            # Buying - go above offer
-            limit_price = base_price + (ticks_aggressive * tick_size)
-        
-        limit_price = round_to_tick(limit_price)
+        limit_price = calculate_aggressive_price(base_price, order_side, attempt)
         
         logger.info(f"Flatten attempt {attempt}/{max_attempts}: {order_side} {remaining_contracts} @ {limit_price:.2f}")
         
@@ -1483,25 +1798,13 @@ def execute_flatten_with_limit_orders(symbol: str, order_side: str, contracts: i
         if order:
             logger.info(f"Flatten limit order placed: {order.get('order_id')}")
         
-        # Phase Eight: Wait and check for fills
+        # Wait and check for fills
         if attempt < max_attempts:
-            wait_seconds = 5 if attempt < 5 else 2  # Shorter waits as we get more urgent
-            logger.debug(f"Waiting {wait_seconds} seconds for fill...")
-            time_module.sleep(wait_seconds)
+            current_qty = wait_for_fill(symbol, attempt, max_attempts)
+            remaining_contracts = handle_partial_fill(current_qty, contracts, attempt)
             
-            # Check current position
-            current_qty = get_position_quantity(symbol)
-            
-            if current_qty == 0:
-                logger.info("Position fully closed")
+            if remaining_contracts == 0:
                 break
-            else:
-                filled_contracts = contracts - abs(current_qty)
-                if filled_contracts > 0:
-                    logger.warning(f"Partial fill: {filled_contracts} of {contracts} filled, {abs(current_qty)} remaining")
-                    remaining_contracts = abs(current_qty)
-                else:
-                    logger.warning(f"No fill on attempt {attempt}, retrying with more aggressive price")
         else:
             # Final attempt - at market price
             logger.critical(f"Final attempt - placing market order for remaining {remaining_contracts}")
@@ -1520,7 +1823,7 @@ def execute_flatten_with_limit_orders(symbol: str, order_side: str, contracts: i
 # PHASE ELEVEN: Daily Reset Logic
 # ============================================================================
 
-def check_vwap_reset(symbol: str, current_time: datetime):
+def check_vwap_reset(symbol: str, current_time: datetime) -> None:
     """
     Check if VWAP should reset at 9:30 AM ET (stock market open).
     VWAP resets daily at market open since MES/MNQ track equity indexes.
@@ -1544,7 +1847,7 @@ def check_vwap_reset(symbol: str, current_time: datetime):
         perform_vwap_reset(symbol, current_date, current_time)
 
 
-def perform_vwap_reset(symbol: str, new_date, reset_time: datetime):
+def perform_vwap_reset(symbol: str, new_date: Any, reset_time: datetime) -> None:
     """
     Perform VWAP reset at 9:30 AM ET daily.
     
@@ -1553,10 +1856,10 @@ def perform_vwap_reset(symbol: str, new_date, reset_time: datetime):
         new_date: The new VWAP date
         reset_time: Time of the reset
     """
-    logger.info("=" * 60)
+    logger.info(SEPARATOR_LINE)
     logger.info(f"VWAP RESET at {reset_time.strftime('%Y-%m-%d %H:%M:%S %Z')}")
     logger.info(f"Stock market open alignment - New VWAP day: {new_date}")
-    logger.info("=" * 60)
+    logger.info(SEPARATOR_LINE)
     
     # Clear accumulated 1-minute bars for VWAP calculation
     state[symbol]["bars_1min"].clear()
@@ -1577,10 +1880,10 @@ def perform_vwap_reset(symbol: str, new_date, reset_time: datetime):
     # Note: 15-minute trend bars continue running - trend carries from overnight
     logger.info("VWAP data cleared - 15-minute trend bars continue running")
     logger.info(f"Current 15-min bars: {len(state[symbol]['bars_15min'])}")
-    logger.info("=" * 60)
+    logger.info(SEPARATOR_LINE)
 
 
-def check_daily_reset(symbol: str, current_time: datetime):
+def check_daily_reset(symbol: str, current_time: datetime) -> None:
     """
     Check if we've crossed into a new trading day and reset daily counters.
     This happens at 9:30 AM ET along with VWAP reset, but tracks date changes.
@@ -1604,7 +1907,7 @@ def check_daily_reset(symbol: str, current_time: datetime):
         logger.info(f"Trading day initialized: {current_date}")
 
 
-def perform_daily_reset(symbol: str, new_date):
+def perform_daily_reset(symbol: str, new_date: Any) -> None:
     """
     Perform the actual daily reset operations.
     Resets daily counters and session stats.
@@ -1614,9 +1917,9 @@ def perform_daily_reset(symbol: str, new_date):
         symbol: Instrument symbol
         new_date: The new trading date
     """
-    logger.info("="*60)
+    logger.info(SEPARATOR_LINE)
     logger.info(f"DAILY RESET - New Trading Day: {new_date}")
-    logger.info("="*60)
+    logger.info(SEPARATOR_LINE)
     
     # Log session summary before reset
     log_session_summary(symbol)
@@ -1648,44 +1951,40 @@ def perform_daily_reset(symbol: str, new_date):
     
     logger.info("Daily reset complete - Ready for trading")
     logger.info("(VWAP reset handled separately at 9:30 AM)")
-    logger.info("="*60)
+    logger.info(SEPARATOR_LINE)
 
 
 # ============================================================================
 # PHASE TWELVE: Safety Mechanisms
 # ============================================================================
 
-def check_safety_conditions(symbol: str) -> Tuple[bool, Optional[str]]:
+def check_daily_loss_limit(symbol: str) -> Tuple[bool, Optional[str]]:
     """
-    Check all safety conditions before allowing trading.
+    Check if daily loss limit has been exceeded.
     
     Args:
         symbol: Instrument symbol
     
     Returns:
-        Tuple of (is_safe, reason) where is_safe is True if safe to trade
+        Tuple of (is_safe, reason)
     """
-    tz = pytz.timezone(CONFIG["timezone"])
-    current_time = datetime.now(tz)
-    
-    # Check if emergency stop is active
-    if bot_status["emergency_stop"]:
-        return False, f"Emergency stop active: {bot_status['stop_reason']}"
-    
-    # Check if trading is disabled
-    if not bot_status["trading_enabled"]:
-        return False, f"Trading disabled: {bot_status['stop_reason']}"
-    
-    # Check daily loss limit
     if state[symbol]["daily_pnl"] <= -CONFIG["daily_loss_limit"]:
         if bot_status["trading_enabled"]:
             logger.critical(f"DAILY LOSS LIMIT BREACHED: ${state[symbol]['daily_pnl']:.2f}")
-            logger.critical(f"Trading STOPPED for the day")
+            logger.critical("Trading STOPPED for the day")
             bot_status["trading_enabled"] = False
             bot_status["stop_reason"] = "daily_loss_limit"
         return False, "Daily loss limit exceeded"
+    return True, None
+
+
+def check_max_drawdown() -> Tuple[bool, Optional[str]]:
+    """
+    Check if maximum drawdown has been exceeded.
     
-    # Check maximum drawdown
+    Returns:
+        Tuple of (is_safe, reason)
+    """
     if bot_status["starting_equity"] is not None:
         current_equity = get_account_equity()
         drawdown_percent = ((bot_status["starting_equity"] - current_equity) / 
@@ -1701,17 +2000,19 @@ def check_safety_conditions(symbol: str) -> Tuple[bool, Optional[str]]:
                 bot_status["trading_enabled"] = False
                 bot_status["stop_reason"] = "max_drawdown_exceeded"
             return False, f"Max drawdown exceeded: {drawdown_percent:.2f}%"
+    return True, None
+
+
+def check_tick_timeout(current_time: datetime) -> Tuple[bool, Optional[str]]:
+    """
+    Check if data feed has timed out.
     
-    # Check time-based kill switch - use shutdown_time from new time management
-    if current_time.time() >= CONFIG["shutdown_time"]:
-        if bot_status["trading_enabled"]:
-            logger.warning(f"Market closed - Shutting down bot at {current_time.time()}")
-            bot_status["trading_enabled"] = False
-            bot_status["stop_reason"] = "market_closed"
-        return False, "Market closed"
+    Args:
+        current_time: Current datetime in Eastern Time
     
-    # Check connection health (no ticks in 60 seconds during trading hours)
-    # Use get_trading_state instead of legacy is_trading_hours
+    Returns:
+        Tuple of (is_safe, reason)
+    """
     if bot_status["last_tick_time"] is not None:
         trading_state = get_trading_state(current_time)
         # Check for tick timeout during any active trading state (not before_open or closed)
@@ -1723,11 +2024,76 @@ def check_safety_conditions(symbol: str) -> Tuple[bool, Optional[str]]:
                 bot_status["trading_enabled"] = False
                 bot_status["stop_reason"] = "data_feed_timeout"
                 return False, f"No tick data for {time_since_tick:.0f} seconds"
+    return True, None
+
+
+def check_trade_limits(current_time: datetime) -> Tuple[bool, Optional[str]]:
+    """
+    Check emergency stop and trading enabled status.
+    
+    Args:
+        current_time: Current datetime in Eastern Time
+    
+    Returns:
+        Tuple of (is_safe, reason)
+    """
+    # Check if emergency stop is active
+    if bot_status["emergency_stop"]:
+        return False, f"Emergency stop active: {bot_status['stop_reason']}"
+    
+    # Check if trading is disabled
+    if not bot_status["trading_enabled"]:
+        return False, f"Trading disabled: {bot_status['stop_reason']}"
+    
+    # Check time-based kill switch
+    if current_time.time() >= CONFIG["shutdown_time"]:
+        if bot_status["trading_enabled"]:
+            logger.warning(f"Market closed - Shutting down bot at {current_time.time()}")
+            bot_status["trading_enabled"] = False
+            bot_status["stop_reason"] = "market_closed"
+        return False, "Market closed"
     
     return True, None
 
 
-def check_no_overnight_positions(symbol: str):
+def check_safety_conditions(symbol: str) -> Tuple[bool, Optional[str]]:
+    """
+    Check all safety conditions before allowing trading.
+    Coordinates various safety checks through helper functions.
+    
+    Args:
+        symbol: Instrument symbol
+    
+    Returns:
+        Tuple of (is_safe, reason) where is_safe is True if safe to trade
+    """
+    tz = pytz.timezone(CONFIG["timezone"])
+    current_time = datetime.now(tz)
+    
+    # Check trade limits and emergency stops
+    is_safe, reason = check_trade_limits(current_time)
+    if not is_safe:
+        return False, reason
+    
+    # Check daily loss limit
+    is_safe, reason = check_daily_loss_limit(symbol)
+    if not is_safe:
+        return False, reason
+    
+    # Check maximum drawdown
+    is_safe, reason = check_max_drawdown()
+    if not is_safe:
+        return False, reason
+    
+    # Check tick timeout
+    is_safe, reason = check_tick_timeout(current_time)
+    if not is_safe:
+        return False, reason
+    
+    return True, None
+
+
+def check_no_overnight_positions(symbol: str) -> None:
     """
     Phase Eleven: Critical safety check - ensure NO positions past 5 PM.
     This prevents gap risk and TopStep evaluation issues.
@@ -1810,19 +2176,13 @@ def validate_order(symbol: str, side: str, quantity: int, entry_price: float,
 # PHASE THIRTEEN: Logging and Monitoring
 # ============================================================================
 
-def log_session_summary(symbol: str):
+def format_trade_statistics(stats: Dict[str, Any]) -> None:
     """
-    Log comprehensive session summary at end of trading day.
+    Format and log basic trade statistics.
     
     Args:
-        symbol: Instrument symbol
+        stats: Session statistics dictionary
     """
-    stats = state[symbol]["session_stats"]
-    
-    logger.info("="*60)
-    logger.info("SESSION SUMMARY")
-    logger.info("="*60)
-    logger.info(f"Trading Day: {state[symbol]['trading_day']}")
     logger.info(f"Total Trades: {len(stats['trades'])}")
     logger.info(f"Wins: {stats['win_count']}")
     logger.info(f"Losses: {stats['loss_count']}")
@@ -1832,7 +2192,15 @@ def log_session_summary(symbol: str):
         logger.info(f"Win Rate: {win_rate:.1f}%")
     else:
         logger.info("Win Rate: N/A (no trades)")
+
+
+def format_pnl_summary(stats: Dict[str, Any]) -> None:
+    """
+    Format and log P&L summary including Sharpe ratio.
     
+    Args:
+        stats: Session statistics dictionary
+    """
     logger.info(f"Total P&L: ${stats['total_pnl']:+.2f}")
     logger.info(f"Largest Win: ${stats['largest_win']:+.2f}")
     logger.info(f"Largest Loss: ${stats['largest_loss']:+.2f}")
@@ -1844,72 +2212,111 @@ def log_session_summary(symbol: str):
         if std_dev > 0:
             sharpe_ratio = avg_pnl / std_dev
             logger.info(f"Sharpe Ratio: {sharpe_ratio:.2f}")
+
+
+def format_time_statistics(stats: Dict[str, Any]) -> None:
+    """
+    Format and log position duration statistics.
     
-    # Phase Ten: Log target vs early close statistics
+    Args:
+        stats: Session statistics dictionary
+    """
+    if len(stats['trade_durations']) == 0:
+        return
+    
+    logger.info(SEPARATOR_LINE)
+    logger.info("POSITION DURATION ANALYSIS (Phase 20)")
+    
+    avg_duration = sum(stats['trade_durations']) / len(stats['trade_durations'])
+    min_duration = min(stats['trade_durations'])
+    max_duration = max(stats['trade_durations'])
+    
+    logger.info(f"Average Position Duration: {avg_duration:.1f} minutes")
+    logger.info(f"Shortest Trade: {min_duration:.1f} minutes")
+    logger.info(f"Longest Trade: {max_duration:.1f} minutes")
+    
+    # Calculate force flatten statistics
+    total_trades = len(stats['trades'])
+    force_flatten_pct = (stats['force_flattened_count'] / total_trades * 100) if total_trades > 0 else 0
+    logger.info(f"Force Flattened: {stats['force_flattened_count']}/{total_trades} ({force_flatten_pct:.1f}%)")
+    
+    if force_flatten_pct > 30:
+        logger.warning("⚠️  >30% force-flattened - trade duration too long for time window")
+        logger.warning("   Consider: earlier entry cutoff or faster profit targets")
+    else:
+        logger.info("✅ <30% force-flattened - acceptable duration")
+    
+    # After-noon entry analysis
+    if stats['after_noon_entries'] > 0:
+        after_noon_flatten_pct = (stats['after_noon_force_flattened'] / 
+                                  stats['after_noon_entries'] * 100)
+        logger.info(f"After-Noon Entries: {stats['after_noon_entries']}")
+        logger.info(f"After-Noon Force Flattened: {stats['after_noon_force_flattened']} "
+                   f"({after_noon_flatten_pct:.1f}%)")
+        
+        if after_noon_flatten_pct > 50:
+            logger.warning("⚠️  >50% of after-noon entries force-flattened")
+            logger.warning("   Entry window may be too late - avg duration {:.1f} min vs time remaining"
+                          .format(avg_duration))
+    
+    # Time compatibility analysis
+    time_to_flatten_at_2pm = 165  # minutes from 2 PM to 4:45 PM
+    if avg_duration > time_to_flatten_at_2pm * 0.8:
+        logger.warning("⚠️  Average duration uses >80% of available time window")
+        logger.warning(f"   Avg duration {avg_duration:.1f} min vs {time_to_flatten_at_2pm} min available at 2 PM")
+
+
+def format_risk_metrics() -> None:
+    """
+    Format and log flatten mode exit analysis.
+    """
     total_decisions = (bot_status["target_wait_wins"] + bot_status["target_wait_losses"] + 
                        bot_status["early_close_saves"])
-    if total_decisions > 0:
-        logger.info("="*60)
-        logger.info("FLATTEN MODE EXIT ANALYSIS (Phase 10)")
-        logger.info(f"Target Wait Wins: {bot_status['target_wait_wins']}")
-        logger.info(f"Target Wait Losses: {bot_status['target_wait_losses']}")
-        logger.info(f"Early Close Saves: {bot_status['early_close_saves']}")
-        if bot_status["target_wait_wins"] > 0:
-            target_success_rate = (bot_status["target_wait_wins"] / 
-                                   (bot_status["target_wait_wins"] + bot_status["target_wait_losses"]) * 100)
-            logger.info(f"Target Wait Success Rate: {target_success_rate:.1f}%")
-        logger.info("="*60)
+    if total_decisions == 0:
+        return
     
-    # Phase Twenty: Position duration statistics
-    if len(stats['trade_durations']) > 0:
-        logger.info("="*60)
-        logger.info("POSITION DURATION ANALYSIS (Phase 20)")
-        
-        avg_duration = sum(stats['trade_durations']) / len(stats['trade_durations'])
-        min_duration = min(stats['trade_durations'])
-        max_duration = max(stats['trade_durations'])
-        
-        logger.info(f"Average Position Duration: {avg_duration:.1f} minutes")
-        logger.info(f"Shortest Trade: {min_duration:.1f} minutes")
-        logger.info(f"Longest Trade: {max_duration:.1f} minutes")
-        
-        # Calculate force flatten statistics
-        total_trades = len(stats['trades'])
-        force_flatten_pct = (stats['force_flattened_count'] / total_trades * 100) if total_trades > 0 else 0
-        logger.info(f"Force Flattened: {stats['force_flattened_count']}/{total_trades} ({force_flatten_pct:.1f}%)")
-        
-        if force_flatten_pct > 30:
-            logger.warning("⚠️  >30% force-flattened - trade duration too long for time window")
-            logger.warning("   Consider: earlier entry cutoff or faster profit targets")
-        else:
-            logger.info("✅ <30% force-flattened - acceptable duration")
-        
-        # After-noon entry analysis
-        if stats['after_noon_entries'] > 0:
-            after_noon_flatten_pct = (stats['after_noon_force_flattened'] / 
-                                      stats['after_noon_entries'] * 100)
-            logger.info(f"After-Noon Entries: {stats['after_noon_entries']}")
-            logger.info(f"After-Noon Force Flattened: {stats['after_noon_force_flattened']} "
-                       f"({after_noon_flatten_pct:.1f}%)")
-            
-            if after_noon_flatten_pct > 50:
-                logger.warning("⚠️  >50% of after-noon entries force-flattened")
-                logger.warning("   Entry window may be too late - avg duration {:.1f} min vs time remaining"
-                              .format(avg_duration))
-        
-        # Time compatibility analysis
-        # If entering at 2 PM, we have 2.75 hours (165 min) until 4:45 PM flatten
-        time_to_flatten_at_2pm = 165  # minutes from 2 PM to 4:45 PM
-        if avg_duration > time_to_flatten_at_2pm * 0.8:
-            logger.warning("⚠️  Average duration uses >80% of available time window")
-            logger.warning(f"   Avg duration {avg_duration:.1f} min vs {time_to_flatten_at_2pm} min available at 2 PM")
-        
-        logger.info("="*60)
-    
-    logger.info("="*60)
+    logger.info(SEPARATOR_LINE)
+    logger.info("FLATTEN MODE EXIT ANALYSIS (Phase 10)")
+    logger.info(f"Target Wait Wins: {bot_status['target_wait_wins']}")
+    logger.info(f"Target Wait Losses: {bot_status['target_wait_losses']}")
+    logger.info(f"Early Close Saves: {bot_status['early_close_saves']}")
+    if bot_status["target_wait_wins"] > 0:
+        target_success_rate = (bot_status["target_wait_wins"] / 
+                               (bot_status["target_wait_wins"] + bot_status["target_wait_losses"]) * 100)
+        logger.info(f"Target Wait Success Rate: {target_success_rate:.1f}%")
 
 
-def update_session_stats(symbol: str, pnl: float):
+def log_session_summary(symbol: str) -> None:
+    """
+    Log comprehensive session summary at end of trading day.
+    Coordinates summary formatting through helper functions.
+    
+    Args:
+        symbol: Instrument symbol
+    """
+    stats = state[symbol]["session_stats"]
+    
+    logger.info(SEPARATOR_LINE)
+    logger.info("SESSION SUMMARY")
+    logger.info(SEPARATOR_LINE)
+    logger.info(f"Trading Day: {state[symbol]['trading_day']}")
+    
+    # Format trade statistics
+    format_trade_statistics(stats)
+    
+    # Format P&L summary
+    format_pnl_summary(stats)
+    
+    # Format risk metrics (flatten mode analysis)
+    format_risk_metrics()
+    
+    # Format time statistics (position duration)
+    format_time_statistics(stats)
+    
+    logger.info(SEPARATOR_LINE)
+
+
+def update_session_stats(symbol: str, pnl: float) -> None:
     """
     Update session statistics after a trade.
     
@@ -2024,7 +2431,7 @@ def get_trading_state(dt: datetime = None) -> str:
 # PHASE FIFTEEN & SIXTEEN: Timezone Handling and Time-Based Logging
 # ============================================================================
 
-def validate_timezone_configuration():
+def validate_timezone_configuration() -> None:
     """
     Phase Fifteen: Validate timezone configuration on bot startup.
     Ensures pytz is working correctly and DST is handled properly.
@@ -2032,9 +2439,9 @@ def validate_timezone_configuration():
     tz = pytz.timezone(CONFIG["timezone"])
     current_time = datetime.now(tz)
     
-    logger.info("=" * 60)
+    logger.info(SEPARATOR_LINE)
     logger.info("TIMEZONE CONFIGURATION VALIDATION")
-    logger.info("=" * 60)
+    logger.info(SEPARATOR_LINE)
     logger.info(f"Configured Timezone: {CONFIG['timezone']}")
     logger.info(f"Current Time (ET): {current_time.strftime('%Y-%m-%d %H:%M:%S %Z')}")
     logger.info(f"UTC Offset: {current_time.strftime('%z')}")
@@ -2049,14 +2456,14 @@ def validate_timezone_configuration():
     # Warn if system local time differs significantly from ET
     system_time = datetime.now()
     if abs((current_time.replace(tzinfo=None) - system_time).total_seconds()) > 3600:
-        logger.warning(f"System local time differs from ET by >1 hour")
+        logger.warning("System local time differs from ET by >1 hour")
         logger.warning(f"System: {system_time.strftime('%H:%M:%S')}, ET: {current_time.strftime('%H:%M:%S')}")
         logger.warning("All trading decisions use ET - system time is informational only")
     
-    logger.info("=" * 60)
+    logger.info(SEPARATOR_LINE)
 
 
-def log_time_based_action(action: str, reason: str, details: dict = None):
+def log_time_based_action(action: str, reason: str, details: Optional[Dict[str, Any]] = None) -> None:
     """
     Phase Sixteen: Log all time-based actions with timestamp and reason.
     Creates audit trail for reviewing time-based rule performance.
@@ -2258,11 +2665,13 @@ VALIDATION:
 # MAIN EXECUTION
 # ============================================================================
 
-def main():
-    """Main bot execution"""
-    logger.info("="*60)
+def main() -> None:
+    """Main bot execution with event loop integration"""
+    global event_loop, timer_manager
+    
+    logger.info(SEPARATOR_LINE)
     logger.info("VWAP Bounce Bot Starting")
-    logger.info("="*60)
+    logger.info(SEPARATOR_LINE)
     logger.info(f"Mode: {'DRY RUN' if CONFIG['dry_run'] else 'LIVE TRADING'}")
     logger.info(f"Instrument: {CONFIG['instrument']}")
     logger.info(f"Entry Window: {CONFIG['entry_window_start']} - {CONFIG['entry_window_end']} ET")
@@ -2272,13 +2681,13 @@ def main():
     logger.info(f"Max Trades/Day: {CONFIG['max_trades_per_day']}")
     logger.info(f"Daily Loss Limit: ${CONFIG['daily_loss_limit']}")
     logger.info(f"Max Drawdown: {CONFIG['max_drawdown_percent']}%")
-    logger.info("="*60)
+    logger.info(SEPARATOR_LINE)
     
     # Phase Fifteen: Validate timezone configuration
     validate_timezone_configuration()
     
-    # Initialize SDK
-    initialize_sdk()
+    # Initialize broker (replaces initialize_sdk)
+    initialize_broker()
     
     # Phase 12: Record starting equity for drawdown monitoring
     bot_status["starting_equity"] = get_account_equity()
@@ -2299,15 +2708,164 @@ def main():
         state[symbol]["bars_15min"].extend(historical_bars)
         update_trend_filter(symbol)
     
+    # Initialize event loop
+    logger.info("Initializing event loop...")
+    event_loop = EventLoop(bot_status, CONFIG)
+    
+    # Register event handlers
+    event_loop.register_handler(EventType.TICK_DATA, handle_tick_event)
+    event_loop.register_handler(EventType.TIME_CHECK, handle_time_check_event)
+    event_loop.register_handler(EventType.VWAP_RESET, handle_vwap_reset_event)
+    event_loop.register_handler(EventType.FLATTEN_MODE, handle_flatten_mode_event)
+    event_loop.register_handler(EventType.SHUTDOWN, handle_shutdown_event)
+    
+    # Register shutdown handlers for cleanup
+    event_loop.register_shutdown_handler(cleanup_on_shutdown)
+    
+    # Initialize timer manager for periodic events
+    tz = pytz.timezone(CONFIG["timezone"])
+    timer_manager = TimerManager(event_loop, CONFIG, tz)
+    timer_manager.start()
+    
     # Subscribe to market data
     subscribe_market_data(symbol, on_tick)
     
     logger.info("Bot initialization complete")
-    logger.info("Waiting for market data...")
+    logger.info("Starting event loop...")
+    logger.info("Press Ctrl+C for graceful shutdown")
+    logger.info(SEPARATOR_LINE)
     
-    # In a real implementation, this would run indefinitely
-    # For now, we just show the structure is ready
-    logger.info("Bot is ready to process ticks through on_tick() callback")
+    # Run event loop (blocks until shutdown signal)
+    try:
+        event_loop.run()
+    except KeyboardInterrupt:
+        logger.info("Keyboard interrupt received")
+    finally:
+        logger.info("Event loop stopped")
+        
+        # Print final metrics
+        metrics = event_loop.get_metrics()
+        logger.info("Event Loop Metrics:")
+        logger.info(f"  Total iterations: {metrics['total_iterations']}")
+        logger.info(f"  Events processed: {metrics['events_processed']}")
+        logger.info(f"  Max queue depth: {metrics['max_queue_depth']}")
+        logger.info(f"  Stall count: {metrics['stall_count']}")
+
+
+# ============================================================================
+# EVENT HANDLERS
+# ============================================================================
+
+def handle_tick_event(data: Dict[str, Any]) -> None:
+    """Handle tick data event from event loop"""
+    symbol = data["symbol"]
+    price = data["price"]
+    volume = data["volume"]
+    timestamp_ms = data["timestamp"]
+    
+    if symbol not in state:
+        initialize_state(symbol)
+    
+    # Phase 12: Update last tick time for connection health check
+    tz = pytz.timezone(CONFIG["timezone"])
+    dt = datetime.fromtimestamp(timestamp_ms / 1000.0, tz=tz)
+    bot_status["last_tick_time"] = dt
+    
+    # Monitor data feed health
+    if recovery_manager:
+        recovery_manager.data_feed_monitor.record_tick(symbol)
+    
+    # Create tick object
+    tick = {
+        "price": price,
+        "volume": volume,
+        "timestamp": timestamp_ms
+    }
+    
+    # Append to tick storage
+    state[symbol]["ticks"].append(tick)
+    
+    # Update 1-minute bars
+    update_1min_bar(symbol, price, volume, dt)
+    
+    # Update 15-minute bars
+    update_15min_bar(symbol, price, volume, dt)
+
+
+def handle_time_check_event(data: Dict[str, Any]) -> None:
+    """Handle time-based checks event"""
+    symbol = CONFIG["instrument"]
+    if symbol in state:
+        tz = pytz.timezone(CONFIG["timezone"])
+        current_time = datetime.now(tz).time()
+        
+        # Check for daily reset
+        check_daily_reset(symbol, datetime.now(tz))
+        
+        # Critical safety check - NO positions past 5 PM
+        check_no_overnight_positions(symbol)
+
+
+def handle_vwap_reset_event(data: Dict[str, Any]) -> None:
+    """Handle VWAP reset event"""
+    symbol = CONFIG["instrument"]
+    if symbol in state:
+        tz = pytz.timezone(CONFIG["timezone"])
+        check_vwap_reset(symbol, datetime.now(tz))
+
+
+def handle_flatten_mode_event(data: Dict[str, Any]) -> None:
+    """Handle flatten mode activation event"""
+    logger.warning("Flatten mode activated - initiating position closure")
+    bot_status["flatten_mode"] = True
+    
+    # If position is active, start flatten process
+    symbol = CONFIG["instrument"]
+    if symbol in state and state[symbol]["position"]["active"]:
+        logger.warning(f"Active position detected - executing flatten")
+        # The exit conditions check will handle the flatten
+
+
+def handle_shutdown_event(data: Dict[str, Any]) -> None:
+    """Handle shutdown event"""
+    logger.info("Shutdown event received")
+    bot_status["trading_enabled"] = False
+
+
+def cleanup_on_shutdown() -> None:
+    """Cleanup tasks on shutdown"""
+    logger.info("Running cleanup tasks...")
+    
+    # Save state to disk
+    if recovery_manager:
+        try:
+            recovery_manager.save_state(state)
+            logger.info("State saved successfully")
+        except Exception as e:
+            logger.error(f"Error saving state: {e}")
+    
+    # Disconnect broker
+    if broker and broker.is_connected():
+        try:
+            broker.disconnect()
+            logger.info("Broker disconnected")
+        except Exception as e:
+            logger.error(f"Error disconnecting broker: {e}")
+    
+    # Stop timer manager
+    if timer_manager:
+        try:
+            timer_manager.stop()
+            logger.info("Timer manager stopped")
+        except Exception as e:
+            logger.error(f"Error stopping timer manager: {e}")
+    
+    # Log session summary
+    symbol = CONFIG["instrument"]
+    if symbol in state:
+        log_session_summary(symbol)
+    
+    logger.info("Cleanup complete")
 
 
 if __name__ == "__main__":
