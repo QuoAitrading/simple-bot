@@ -148,7 +148,7 @@ def place_market_order(symbol: str, side: str, quantity: int) -> Optional[Dict[s
     
     if CONFIG["dry_run"]:
         return {
-            "order_id": f"MOCK_{datetime.now().timestamp()}",
+            "order_id": f"DRY_RUN_{datetime.now().timestamp()}",
             "symbol": symbol,
             "side": side,
             "quantity": quantity,
@@ -208,7 +208,7 @@ def place_stop_order(symbol: str, side: str, quantity: int, stop_price: float) -
     
     if CONFIG["dry_run"]:
         return {
-            "order_id": f"MOCK_STOP_{datetime.now().timestamp()}",
+            "order_id": f"DRY_RUN_STOP_{datetime.now().timestamp()}",
             "symbol": symbol,
             "side": side,
             "quantity": quantity,
@@ -263,7 +263,7 @@ def place_limit_order(symbol: str, side: str, quantity: int, limit_price: float)
     
     if CONFIG["dry_run"]:
         return {
-            "order_id": f"MOCK_LIMIT_{datetime.now().timestamp()}",
+            "order_id": f"DRY_RUN_LIMIT_{datetime.now().timestamp()}",
             "symbol": symbol,
             "side": side,
             "quantity": quantity,
@@ -366,7 +366,7 @@ def subscribe_market_data(symbol: str, callback: Callable[[str, float, int, int]
     logger.info(f"{'[DRY RUN] ' if CONFIG['dry_run'] else ''}Subscribing to market data: {symbol}")
     
     if CONFIG["dry_run"]:
-        logger.info(f"Dry run mode - simulating subscription to {symbol}")
+        logger.info(f"Dry run mode - skipping real broker subscription for {symbol}")
         return
     
     if broker is None:
@@ -2494,12 +2494,12 @@ def log_time_based_action(action: str, reason: str, details: Optional[Dict[str, 
 """
 Phase Seventeen: Backtesting Time Logic
 
-When backtesting this strategy on historical data, you must simulate time-based
+When backtesting this strategy on historical data, you must implement time-based
 flatten rules accurately:
 
 1. For every historical trade, check entry time
    - If entered after 2 PM, calculate time remaining until 4:45 PM flatten
-   - Simulate forced flatten at whatever price existed at 4:45 PM if position
+   - Execute forced flatten at whatever price existed at 4:45 PM if position
      hadn't hit target or stop
 
 2. Track forced flatten statistics:
@@ -2512,8 +2512,8 @@ flatten rules accurately:
    - Either extend trading hours or accept lower targets to close positions faster
 
 4. Friday-specific backtesting:
-   - Simulate no new trades after 1 PM Friday
-   - Simulate forced close at 3 PM Friday
+   - Enforce no new trades after 1 PM Friday
+   - Execute forced close at 3 PM Friday
    - Measure weekend gap impact on positions that would have been held
 
 5. DST transition testing:

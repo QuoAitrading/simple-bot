@@ -252,7 +252,7 @@ simple-bot/
 ├── test_phases_11_14.py    # Safety and monitoring tests (Phases 11-14)
 ├── test_phases_6_10.py     # Phases 6-10 specific tests
 ├── test_bot.py             # Original validation tests
-├── example_simulation.py   # Basic simulation example
+├── example_usage.py         # Usage examples and demonstrations
 ├── requirements.txt        # Python dependencies
 ├── .env.example           # Environment variable template
 ├── .gitignore            # Git ignore patterns
