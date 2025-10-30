@@ -67,6 +67,12 @@ The bot currently uses **blind market orders** that cross the spread on every tr
 
 **Expected Impact**: Save 1-2 ticks per round-trip trade = $6.25-$12.50 per trade = ~$125-$250/month at current frequency
 
+**How to Validate Parameters (See "Parameter Validation" section below)**:
+- Start with conservative defaults (2 tick max spread, 3 second timeout)
+- Paper trade for 2 weeks tracking: passive fill rate, missed trades, spread saved
+- Adjust based on data, not guesses
+- A/B test changes (1 week old params, 1 week new params, compare)
+
 ---
 
 ### Phase 2: Data Collection (Valuable - Improves Future Testing)
@@ -190,6 +196,333 @@ The bot currently uses **blind market orders** that cross the spread on every tr
    - Improve trade quality
 
 **Expected Impact**: Evolve strategy based on live performance, adapt to market changes, continuous improvement
+
+---
+
+## 🧪 Parameter Validation & Testing Framework
+
+### How to Know If Parameters Are Helping (Not Hurting)
+
+**The Problem**: You don't want to add bid/ask logic that causes you to MISS profitable trades or use bad thresholds.
+
+**The Solution**: Systematic testing with data-driven validation.
+
+---
+
+### Step 1: Establish Baseline Performance (CRITICAL)
+
+**Before implementing ANY Phase 1 changes, you need a baseline:**
+
+```bash
+# Paper trade for 2 weeks with CURRENT bot (no bid/ask logic)
+python main.py --mode live --dry-run --symbol ES
+
+# Track these metrics:
+# - Total trades executed
+# - Win rate
+# - Average profit per trade
+# - Total P&L
+# - Entry/exit slippage experienced
+```
+
+**Save this data**: Create a `baseline_metrics.json` file with your 2-week paper trading results.
+
+Example baseline:
+```json
+{
+  "period": "2025-11-01 to 2025-11-14",
+  "mode": "paper_trading_no_bidask",
+  "total_trades": 18,
+  "win_rate": 0.67,
+  "avg_profit_per_trade": 87.50,
+  "total_pnl": 1575.00,
+  "trades_missed": 0,
+  "avg_entry_slippage_ticks": 1.8,
+  "avg_exit_slippage_ticks": 1.6
+}
+```
+
+---
+
+### Step 2: Choose Conservative Starting Parameters
+
+**Don't guess - use these proven defaults:**
+
+```python
+# config.py - Phase 1 Bid/Ask Parameters
+BID_ASK_CONFIG = {
+    # Spread validation
+    "max_spread_ticks": 2.0,        # Reject if spread > 2 ticks (conservative)
+    "warn_spread_ticks": 1.5,       # Log warning if spread > 1.5 ticks
+    
+    # Smart order routing
+    "passive_timeout_seconds": 3.0, # Wait 3 seconds for passive fill
+    "use_passive_orders": True,     # Try limit orders first
+    "passive_first_always": False,  # Can skip passive if spread < 1 tick
+    
+    # Fill tracking
+    "track_expected_vs_actual": True,
+    "log_all_fills": True,
+    
+    # Market condition filters
+    "skip_wide_spread_trades": True,
+    "skip_if_spread_widening": False,  # Advanced - start False
+}
+```
+
+**Why these values?**
+- **2 tick max spread**: ES typically 1 tick spread during liquid hours, 2 ticks is reasonable limit
+- **3 second timeout**: Enough time to get filled without missing market move
+- **Start simple**: Enable basic features, disable advanced ones until proven
+
+---
+
+### Step 3: Paper Trade with New Parameters (2 Weeks)
+
+```bash
+# Paper trade with Phase 1 bid/ask logic enabled
+python main.py --mode live --dry-run --symbol ES --enable-bidask
+
+# Track SAME metrics as baseline PLUS:
+# - Passive fill success rate
+# - Trades skipped due to wide spread
+# - Spread cost saved vs baseline
+# - Market movement during passive timeout
+```
+
+**NEW metrics to track**:
+```json
+{
+  "period": "2025-11-15 to 2025-11-28",
+  "mode": "paper_trading_with_bidask",
+  "total_trades": 17,              // Did you MISS trades? (17 vs 18 baseline)
+  "win_rate": 0.65,                 // Did win rate DROP? (0.65 vs 0.67)
+  "avg_profit_per_trade": 95.00,   // Did profit IMPROVE? (95 vs 87.50 - GOOD!)
+  "total_pnl": 1615.00,             // Did total P&L improve? (1615 vs 1575 - GOOD!)
+  "trades_missed": 2,               // How many trades skipped? (need to analyze WHY)
+  "trades_skipped_wide_spread": 1,  // Was spread validation too tight?
+  "passive_fill_rate": 0.75,        // 75% of orders filled passively (GREAT!)
+  "aggressive_fill_rate": 0.25,     // 25% needed market orders
+  "avg_spread_saved_ticks": 0.8,    // Saved 0.8 ticks per trade (0.8 * $12.50 = $10/trade)
+  "avg_entry_slippage_ticks": 1.0,  // DOWN from 1.8 (GOOD!)
+  "avg_exit_slippage_ticks": 0.9    // DOWN from 1.6 (GOOD!)
+}
+```
+
+---
+
+### Step 4: Compare Results & Make Decision
+
+**Use this decision matrix:**
+
+| Metric | Baseline | With Bid/Ask | Change | Assessment |
+|--------|----------|--------------|--------|------------|
+| **Total Trades** | 18 | 17 | -1 | ⚠️ Missed 1 trade - investigate why |
+| **Win Rate** | 67% | 65% | -2% | ✅ Within normal variance |
+| **Avg Profit/Trade** | $87.50 | $95.00 | +$7.50 | ✅ BETTER (saved spread costs) |
+| **Total P&L** | $1,575 | $1,615 | +$40 | ✅ BETTER overall |
+| **Passive Fill Rate** | N/A | 75% | N/A | ✅ EXCELLENT (saving spread) |
+| **Avg Entry Slippage** | 1.8 ticks | 1.0 ticks | -0.8 | ✅ MUCH BETTER |
+| **Avg Exit Slippage** | 1.6 ticks | 0.9 ticks | -0.7 | ✅ MUCH BETTER |
+
+**Decision Rules**:
+
+✅ **KEEP NEW PARAMETERS** if:
+- Total P&L improved OR stayed roughly same
+- Avg profit per trade improved
+- Trades missed < 10% of baseline
+- Passive fill rate > 60%
+- Slippage reduced
+
+⚠️ **ADJUST PARAMETERS** if:
+- Missed > 10% of trades (spread threshold too tight or timeout too long)
+- Win rate dropped > 5% (missing best setups)
+- Passive fill rate < 40% (timeout too short or market too fast)
+
+❌ **REVERT TO BASELINE** if:
+- Total P&L dropped significantly (> $200 or > 10%)
+- Missed > 20% of trades
+- Win rate dropped > 10%
+- System too complex/unreliable
+
+---
+
+### Step 5: Optimize One Parameter at a Time
+
+**If results are mixed, adjust ONE parameter and retest:**
+
+**Example: Too many trades skipped due to wide spread**
+
+```python
+# Week 1-2: Test with max_spread_ticks = 2.0
+# Result: Skipped 3 trades, but 2 were losers anyway
+
+# Week 3-4: Test with max_spread_ticks = 2.5
+# Result: Skipped only 1 trade, P&L improved $50
+
+# Decision: Use 2.5 ticks (sweet spot)
+```
+
+**Example: Passive fill rate too low (only 40%)**
+
+```python
+# Week 1-2: Test with passive_timeout_seconds = 3.0
+# Result: 40% passive fills, often market moved away
+
+# Week 3-4: Test with passive_timeout_seconds = 2.0
+# Result: 35% passive fills (worse), need different approach
+
+# Week 5-6: Test with smarter limit price (bid + 0.25 ticks for longs)
+# Result: 65% passive fills (much better!)
+
+# Decision: Keep 3 second timeout, improve limit price placement
+```
+
+---
+
+### Step 6: A/B Testing Framework
+
+**Run parallel comparison tests:**
+
+```bash
+# Bot A: Old parameters (baseline or previous best)
+# Bot B: New parameters (testing optimization)
+
+# Both run simultaneously in paper trading for 1 week
+# Compare results side-by-side
+```
+
+**Tracking template**:
+```
+Test Period: Nov 15-22, 2025
+
+Bot A (Baseline):
+- Params: max_spread=2.0, timeout=3.0, passive_always=True
+- Trades: 9
+- P&L: $810
+- Passive Fill: 70%
+
+Bot B (Test):
+- Params: max_spread=2.5, timeout=2.5, passive_always=False
+- Trades: 10
+- P&L: $925
+- Passive Fill: 75%
+
+Winner: Bot B (+$115, +1 trade, +5% passive fill rate)
+Action: Adopt Bot B parameters as new baseline
+```
+
+---
+
+### Step 7: Continuous Monitoring (After Going Live)
+
+**Daily checks**:
+```bash
+# Generate daily comparison report
+python tools/compare_performance.py --baseline baseline_metrics.json --current today
+
+# Output:
+# - Trades today: 1 (baseline avg: 0.91/day) ✅
+# - Win rate: 100% (baseline: 65%) ✅  
+# - Passive fills: 1/1 (100%) ✅
+# - Spread saved: 1.2 ticks ($15) ✅
+# - No trades skipped ✅
+```
+
+**Weekly review**:
+- Compare week's performance to baseline
+- Check for parameter drift (market conditions changing)
+- Look for patterns in missed trades
+- Verify passive fill rate staying > 60%
+
+**Monthly optimization**:
+- Re-run parameter tests with live data
+- Update thresholds based on actual market conditions
+- Test new ideas (queue position, partial fills, etc.)
+
+---
+
+### Key Metrics to Track
+
+**Must Track (Critical)**:
+1. **Total trades executed** - Are you missing signals?
+2. **Trades skipped (with reason)** - Why are trades rejected?
+3. **Win rate** - Did execution changes hurt trade quality?
+4. **Avg profit per trade** - Are savings real?
+5. **Passive fill success rate** - Is smart routing working?
+6. **Avg slippage (entry + exit)** - Are you actually saving spread?
+
+**Should Track (Important)**:
+7. **Spread at entry time** - What was market condition?
+8. **Time to fill (passive orders)** - Is timeout optimal?
+9. **Market movement during timeout** - Did you miss the move?
+10. **Spread cost saved vs market orders** - Quantify improvement
+
+**Nice to Track (Optimization)**:
+11. **Fill rate by time of day** - When do passive orders work best?
+12. **Spread distribution** - What's typical spread during trading hours?
+13. **Correlation: spread width vs trade outcome** - Do tight spreads = better trades?
+
+---
+
+### Red Flags (Stop & Investigate)
+
+🚨 **STOP IMMEDIATELY if**:
+- Total trades < 50% of baseline for 3+ days
+- Win rate drops > 15% for 1 week
+- Total P&L negative for 2+ weeks (when baseline was positive)
+- Passive fill rate < 20% (routing logic broken)
+
+⚠️ **INVESTIGATE if**:
+- Trades skipped > 20% for 3+ days
+- Passive fill rate drops from 70% to 40% suddenly
+- Avg slippage INCREASES instead of decreases
+- Specific time periods consistently skip trades
+
+---
+
+### Example: Real-World Parameter Tuning
+
+**Week 1 (Baseline - No Bid/Ask)**:
+```
+Trades: 4
+P&L: +$350
+Avg slippage: 1.5 ticks entry + 1.5 ticks exit = 3 ticks ($37.50/trade)
+Total slippage cost: $150
+```
+
+**Week 2 (Conservative - max_spread=2, timeout=3s)**:
+```
+Trades: 3 (missed 1 due to wide spread during news)
+P&L: +$315
+Passive fills: 2/3 (67%)
+Avg slippage: 0.5 ticks entry + 0.8 ticks exit = 1.3 ticks ($16.25/trade)
+Total slippage cost: $49
+Slippage saved: $150 - $49 = $101
+
+Result: Made $35 LESS total, but saved $101 in slippage
+If that missed trade was a loser (65% win rate = 35% lose), we actually did BETTER
+Decision: Parameters are GOOD, keep them
+```
+
+**Week 3 (Aggressive - max_spread=3, timeout=2s)**:
+```
+Trades: 5 (caught the news trade)
+P&L: +$280
+Passive fills: 1/5 (20%)
+Avg slippage: 1.2 ticks entry + 1.4 ticks exit = 2.6 ticks ($32.50/trade)
+Total slippage cost: $163
+
+Result: More trades but WORSE slippage, LOWER P&L than both previous weeks
+Decision: TOO AGGRESSIVE, revert to Week 2 parameters
+```
+
+**Final Parameters (Week 2 - Conservative)**:
+```python
+max_spread_ticks = 2.0
+passive_timeout_seconds = 3.0
+use_passive_orders = True
+```
 
 ---
 
