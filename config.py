@@ -96,6 +96,17 @@ class BotConfiguration:
     use_mixed_order_strategy: bool = False  # Enable mixed passive/aggressive orders
     mixed_passive_ratio: float = 0.5  # Ratio of passive to total when using mixed strategy
     
+    # Enhanced Bid/Ask Parameters (Requirements 5-8)
+    max_queue_size: int = 100  # Cancel passive order if queue too large
+    queue_jump_threshold: int = 50  # Jump queue if position > threshold
+    min_bid_ask_size: int = 1  # Minimum liquidity requirement
+    max_acceptable_spread: Optional[float] = None  # Maximum spread threshold (None = no limit)
+    normal_hours_slippage_ticks: float = 1.0  # Expected slippage during normal hours
+    illiquid_hours_slippage_ticks: float = 2.0  # Expected slippage during illiquid hours
+    max_slippage_ticks: float = 3.0  # Maximum acceptable slippage
+    illiquid_hours_start: time = field(default_factory=lambda: time(0, 0))  # Start of illiquid period
+    illiquid_hours_end: time = field(default_factory=lambda: time(9, 30))  # End of illiquid period
+    
     # Broker Configuration (only for live trading)
     api_token: Optional[str] = None
     
