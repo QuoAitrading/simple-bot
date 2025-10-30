@@ -19,9 +19,9 @@ class BotConfiguration:
     timezone: str = "America/New_York"
     
     # Trading Parameters
-    risk_per_trade: float = 0.01  # 1% of account per trade
-    max_contracts: int = 2
-    max_trades_per_day: int = 3  # Limit to best quality setups
+    risk_per_trade: float = 0.015  # 1.5% of account per trade (optimized for $9-10K profit target)
+    max_contracts: int = 3  # 3 contracts (optimized for target profit)
+    max_trades_per_day: int = 5  # Allow more quality setups (increased from 3)
     risk_reward_ratio: float = 2.0  # Realistic 2:1 for mean reversion with tight stops
     
     # Slippage & Commission - PRODUCTION READY
@@ -38,17 +38,17 @@ class BotConfiguration:
     trend_ema_period: int = 20
     trend_threshold: float = 0.0001
     
-    # Technical Indicator Parameters - BACK TO PROVEN SETUP
+    # Technical Indicator Parameters - OPTIMIZED FOR 75% WIN RATE
     use_trend_filter: bool = False  # ❌ OFF - conflicts with mean reversion
-    use_rsi_filter: bool = True  # ✅ RSI extremes (28/72)
+    use_rsi_filter: bool = True  # ✅ RSI extremes (25/75 - optimized)
     use_macd_filter: bool = False  # ❌ OFF - lags reversals
     use_vwap_direction_filter: bool = True  # ✅ Price moving toward VWAP
     use_volume_filter: bool = False  # ❌ OFF - blocks overnight trades
     
-        # RSI Settings - Balanced for quality
+    # RSI Settings - Optimized for 75% win rate and $9-10K profit target
     rsi_period: int = 14
-    rsi_oversold: int = 28  # Slightly tighter than 30 for better extremes
-    rsi_overbought: int = 72  # Slightly tighter than 70
+    rsi_oversold: int = 25  # More extreme threshold for stronger signals (from 28)
+    rsi_overbought: int = 75  # More extreme threshold for stronger signals (from 72)
     
     # MACD - Keep for reference but disabled
     macd_fast: int = 12
@@ -73,7 +73,7 @@ class BotConfiguration:
     friday_close_target: time = field(default_factory=lambda: time(16, 30))  # Flatten by 4:30 PM Friday
     
     # Safety Parameters
-    daily_loss_limit: float = 200.0
+    daily_loss_limit: float = 500.0  # Increased for 3 contracts × 1.5% risk (was 200.0)
     max_drawdown_percent: float = 5.0
     tick_timeout_seconds: int = 60
     proactive_stop_buffer_ticks: int = 2
