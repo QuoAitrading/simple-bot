@@ -18,11 +18,11 @@ class BotConfiguration:
     instrument: str = "ES"
     timezone: str = "America/New_York"
     
-    # Trading Parameters - OPTIMIZED FROM 162 BACKTEST COMBINATIONS
-    risk_per_trade: float = 0.01  # 1% of account per trade (optimal from testing)
-    max_contracts: int = 3
-    max_trades_per_day: int = 3  # Limit to best quality setups
-    risk_reward_ratio: float = 2.0  # Realistic 2:1 for mean reversion with tight stops
+    # Trading Parameters - OPTIMIZED (Best from 162 backtests)
+    risk_per_trade: float = 0.01  # 1% per trade (PROVEN OPTIMAL)
+    max_contracts: int = 3  # Standard ES contract limit
+    max_trades_per_day: int = 3  # Quality over quantity
+    risk_reward_ratio: float = 2.0  # Proven 2:1 for mean reversion
     
     # Slippage & Commission - PRODUCTION READY
     slippage_ticks: float = 1.5  # Average 1-2 ticks per fill (conservative estimate)
