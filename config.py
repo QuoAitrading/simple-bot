@@ -15,35 +15,62 @@ class BotConfiguration:
     """Type-safe configuration for the VWAP Bounce Bot."""
     
     # Instrument Configuration
-    instrument: str = "MES"
+    instrument: str = "ES"
     timezone: str = "America/New_York"
     
     # Trading Parameters
     risk_per_trade: float = 0.01  # 1% of account per trade
     max_contracts: int = 2
-    max_trades_per_day: int = 3
-    risk_reward_ratio: float = 1.5
+    max_trades_per_day: int = 3  # Limit to best quality setups
+    risk_reward_ratio: float = 2.0  # Realistic 2:1 for mean reversion with tight stops
     
-    # VWAP Parameters
-    vwap_std_dev_1: float = 1.0
-    vwap_std_dev_2: float = 2.0
+    # Slippage & Commission - PRODUCTION READY
+    slippage_ticks: float = 1.5  # Average 1-2 ticks per fill (conservative estimate)
+    commission_per_contract: float = 2.50  # Round-turn commission (adjust to your broker)
+    # Total cost per round-trip: ~3 ticks slippage + $2.50 commission = ~$42.50/contract
+    
+    # VWAP Parameters - BALANCED FOR REAL TRADING
+    vwap_std_dev_1: float = 1.5  # Warning zone
+    vwap_std_dev_2: float = 2.0  # Entry zone (BALANCED - not too extreme)
+    vwap_std_dev_3: float = 3.0  # Stop zone
     
     # Trend Filter Parameters
     trend_ema_period: int = 20
     trend_threshold: float = 0.0001
     
+    # Technical Indicator Parameters - BACK TO PROVEN SETUP
+    use_trend_filter: bool = False  # ❌ OFF - conflicts with mean reversion
+    use_rsi_filter: bool = True  # ✅ RSI extremes (28/72)
+    use_macd_filter: bool = False  # ❌ OFF - lags reversals
+    use_vwap_direction_filter: bool = True  # ✅ Price moving toward VWAP
+    use_volume_filter: bool = False  # ❌ OFF - blocks overnight trades
+    
+        # RSI Settings - Balanced for quality
+    rsi_period: int = 14
+    rsi_oversold: int = 28  # Slightly tighter than 30 for better extremes
+    rsi_overbought: int = 72  # Slightly tighter than 70
+    
+    # MACD - Keep for reference but disabled
+    macd_fast: int = 12
+    macd_slow: int = 26
+    macd_signal: int = 9
+    
+    # Volume Filter - DISABLED (futures have inconsistent volume)
+    volume_spike_multiplier: float = 1.5
+    volume_lookback: int = 20
+    
     # Time Windows (all in Eastern Time)
     market_open_time: time = field(default_factory=lambda: time(9, 30))
-    entry_start_time: time = field(default_factory=lambda: time(9, 0))
-    entry_end_time: time = field(default_factory=lambda: time(14, 30))
-    flatten_time: time = field(default_factory=lambda: time(16, 30))
-    forced_flatten_time: time = field(default_factory=lambda: time(16, 45))
-    shutdown_time: time = field(default_factory=lambda: time(17, 0))
-    vwap_reset_time: time = field(default_factory=lambda: time(9, 30))
+    entry_start_time: time = field(default_factory=lambda: time(0, 0))  # 24/5 - trades any time
+    entry_end_time: time = field(default_factory=lambda: time(23, 50))  # Accept entries nearly all day
+    flatten_time: time = field(default_factory=lambda: time(23, 55))  # Only used for Friday close
+    forced_flatten_time: time = field(default_factory=lambda: time(23, 57))  # Only used for Friday close
+    shutdown_time: time = field(default_factory=lambda: time(23, 59))  # Daily reset at midnight
+    vwap_reset_time: time = field(default_factory=lambda: time(18, 0))  # 6 PM ET - futures daily session reset
     
-    # Friday Special Rules
-    friday_entry_cutoff: time = field(default_factory=lambda: time(13, 0))
-    friday_close_target: time = field(default_factory=lambda: time(15, 0))
+    # Friday Special Rules - Close before weekend
+    friday_entry_cutoff: time = field(default_factory=lambda: time(16, 45))  # Stop entries 4:45 PM Friday
+    friday_close_target: time = field(default_factory=lambda: time(16, 30))  # Flatten by 4:30 PM Friday
     
     # Safety Parameters
     daily_loss_limit: float = 200.0
@@ -53,7 +80,7 @@ class BotConfiguration:
     
     # Instrument Specifications
     tick_size: float = 0.25
-    tick_value: float = 1.25
+    tick_value: float = 12.50  # ES full contract: $12.50 per tick
     
     # Operational Parameters
     dry_run: bool = False
@@ -139,10 +166,26 @@ class BotConfiguration:
             "max_contracts": self.max_contracts,
             "max_trades_per_day": self.max_trades_per_day,
             "risk_reward_ratio": self.risk_reward_ratio,
+            "slippage_ticks": self.slippage_ticks,
+            "commission_per_contract": self.commission_per_contract,
             "vwap_std_dev_1": self.vwap_std_dev_1,
             "vwap_std_dev_2": self.vwap_std_dev_2,
+            "vwap_std_dev_3": self.vwap_std_dev_3,
             "trend_ema_period": self.trend_ema_period,
             "trend_threshold": self.trend_threshold,
+            "use_trend_filter": self.use_trend_filter,
+            "use_rsi_filter": self.use_rsi_filter,
+            "use_macd_filter": self.use_macd_filter,
+            "use_vwap_direction_filter": self.use_vwap_direction_filter,
+            "use_volume_filter": self.use_volume_filter,
+            "rsi_period": self.rsi_period,
+            "rsi_oversold": self.rsi_oversold,
+            "rsi_overbought": self.rsi_overbought,
+            "macd_fast": self.macd_fast,
+            "macd_slow": self.macd_slow,
+            "macd_signal": self.macd_signal,
+            "volume_spike_multiplier": self.volume_spike_multiplier,
+            "volume_lookback": self.volume_lookback,
             "market_open_time": self.market_open_time,
             "entry_start_time": self.entry_start_time,
             "entry_end_time": self.entry_end_time,

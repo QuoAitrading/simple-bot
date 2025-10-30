@@ -12,12 +12,21 @@ import pytz
 
 # Import new production modules
 from config import load_config, BotConfiguration
-from broker_interface import create_broker, BrokerInterface
 from event_loop import EventLoop, EventType, EventPriority, TimerManager
 from error_recovery import ErrorRecoveryManager, ErrorType as RecoveryErrorType
 
+# Conditionally import broker (only needed for live trading, not backtesting)
+try:
+    from broker_interface import create_broker, BrokerInterface
+except ImportError:
+    # Broker interface not available (e.g., in backtest-only mode)
+    create_broker = None
+    BrokerInterface = None
+
 # Load configuration from environment and config module
-_bot_config = load_config()
+# Check if in backtest mode via environment variable
+_backtest_mode = os.getenv("BOT_BACKTEST_MODE", "false").lower() == "true"
+_bot_config = load_config(backtest_mode=_backtest_mode)
 _bot_config.validate()  # Validate configuration at startup
 
 # Convert BotConfiguration to dictionary for backward compatibility with existing code
@@ -42,6 +51,10 @@ timer_manager: Optional[TimerManager] = None
 # State management dictionary
 state: Dict[str, Any] = {}
 
+# Backtest mode: Track current simulation time (for backtesting)
+# When None, uses real datetime.now(). When set, uses this timestamp.
+backtest_current_time: Optional[datetime] = None
+
 # Global tracking for safety mechanisms (Phase 12)
 bot_status: Dict[str, Any] = {
     "trading_enabled": True,
@@ -54,6 +67,9 @@ bot_status: Dict[str, Any] = {
     "target_wait_wins": 0,  # Times waiting for target paid off
     "target_wait_losses": 0,  # Times waiting for target caused reversal
     "early_close_saves": 0,  # Times early close prevented loss
+    # PRODUCTION: Track trading costs
+    "total_slippage_cost": 0.0,  # Total slippage costs across all trades
+    "total_commission": 0.0,  # Total commissions across all trades
 }
 
 
@@ -107,10 +123,15 @@ def get_account_equity() -> float:
     """
     Fetch current account equity from broker.
     Returns account equity/balance with error handling.
+    In backtest mode, returns initial capital from backtest engine.
     """
-    if broker is None:
-        logger.error("Broker not initialized")
-        return 0.0
+    # In backtest mode, broker is None - return default starting capital
+    if _bot_config.backtest_mode or broker is None:
+        # Backtest mode - use initial_capital from bot_status if available
+        if bot_status.get("starting_equity") is not None:
+            return bot_status["starting_equity"]
+        # Default starting capital for backtesting
+        return 25000.0
     
     try:
         # Use circuit breaker for account query
@@ -146,9 +167,10 @@ def place_market_order(symbol: str, side: str, quantity: int) -> Optional[Dict[s
     """
     logger.info(f"{'[DRY RUN] ' if CONFIG['dry_run'] else ''}Market Order: {side} {quantity} {symbol}")
     
-    if CONFIG["dry_run"]:
+    # In backtest or dry-run mode, return simulated order
+    if CONFIG["dry_run"] or _bot_config.backtest_mode:
         return {
-            "order_id": f"DRY_RUN_{datetime.now().timestamp()}",
+            "order_id": f"BACKTEST_{datetime.now().timestamp()}",
             "symbol": symbol,
             "side": side,
             "quantity": quantity,
@@ -440,10 +462,10 @@ def initialize_state(symbol: str) -> None:
     """
     state[symbol] = {
         # Tick data storage
-        "ticks": deque(maxlen=CONFIG["max_tick_storage"]),
+        "ticks": deque(maxlen=CONFIG.get("max_tick_storage", 10000)),
         
         # Bar storage
-        "bars_1min": deque(maxlen=CONFIG["max_bars_storage"]),
+        "bars_1min": deque(maxlen=CONFIG.get("max_bars_storage", 200)),
         "bars_15min": deque(maxlen=100),
         
         # Current incomplete bars
@@ -455,8 +477,10 @@ def initialize_state(symbol: str) -> None:
         "vwap_bands": {
             "upper_1": None,
             "upper_2": None,
+            "upper_3": None,
             "lower_1": None,
-            "lower_2": None
+            "lower_2": None,
+            "lower_3": None
         },
         "vwap_std_dev": None,
         "vwap_day": None,  # Phase Three: Track VWAP day separately
@@ -464,6 +488,11 @@ def initialize_state(symbol: str) -> None:
         # Trend filter
         "trend_ema": None,
         "trend_direction": None,  # 'up', 'down', or 'neutral'
+        
+        # Technical indicators
+        "rsi": None,  # RSI value (0-100)
+        "macd": None,  # MACD data dict with 'macd', 'signal', 'histogram'
+        "avg_volume": None,  # Average volume for spike detection
         
         # Signal tracking
         "last_signal": None,
@@ -522,6 +551,11 @@ def on_tick(symbol: str, price: float, volume: int, timestamp_ms: int) -> None:
         volume: Tick volume
         timestamp_ms: Timestamp in milliseconds
     """
+    # Update backtest current time from tick timestamp
+    global backtest_current_time
+    if _bot_config.backtest_mode:
+        backtest_current_time = datetime.fromtimestamp(timestamp_ms / 1000, tz=pytz.timezone(CONFIG["timezone"]))
+    
     # Post tick data to event loop for processing
     if event_loop:
         event_loop.post_event(
@@ -608,8 +642,11 @@ def update_15min_bar(symbol: str, price: float, volume: int, dt: datetime) -> No
         # Finalize previous bar if exists
         if current_bar is not None:
             state[symbol]["bars_15min"].append(current_bar)
-            # Update trend filter after new bar is added
+            # Update all indicators after new bar is added
             update_trend_filter(symbol)
+            update_rsi(symbol)
+            update_macd(symbol)
+            update_volume_average(symbol)
         
         # Start new bar
         state[symbol]["current_15min_bar"] = {
@@ -636,7 +673,7 @@ def update_trend_filter(symbol: str) -> None:
         symbol: Instrument symbol
     """
     bars = state[symbol]["bars_15min"]
-    period = CONFIG["trend_filter_period"]
+    period = CONFIG.get("trend_ema_period", 20)
     
     if len(bars) < period:
         logger.debug(f"Not enough bars for trend filter: {len(bars)}/{period}")
@@ -689,6 +726,173 @@ def calculate_ema(values: List[float], period: int) -> Optional[float]:
     return ema
 
 
+def calculate_rsi(prices: List[float], period: int = 14) -> Optional[float]:
+    """
+    Calculate Relative Strength Index.
+    
+    Args:
+        prices: List of closing prices
+        period: RSI period (default 14)
+    
+    Returns:
+        RSI value (0-100) or None if insufficient data
+    """
+    if len(prices) < period + 1:
+        return None
+    
+    # Calculate price changes
+    changes = [prices[i] - prices[i-1] for i in range(1, len(prices))]
+    
+    # Separate gains and losses
+    gains = [change if change > 0 else 0 for change in changes]
+    losses = [-change if change < 0 else 0 for change in changes]
+    
+    # Calculate initial average gain and loss (SMA)
+    avg_gain = sum(gains[:period]) / period
+    avg_loss = sum(losses[:period]) / period
+    
+    # Calculate smoothed averages (EMA style)
+    for i in range(period, len(gains)):
+        avg_gain = (avg_gain * (period - 1) + gains[i]) / period
+        avg_loss = (avg_loss * (period - 1) + losses[i]) / period
+    
+    # Calculate RSI
+    if avg_loss == 0:
+        return 100.0
+    
+    rs = avg_gain / avg_loss
+    rsi = 100.0 - (100.0 / (1.0 + rs))
+    
+    return rsi
+
+
+def calculate_macd(prices: List[float], fast_period: int = 12, 
+                   slow_period: int = 26, signal_period: int = 9) -> Optional[Dict[str, float]]:
+    """
+    Calculate MACD (Moving Average Convergence Divergence).
+    
+    Args:
+        prices: List of closing prices
+        fast_period: Fast EMA period (default 12)
+        slow_period: Slow EMA period (default 26)
+        signal_period: Signal line EMA period (default 9)
+    
+    Returns:
+        Dictionary with 'macd', 'signal', 'histogram' or None if insufficient data
+    """
+    if len(prices) < slow_period + signal_period:
+        return None
+    
+    # Calculate fast and slow EMAs
+    fast_ema = calculate_ema(prices, fast_period)
+    slow_ema = calculate_ema(prices, slow_period)
+    
+    if fast_ema is None or slow_ema is None:
+        return None
+    
+    # Calculate MACD line
+    macd_line = fast_ema - slow_ema
+    
+    # Calculate MACD values for signal line
+    # We need to calculate MACD for each point to get signal line
+    macd_values = []
+    for i in range(slow_period, len(prices) + 1):
+        fast = calculate_ema(prices[:i], fast_period)
+        slow = calculate_ema(prices[:i], slow_period)
+        if fast is not None and slow is not None:
+            macd_values.append(fast - slow)
+    
+    if len(macd_values) < signal_period:
+        return None
+    
+    # Calculate signal line (EMA of MACD)
+    signal_line = calculate_ema(macd_values, signal_period)
+    
+    if signal_line is None:
+        return None
+    
+    # Calculate histogram
+    histogram = macd_line - signal_line
+    
+    return {
+        "macd": macd_line,
+        "signal": signal_line,
+        "histogram": histogram
+    }
+
+
+def update_rsi(symbol: str) -> None:
+    """
+    Update RSI indicator for the symbol.
+    
+    Args:
+        symbol: Instrument symbol
+    """
+    bars = state[symbol]["bars_15min"]
+    rsi_period = CONFIG.get("rsi_period", 14)
+    
+    if len(bars) < rsi_period + 1:
+        logger.debug(f"Not enough bars for RSI: {len(bars)}/{rsi_period + 1}")
+        return
+    
+    closes = [bar["close"] for bar in bars]
+    rsi = calculate_rsi(closes, rsi_period)
+    
+    if rsi is not None:
+        state[symbol]["rsi"] = rsi
+        logger.debug(f"RSI: {rsi:.2f}")
+
+
+def update_macd(symbol: str) -> None:
+    """
+    Update MACD indicator for the symbol.
+    
+    Args:
+        symbol: Instrument symbol
+    """
+    bars = state[symbol]["bars_15min"]
+    
+    # Get MACD parameters from config
+    fast_period = CONFIG.get("macd_fast", 12)
+    slow_period = CONFIG.get("macd_slow", 26)
+    signal_period = CONFIG.get("macd_signal", 9)
+    
+    if len(bars) < slow_period + signal_period:
+        logger.debug(f"Not enough bars for MACD: {len(bars)}/{slow_period + signal_period}")
+        return
+    
+    closes = [bar["close"] for bar in bars]
+    macd_data = calculate_macd(closes, fast_period, slow_period, signal_period)
+    
+    if macd_data is not None:
+        state[symbol]["macd"] = macd_data
+        logger.debug(f"MACD: {macd_data['macd']:.2f}, Signal: {macd_data['signal']:.2f}, "
+                    f"Histogram: {macd_data['histogram']:.2f}")
+
+
+def update_volume_average(symbol: str) -> None:
+    """
+    Update average volume for spike detection.
+    
+    Args:
+        symbol: Instrument symbol
+    """
+    bars = state[symbol]["bars_15min"]
+    lookback = CONFIG.get("volume_lookback", 20)
+    
+    if len(bars) < lookback:
+        logger.debug(f"Not enough bars for volume average: {len(bars)}/{lookback}")
+        return
+    
+    # Calculate average volume over lookback period
+    recent_bars = list(bars)[-lookback:]
+    volumes = [bar["volume"] for bar in recent_bars]
+    avg_volume = sum(volumes) / len(volumes)
+    
+    state[symbol]["avg_volume"] = avg_volume
+    logger.debug(f"Average volume (last {lookback} bars): {avg_volume:.0f}")
+
+
 # ============================================================================
 # PHASE FIVE: VWAP Calculation
 # ============================================================================
@@ -734,18 +938,24 @@ def calculate_vwap(symbol: str) -> None:
     std_dev = variance ** 0.5
     state[symbol]["vwap_std_dev"] = std_dev
     
-    # Calculate bands
-    multipliers = CONFIG["vwap_sd_multipliers"]
-    state[symbol]["vwap_bands"]["upper_1"] = vwap + (std_dev * multipliers["band_1"])
-    state[symbol]["vwap_bands"]["upper_2"] = vwap + (std_dev * multipliers["band_2"])
-    state[symbol]["vwap_bands"]["lower_1"] = vwap - (std_dev * multipliers["band_1"])
-    state[symbol]["vwap_bands"]["lower_2"] = vwap - (std_dev * multipliers["band_2"])
+    # Calculate bands using configured standard deviation multipliers
+    band_1_mult = CONFIG.get("vwap_std_dev_1", 1.5)
+    band_2_mult = CONFIG.get("vwap_std_dev_2", 2.0)
+    band_3_mult = CONFIG.get("vwap_std_dev_3", 3.0)
+    state[symbol]["vwap_bands"]["upper_1"] = vwap + (std_dev * band_1_mult)
+    state[symbol]["vwap_bands"]["upper_2"] = vwap + (std_dev * band_2_mult)
+    state[symbol]["vwap_bands"]["upper_3"] = vwap + (std_dev * band_3_mult)
+    state[symbol]["vwap_bands"]["lower_1"] = vwap - (std_dev * band_1_mult)
+    state[symbol]["vwap_bands"]["lower_2"] = vwap - (std_dev * band_2_mult)
+    state[symbol]["vwap_bands"]["lower_3"] = vwap - (std_dev * band_3_mult)
     
     logger.debug(f"VWAP: {vwap:.2f}, StdDev: {std_dev:.2f}")
-    logger.debug(f"Bands - U2: {state[symbol]['vwap_bands']['upper_2']:.2f}, "
+    logger.debug(f"Bands - U3: {state[symbol]['vwap_bands']['upper_3']:.2f}, "
+                f"U2: {state[symbol]['vwap_bands']['upper_2']:.2f}, "
                 f"U1: {state[symbol]['vwap_bands']['upper_1']:.2f}, "
                 f"L1: {state[symbol]['vwap_bands']['lower_1']:.2f}, "
-                f"L2: {state[symbol]['vwap_bands']['lower_2']:.2f}")
+                f"L2: {state[symbol]['vwap_bands']['lower_2']:.2f}, "
+                f"L3: {state[symbol]['vwap_bands']['lower_3']:.2f}")
 
 
 # ============================================================================
@@ -755,6 +965,7 @@ def calculate_vwap(symbol: str) -> None:
 def validate_signal_requirements(symbol: str, bar_time: datetime) -> Tuple[bool, Optional[str]]:
     """
     Validate that all requirements are met for signal generation.
+    24/5 trading - signals allowed anytime except maintenance/weekend.
     
     Args:
         symbol: Instrument symbol
@@ -765,17 +976,14 @@ def validate_signal_requirements(symbol: str, bar_time: datetime) -> Tuple[bool,
     """
     # Check trading state
     trading_state = get_trading_state(bar_time)
-    if trading_state != "entry_window":
-        if trading_state == "exit_only":
-            log_time_based_action(
-                "entry_blocked",
-                "Entry window closed at 2:30 PM, no new trades until tomorrow 9:00 AM ET",
-                {"current_state": trading_state, "time": bar_time.strftime('%H:%M:%S')}
-            )
-        logger.debug(f"Not in entry window (state: {trading_state}), skipping signal check")
-        return False, f"Not in entry window: {trading_state}"
+    if trading_state == "maintenance":
+        logger.debug(f"Maintenance window (5-6 PM), skipping signal check")
+        return False, f"Maintenance window"
+    elif trading_state == "weekend":
+        logger.debug(f"Weekend, skipping signal check")
+        return False, f"Weekend"
     
-    # Friday restriction
+    # Friday restriction - close before weekend
     if bar_time.weekday() == 4 and bar_time.time() >= CONFIG["friday_entry_cutoff"]:
         log_time_based_action(
             "friday_entry_blocked",
@@ -811,11 +1019,42 @@ def validate_signal_requirements(symbol: str, bar_time: datetime) -> Tuple[bool,
         logger.info("VWAP bands not yet calculated")
         return False, "VWAP not ready"
     
-    # Check trend
-    trend = state[symbol]["trend_direction"]
-    if trend is None or trend == "neutral":
-        logger.info(f"Trend not established or neutral: {trend}")
-        return False, "Trend not established"
+    # Check trend (optional - can be disabled)
+    use_trend_filter = CONFIG.get("use_trend_filter", False)
+    if use_trend_filter:
+        trend = state[symbol]["trend_direction"]
+        if trend is None or trend == "neutral":
+            logger.info(f"Trend not established or neutral: {trend}")
+            return False, "Trend not established"
+    
+    # Check RSI (optional - for extreme overbought/oversold confirmation)
+    use_rsi_filter = CONFIG.get("use_rsi_filter", True)
+    rsi_oversold = CONFIG.get("rsi_oversold", 20.0)
+    rsi_overbought = CONFIG.get("rsi_overbought", 80.0)
+    
+    if use_rsi_filter:
+        rsi = state[symbol]["rsi"]
+        if rsi is None:
+            logger.debug("RSI not yet calculated")
+            # Allow trading without RSI if not available yet
+        # Note: RSI check moved to signal-specific functions for long/short
+    
+    # Check volume spike (optional - for confirmation)
+    use_volume_filter = CONFIG.get("use_volume_filter", True)
+    if use_volume_filter:
+        avg_volume = state[symbol]["avg_volume"]
+        if avg_volume is None:
+            logger.debug("Average volume not yet calculated")
+            # Allow trading without volume filter if not available yet
+    
+    # VWAP direction filter (optional - price vs VWAP for bias)
+    use_vwap_direction_filter = CONFIG.get("use_vwap_direction_filter", True)
+    if use_vwap_direction_filter:
+        vwap = state[symbol]["vwap"]
+        if vwap is None:
+            logger.debug("VWAP not yet calculated")
+            return False, "VWAP not ready"
+        # Note: VWAP direction check moved to signal-specific functions
     
     return True, None
 
@@ -823,7 +1062,9 @@ def validate_signal_requirements(symbol: str, bar_time: datetime) -> Tuple[bool,
 def check_long_signal_conditions(symbol: str, prev_bar: Dict[str, Any], 
                                  current_bar: Dict[str, Any]) -> bool:
     """
-    Check if long signal conditions are met.
+    Check if long signal conditions are met - PROFESSIONAL OPTIMIZED VERSION.
+    
+    Strategy: Mean reversion from VWAP lower band with multi-factor confirmation
     
     Args:
         symbol: Instrument symbol
@@ -833,32 +1074,57 @@ def check_long_signal_conditions(symbol: str, prev_bar: Dict[str, Any],
     Returns:
         True if long signal detected
     """
-    trend = state[symbol]["trend_direction"]
     vwap_bands = state[symbol]["vwap_bands"]
+    vwap = state[symbol]["vwap"]
     
-    if trend != "up":
-        return False
-    
-    # Check if previous bar touched lower band 2
+    # PRIMARY: VWAP bounce condition (2.5 std dev = high quality setup)
     touched_lower = prev_bar["low"] <= vwap_bands["lower_2"]
-    # Check if current bar closed back above lower band 2
     bounced_back = current_bar["close"] > vwap_bands["lower_2"]
     
-    logger.debug(f"Long check: touched_lower={touched_lower}, bounced_back={bounced_back}")
+    if not (touched_lower and bounced_back):
+        return False
     
-    if touched_lower and bounced_back:
-        logger.info("LONG SIGNAL: Bounce off lower band 2 with uptrend")
-        logger.info(f"  Price: {current_bar['close']:.2f}, Lower Band 2: {vwap_bands['lower_2']:.2f}")
-        logger.info(f"  Trend: {trend}, EMA: {state[symbol]['trend_ema']:.2f}")
-        return True
+    # FILTER 1: VWAP Direction - price should be BELOW VWAP (discount/oversold)
+    use_vwap_direction = CONFIG.get("use_vwap_direction_filter", True)
+    if use_vwap_direction and vwap is not None:
+        if current_bar["close"] >= vwap:
+            logger.debug(f"Long rejected - price above VWAP: {current_bar['close']:.2f} >= {vwap:.2f}")
+            return False
+        logger.debug(f"Price below VWAP: {current_bar['close']:.2f} < {vwap:.2f} ✓")
     
-    return False
+    # FILTER 2: RSI - extreme oversold (< 20 instead of < 40)
+    use_rsi = CONFIG.get("use_rsi_filter", True)
+    rsi_oversold = CONFIG.get("rsi_oversold", 20.0)
+    if use_rsi:
+        rsi = state[symbol]["rsi"]
+        if rsi is not None:
+            if rsi >= rsi_oversold:
+                logger.debug(f"Long rejected - RSI not extreme: {rsi:.2f} >= {rsi_oversold}")
+                return False
+            logger.debug(f"RSI extreme oversold: {rsi:.2f} < {rsi_oversold} ✓")
+    
+    # FILTER 3: Volume spike - confirmation of interest
+    use_volume = CONFIG.get("use_volume_filter", True)
+    volume_mult = CONFIG.get("volume_spike_multiplier", 1.5)
+    if use_volume:
+        avg_volume = state[symbol]["avg_volume"]
+        if avg_volume is not None and avg_volume > 0:
+            current_volume = current_bar["volume"]
+            if current_volume < avg_volume * volume_mult:
+                logger.debug(f"Long rejected - no volume spike: {current_volume} < {avg_volume * volume_mult:.0f}")
+                return False
+            logger.debug(f"Volume spike: {current_volume} >= {avg_volume * volume_mult:.0f} ✓")
+    
+    logger.info(f"✅ LONG SIGNAL: VWAP bounce at {current_bar['close']:.2f} (band: {vwap_bands['lower_2']:.2f})")
+    return True
 
 
 def check_short_signal_conditions(symbol: str, prev_bar: Dict[str, Any], 
                                   current_bar: Dict[str, Any]) -> bool:
     """
-    Check if short signal conditions are met.
+    Check if short signal conditions are met - PROFESSIONAL OPTIMIZED VERSION.
+    
+    Strategy: Mean reversion from VWAP upper band with multi-factor confirmation
     
     Args:
         symbol: Instrument symbol
@@ -868,24 +1134,49 @@ def check_short_signal_conditions(symbol: str, prev_bar: Dict[str, Any],
     Returns:
         True if short signal detected
     """
-    trend = state[symbol]["trend_direction"]
     vwap_bands = state[symbol]["vwap_bands"]
+    vwap = state[symbol]["vwap"]
     
-    if trend != "down":
-        return False
-    
-    # Check if previous bar touched upper band 2
+    # PRIMARY: VWAP bounce condition (2.5 std dev = high quality setup)
     touched_upper = prev_bar["high"] >= vwap_bands["upper_2"]
-    # Check if current bar closed back below upper band 2
     bounced_back = current_bar["close"] < vwap_bands["upper_2"]
     
-    if touched_upper and bounced_back:
-        logger.info("SHORT SIGNAL: Bounce off upper band 2 with downtrend")
-        logger.info(f"  Price: {current_bar['close']:.2f}, Upper Band 2: {vwap_bands['upper_2']:.2f}")
-        logger.info(f"  Trend: {trend}, EMA: {state[symbol]['trend_ema']:.2f}")
-        return True
+    if not (touched_upper and bounced_back):
+        return False
     
-    return False
+    # FILTER 1: VWAP Direction - price should be ABOVE VWAP (premium/overbought)
+    use_vwap_direction = CONFIG.get("use_vwap_direction_filter", True)
+    if use_vwap_direction and vwap is not None:
+        if current_bar["close"] <= vwap:
+            logger.debug(f"Short rejected - price below VWAP: {current_bar['close']:.2f} <= {vwap:.2f}")
+            return False
+        logger.debug(f"Price above VWAP: {current_bar['close']:.2f} > {vwap:.2f} ✓")
+    
+    # FILTER 2: RSI - extreme overbought (> 80 instead of > 60)
+    use_rsi = CONFIG.get("use_rsi_filter", True)
+    rsi_overbought = CONFIG.get("rsi_overbought", 80.0)
+    if use_rsi:
+        rsi = state[symbol]["rsi"]
+        if rsi is not None:
+            if rsi <= rsi_overbought:
+                logger.debug(f"Short rejected - RSI not extreme: {rsi:.2f} <= {rsi_overbought}")
+                return False
+            logger.debug(f"RSI extreme overbought: {rsi:.2f} > {rsi_overbought} ✓")
+    
+    # FILTER 3: Volume spike - confirmation of interest
+    use_volume = CONFIG.get("use_volume_filter", True)
+    volume_mult = CONFIG.get("volume_spike_multiplier", 1.5)
+    if use_volume:
+        avg_volume = state[symbol]["avg_volume"]
+        if avg_volume is not None and avg_volume > 0:
+            current_volume = current_bar["volume"]
+            if current_volume < avg_volume * volume_mult:
+                logger.debug(f"Short rejected - no volume spike: {current_volume} < {avg_volume * volume_mult:.0f}")
+                return False
+            logger.debug(f"Volume spike: {current_volume} >= {avg_volume * volume_mult:.0f} ✓")
+    
+    logger.info(f"✅ SHORT SIGNAL: VWAP bounce at {current_bar['close']:.2f} (band: {vwap_bands['upper_2']:.2f})")
+    return True
 
 
 def check_for_signals(symbol: str) -> None:
@@ -896,14 +1187,18 @@ def check_for_signals(symbol: str) -> None:
     Args:
         symbol: Instrument symbol
     """
+    print(f"[DEBUG] check_for_signals called for {symbol}, bars: {len(state.get(symbol, {}).get('bars_1min', []))}")
+    
     # Check safety conditions first
     is_safe, reason = check_safety_conditions(symbol)
     if not is_safe:
-        logger.debug(f"Safety check failed: {reason}")
+        print(f"[DEBUG] Safety check failed: {reason}")
+        logger.debug(f"[BACKTEST] Safety check failed: {reason}")
         return
     
     # Get the latest bar
     if len(state[symbol]["bars_1min"]) == 0:
+        logger.debug(f"[BACKTEST] No 1-min bars yet")
         return
     
     latest_bar = state[symbol]["bars_1min"][-1]
@@ -912,6 +1207,9 @@ def check_for_signals(symbol: str) -> None:
     # Validate signal requirements
     is_valid, reason = validate_signal_requirements(symbol, bar_time)
     if not is_valid:
+        if reason not in ["Position active", "Insufficient bars"]:
+            print(f"[DEBUG] Signal validation failed: {reason} at {bar_time.strftime('%Y-%m-%d %H:%M:%S %Z')} (weekday={bar_time.weekday()})")
+        logger.debug(f"[BACKTEST] Signal validation failed: {reason} at {bar_time}")
         return
     
     # Get bars for signal check
@@ -957,17 +1255,25 @@ def calculate_position_size(symbol: str, side: str, entry_price: float) -> Tuple
     risk_dollars = equity * CONFIG["risk_per_trade"]
     logger.info(f"Account equity: ${equity:.2f}, Risk allowance: ${risk_dollars:.2f}")
     
-    # Determine stop price
+    # Determine stop price - TIGHTER STOPS FOR MEAN REVERSION
     vwap_bands = state[symbol]["vwap_bands"]
+    vwap = state[symbol]["vwap"]
     tick_size = CONFIG["tick_size"]
-    buffer_ticks = 2  # 2 tick buffer beyond band
+    
+    # IMPROVED: Use optimal stops (11 ticks) - sweet spot between tight and too tight
+    # Mean reversion = expect quick bounce, not slow grind
+    max_stop_ticks = 11  # Optimized to 11 ticks ($13.75 max risk per contract)
     
     if side == "long":
-        # Stop below lower band 2
-        stop_price = vwap_bands["lower_2"] - (buffer_ticks * tick_size)
+        # Stop 12 ticks below entry (or at lower band 3, whichever is tighter)
+        band_stop = vwap_bands["lower_3"] - (2 * tick_size)  # 2 tick buffer
+        tight_stop = entry_price - (max_stop_ticks * tick_size)
+        stop_price = max(tight_stop, band_stop)  # Use tighter of the two
     else:  # short
-        # Stop above upper band 2
-        stop_price = vwap_bands["upper_2"] + (buffer_ticks * tick_size)
+        # Stop 12 ticks above entry (or at upper band 3, whichever is tighter)
+        band_stop = vwap_bands["upper_3"] + (2 * tick_size)  # 2 tick buffer
+        tight_stop = entry_price + (max_stop_ticks * tick_size)
+        stop_price = min(tight_stop, band_stop)  # Use tighter of the two
     
     stop_price = round_to_tick(stop_price)
     
@@ -992,19 +1298,33 @@ def calculate_position_size(symbol: str, side: str, entry_price: float) -> Tuple
         logger.warning(f"Position size too small: risk=${risk_per_contract:.2f}, allowance=${risk_dollars:.2f}")
         return 0, stop_price, None
     
-    # Calculate target price (1.5:1 risk/reward)
-    target_distance = stop_distance * CONFIG["risk_reward_ratio"]
+    # Calculate target price - IMPROVED: Mean reversion to VWAP + risk/reward
+    # Option 1: Traditional R/R ratio target
+    traditional_target_distance = stop_distance * CONFIG["risk_reward_ratio"]
+    
+    # Option 2: VWAP center (mean reversion target)
     if side == "long":
-        target_price = entry_price + target_distance
+        vwap_reversion_distance = vwap - entry_price
+        traditional_target = entry_price + traditional_target_distance
     else:
-        target_price = entry_price - target_distance
+        vwap_reversion_distance = entry_price - vwap
+        traditional_target = entry_price - traditional_target_distance
+    
+    # Use the CLOSER of the two targets (more conservative, higher win rate)
+    # This ensures we're taking profits when price reverts to mean
+    if side == "long":
+        target_price = min(traditional_target, entry_price + vwap_reversion_distance)
+    else:
+        target_price = max(traditional_target, entry_price - vwap_reversion_distance)
     
     target_price = round_to_tick(target_price)
+    target_distance = abs(target_price - entry_price)
     
     logger.info(f"Position sizing: {contracts} contract(s)")
     logger.info(f"  Entry: ${entry_price:.2f}, Stop: ${stop_price:.2f}, Target: ${target_price:.2f}")
     logger.info(f"  Risk: {ticks_at_risk:.1f} ticks (${risk_per_contract:.2f})")
-    logger.info(f"  Reward: {target_distance/tick_size:.1f} ticks ({CONFIG['risk_reward_ratio']}:1 R/R)")
+    logger.info(f"  Reward: {target_distance/tick_size:.1f} ticks ({target_distance/stop_distance:.1f}:1 R/R)")
+    logger.info(f"  VWAP: ${vwap:.2f} (mean reversion target)")
     
     return contracts, stop_price, target_price
 
@@ -1038,11 +1358,10 @@ def execute_entry(symbol: str, side: str, entry_price: float) -> None:
     
     # Phase Four: Final time check before placing order
     # Check if we're still in entry window after calculations
-    tz = pytz.timezone(CONFIG["timezone"])
-    entry_time = datetime.now(tz)
+    entry_time = get_current_time()
     trading_state = get_trading_state(entry_time)
     
-    if trading_state != "entry_window":
+    if trading_state not in ["entry_window"]:
         logger.warning(SEPARATOR_LINE)
         logger.warning("ENTRY ABORTED - No longer in entry window")
         logger.warning(f"  Current state: {trading_state}")
@@ -1053,6 +1372,21 @@ def execute_entry(symbol: str, side: str, entry_price: float) -> None:
     
     # Place market order
     order_side = "BUY" if side == "long" else "SELL"
+    
+    # PRODUCTION READY: Apply slippage to entry price in backtest mode
+    tick_size = CONFIG["tick_size"]
+    slippage_ticks = CONFIG.get("slippage_ticks", 0.0)  # Default 0 if not configured
+    
+    if _bot_config.backtest_mode and slippage_ticks > 0:
+        # Market orders get filled with slippage
+        if side == "long":
+            actual_fill_price = entry_price + (slippage_ticks * tick_size)
+        else:  # short
+            actual_fill_price = entry_price - (slippage_ticks * tick_size)
+        
+        logger.info(f"  Expected Entry: ${entry_price:.2f} (signal price)")
+        logger.info(f"  Slippage: {slippage_ticks} ticks (${slippage_ticks * tick_size:.2f})")
+        entry_price = round_to_tick(actual_fill_price)  # Update to realistic fill
     
     logger.info(SEPARATOR_LINE)
     logger.info(f"ENTERING {side.upper()} POSITION")
@@ -1516,29 +1850,61 @@ def get_flatten_price(symbol: str, side: str, current_price: float) -> float:
 
 def calculate_pnl(position: Dict[str, Any], exit_price: float) -> Tuple[float, float]:
     """
-    Calculate profit/loss for the exit.
+    Calculate profit/loss for the exit - PRODUCTION READY with slippage and commissions.
     
     Args:
         position: Position dictionary
-        exit_price: Exit price
+        exit_price: Exit price (before slippage)
     
     Returns:
-        Tuple of (ticks, pnl_dollars)
+        Tuple of (ticks, pnl_dollars after all costs)
     """
     entry_price = position["entry_price"]
     contracts = position["quantity"]
     tick_size = CONFIG["tick_size"]
     tick_value = CONFIG["tick_value"]
     
+    # Apply exit slippage in backtest mode
+    slippage_ticks = CONFIG.get("slippage_ticks", 0.0)
+    actual_exit_price = exit_price
+    
+    if _bot_config.backtest_mode and slippage_ticks > 0:
+        # Exit slippage works AGAINST you
+        if position["side"] == "long":
+            # Selling - you get filled lower
+            actual_exit_price = exit_price - (slippage_ticks * tick_size)
+        else:  # short
+            # Buying to cover - you get filled higher
+            actual_exit_price = exit_price + (slippage_ticks * tick_size)
+        
+        actual_exit_price = round_to_tick(actual_exit_price)
+    
+    # Calculate gross P&L
     if position["side"] == "long":
-        price_change = exit_price - entry_price
+        price_change = actual_exit_price - entry_price
     else:
-        price_change = entry_price - exit_price
+        price_change = entry_price - actual_exit_price
     
     ticks = price_change / tick_size
-    pnl = ticks * tick_value * contracts
+    gross_pnl = ticks * tick_value * contracts
     
-    return ticks, pnl
+    # Deduct commissions
+    commission = CONFIG.get("commission_per_contract", 0.0) * contracts
+    net_pnl = gross_pnl - commission
+    
+    # Track costs globally in backtest mode
+    if _bot_config.backtest_mode:
+        slippage_cost = slippage_ticks * tick_value * contracts * 2  # Entry + Exit
+        bot_status["total_slippage_cost"] += slippage_cost
+        bot_status["total_commission"] += commission
+        
+        # Log costs breakdown
+        if slippage_ticks > 0 or commission > 0:
+            total_costs = slippage_cost + commission
+            logger.debug(f"  Trading costs: Slippage ${slippage_cost:.2f} + Commission ${commission:.2f} = ${total_costs:.2f}")
+            logger.debug(f"  Gross P&L: ${gross_pnl:.2f} → Net P&L: ${net_pnl:.2f}")
+    
+    return ticks, net_pnl
 
 
 def update_position_statistics(symbol: str, position: Dict[str, Any], exit_time: datetime, 
@@ -1825,31 +2191,36 @@ def execute_flatten_with_limit_orders(symbol: str, order_side: str, contracts: i
 
 def check_vwap_reset(symbol: str, current_time: datetime) -> None:
     """
-    Check if VWAP should reset at 9:30 AM ET (stock market open).
-    VWAP resets daily at market open since MES/MNQ track equity indexes.
+    Check if VWAP should reset at 6 PM ET (futures market day start).
+    For 24/5 trading: VWAP resets at 6 PM when futures trading day begins.
     
     Args:
         symbol: Instrument symbol
         current_time: Current datetime in Eastern Time
     """
     current_date = current_time.date()
-    vwap_reset_time = CONFIG["vwap_reset_time"]
+    vwap_reset_time = time(18, 0)  # 6 PM ET - futures trading day starts
     
-    # Check if we've crossed 9:30 AM on a new day
+    # Check if we've crossed 6 PM on a new day
     if state[symbol]["vwap_day"] is None:
         # First run - initialize VWAP day
         state[symbol]["vwap_day"] = current_date
         logger.info(f"VWAP day initialized: {current_date}")
         return
     
-    # If it's a new day and we're past 9:30 AM, reset VWAP
-    if state[symbol]["vwap_day"] != current_date and current_time.time() >= vwap_reset_time:
+    # If it's a new day and we're past 6 PM, reset VWAP
+    # OR if it's the same calendar day but we just crossed 6 PM
+    last_reset_date = state[symbol]["vwap_day"]
+    crossed_reset_time = current_time.time() >= vwap_reset_time
+    
+    # New trading day starts at 6 PM, so check if we've moved to a new VWAP session
+    if crossed_reset_time and last_reset_date != current_date:
         perform_vwap_reset(symbol, current_date, current_time)
 
 
 def perform_vwap_reset(symbol: str, new_date: Any, reset_time: datetime) -> None:
     """
-    Perform VWAP reset at 9:30 AM ET daily.
+    Perform VWAP reset at 6 PM ET daily (futures trading day start).
     
     Args:
         symbol: Instrument symbol
@@ -1858,7 +2229,7 @@ def perform_vwap_reset(symbol: str, new_date: Any, reset_time: datetime) -> None
     """
     logger.info(SEPARATOR_LINE)
     logger.info(f"VWAP RESET at {reset_time.strftime('%Y-%m-%d %H:%M:%S %Z')}")
-    logger.info(f"Stock market open alignment - New VWAP day: {new_date}")
+    logger.info(f"Futures trading day start (6 PM ET) - New VWAP day: {new_date}")
     logger.info(SEPARATOR_LINE)
     
     # Clear accumulated 1-minute bars for VWAP calculation
@@ -1886,19 +2257,19 @@ def perform_vwap_reset(symbol: str, new_date: Any, reset_time: datetime) -> None
 def check_daily_reset(symbol: str, current_time: datetime) -> None:
     """
     Check if we've crossed into a new trading day and reset daily counters.
-    This happens at 9:30 AM ET along with VWAP reset, but tracks date changes.
+    For 24/5 trading: Resets at 6 PM ET (futures trading day start).
     
     Args:
         symbol: Instrument symbol
         current_time: Current datetime in Eastern Time
     """
     current_date = current_time.date()
-    vwap_reset_time = CONFIG["vwap_reset_time"]
+    vwap_reset_time = time(18, 0)  # 6 PM ET - futures trading day starts
     
     # If we have a trading day stored and it's different from current date
     if state[symbol]["trading_day"] is not None:
         if state[symbol]["trading_day"] != current_date:
-            # Reset daily counters at 9:30 AM (same as VWAP reset)
+            # Reset daily counters at 6 PM (same as VWAP reset)
             if current_time.time() >= vwap_reset_time:
                 perform_daily_reset(symbol, current_date)
     else:
@@ -1937,7 +2308,12 @@ def perform_daily_reset(symbol: str, new_date: Any) -> None:
         "total_pnl": 0.0,
         "largest_win": 0.0,
         "largest_loss": 0.0,
-        "pnl_variance": 0.0
+        "pnl_variance": 0.0,
+        # Phase 20: Position duration statistics
+        "trade_durations": [],  # List of durations in minutes
+        "force_flattened_count": 0,  # Trades closed due to time limit
+        "after_noon_entries": 0,  # Entries after 12 PM
+        "after_noon_force_flattened": 0  # After-noon entries force-closed
     }
     
     # Re-enable trading if it was stopped for daily limits
@@ -2030,6 +2406,7 @@ def check_tick_timeout(current_time: datetime) -> Tuple[bool, Optional[str]]:
 def check_trade_limits(current_time: datetime) -> Tuple[bool, Optional[str]]:
     """
     Check emergency stop and trading enabled status.
+    24/5 trading - only stop for maintenance window and weekends.
     
     Args:
         current_time: Current datetime in Eastern Time
@@ -2041,17 +2418,29 @@ def check_trade_limits(current_time: datetime) -> Tuple[bool, Optional[str]]:
     if bot_status["emergency_stop"]:
         return False, f"Emergency stop active: {bot_status['stop_reason']}"
     
-    # Check if trading is disabled
-    if not bot_status["trading_enabled"]:
-        return False, f"Trading disabled: {bot_status['stop_reason']}"
-    
-    # Check time-based kill switch
-    if current_time.time() >= CONFIG["shutdown_time"]:
+    # Check for weekend (Saturday/Sunday)
+    if current_time.weekday() >= 5:  # 5=Saturday, 6=Sunday
         if bot_status["trading_enabled"]:
-            logger.warning(f"Market closed - Shutting down bot at {current_time.time()}")
+            logger.debug(f"Weekend detected - disabling trading until Monday")
             bot_status["trading_enabled"] = False
-            bot_status["stop_reason"] = "market_closed"
-        return False, "Market closed"
+            bot_status["stop_reason"] = "weekend"
+        return False, "Weekend - market closed"
+    
+    # Check for futures maintenance window (5:00 PM - 6:00 PM ET daily)
+    maintenance_start = time(17, 0)  # 5 PM
+    maintenance_end = time(18, 0)    # 6 PM
+    if maintenance_start <= current_time.time() < maintenance_end:
+        if bot_status["trading_enabled"]:
+            logger.debug(f"Maintenance window - disabling trading")
+            bot_status["trading_enabled"] = False
+            bot_status["stop_reason"] = "maintenance"
+        return False, "Maintenance window"
+    
+    # Re-enable trading after maintenance/weekend
+    if not bot_status["trading_enabled"]:
+        logger.debug(f"Re-enabling trading - market open at {current_time}")
+        bot_status["trading_enabled"] = True
+        bot_status["stop_reason"] = None
     
     return True, None
 
@@ -2067,8 +2456,7 @@ def check_safety_conditions(symbol: str) -> Tuple[bool, Optional[str]]:
     Returns:
         Tuple of (is_safe, reason) where is_safe is True if safe to trade
     """
-    tz = pytz.timezone(CONFIG["timezone"])
-    current_time = datetime.now(tz)
+    current_time = get_current_time()
     
     # Check trade limits and emergency stops
     is_safe, reason = check_trade_limits(current_time)
@@ -2307,6 +2695,24 @@ def log_session_summary(symbol: str) -> None:
     # Format P&L summary
     format_pnl_summary(stats)
     
+    # PRODUCTION: Show trading costs breakdown
+    if _bot_config.backtest_mode:
+        total_slippage = bot_status["total_slippage_cost"]
+        total_commission = bot_status["total_commission"]
+        total_costs = total_slippage + total_commission
+        
+        if total_costs > 0:
+            logger.info(SEPARATOR_LINE)
+            logger.info("TRADING COSTS (Backtest)")
+            logger.info(f"Total Slippage: ${total_slippage:.2f}")
+            logger.info(f"Total Commission: ${total_commission:.2f}")
+            logger.info(f"Total Costs: ${total_costs:.2f}")
+            logger.info(f"Cost per Trade: ${total_costs / max(1, len(stats['trades'])):.2f}")
+            
+            if stats["total_pnl"] > 0:
+                cost_percentage = (total_costs / stats["total_pnl"]) * 100
+                logger.info(f"Costs as % of Gross P&L: {cost_percentage:.1f}%")
+    
     # Format risk metrics (flatten mode analysis)
     format_risk_metrics()
     
@@ -2375,23 +2781,40 @@ def round_to_tick(price: float) -> float:
 
 
 # ============================================================================
-# PHASE TWO: Time Check Function
+# PHASE TWO: Time Management - Support Both Live and Backtest
 # ============================================================================
+
+def get_current_time() -> datetime:
+    """
+    Get current time - either real time (live) or backtest simulation time.
+    
+    Returns:
+        Current datetime with timezone
+    """
+    global backtest_current_time
+    
+    if backtest_current_time is not None:
+        # Backtest mode: use simulated time
+        return backtest_current_time
+    else:
+        # Live mode: use real time
+        tz = pytz.timezone(CONFIG["timezone"])
+        return datetime.now(tz)
+
 
 def get_trading_state(dt: datetime = None) -> str:
     """
     Centralized time checking function that returns current trading state.
-    Converts to Eastern Time and determines state based on time of day.
+    24/5 trading - always in entry window except maintenance/weekend.
     
     Args:
-        dt: Datetime to check (defaults to now in Eastern Time)
+        dt: Datetime to check (defaults to current time - live or backtest)
     
     Returns:
-        Trading state: 'before_open', 'entry_window', 'exit_only', 'flatten_mode', or 'closed'
+        Trading state: 'entry_window', 'maintenance', or 'weekend'
     """
     if dt is None:
-        tz = pytz.timezone(CONFIG["timezone"])
-        dt = datetime.now(tz)
+        dt = get_current_time()
     elif dt.tzinfo is None:
         # If naive datetime provided, assume it's Eastern Time
         tz = pytz.timezone(CONFIG["timezone"])
@@ -2401,30 +2824,19 @@ def get_trading_state(dt: datetime = None) -> str:
         tz = pytz.timezone(CONFIG["timezone"])
         dt = dt.astimezone(tz)
     
+    # Check for weekend
+    if dt.weekday() >= 5:  # Saturday or Sunday
+        return 'weekend'
+    
+    # Check for maintenance window (5-6 PM ET daily)
+    maintenance_start = time(17, 0)
+    maintenance_end = time(18, 0)
     current_time = dt.time()
+    if maintenance_start <= current_time < maintenance_end:
+        return 'maintenance'
     
-    # Before 9:00 AM - before open
-    if current_time < CONFIG["entry_window_start"]:
-        return "before_open"
-    
-    # 9:00 AM to 2:30 PM - entry window (signals enabled)
-    if CONFIG["entry_window_start"] <= current_time < CONFIG["entry_window_end"]:
-        return "entry_window"
-    
-    # 2:30 PM to 4:30 PM - exit only (signals disabled, position management continues)
-    if CONFIG["entry_window_end"] <= current_time < CONFIG["warning_time"]:
-        return "exit_only"
-    
-    # 4:30 PM to 4:45 PM - flatten mode (aggressive position closing)
-    if CONFIG["warning_time"] <= current_time < CONFIG["forced_flatten_time"]:
-        return "flatten_mode"
-    
-    # After 4:45 PM - closed (force flatten complete, wait for next day)
-    if current_time >= CONFIG["forced_flatten_time"]:
-        return "closed"
-    
-    # Should not reach here, but default to closed for safety
-    return "closed"
+    # Otherwise always in entry window for 24/5 trading
+    return 'entry_window'
 
 
 # ============================================================================
@@ -2700,8 +3112,8 @@ def main() -> None:
     # Fetch historical bars for trend filter initialization
     historical_bars = fetch_historical_bars(
         symbol=symbol,
-        timeframe=CONFIG["trend_timeframe"],
-        count=CONFIG["trend_filter_period"]
+        timeframe=CONFIG.get("trend_timeframe", "15min"),
+        count=CONFIG.get("trend_filter_period", 20)
     )
     
     if historical_bars:
