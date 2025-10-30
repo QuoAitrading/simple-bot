@@ -67,7 +67,7 @@ def example_passive_vs_aggressive():
     
     # Calculate savings
     quote = params['quote']
-    passive_cost = quote.bid_price - quote.bid_price  # $0 (join bid)
+    passive_cost = 0.0  # $0 (join bid, no spread cost)
     aggressive_cost = quote.ask_price - quote.bid_price  # Full spread
     savings = aggressive_cost - passive_cost
     
