@@ -14,6 +14,7 @@ import pytz
 from config import load_config, BotConfiguration
 from event_loop import EventLoop, EventType, EventPriority, TimerManager
 from error_recovery import ErrorRecoveryManager, ErrorType as RecoveryErrorType
+from bid_ask_manager import BidAskManager, BidAskQuote
 
 # Conditionally import broker (only needed for live trading, not backtesting)
 try:
@@ -47,6 +48,9 @@ recovery_manager: Optional[ErrorRecoveryManager] = None
 
 # Global timer manager
 timer_manager: Optional[TimerManager] = None
+
+# Global bid/ask manager
+bid_ask_manager: Optional[BidAskManager] = None
 
 # State management dictionary
 state: Dict[str, Any] = {}
@@ -540,6 +544,33 @@ def initialize_state(symbol: str) -> None:
 # ============================================================================
 # PHASE FOUR: Data Processing Pipeline
 # ============================================================================
+
+def on_quote(symbol: str, bid_price: float, ask_price: float, bid_size: int, 
+             ask_size: int, last_price: float, timestamp_ms: int) -> None:
+    """
+    Handle incoming bid/ask quote data.
+    Updates bid/ask manager with real-time quote information.
+    
+    Args:
+        symbol: Instrument symbol
+        bid_price: Current bid price
+        ask_price: Current ask price
+        bid_size: Bid size (contracts)
+        ask_size: Ask size (contracts)
+        last_price: Last trade price
+        timestamp_ms: Quote timestamp in milliseconds
+    """
+    if bid_ask_manager is not None:
+        bid_ask_manager.update_quote(
+            symbol=symbol,
+            bid_price=bid_price,
+            ask_price=ask_price,
+            bid_size=bid_size,
+            ask_size=ask_size,
+            last_price=last_price,
+            timestamp=timestamp_ms
+        )
+
 
 def on_tick(symbol: str, price: float, volume: int, timestamp_ms: int) -> None:
     """
@@ -1056,6 +1087,30 @@ def validate_signal_requirements(symbol: str, bar_time: datetime) -> Tuple[bool,
             return False, "VWAP not ready"
         # Note: VWAP direction check moved to signal-specific functions
     
+    # Check bid/ask spread and market condition (Phase: Bid/Ask Strategy)
+    if bid_ask_manager is not None:
+        # Validate spread (Requirement 8)
+        is_acceptable, spread_reason = bid_ask_manager.validate_entry_spread(symbol)
+        if not is_acceptable:
+            logger.info(f"Spread check failed: {spread_reason}")
+            return False, spread_reason
+        
+        # Classify market condition (Requirement 11)
+        try:
+            condition, condition_reason = bid_ask_manager.classify_market_condition(symbol)
+            logger.info(f"Market Condition: {condition.upper()} - {condition_reason}")
+            
+            # Skip trading in stressed markets
+            if condition == "stressed":
+                logger.warning("Market is stressed - skipping trade")
+                return False, "Stressed market conditions"
+            
+            # Warn about illiquid markets (position size already adjusted in execute_entry)
+            if condition == "illiquid":
+                logger.warning("Illiquid market detected - position size will be adjusted")
+        except Exception as e:
+            logger.warning(f"Could not classify market: {e}")
+    
     return True, None
 
 
@@ -1336,12 +1391,12 @@ def calculate_position_size(symbol: str, side: str, entry_price: float) -> Tuple
 def execute_entry(symbol: str, side: str, entry_price: float) -> None:
     """
     Execute entry order with stop loss and target.
-    Phase Four: Double time check before placing entry order.
+    Uses intelligent bid/ask order placement strategy.
     
     Args:
         symbol: Instrument symbol
         side: 'long' or 'short'
-        entry_price: Approximate entry price
+        entry_price: Approximate entry price (mid or last)
     """
     # Calculate position size
     contracts, stop_price, target_price = calculate_position_size(symbol, side, entry_price)
@@ -1357,7 +1412,6 @@ def execute_entry(symbol: str, side: str, entry_price: float) -> None:
         return
     
     # Phase Four: Final time check before placing order
-    # Check if we're still in entry window after calculations
     entry_time = get_current_time()
     trading_state = get_trading_state(entry_time)
     
@@ -1366,54 +1420,184 @@ def execute_entry(symbol: str, side: str, entry_price: float) -> None:
         logger.warning("ENTRY ABORTED - No longer in entry window")
         logger.warning(f"  Current state: {trading_state}")
         logger.warning(f"  Time: {entry_time.strftime('%H:%M:%S %Z')}")
-        logger.warning("  Signal triggered but calculations took too long")
         logger.warning(SEPARATOR_LINE)
         return
-    
-    # Place market order
-    order_side = "BUY" if side == "long" else "SELL"
-    
-    # PRODUCTION READY: Apply slippage to entry price in backtest mode
-    tick_size = CONFIG["tick_size"]
-    slippage_ticks = CONFIG.get("slippage_ticks", 0.0)  # Default 0 if not configured
-    
-    if _bot_config.backtest_mode and slippage_ticks > 0:
-        # Market orders get filled with slippage
-        if side == "long":
-            actual_fill_price = entry_price + (slippage_ticks * tick_size)
-        else:  # short
-            actual_fill_price = entry_price - (slippage_ticks * tick_size)
-        
-        logger.info(f"  Expected Entry: ${entry_price:.2f} (signal price)")
-        logger.info(f"  Slippage: {slippage_ticks} ticks (${slippage_ticks * tick_size:.2f})")
-        entry_price = round_to_tick(actual_fill_price)  # Update to realistic fill
     
     logger.info(SEPARATOR_LINE)
     logger.info(f"ENTERING {side.upper()} POSITION")
     logger.info(f"  Time: {entry_time.strftime('%Y-%m-%d %H:%M:%S %Z')}")
     logger.info(f"  Symbol: {symbol}")
+    
+    # Spread-aware position sizing (Requirement 10)
+    original_contracts = contracts
+    if bid_ask_manager is not None:
+        try:
+            expected_profit_ticks = abs(target_price - entry_price) / CONFIG["tick_size"]
+            adjusted_contracts, cost_breakdown = bid_ask_manager.calculate_spread_aware_position_size(
+                symbol, contracts, expected_profit_ticks
+            )
+            if adjusted_contracts != original_contracts:
+                logger.warning(f"  Position size adjusted: {original_contracts} -> {adjusted_contracts} contracts")
+                logger.info(f"  Spread cost: {cost_breakdown['cost_percentage']:.1f}% of expected profit")
+                contracts = adjusted_contracts
+        except Exception as e:
+            logger.warning(f"  Spread-aware sizing unavailable: {e}")
+    
     logger.info(f"  Contracts: {contracts}")
-    logger.info(f"  Entry Price: ${entry_price:.2f}")
     logger.info(f"  Stop Loss: ${stop_price:.2f}")
     logger.info(f"  Target: ${target_price:.2f}")
     
-    # Place market order
-    order = place_market_order(symbol, order_side, contracts)
+    # Track order execution details for post-trade analysis
+    fill_start_time = datetime.now()
+    order_type_used = "market"  # Default
+    
+    # Get intelligent order placement strategy from bid/ask manager
+    order_side = "BUY" if side == "long" else "SELL"
+    actual_fill_price = entry_price
+    order = None
+    
+    if bid_ask_manager is not None:
+        try:
+            # Get order parameters from bid/ask manager
+            order_params = bid_ask_manager.get_entry_order_params(symbol, side, contracts)
+            
+            logger.info(f"  Order Strategy: {order_params['strategy']}")
+            logger.info(f"  Reason: {order_params['reason']}")
+            
+            if order_params['strategy'] == 'passive':
+                # Try passive entry first (at bid for long, at ask for short)
+                limit_price = order_params['limit_price']
+                logger.info(f"  Passive Entry: ${limit_price:.2f} (saving spread)")
+                logger.info(f"  Timeout: {order_params['timeout']}s")
+                
+                order = place_limit_order(symbol, order_side, contracts, limit_price)
+                if order:
+                    # Wait for fill or timeout
+                    import time
+                    time.sleep(order_params['timeout'])
+                    
+                    # Check if filled
+                    current_position = get_position_quantity(symbol)
+                    expected_qty = contracts if side == "long" else -contracts
+                    
+                    if abs(current_position) == abs(expected_qty):
+                        # Successfully filled at passive price
+                        actual_fill_price = limit_price
+                        order_type_used = "passive"
+                        logger.info(f"  ✓ Passive fill at ${limit_price:.2f}")
+                    else:
+                        # Not filled, fallback to aggressive
+                        logger.warning("  ✗ Passive order not filled, using aggressive fallback")
+                        aggressive_price = order_params['fallback_price']
+                        order = place_limit_order(symbol, order_side, contracts, aggressive_price)
+                        actual_fill_price = aggressive_price
+                        order_type_used = "aggressive"
+                        logger.info(f"  Aggressive Entry: ${aggressive_price:.2f}")
+                else:
+                    # Passive order failed, use aggressive
+                    logger.warning("  Passive order placement failed, using aggressive")
+                    aggressive_price = order_params['fallback_price']
+                    order = place_limit_order(symbol, order_side, contracts, aggressive_price)
+                    actual_fill_price = aggressive_price
+                    order_type_used = "aggressive"
+                    
+            elif order_params['strategy'] == 'aggressive':
+                # Use aggressive entry (cross the spread immediately)
+                limit_price = order_params['limit_price']
+                logger.info(f"  Aggressive Entry: ${limit_price:.2f} (guaranteed fill)")
+                order = place_limit_order(symbol, order_side, contracts, limit_price)
+                actual_fill_price = limit_price
+                order_type_used = "aggressive"
+                
+            elif order_params['strategy'] == 'mixed':
+                # Split order between passive and aggressive
+                passive_qty = order_params['passive_contracts']
+                aggressive_qty = order_params['aggressive_contracts']
+                passive_price = order_params['passive_price']
+                aggressive_price = order_params['aggressive_price']
+                
+                logger.info(f"  Mixed Strategy: {passive_qty} @ ${passive_price:.2f} (passive) + {aggressive_qty} @ ${aggressive_price:.2f} (aggressive)")
+                
+                # Place passive portion
+                passive_order = place_limit_order(symbol, order_side, passive_qty, passive_price)
+                # Place aggressive portion
+                aggressive_order = place_limit_order(symbol, order_side, aggressive_qty, aggressive_price)
+                
+                # Use weighted average fill price
+                actual_fill_price = (passive_price * passive_qty + aggressive_price * aggressive_qty) / contracts
+                order = aggressive_order  # Use aggressive order for tracking
+            
+        except Exception as e:
+            logger.error(f"Error using bid/ask manager for entry: {e}")
+            logger.info("Falling back to market order")
+            order = place_market_order(symbol, order_side, contracts)
+            actual_fill_price = entry_price
+    else:
+        # No bid/ask manager, use traditional market order
+        logger.info("  Using market order (no bid/ask manager)")
+        
+        # PRODUCTION: Apply slippage in backtest mode
+        tick_size = CONFIG["tick_size"]
+        slippage_ticks = CONFIG.get("slippage_ticks", 0.0)
+        
+        if _bot_config.backtest_mode and slippage_ticks > 0:
+            if side == "long":
+                actual_fill_price = entry_price + (slippage_ticks * tick_size)
+            else:
+                actual_fill_price = entry_price - (slippage_ticks * tick_size)
+            actual_fill_price = round_to_tick(actual_fill_price)
+            logger.info(f"  Slippage: {slippage_ticks} ticks")
+        
+        order = place_market_order(symbol, order_side, contracts)
     
     if order is None:
         logger.error("Failed to place entry order")
         return
+    
+    logger.info(f"  Actual Entry Price: ${actual_fill_price:.2f}")
+    
+    # Record trade execution for cost tracking (Requirement 5)
+    if bid_ask_manager is not None:
+        try:
+            fill_time_seconds = (datetime.now() - fill_start_time).total_seconds()
+            bid_ask_manager.record_trade_execution(
+                symbol=symbol,
+                side=side,
+                signal_price=entry_price,
+                fill_price=actual_fill_price,
+                quantity=contracts,
+                order_type=order_type_used
+            )
+            
+            # Record for post-trade analysis (Requirement 13)
+            quote = bid_ask_manager.get_current_quote(symbol)
+            if quote:
+                estimated_costs = {"total": quote.spread}
+                actual_costs = {"total": abs(actual_fill_price - entry_price)}
+                bid_ask_manager.record_post_trade_analysis(
+                    signal_price=entry_price,
+                    fill_price=actual_fill_price,
+                    side=side,
+                    order_type=order_type_used,
+                    spread_at_order=quote.spread,
+                    fill_time_seconds=fill_time_seconds,
+                    estimated_costs=estimated_costs,
+                    actual_costs=actual_costs
+                )
+        except Exception as e:
+            logger.warning(f"  Could not record trade execution: {e}")
     
     # Update position tracking
     state[symbol]["position"] = {
         "active": True,
         "side": side,
         "quantity": contracts,
-        "entry_price": entry_price,
+        "entry_price": actual_fill_price,
         "stop_price": stop_price,
         "target_price": target_price,
         "entry_time": entry_time,
-        "order_id": order.get("order_id")
+        "order_id": order.get("order_id"),
+        "order_type_used": order_type_used  # Track for exit optimization
     }
     
     # Place stop loss order
@@ -1942,7 +2126,8 @@ def update_position_statistics(symbol: str, position: Dict[str, Any], exit_time:
 
 def handle_exit_orders(symbol: str, position: Dict[str, Any], exit_price: float, reason: str) -> None:
     """
-    Handle exit order placement (flatten vs normal).
+    Handle exit order placement using intelligent bid/ask optimization.
+    Requirement 9: Exit Order Optimization
     
     Args:
         symbol: Instrument symbol
@@ -1953,7 +2138,74 @@ def handle_exit_orders(symbol: str, position: Dict[str, Any], exit_price: float,
     order_side = "SELL" if position["side"] == "long" else "BUY"
     contracts = position["quantity"]
     
-    # Determine if flatten mode
+    # Determine exit type based on reason
+    exit_type_map = {
+        "target_reached": "target",
+        "stop_loss": "stop",
+        "flatten_mode_exit": "time_flatten",
+        "time_based_profit_take": "time_flatten",
+        "time_based_loss_cut": "time_flatten",
+        "emergency_forced_flatten": "time_flatten",
+        "signal_reversal": "partial",
+        "early_profit_lock": "partial"
+    }
+    exit_type = exit_type_map.get(reason, "stop")  # Default to stop for safety
+    
+    # Use bid/ask manager for intelligent exit routing
+    if bid_ask_manager is not None:
+        try:
+            strategy = bid_ask_manager.get_exit_order_strategy(
+                exit_type=exit_type,
+                symbol=symbol,
+                side=position["side"],
+                urgency="normal"
+            )
+            
+            logger.info(f"Exit Strategy: {strategy['order_type']} - {strategy['reason']}")
+            
+            if strategy['order_type'] == 'passive':
+                # Try passive exit to collect spread
+                limit_price = strategy['limit_price']
+                logger.info(f"Passive exit at ${limit_price:.2f} (collecting spread)")
+                order = place_limit_order(symbol, order_side, contracts, limit_price)
+                
+                if order and strategy.get('timeout', 0) > 0:
+                    # Wait for fill with timeout
+                    import time
+                    time.sleep(strategy['timeout'])
+                    
+                    # Check if filled
+                    current_position = get_position_quantity(symbol)
+                    if current_position == 0:
+                        logger.info("✓ Passive exit filled")
+                        return
+                    else:
+                        # Not filled, use fallback
+                        logger.warning("✗ Passive exit not filled, using aggressive")
+                        if 'fallback_price' in strategy:
+                            order = place_limit_order(symbol, order_side, contracts, strategy['fallback_price'])
+                        else:
+                            order = place_market_order(symbol, order_side, contracts)
+                else:
+                    # No timeout or order failed, go aggressive
+                    order = place_market_order(symbol, order_side, contracts)
+            else:
+                # Aggressive exit
+                if 'limit_price' in strategy:
+                    logger.info(f"Aggressive exit at ${strategy['limit_price']:.2f}")
+                    order = place_limit_order(symbol, order_side, contracts, strategy['limit_price'])
+                else:
+                    order = place_market_order(symbol, order_side, contracts)
+            
+            if order:
+                logger.info(f"Exit order placed: {order.get('order_id')}")
+                return
+                
+        except Exception as e:
+            logger.error(f"Error using bid/ask exit optimization: {e}")
+            logger.info("Falling back to traditional exit")
+    
+    # Fallback to traditional exit logic
     is_flatten_mode = bot_status["flatten_mode"] or reason in [
         "flatten_mode_exit", "time_based_profit_take", 
         "time_based_loss_cut", "emergency_forced_flatten"
@@ -3079,7 +3331,7 @@ VALIDATION:
 
 def main() -> None:
     """Main bot execution with event loop integration"""
-    global event_loop, timer_manager
+    global event_loop, timer_manager, bid_ask_manager
     
     logger.info(SEPARATOR_LINE)
     logger.info("VWAP Bounce Bot Starting")
@@ -3097,6 +3349,10 @@ def main() -> None:
     
     # Phase Fifteen: Validate timezone configuration
     validate_timezone_configuration()
+    
+    # Initialize bid/ask manager
+    logger.info("Initializing bid/ask manager...")
+    bid_ask_manager = BidAskManager(CONFIG)
     
     # Initialize broker (replaces initialize_sdk)
     initialize_broker()
@@ -3139,8 +3395,17 @@ def main() -> None:
     timer_manager = TimerManager(event_loop, CONFIG, tz)
     timer_manager.start()
     
-    # Subscribe to market data
+    # Subscribe to market data (trades)
     subscribe_market_data(symbol, on_tick)
+    
+    # Subscribe to bid/ask quotes if broker supports it
+    if broker is not None and hasattr(broker, 'subscribe_quotes'):
+        logger.info("Subscribing to bid/ask quotes...")
+        try:
+            broker.subscribe_quotes(symbol, on_quote)
+        except Exception as e:
+            logger.warning(f"Failed to subscribe to quotes: {e}")
+            logger.warning("Continuing without bid/ask quote data")
     
     logger.info("Bot initialization complete")
     logger.info("Starting event loop...")

@@ -87,6 +87,35 @@ class BotConfiguration:
     log_file: str = "vwap_bounce_bot.log"
     max_bars_storage: int = 200
     
+    # Bid/Ask Trading Strategy Parameters
+    passive_order_timeout: int = 10  # Seconds to wait for passive order fill
+    abnormal_spread_multiplier: float = 2.0  # Multiplier for abnormal spread detection
+    spread_lookback_periods: int = 100  # Number of spread samples to track
+    high_volatility_spread_mult: float = 3.0  # Spread multiplier for high volatility detection
+    calm_market_spread_mult: float = 1.5  # Spread multiplier for calm market detection
+    use_mixed_order_strategy: bool = False  # Enable mixed passive/aggressive orders
+    mixed_passive_ratio: float = 0.5  # Ratio of passive to total when using mixed strategy
+    
+    # Enhanced Bid/Ask Parameters (Requirements 5-8)
+    max_queue_size: int = 100  # Cancel passive order if queue too large
+    queue_jump_threshold: int = 50  # Jump queue if position > threshold
+    min_bid_ask_size: int = 1  # Minimum liquidity requirement
+    max_acceptable_spread: Optional[float] = None  # Maximum spread threshold (None = no limit)
+    normal_hours_slippage_ticks: float = 1.0  # Expected slippage during normal hours
+    illiquid_hours_slippage_ticks: float = 2.0  # Expected slippage during illiquid hours
+    max_slippage_ticks: float = 3.0  # Maximum acceptable slippage
+    illiquid_hours_start: time = field(default_factory=lambda: time(0, 0))  # Start of illiquid period
+    illiquid_hours_end: time = field(default_factory=lambda: time(9, 30))  # End of illiquid period
+    
+    # Advanced Bid/Ask Parameters (Requirements 9-15)
+    tight_spread_multiplier: float = 1.2  # Threshold for normal/tight spread
+    wide_spread_multiplier: float = 2.0  # Threshold for volatile/wide spread
+    extreme_spread_multiplier: float = 3.0  # Threshold for stressed market
+    low_volume_threshold: float = 0.5  # Threshold for low volume detection
+    min_fill_probability: float = 0.5  # Minimum fill probability for passive orders
+    max_transaction_cost_pct: float = 0.15  # Max transaction cost as % of expected profit (15%)
+    commission_per_contract: float = 2.50  # Commission per contract round-turn
+    
     # Broker Configuration (only for live trading)
     api_token: Optional[str] = None
     
