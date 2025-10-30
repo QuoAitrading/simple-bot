@@ -31,7 +31,7 @@ class BotConfiguration:
     
     # VWAP Parameters - BALANCED FOR REAL TRADING
     vwap_std_dev_1: float = 1.5  # Warning zone
-    vwap_std_dev_2: float = 2.0  # Entry zone (BALANCED - not too extreme)
+    vwap_std_dev_2: float = 2.0  # Entry zone (OPTIMAL - proven best)
     vwap_std_dev_3: float = 3.0  # Stop zone
     
     # Trend Filter Parameters
