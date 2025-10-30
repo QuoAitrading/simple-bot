@@ -135,4 +135,5 @@ bot.pid
 /logs/
 /data/
 /backups/
-/historical_data/*.csv
+# Allow ES data files for GitHub Copilot agent
+# /historical_data/*.csv
