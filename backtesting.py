@@ -416,7 +416,7 @@ class PerformanceMetrics:
         return gross_profit / gross_loss
     
     def calculate_time_in_market(self) -> float:
-        """Calculate percentage of time with an active position"""
+        """Calculate percentage of time spent in positions"""
         if len(self.trades) == 0:
             return 0.0
             
@@ -424,7 +424,16 @@ class PerformanceMetrics:
         
         # Calculate total backtest duration
         if len(self.equity_curve) > 1:
-            total_duration = (self.equity_curve[-1][0] - self.equity_curve[0][0]).total_seconds() / 60.0
+            start_time = self.equity_curve[0][0]
+            end_time = self.equity_curve[-1][0]
+            
+            # Normalize to timezone-naive for comparison
+            if start_time.tzinfo is not None:
+                start_time = start_time.replace(tzinfo=None)
+            if end_time.tzinfo is not None:
+                end_time = end_time.replace(tzinfo=None)
+                
+            total_duration = (end_time - start_time).total_seconds() / 60.0
         else:
             return 0.0
             

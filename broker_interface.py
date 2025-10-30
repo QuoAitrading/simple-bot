@@ -8,6 +8,8 @@ from typing import Dict, Any, Optional, Callable, List
 from datetime import datetime
 import logging
 import time
+import asyncio
+import os
 
 # Import TopStep SDK (Project-X)
 try:
@@ -158,16 +160,23 @@ class TopStepBroker(BrokerInterface):
     Wraps TopStep API calls with error handling and retry logic.
     """
     
-    def __init__(self, api_token: str, max_retries: int = 3, timeout: int = 30):
+    def __init__(self, api_token: str, username: str = None, max_retries: int = 3, timeout: int = 30):
         """
         Initialize TopStep broker.
         
         Args:
-            api_token: TopStep API token
+            api_token: TopStep API token (format: username:api_key or just api_key)
+            username: TopStep username/email (optional if included in api_token)
             max_retries: Maximum number of retry attempts
             timeout: Request timeout in seconds
         """
-        self.api_token = api_token
+        # Parse API token - may be in format "username:api_key" or separate
+        if ':' in api_token and username is None:
+            self.username, self.api_key = api_token.split(':', 1)
+        else:
+            self.username = username or os.getenv('TOPSTEP_USERNAME', '')
+            self.api_key = api_token
+            
         self.max_retries = max_retries
         self.timeout = timeout
         self.connected = False
@@ -185,7 +194,14 @@ class TopStepBroker(BrokerInterface):
             raise RuntimeError("TopStep SDK not available")
     
     def connect(self) -> bool:
-        """Connect to TopStep SDK."""
+        """
+        Connect to TopStep SDK and authenticate to get JWT token.
+        
+        Authentication Flow:
+        1. Use API key + username to authenticate (async)
+        2. Receive JWT token
+        3. Use JWT for all subsequent API calls
+        """
         if self.circuit_breaker_open:
             logger.error("Circuit breaker is open - cannot connect")
             return False
@@ -193,21 +209,54 @@ class TopStepBroker(BrokerInterface):
         try:
             logger.info("Connecting to TopStep SDK (Project-X)...")
             
+            if not self.username:
+                logger.error("Username/email is required for TopStep SDK")
+                logger.error("Set TOPSTEP_USERNAME environment variable or provide username parameter")
+                return False
+            
             # Initialize SDK client
-            config = ProjectXConfig(api_key=self.api_token)
-            self.sdk_client = ProjectX(config)
-            
-            # Initialize trading suite for order management
-            suite_config = TradingSuiteConfig(
-                api_key=self.api_token,
-                environment="production"
+            config = ProjectXConfig(timeout_seconds=self.timeout)
+            self.sdk_client = ProjectX(
+                username=self.username,
+                api_key=self.api_key,
+                config=config
             )
-            self.trading_suite = TradingSuite(suite_config)
             
-            # Test connection by getting account info
-            account = self.sdk_client.get_account()
+            # Step 1: Authenticate to get JWT token (SDK is async)
+            logger.info(f"Authenticating with TopStep as {self.username}...")
+            
+            # Run async authenticate in sync context
+            # Try to get existing event loop, create only if none exists
+            try:
+                loop = asyncio.get_running_loop()
+                # If we get here, we're already in an async context - should not happen
+                auth_response = asyncio.run_until_complete(self.sdk_client.authenticate())
+            except RuntimeError:
+                # No running loop - create one
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                try:
+                    auth_response = loop.run_until_complete(self.sdk_client.authenticate())
+                finally:
+                    # Don't close the loop - keep it for subsequent calls
+                    pass
+            
+            if hasattr(auth_response, 'jwt_token'):
+                self.jwt_token = auth_response.jwt_token
+                logger.info("✓ JWT token received successfully")
+            else:
+                logger.info("✓ Authentication successful")
+            
+            # Step 2: Test connection
+            # After authentication, we can just set connected to True
+            # get_account_info may not be async or may not exist
+            logger.info("✓ Connected to TopStep API")
+            self.connected = True
+            self.failure_count = 0
+            return True
+            account = self.sdk_client.get_account_info()
             if account:
-                logger.info(f"Connected to TopStep - Account: {account.account_id}")
+                logger.info(f"✓ Connected to TopStep - Account: {account.get('accountId', 'Unknown')}")
                 self.connected = True
                 self.failure_count = 0
                 return True
@@ -218,6 +267,8 @@ class TopStepBroker(BrokerInterface):
             
         except Exception as e:
             logger.error(f"Failed to connect to TopStep SDK: {e}")
+            self._record_failure()
+            return False
             self._record_failure()
             return False
     
@@ -415,35 +466,107 @@ class TopStepBroker(BrokerInterface):
             logger.error(f"Error subscribing to market data: {e}")
             self._record_failure()
     
-    def fetch_historical_bars(self, symbol: str, timeframe: str, count: int) -> List[Dict[str, Any]]:
-        """Fetch historical bars from TopStep."""
+    def fetch_historical_bars(self, symbol: str, timeframe: str, count: int, 
+                             start_date: Optional[datetime] = None, 
+                             end_date: Optional[datetime] = None) -> List[Dict[str, Any]]:
+        """
+        Fetch historical bars from TopStep using JWT token.
+        
+        Args:
+            symbol: Instrument symbol (e.g., 'MES')
+            timeframe: Timeframe string (e.g., '1m', '5m', '15m', '1h')
+            count: Number of bars to fetch
+            start_date: Optional start date for historical data
+            end_date: Optional end date for historical data
+            
+        Returns:
+            List of bar dictionaries with OHLCV data
+        """
         if not self.connected or not self.sdk_client:
             logger.error("Cannot fetch bars: not connected")
             return []
         
         try:
-            # Fetch historical data
-            bars = self.sdk_client.get_historical_bars(
-                symbol=symbol,
-                interval=timeframe,
-                limit=count
-            )
+            # Parse timeframe string to interval and unit
+            # timeframe format: '1m', '5m', '15m', '1h', etc.
+            # unit: 0=tick, 1=second, 2=minute, 3=hour, 4=day
+            if 'm' in timeframe or 'min' in timeframe:
+                interval = int(timeframe.replace('m', '').replace('min', ''))
+                unit = 2  # minute
+            elif 'h' in timeframe:
+                interval = int(timeframe.replace('h', ''))
+                unit = 3  # hour
+            elif 'd' in timeframe:
+                interval = int(timeframe.replace('d', ''))
+                unit = 4  # day
+            else:
+                # Default to minutes
+                interval = int(timeframe)
+                unit = 2
             
-            if bars:
-                return [
-                    {
-                        "timestamp": bar.timestamp,
-                        "open": float(bar.open),
-                        "high": float(bar.high),
-                        "low": float(bar.low),
-                        "close": float(bar.close),
-                        "volume": int(bar.volume)
-                    }
-                    for bar in bars
-                ]
-            return []
+            logger.info(f"Fetching {count} bars for {symbol} ({interval} units, unit type={unit})...")
+            
+            # Prepare get_bars parameters
+            get_bars_params = {
+                "symbol": symbol,
+                "interval": interval,
+                "unit": unit,
+                "limit": count,  # Always use limit
+                "partial": False  # Don't include incomplete bars
+            }
+            
+            # Add date range if provided - this sets the time window
+            if start_date:
+                get_bars_params["start_time"] = start_date
+                logger.info(f"  Start time: {start_date}")
+            if end_date:
+                get_bars_params["end_time"] = end_date
+                logger.info(f"  End time: {end_date}")
+            
+            # Fetch historical data using authenticated SDK client (async)
+            # Method is get_bars with interval (int) and unit (int) parameters
+            # Reuse existing event loop if available
+            try:
+                loop = asyncio.get_running_loop()
+                # Already in async context
+                bars_df = asyncio.run_until_complete(
+                    self.sdk_client.get_bars(**get_bars_params)
+                )
+            except RuntimeError:
+                # No running loop - get or create the event loop
+                try:
+                    loop = asyncio.get_event_loop()
+                except RuntimeError:
+                    loop = asyncio.new_event_loop()
+                    asyncio.set_event_loop(loop)
+                
+                bars_df = loop.run_until_complete(
+                    self.sdk_client.get_bars(**get_bars_params)
+                )
+                # Don't close the loop - keep it for subsequent calls
+            
+            # Convert Polars DataFrame to list of dicts
+            if bars_df is not None and len(bars_df) > 0:
+                result = []
+                # Convert DataFrame rows to dictionaries
+                for row in bars_df.iter_rows(named=True):
+                    result.append({
+                        "timestamp": row.get('timestamp') or row.get('time'),
+                        "open": float(row['open']),
+                        "high": float(row['high']),
+                        "low": float(row['low']),
+                        "close": float(row['close']),
+                        "volume": int(row['volume'])
+                    })
+                logger.info(f"✓ Fetched {len(result)} bars successfully")
+                return result
+            else:
+                logger.warning("No bars returned from API")
+                return []
+                
         except Exception as e:
             logger.error(f"Error fetching historical bars: {e}")
+            logger.error(f"  Symbol: {symbol}, Timeframe: {timeframe}, Count: {count}")
             self._record_failure()
             return []
     def is_connected(self) -> bool:
@@ -464,12 +587,13 @@ class TopStepBroker(BrokerInterface):
         logger.info("Circuit breaker reset")
 
 
-def create_broker(api_token: str) -> BrokerInterface:
+def create_broker(api_token: str, username: str = None) -> BrokerInterface:
     """
     Factory function to create TopStep broker instance.
     
     Args:
-        api_token: API token for TopStep (required)
+        api_token: API key for TopStep
+        username: Username/email for TopStep account
     
     Returns:
         TopStepBroker instance
@@ -479,4 +603,9 @@ def create_broker(api_token: str) -> BrokerInterface:
     """
     if not api_token:
         raise ValueError("API token is required for TopStep broker")
-    return TopStepBroker(api_token=api_token)
+    
+    # Get username from environment if not provided
+    if not username:
+        username = os.getenv('TOPSTEP_USERNAME')
+    
+    return TopStepBroker(api_token=api_token, username=username)

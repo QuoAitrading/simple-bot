@@ -100,6 +100,13 @@ Examples:
         help='Use tick-by-tick replay instead of bar-by-bar (requires tick data files)'
     )
     
+    parser.add_argument(
+        '--strategy',
+        choices=['vwap', 'ma-crossover'],
+        default='vwap',
+        help='Trading strategy: vwap (mean reversion) or ma-crossover (breakout) (default: vwap)'
+    )
+    
     # Configuration overrides
     parser.add_argument(
         '--symbol',
@@ -184,11 +191,14 @@ def run_backtest(args, bot_config):
     engine = BacktestEngine(backtest_config, bot_config_dict)
     
     # Integrate actual VWAP bot strategy for backtesting
-    from vwap_bounce_bot import initialize_state, on_tick, check_for_signals, check_exit_conditions, state
+    from vwap_bounce_bot import initialize_state, on_tick, check_for_signals, check_exit_conditions, check_daily_reset, state
     
     # Initialize bot state for backtesting
     symbol = bot_config_dict['instrument']
     initialize_state(symbol)
+    
+    # Get ET timezone for daily reset checks
+    et = pytz.timezone('US/Eastern')
     
     def vwap_strategy_backtest(bars_1min: List[Dict[str, Any]], bars_15min: List[Dict[str, Any]]) -> None:
         """
@@ -202,6 +212,10 @@ def run_backtest(args, bot_config):
             volume = bar['volume']
             timestamp_ms = int(timestamp.timestamp() * 1000)
             
+            # Check for new trading day (resets daily counters at 6 PM ET)
+            timestamp_et = timestamp.astimezone(et)
+            check_daily_reset(symbol, timestamp_et)
+            
             # Process tick through actual bot logic
             on_tick(symbol, price, volume, timestamp_ms)
             
@@ -212,29 +226,29 @@ def run_backtest(args, bot_config):
             check_exit_conditions(symbol)
             
             # Update backtest engine with current position from bot state
-            if symbol in state and 'position' in state[symbol] and state[symbol]['position'] is not None:
+            if symbol in state and 'position' in state[symbol]:
                 pos = state[symbol]['position']
                 
-                # If bot entered a position and backtest engine doesn't have it, record it
-                if engine.current_position is None:
+                # If bot has active position and backtest engine doesn't have it, record it
+                if pos.get('active') and engine.current_position is None:
                     engine.current_position = {
                         'symbol': symbol,
                         'side': pos['side'],
-                        'quantity': pos['quantity'],
+                        'quantity': pos.get('quantity', 1),
                         'entry_price': pos['entry_price'],
-                        'entry_time': pos['entry_time'],
-                        'stop_price': pos.get('stop_loss'),
+                        'entry_time': pos.get('entry_time', timestamp),
+                        'stop_price': pos.get('stop_price'),
                         'target_price': pos.get('target_price')
                     }
                     logger.info(f"Backtest: {pos['side'].upper()} position entered at {pos['entry_price']}")
                     
-            # If bot closed position, close it in backtest engine too
-            elif engine.current_position is not None:
-                exit_price = price
-                exit_time = timestamp
-                exit_reason = 'bot_exit'
-                engine._close_position(exit_time, exit_price, exit_reason)
-                logger.info(f"Backtest: Position closed at {exit_price}, reason: {exit_reason}")
+                # If bot closed position (active=False), close it in backtest engine too
+                elif not pos.get('active') and engine.current_position is not None:
+                    exit_price = price
+                    exit_time = timestamp
+                    exit_reason = 'bot_exit'
+                    engine._close_position(exit_time, exit_price, exit_reason)
+                    logger.info(f"Backtest: Position closed at {exit_price}, reason: {exit_reason}")
         
     results = engine.run_with_strategy(vwap_strategy_backtest)
     
@@ -328,6 +342,11 @@ def main():
     
     # Load configuration with backtest mode flag
     backtest_mode = (args.mode == 'backtest')
+    
+    # Set environment variable so vwap_bounce_bot knows we're in backtest mode
+    if backtest_mode:
+        os.environ['BOT_BACKTEST_MODE'] = 'true'
+    
     bot_config = load_config(environment=args.environment, backtest_mode=backtest_mode)
     
     # In backtest mode, we don't need API token at all
