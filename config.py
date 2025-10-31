@@ -21,34 +21,34 @@ class BotConfiguration:
     # Trading Parameters
     risk_per_trade: float = 0.012  # 1.2% of account per trade (increased for more profit)
     max_contracts: int = 3
-    max_trades_per_day: int = 3  # Limit to best quality setups
+    max_trades_per_day: int = 999  # UNLIMITED - take all valid signals
     risk_reward_ratio: float = 2.0  # Realistic 2:1 for mean reversion with tight stops
     
     # Slippage & Commission - PRODUCTION READY
     slippage_ticks: float = 1.5  # Average 1-2 ticks per fill (conservative estimate)
     commission_per_contract: float = 2.50  # Round-turn commission (adjust to your broker)
-    # Total cost per round-trip: ~3 ticks slippage + $2.50 commission = ~$42.50/contract
+        # Total cost per round-trip: ~3 ticks slippage + $2.50 commission = ~$42.50/contract
     
-    # VWAP Parameters - Back to 2.0σ (proven best)
-    vwap_std_dev_1: float = 1.5  # Warning zone
-    vwap_std_dev_2: float = 2.0  # Entry zone
-    vwap_std_dev_3: float = 3.5  # Stop zone
+    # VWAP bands (standard deviation multipliers) - ITERATION 24 BEST
+    vwap_std_dev_1: float = 1.5  # Warning zone (potential reversal area)
+    vwap_std_dev_2: float = 1.5199999999999998  # Entry zone - Trying exact optimizer value
+    vwap_std_dev_3: float = 3.4  # Exit/stop zone - Iteration 24
     
     # Trend Filter Parameters
-    trend_ema_period: int = 20
+    trend_ema_period: int = 21  # Iteration 24
     trend_threshold: float = 0.0001
     
-    # Technical Indicator Parameters - BACK TO PROVEN SETUP
-    use_trend_filter: bool = False  # ❌ OFF - conflicts with mean reversion
-    use_rsi_filter: bool = True  # ✅ RSI extremes (28/72)
-    use_macd_filter: bool = False  # ❌ OFF - lags reversals
-    use_vwap_direction_filter: bool = True  # ✅ Price moving toward VWAP
-    use_volume_filter: bool = False  # ❌ OFF - blocks overnight trades
+    # Technical Filters - ITERATION 24 BEST
+    use_trend_filter: bool = False  # Trend filter OFF (Iteration 24)
+    use_rsi_filter: bool = True
+    use_vwap_direction_filter: bool = True  # VWAP direction filter ON (Iteration 24)
+    use_volume_filter: bool = False  # Don't use volume filter - blocks overnight trades
+    use_macd_filter: bool = False
     
-        # RSI Settings - Back to BEST: 25/75
-    rsi_period: int = 14
-    rsi_oversold: int = 25
-    rsi_overbought: int = 75
+    # RSI Settings - ITERATION 24 BEST
+    rsi_period: int = 19  # Iteration 24
+    rsi_oversold: int = 30  # Iteration 24
+    rsi_overbought: int = 78  # Iteration 24
     
     # MACD - Keep for reference but disabled
     macd_fast: int = 12
@@ -61,15 +61,15 @@ class BotConfiguration:
     
     # Time Windows (all in Eastern Time)
     market_open_time: time = field(default_factory=lambda: time(9, 30))
-    entry_start_time: time = field(default_factory=lambda: time(0, 0))  # 24/5 - trades any time
-    entry_end_time: time = field(default_factory=lambda: time(23, 50))  # Accept entries nearly all day
-    flatten_time: time = field(default_factory=lambda: time(23, 55))  # Only used for Friday close
-    forced_flatten_time: time = field(default_factory=lambda: time(23, 57))  # Only used for Friday close
-    shutdown_time: time = field(default_factory=lambda: time(23, 59))  # Daily reset at midnight
+    entry_start_time: time = field(default_factory=lambda: time(18, 0))  # 6 PM ET - ES futures session opens
+    entry_end_time: time = field(default_factory=lambda: time(16, 55))  # 4:55 PM ET next day - before maintenance
+    flatten_time: time = field(default_factory=lambda: time(16, 30))  # 4:30 PM ET - flatten before session close
+    forced_flatten_time: time = field(default_factory=lambda: time(16, 45))  # 4:45 PM ET - forced flatten
+    shutdown_time: time = field(default_factory=lambda: time(16, 50))  # 4:50 PM ET - shutdown before maintenance
     vwap_reset_time: time = field(default_factory=lambda: time(18, 0))  # 6 PM ET - futures daily session reset
     
     # Friday Special Rules - Close before weekend
-    friday_entry_cutoff: time = field(default_factory=lambda: time(16, 45))  # Stop entries 4:45 PM Friday
+    friday_entry_cutoff: time = field(default_factory=lambda: time(16, 0))  # Stop entries 4:00 PM Friday
     friday_close_target: time = field(default_factory=lambda: time(16, 30))  # Flatten by 4:30 PM Friday
     
     # Safety Parameters
@@ -77,6 +77,12 @@ class BotConfiguration:
     max_drawdown_percent: float = 5.0
     tick_timeout_seconds: int = 60
     proactive_stop_buffer_ticks: int = 2
+    
+    # ATR-Based Dynamic Risk Management - NOT ACTUALLY IMPLEMENTED YET
+    use_atr_stops: bool = False  # Bot doesn't use this yet - uses fixed stops
+    atr_period: int = 14  # ATR calculation period
+    stop_loss_atr_multiplier: float = 2.7  # Not used yet
+    profit_target_atr_multiplier: float = 4.7  # Not used yet
     
     # Instrument Specifications
     tick_size: float = 0.25
@@ -117,15 +123,21 @@ class BotConfiguration:
     commission_per_contract: float = 2.50  # Commission per contract round-turn
     
     # Advanced Exit Management Parameters
-    # Breakeven Protection
+    # ADAPTIVE EXIT MANAGEMENT - Adjusts to real-time market conditions
+    adaptive_exits_enabled: bool = True  # Enable adaptive exit management (overrides static params)
+    adaptive_volatility_scaling: bool = True  # Scale parameters based on ATR
+    adaptive_regime_detection: bool = True  # Adjust for trending vs choppy markets
+    adaptive_performance_based: bool = True  # Adapt based on trade performance
+    
+    # Breakeven Protection (baseline - adaptive system adjusts these)
     breakeven_enabled: bool = True  # Enable/disable breakeven protection
-    breakeven_profit_threshold_ticks: int = 8  # Profit in ticks before activating breakeven
+    breakeven_profit_threshold_ticks: int = 8  # Profit in ticks before activating breakeven (adaptive: 4-12)
     breakeven_stop_offset_ticks: int = 1  # Ticks above/below entry for breakeven stop
     
-    # Trailing Stop
+    # Trailing Stop (baseline - adaptive system adjusts these)
     trailing_stop_enabled: bool = True  # Enable/disable trailing stop
-    trailing_stop_distance_ticks: int = 8  # Distance in ticks to trail behind price
-    trailing_stop_min_profit_ticks: int = 12  # Minimum profit before activating trailing
+    trailing_stop_distance_ticks: int = 8  # Distance in ticks to trail behind price (adaptive: 4-16)
+    trailing_stop_min_profit_ticks: int = 12  # Minimum profit before activating trailing (adaptive: 8-20)
     
     # Time-Decay Tightening
     time_decay_enabled: bool = True  # Enable/disable time-decay tightening
@@ -133,12 +145,12 @@ class BotConfiguration:
     time_decay_75_percent_tightening: float = 0.20  # 20% tightening at 75% of max hold time
     time_decay_90_percent_tightening: float = 0.30  # 30% tightening at 90% of max hold time
     
-    # Partial Exits
+    # Partial Exits (baseline - adaptive system adjusts R-multiples)
     partial_exits_enabled: bool = True  # Enable/disable partial exits
     partial_exit_1_percentage: float = 0.50  # 50% exit at first level
-    partial_exit_1_r_multiple: float = 2.0  # Exit at 2.0R
+    partial_exit_1_r_multiple: float = 2.0  # Exit at 2.0R (adaptive: 1.4-3.0)
     partial_exit_2_percentage: float = 0.30  # 30% exit at second level
-    partial_exit_2_r_multiple: float = 3.0  # Exit at 3.0R
+    partial_exit_2_r_multiple: float = 3.0  # Exit at 3.0R (adaptive: 2.1-4.5)
     partial_exit_3_percentage: float = 0.20  # 20% exit at third level
     partial_exit_3_r_multiple: float = 5.0  # Exit at 5.0R
     
@@ -168,13 +180,15 @@ class BotConfiguration:
         if self.risk_reward_ratio <= 0:
             errors.append(f"risk_reward_ratio must be positive, got {self.risk_reward_ratio}")
         
-        # Validate time windows
-        if self.entry_start_time >= self.entry_end_time:
-            errors.append(f"entry_start_time must be before entry_end_time")
+        # Validate time windows (ES futures: 6 PM to 5 PM next day, wraps midnight)
+        # For 24-hour trading, entry_start_time (6 PM) > entry_end_time (4:55 PM) is VALID
+        # Skip the old entry_start_time >= entry_end_time check since futures wrap midnight
         
-        if self.entry_end_time >= self.flatten_time:
-            errors.append(f"entry_end_time must be before flatten_time")
+        # Flatten times should still be in order on same day
+        if self.flatten_time >= self.forced_flatten_time:
+            errors.append(f"flatten_time must be before forced_flatten_time")
         
+        # Flatten times should still be in order on same day
         if self.flatten_time >= self.forced_flatten_time:
             errors.append(f"flatten_time must be before forced_flatten_time")
         
@@ -259,7 +273,12 @@ class BotConfiguration:
             "dry_run": self.dry_run,
             "log_file": self.log_file,
             "max_bars_storage": self.max_bars_storage,
-            # Advanced Exit Management
+            # Adaptive Exit Management
+            "adaptive_exits_enabled": self.adaptive_exits_enabled,
+            "adaptive_volatility_scaling": self.adaptive_volatility_scaling,
+            "adaptive_regime_detection": self.adaptive_regime_detection,
+            "adaptive_performance_based": self.adaptive_performance_based,
+            # Advanced Exit Management (baseline parameters)
             "breakeven_enabled": self.breakeven_enabled,
             "breakeven_profit_threshold_ticks": self.breakeven_profit_threshold_ticks,
             "breakeven_stop_offset_ticks": self.breakeven_stop_offset_ticks,

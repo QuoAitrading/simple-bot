@@ -52,6 +52,9 @@ timer_manager: Optional[TimerManager] = None
 # Global bid/ask manager
 bid_ask_manager: Optional[BidAskManager] = None
 
+# Global adaptive exit manager (for streak tracking persistence)
+adaptive_manager: Optional[Any] = None
+
 # State management dictionary
 state: Dict[str, Any] = {}
 
@@ -464,6 +467,12 @@ def initialize_state(symbol: str) -> None:
     Args:
         symbol: Instrument symbol
     """
+    # CRITICAL FIX: Reload config to get latest values (fixes subprocess caching issue)
+    global _bot_config, CONFIG
+    _bot_config = load_config(backtest_mode=_backtest_mode)
+    _bot_config.validate()
+    CONFIG = _bot_config.to_dict()
+    
     state[symbol] = {
         # Tick data storage
         "ticks": deque(maxlen=CONFIG.get("max_tick_storage", 10000)),
@@ -1075,13 +1084,18 @@ def validate_signal_requirements(symbol: str, bar_time: datetime) -> Tuple[bool,
         logger.info("VWAP bands not yet calculated")
         return False, "VWAP not ready"
     
-    # Check trend (optional - can be disabled)
+    # Check trend (optional - DOES NOT block signals if neutral)
+    # Trend filtering happens in signal-specific functions:
+    #   - Uptrend: only longs allowed
+    #   - Downtrend: only shorts allowed
+    #   - Neutral: both allowed (mean reversion)
     use_trend_filter = CONFIG.get("use_trend_filter", False)
     if use_trend_filter:
         trend = state[symbol]["trend_direction"]
-        if trend is None or trend == "neutral":
-            logger.info(f"Trend not established or neutral: {trend}")
+        if trend is None:
+            logger.info(f"Trend not yet established")
             return False, "Trend not established"
+        # Neutral trend is OK - will trade both directions
     
     # Check RSI (optional - for extreme overbought/oversold confirmation)
     use_rsi_filter = CONFIG.get("use_rsi_filter", True)
@@ -1142,9 +1156,9 @@ def validate_signal_requirements(symbol: str, bar_time: datetime) -> Tuple[bool,
 def check_long_signal_conditions(symbol: str, prev_bar: Dict[str, Any], 
                                  current_bar: Dict[str, Any]) -> bool:
     """
-    Check if long signal conditions are met - PROFESSIONAL OPTIMIZED VERSION.
+    Check if long signal conditions are met - WITH-TREND MEAN REVERSION.
     
-    Strategy: Mean reversion from VWAP lower band with multi-factor confirmation
+    Strategy: Buy dips in uptrends (fade to VWAP from below)
     
     Args:
         symbol: Instrument symbol
@@ -1157,7 +1171,16 @@ def check_long_signal_conditions(symbol: str, prev_bar: Dict[str, Any],
     vwap_bands = state[symbol]["vwap_bands"]
     vwap = state[symbol]["vwap"]
     
-    # PRIMARY: VWAP bounce condition (2.5 std dev = high quality setup)
+    # TREND FILTER: Skip longs in downtrend (but allow in neutral/uptrend)
+    use_trend = CONFIG.get("use_trend_filter", False)
+    if use_trend:
+        trend = state[symbol]["trend_direction"]
+        if trend == "down":
+            logger.debug(f"Long rejected - trend is {trend}, counter to downtrend")
+            return False
+        logger.debug(f"Trend filter: {trend} ✓ (allows longs)")
+    
+    # PRIMARY: VWAP bounce condition (2.0 std dev)
     touched_lower = prev_bar["low"] <= vwap_bands["lower_2"]
     bounced_back = current_bar["close"] > vwap_bands["lower_2"]
     
@@ -1165,16 +1188,16 @@ def check_long_signal_conditions(symbol: str, prev_bar: Dict[str, Any],
         return False
     
     # FILTER 1: VWAP Direction - price should be BELOW VWAP (discount/oversold)
-    use_vwap_direction = CONFIG.get("use_vwap_direction_filter", True)
+    use_vwap_direction = CONFIG.get("use_vwap_direction_filter", False)
     if use_vwap_direction and vwap is not None:
         if current_bar["close"] >= vwap:
             logger.debug(f"Long rejected - price above VWAP: {current_bar['close']:.2f} >= {vwap:.2f}")
             return False
         logger.debug(f"Price below VWAP: {current_bar['close']:.2f} < {vwap:.2f} ✓")
     
-    # FILTER 2: RSI - extreme oversold (< 20 instead of < 40)
+    # FILTER 2: RSI - extreme oversold
     use_rsi = CONFIG.get("use_rsi_filter", True)
-    rsi_oversold = CONFIG.get("rsi_oversold", 20.0)
+    rsi_oversold = CONFIG.get("rsi_oversold", 25.0)
     if use_rsi:
         rsi = state[symbol]["rsi"]
         if rsi is not None:
@@ -1195,16 +1218,16 @@ def check_long_signal_conditions(symbol: str, prev_bar: Dict[str, Any],
                 return False
             logger.debug(f"Volume spike: {current_volume} >= {avg_volume * volume_mult:.0f} ✓")
     
-    logger.info(f"✅ LONG SIGNAL: VWAP bounce at {current_bar['close']:.2f} (band: {vwap_bands['lower_2']:.2f})")
+    logger.info(f"✅ LONG SIGNAL (WITH-TREND DIP): VWAP bounce at {current_bar['close']:.2f} (band: {vwap_bands['lower_2']:.2f})")
     return True
 
 
 def check_short_signal_conditions(symbol: str, prev_bar: Dict[str, Any], 
                                   current_bar: Dict[str, Any]) -> bool:
     """
-    Check if short signal conditions are met - PROFESSIONAL OPTIMIZED VERSION.
+    Check if short signal conditions are met - WITH-TREND MEAN REVERSION.
     
-    Strategy: Mean reversion from VWAP upper band with multi-factor confirmation
+    Strategy: Sell rallies in downtrends (fade to VWAP from above)
     
     Args:
         symbol: Instrument symbol
@@ -1217,7 +1240,16 @@ def check_short_signal_conditions(symbol: str, prev_bar: Dict[str, Any],
     vwap_bands = state[symbol]["vwap_bands"]
     vwap = state[symbol]["vwap"]
     
-    # PRIMARY: VWAP bounce condition (2.5 std dev = high quality setup)
+    # TREND FILTER: Skip shorts in uptrend (but allow in neutral/downtrend)
+    use_trend = CONFIG.get("use_trend_filter", False)
+    if use_trend:
+        trend = state[symbol]["trend_direction"]
+        if trend == "up":
+            logger.debug(f"Short rejected - trend is {trend}, counter to uptrend")
+            return False
+        logger.debug(f"Trend filter: {trend} ✓ (allows shorts)")
+    
+    # PRIMARY: VWAP bounce condition (2.0 std dev)
     touched_upper = prev_bar["high"] >= vwap_bands["upper_2"]
     bounced_back = current_bar["close"] < vwap_bands["upper_2"]
     
@@ -1225,16 +1257,16 @@ def check_short_signal_conditions(symbol: str, prev_bar: Dict[str, Any],
         return False
     
     # FILTER 1: VWAP Direction - price should be ABOVE VWAP (premium/overbought)
-    use_vwap_direction = CONFIG.get("use_vwap_direction_filter", True)
+    use_vwap_direction = CONFIG.get("use_vwap_direction_filter", False)
     if use_vwap_direction and vwap is not None:
         if current_bar["close"] <= vwap:
             logger.debug(f"Short rejected - price below VWAP: {current_bar['close']:.2f} <= {vwap:.2f}")
             return False
         logger.debug(f"Price above VWAP: {current_bar['close']:.2f} > {vwap:.2f} ✓")
     
-    # FILTER 2: RSI - extreme overbought (> 80 instead of > 60)
+    # FILTER 2: RSI - extreme overbought
     use_rsi = CONFIG.get("use_rsi_filter", True)
-    rsi_overbought = CONFIG.get("rsi_overbought", 80.0)
+    rsi_overbought = CONFIG.get("rsi_overbought", 75.0)
     if use_rsi:
         rsi = state[symbol]["rsi"]
         if rsi is not None:
@@ -1255,7 +1287,7 @@ def check_short_signal_conditions(symbol: str, prev_bar: Dict[str, Any],
                 return False
             logger.debug(f"Volume spike: {current_volume} >= {avg_volume * volume_mult:.0f} ✓")
     
-    logger.info(f"✅ SHORT SIGNAL: VWAP bounce at {current_bar['close']:.2f} (band: {vwap_bands['upper_2']:.2f})")
+    logger.info(f"✅ SHORT SIGNAL (WITH-TREND RALLY): VWAP bounce at {current_bar['close']:.2f} (band: {vwap_bands['upper_2']:.2f})")
     return True
 
 
@@ -1903,8 +1935,10 @@ def check_breakeven_protection(symbol: str, current_price: float) -> None:
     """
     Check if breakeven protection should be activated and move stop to breakeven.
     
-    This function runs every bar (or every 5 seconds in live mode) to monitor
-    position profit and activate breakeven protection when threshold is met.
+    Uses ADAPTIVE parameters that adjust based on:
+    - Current market volatility (ATR)
+    - Market regime (trending vs choppy)
+    - Trade performance
     
     Args:
         symbol: Instrument symbol
@@ -1923,8 +1957,44 @@ def check_breakeven_protection(symbol: str, current_price: float) -> None:
     side = position["side"]
     entry_price = position["entry_price"]
     tick_size = CONFIG["tick_size"]
-    breakeven_threshold_ticks = CONFIG.get("breakeven_profit_threshold_ticks", 8)
-    breakeven_offset_ticks = CONFIG.get("breakeven_stop_offset_ticks", 1)
+    
+    # ========================================================================
+    # ADAPTIVE EXIT MANAGEMENT - Calculate dynamic thresholds
+    # ========================================================================
+    adaptive_enabled = CONFIG.get("adaptive_exits_enabled", False)
+    
+    if adaptive_enabled:
+        try:
+            global adaptive_manager
+            if adaptive_manager is None:
+                from adaptive_exits import AdaptiveExitManager
+                adaptive_manager = AdaptiveExitManager(CONFIG)
+            
+            from adaptive_exits import get_adaptive_exit_params
+            
+            adaptive_params = get_adaptive_exit_params(
+                bars=state[symbol]["bars_1min"],
+                position=position,
+                current_price=current_price,
+                config=CONFIG,
+                adaptive_manager=adaptive_manager  # Pass global instance for persistence
+            )
+            
+            breakeven_threshold_ticks = adaptive_params["breakeven_threshold_ticks"]
+            breakeven_offset_ticks = adaptive_params["breakeven_offset_ticks"]
+            
+            logger.info(f"📊 ADAPTIVE BREAKEVEN: {breakeven_threshold_ticks}t threshold "
+                       f"| Regime: {adaptive_params['market_regime'].upper()} "
+                       f"| ATR: {adaptive_params['current_volatility_atr']:.2f} "
+                       f"| Aggressive: {adaptive_params['is_aggressive_mode']}")
+        except Exception as e:
+            logger.warning(f"Adaptive exits failed, using static params: {e}")
+            breakeven_threshold_ticks = CONFIG.get("breakeven_profit_threshold_ticks", 8)
+            breakeven_offset_ticks = CONFIG.get("breakeven_stop_offset_ticks", 1)
+    else:
+        # Static parameters
+        breakeven_threshold_ticks = CONFIG.get("breakeven_profit_threshold_ticks", 8)
+        breakeven_offset_ticks = CONFIG.get("breakeven_stop_offset_ticks", 1)
     
     # Step 2 - Calculate current profit in ticks
     if side == "long":
@@ -1986,6 +2056,11 @@ def check_trailing_stop(symbol: str, current_price: float) -> None:
     """
     Check and update trailing stop based on price movement.
     
+    Uses ADAPTIVE parameters that adjust based on:
+    - Current market volatility (ATR)
+    - Market regime (trending vs choppy)  
+    - Position holding duration
+    
     Runs AFTER breakeven check. Only processes positions where breakeven is already active.
     Continuously updates stop to follow profitable price movement while protecting gains.
     
@@ -2006,8 +2081,41 @@ def check_trailing_stop(symbol: str, current_price: float) -> None:
     side = position["side"]
     entry_price = position["entry_price"]
     tick_size = CONFIG["tick_size"]
-    trailing_distance_ticks = CONFIG.get("trailing_stop_distance_ticks", 8)
-    min_profit_ticks = CONFIG.get("trailing_stop_min_profit_ticks", 12)
+    
+    # ========================================================================
+    # ADAPTIVE EXIT MANAGEMENT - Calculate dynamic trailing parameters
+    # ========================================================================
+    if CONFIG.get("adaptive_exits_enabled", False):
+        try:
+            global adaptive_manager
+            if adaptive_manager is None:
+                from adaptive_exits import AdaptiveExitManager
+                adaptive_manager = AdaptiveExitManager(CONFIG)
+            
+            from adaptive_exits import get_adaptive_exit_params
+            
+            adaptive_params = get_adaptive_exit_params(
+                bars=state[symbol]["bars_1min"],
+                position=position,
+                current_price=current_price,
+                config=CONFIG,
+                adaptive_manager=adaptive_manager  # Pass global instance for persistence
+            )
+            
+            trailing_distance_ticks = adaptive_params["trailing_distance_ticks"]
+            min_profit_ticks = adaptive_params["trailing_min_profit_ticks"]
+            
+            logger.info(f"📊 ADAPTIVE TRAILING: {trailing_distance_ticks}t distance, {min_profit_ticks}t min "
+                       f"| Regime: {adaptive_params['market_regime'].upper()} "
+                       f"| Aggressive: {adaptive_params['is_aggressive_mode']}")
+        except Exception as e:
+            logger.warning(f"Adaptive exits failed, using static params: {e}")
+            trailing_distance_ticks = CONFIG.get("trailing_stop_distance_ticks", 8)
+            min_profit_ticks = CONFIG.get("trailing_stop_min_profit_ticks", 12)
+    else:
+        # Static parameters
+        trailing_distance_ticks = CONFIG.get("trailing_stop_distance_ticks", 8)
+        min_profit_ticks = CONFIG.get("trailing_stop_min_profit_ticks", 12)
     
     # Calculate current profit
     if side == "long":
@@ -2817,6 +2925,18 @@ def execute_exit(symbol: str, exit_price: float, reason: str) -> None:
     logger.info(f"  Entry: ${position['entry_price']:.2f}, Exit: ${exit_price:.2f}")
     logger.info(f"  Ticks: {ticks:+.1f}, P&L: ${pnl:+.2f}")
     
+    # ADAPTIVE EXIT MANAGEMENT - Record trade result for streak tracking
+    if CONFIG.get("adaptive_exits_enabled", False):
+        try:
+            global adaptive_manager
+            if adaptive_manager is None:
+                from adaptive_exits import AdaptiveExitManager
+                adaptive_manager = AdaptiveExitManager(CONFIG)
+            adaptive_manager.record_trade_result(pnl)
+            logger.info(f"📈 STREAK TRACKING: Recorded P&L ${pnl:+.2f} (Recent: {len(adaptive_manager.recent_trades)} trades)")
+        except Exception as e:
+            logger.debug(f"Streak tracking update skipped: {e}")
+    
     # Log time-based exits with detailed audit trail
     time_based_reasons = [
         "flatten_mode_exit", "time_based_profit_take", "time_based_loss_cut",
@@ -3263,23 +3383,32 @@ def check_trade_limits(current_time: datetime) -> Tuple[bool, Optional[str]]:
     if bot_status["emergency_stop"]:
         return False, f"Emergency stop active: {bot_status['stop_reason']}"
     
-    # Check for weekend (Saturday/Sunday)
-    if current_time.weekday() >= 5:  # 5=Saturday, 6=Sunday
+    # Check for weekend (Saturday + Sunday before 6 PM)
+    if current_time.weekday() == 5:  # Saturday - always closed
         if bot_status["trading_enabled"]:
-            logger.debug(f"Weekend detected - disabling trading until Monday")
+            logger.debug(f"Saturday detected - market closed")
             bot_status["trading_enabled"] = False
             bot_status["stop_reason"] = "weekend"
         return False, "Weekend - market closed"
     
-    # Check for futures maintenance window (5:00 PM - 6:00 PM ET daily)
-    maintenance_start = time(17, 0)  # 5 PM
-    maintenance_end = time(18, 0)    # 6 PM
-    if maintenance_start <= current_time.time() < maintenance_end:
-        if bot_status["trading_enabled"]:
-            logger.debug(f"Maintenance window - disabling trading")
-            bot_status["trading_enabled"] = False
-            bot_status["stop_reason"] = "maintenance"
-        return False, "Maintenance window"
+    if current_time.weekday() == 6:  # Sunday
+        if current_time.time() < time(18, 0):  # Before 6 PM Sunday
+            if bot_status["trading_enabled"]:
+                logger.debug(f"Sunday before 6 PM - market closed")
+                bot_status["trading_enabled"] = False
+                bot_status["stop_reason"] = "weekend"
+            return False, "Weekend - market closed (opens 6 PM)"
+    
+    # Check for futures maintenance window (5:00 PM - 6:00 PM ET Monday-Friday)
+    if current_time.weekday() < 5:  # Monday through Friday only
+        maintenance_start = time(17, 0)  # 5 PM
+        maintenance_end = time(18, 0)    # 6 PM
+        if maintenance_start <= current_time.time() < maintenance_end:
+            if bot_status["trading_enabled"]:
+                logger.debug(f"Maintenance window - disabling trading")
+                bot_status["trading_enabled"] = False
+                bot_status["stop_reason"] = "maintenance"
+            return False, "Maintenance window"
     
     # Re-enable trading after maintenance/weekend
     if not bot_status["trading_enabled"]:
@@ -3669,18 +3798,25 @@ def get_trading_state(dt: datetime = None) -> str:
         tz = pytz.timezone(CONFIG["timezone"])
         dt = dt.astimezone(tz)
     
-    # Check for weekend
-    if dt.weekday() >= 5:  # Saturday or Sunday
+    # Check for weekend (Saturday + Sunday before 6 PM)
+    if dt.weekday() == 5:  # Saturday - always closed
         return 'weekend'
     
-    # Check for maintenance window (5-6 PM ET daily)
-    maintenance_start = time(17, 0)
-    maintenance_end = time(18, 0)
-    current_time = dt.time()
-    if maintenance_start <= current_time < maintenance_end:
-        return 'maintenance'
+    if dt.weekday() == 6:  # Sunday
+        # ES futures open Sunday at 6 PM ET
+        if dt.time() < time(18, 0):  # Before 6 PM Sunday
+            return 'weekend'
     
-    # Otherwise always in entry window for 24/5 trading
+    # Check for maintenance window (5-6 PM ET Monday-Friday)
+    # Sunday 5-6 PM is part of weekend, so only check Mon-Fri
+    if dt.weekday() < 5:  # Monday through Friday
+        maintenance_start = time(17, 0)
+        maintenance_end = time(18, 0)
+        current_time = dt.time()
+        if maintenance_start <= current_time < maintenance_end:
+            return 'maintenance'
+    
+    # Otherwise in entry window (Sunday 6 PM through Friday 5 PM)
     return 'entry_window'
 
 

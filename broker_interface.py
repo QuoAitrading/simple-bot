@@ -169,16 +169,18 @@ class TopStepBroker(BrokerInterface):
     Wraps TopStep API calls with error handling and retry logic.
     """
     
-    def __init__(self, api_token: str, max_retries: int = 3, timeout: int = 30):
+    def __init__(self, api_token: str, username: str = None, max_retries: int = 3, timeout: int = 30):
         """
         Initialize TopStep broker.
         
         Args:
             api_token: TopStep API token
+            username: TopStep username/email (required for SDK v3.5+)
             max_retries: Maximum number of retry attempts
             timeout: Request timeout in seconds
         """
         self.api_token = api_token
+        self.username = username
         self.max_retries = max_retries
         self.timeout = timeout
         self.connected = False
@@ -197,6 +199,8 @@ class TopStepBroker(BrokerInterface):
     
     def connect(self) -> bool:
         """Connect to TopStep SDK."""
+        import asyncio
+        
         if self.circuit_breaker_open:
             logger.error("Circuit breaker is open - cannot connect")
             return False
@@ -204,21 +208,25 @@ class TopStepBroker(BrokerInterface):
         try:
             logger.info("Connecting to TopStep SDK (Project-X)...")
             
-            # Initialize SDK client
-            config = ProjectXConfig(api_key=self.api_token)
-            self.sdk_client = ProjectX(config)
-            
-            # Initialize trading suite for order management
-            suite_config = TradingSuiteConfig(
+            # Initialize SDK client with username and API key
+            self.sdk_client = ProjectX(
+                username=self.username or "",
                 api_key=self.api_token,
-                environment="production"
+                config=ProjectXConfig()
             )
-            self.trading_suite = TradingSuite(suite_config)
+            
+            # Authenticate first (async method needs await)
+            logger.info("Authenticating with TopStep...")
+            asyncio.run(self.sdk_client.authenticate())
+            
+            # Trading suite is optional - only needed for live trading, not historical data
+            self.trading_suite = None
             
             # Test connection by getting account info
-            account = self.sdk_client.get_account()
+            account = self.sdk_client.get_account_info()
             if account:
-                logger.info(f"Connected to TopStep - Account: {account.account_id}")
+                account_id = getattr(account, 'account_id', getattr(account, 'id', 'N/A'))
+                logger.info(f"Connected to TopStep - Account: {account_id}")
                 self.connected = True
                 self.failure_count = 0
                 return True
@@ -456,31 +464,49 @@ class TopStepBroker(BrokerInterface):
             logger.error(f"Error subscribing to quotes: {e}")
             self._record_failure()
     
-    def fetch_historical_bars(self, symbol: str, timeframe: str, count: int) -> List[Dict[str, Any]]:
+    def fetch_historical_bars(self, symbol: str, timeframe: str, count: int, 
+                             start_date: datetime = None, end_date: datetime = None) -> List[Dict[str, Any]]:
         """Fetch historical bars from TopStep."""
+        import asyncio
+        
         if not self.connected or not self.sdk_client:
             logger.error("Cannot fetch bars: not connected")
             return []
         
         try:
-            # Fetch historical data
-            bars = self.sdk_client.get_historical_bars(
-                symbol=symbol,
-                interval=timeframe,
-                limit=count
-            )
+            # Convert timeframe string to interval (e.g., '1m' -> 1 minute)
+            if 'm' in timeframe or 'min' in timeframe:
+                interval = int(timeframe.replace('m', '').replace('min', ''))
+                unit = 2  # Minutes
+            elif 'h' in timeframe:
+                interval = int(timeframe.replace('h', '')) * 60
+                unit = 2  # Minutes
+            else:
+                interval = 5  # Default to 5 minutes
+                unit = 2
             
-            if bars:
+            # Fetch historical data using get_bars (async method)
+            bars_df = asyncio.run(self.sdk_client.get_bars(
+                symbol=symbol,
+                interval=interval,
+                unit=unit,
+                limit=count,
+                start_time=start_date,
+                end_time=end_date
+            ))
+            
+            if bars_df is not None and len(bars_df) > 0:
+                # Convert Polars DataFrame to list of dicts
                 return [
                     {
-                        "timestamp": bar.timestamp,
-                        "open": float(bar.open),
-                        "high": float(bar.high),
-                        "low": float(bar.low),
-                        "close": float(bar.close),
-                        "volume": int(bar.volume)
+                        "timestamp": row['timestamp'],
+                        "open": float(row['open']),
+                        "high": float(row['high']),
+                        "low": float(row['low']),
+                        "close": float(row['close']),
+                        "volume": int(row['volume'])
                     }
-                    for bar in bars
+                    for row in bars_df.iter_rows(named=True)
                 ]
             return []
         except Exception as e:
@@ -505,12 +531,13 @@ class TopStepBroker(BrokerInterface):
         logger.info("Circuit breaker reset")
 
 
-def create_broker(api_token: str) -> BrokerInterface:
+def create_broker(api_token: str, username: str = None) -> BrokerInterface:
     """
     Factory function to create TopStep broker instance.
     
     Args:
         api_token: API token for TopStep (required)
+        username: TopStep username/email (required for SDK v3.5+)
     
     Returns:
         TopStepBroker instance
@@ -520,4 +547,4 @@ def create_broker(api_token: str) -> BrokerInterface:
     """
     if not api_token:
         raise ValueError("API token is required for TopStep broker")
-    return TopStepBroker(api_token=api_token)
+    return TopStepBroker(api_token=api_token, username=username)

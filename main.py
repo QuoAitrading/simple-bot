@@ -190,6 +190,15 @@ def run_backtest(args, bot_config):
     bot_config_dict = bot_config.to_dict()
     engine = BacktestEngine(backtest_config, bot_config_dict)
     
+    # CRITICAL FIX: Force reload of config and vwap_bounce_bot modules to get fresh values
+    # This fixes subprocess caching issue where config changes weren't being picked up
+    import sys
+    import importlib
+    if 'config' in sys.modules:
+        importlib.reload(sys.modules['config'])
+    if 'vwap_bounce_bot' in sys.modules:
+        importlib.reload(sys.modules['vwap_bounce_bot'])
+    
     # Integrate actual VWAP bot strategy for backtesting
     from vwap_bounce_bot import initialize_state, on_tick, check_for_signals, check_exit_conditions, check_daily_reset, state
     
