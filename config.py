@@ -31,24 +31,24 @@ class BotConfiguration:
     
     # VWAP bands (standard deviation multipliers) - ITERATION 24 BEST
     vwap_std_dev_1: float = 1.5  # Warning zone (potential reversal area)
-    vwap_std_dev_2: float = 1.5199999999999998  # Entry zone - Trying exact optimizer value
-    vwap_std_dev_3: float = 3.4  # Exit/stop zone - Iteration 24
+    vwap_std_dev_2: float = 1.2599639416767487  # Entry zone - Trying exact optimizer value
+    vwap_std_dev_3: float = 4.366119852325928  # Exit/stop zone - Iteration 24
     
     # Trend Filter Parameters
-    trend_ema_period: int = 21  # Iteration 24
+    trend_ema_period: int = 45  # Iteration 24
     trend_threshold: float = 0.0001
     
     # Technical Filters - ITERATION 24 BEST
     use_trend_filter: bool = False  # Trend filter OFF (Iteration 24)
-    use_rsi_filter: bool = True
-    use_vwap_direction_filter: bool = True  # VWAP direction filter ON (Iteration 24)
+    use_rsi_filter: bool = True  # RSI filter ON - core part of strategy!
+    use_vwap_direction_filter: bool = False  # VWAP direction filter ON (Iteration 24)
     use_volume_filter: bool = False  # Don't use volume filter - blocks overnight trades
     use_macd_filter: bool = False
     
     # RSI Settings - ITERATION 24 BEST
-    rsi_period: int = 19  # Iteration 24
-    rsi_oversold: int = 30  # Iteration 24
-    rsi_overbought: int = 78  # Iteration 24
+    rsi_period: int = 18  # Iteration 24
+    rsi_oversold: int = 32  # Iteration 24
+    rsi_overbought: int = 72  # Iteration 24
     
     # MACD - Keep for reference but disabled
     macd_fast: int = 12
@@ -73,16 +73,16 @@ class BotConfiguration:
     friday_close_target: time = field(default_factory=lambda: time(16, 30))  # Flatten by 4:30 PM Friday
     
     # Safety Parameters
-    daily_loss_limit: float = 200.0
+    daily_loss_limit: float = 99999.0  # Disabled - learning brain controls stop-trading decisions
     max_drawdown_percent: float = 5.0
     tick_timeout_seconds: int = 60
     proactive_stop_buffer_ticks: int = 2
     
     # ATR-Based Dynamic Risk Management - NOT ACTUALLY IMPLEMENTED YET
-    use_atr_stops: bool = False  # Bot doesn't use this yet - uses fixed stops
+    use_atr_stops: bool = True  # Bot doesn't use this yet - uses fixed stops
     atr_period: int = 14  # ATR calculation period
-    stop_loss_atr_multiplier: float = 2.7  # Not used yet
-    profit_target_atr_multiplier: float = 4.7  # Not used yet
+    stop_loss_atr_multiplier: float = 3.4906342493948115  # Not used yet
+    profit_target_atr_multiplier: float = 5.861677405155175  # Not used yet
     
     # Instrument Specifications
     tick_size: float = 0.25
@@ -131,26 +131,26 @@ class BotConfiguration:
     
     # Breakeven Protection (baseline - adaptive system adjusts these)
     breakeven_enabled: bool = True  # Enable/disable breakeven protection
-    breakeven_profit_threshold_ticks: int = 8  # Profit in ticks before activating breakeven (adaptive: 4-12)
-    breakeven_stop_offset_ticks: int = 1  # Ticks above/below entry for breakeven stop
+    breakeven_profit_threshold_ticks: int = 6  # Profit in ticks before activating breakeven (adaptive: 4-12)
+    breakeven_stop_offset_ticks: int = 2  # Ticks above/below entry for breakeven stop
     
     # Trailing Stop (baseline - adaptive system adjusts these)
-    trailing_stop_enabled: bool = True  # Enable/disable trailing stop
-    trailing_stop_distance_ticks: int = 8  # Distance in ticks to trail behind price (adaptive: 4-16)
-    trailing_stop_min_profit_ticks: int = 12  # Minimum profit before activating trailing (adaptive: 8-20)
+    trailing_stop_enabled: bool = False  # Enable/disable trailing stop
+    trailing_stop_distance_ticks: int = 14  # Distance in ticks to trail behind price (adaptive: 4-16)
+    trailing_stop_min_profit_ticks: int = 13  # Minimum profit before activating trailing (adaptive: 8-20)
     
     # Time-Decay Tightening
-    time_decay_enabled: bool = True  # Enable/disable time-decay tightening
-    time_decay_50_percent_tightening: float = 0.10  # 10% tightening at 50% of max hold time
-    time_decay_75_percent_tightening: float = 0.20  # 20% tightening at 75% of max hold time
-    time_decay_90_percent_tightening: float = 0.30  # 30% tightening at 90% of max hold time
+    time_decay_enabled: bool = False  # Enable/disable time-decay tightening
+    time_decay_50_percent_tightening: float = 0.2201856897535026  # 10% tightening at 50% of max hold time
+    time_decay_75_percent_tightening: float = 0.3806904982662844  # 20% tightening at 75% of max hold time
+    time_decay_90_percent_tightening: float = 0.42486922788988035  # 30% tightening at 90% of max hold time
     
     # Partial Exits (baseline - adaptive system adjusts R-multiples)
-    partial_exits_enabled: bool = True  # Enable/disable partial exits
-    partial_exit_1_percentage: float = 0.50  # 50% exit at first level
-    partial_exit_1_r_multiple: float = 2.0  # Exit at 2.0R (adaptive: 1.4-3.0)
-    partial_exit_2_percentage: float = 0.30  # 30% exit at second level
-    partial_exit_2_r_multiple: float = 3.0  # Exit at 3.0R (adaptive: 2.1-4.5)
+    partial_exits_enabled: bool = False  # Enable/disable partial exits
+    partial_exit_1_percentage: float = 0.5322746485745818  # 50% exit at first level
+    partial_exit_1_r_multiple: float = 2.058424149842615  # Exit at 2.0R (adaptive: 1.4-3.0)
+    partial_exit_2_percentage: float = 0.4820400327373336  # 30% exit at second level
+    partial_exit_2_r_multiple: float = 4.447327673510635  # Exit at 3.0R (adaptive: 2.1-4.5)
     partial_exit_3_percentage: float = 0.20  # 20% exit at third level
     partial_exit_3_r_multiple: float = 5.0  # Exit at 5.0R
     

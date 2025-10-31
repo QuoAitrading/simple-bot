@@ -75,6 +75,13 @@ Examples:
     )
     
     parser.add_argument(
+        '--iterations',
+        type=int,
+        default=1,
+        help='Number of times to run backtest (for ML learning - default: 1, use 100+ for deep learning)'
+    )
+    
+    parser.add_argument(
         '--data-path',
         type=str,
         default='./historical_data',

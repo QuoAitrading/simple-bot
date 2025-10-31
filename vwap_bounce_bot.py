@@ -9,6 +9,7 @@ from datetime import datetime, time, timedelta
 from collections import deque
 from typing import Any, Dict, List, Optional, Tuple, Callable
 import pytz
+import numpy as np
 
 # Import new production modules
 from config import load_config, BotConfiguration
@@ -55,6 +56,9 @@ bid_ask_manager: Optional[BidAskManager] = None
 # Global adaptive exit manager (for streak tracking persistence)
 adaptive_manager: Optional[Any] = None
 
+# Global learning brain (pure reinforcement learning)
+learning_brain: Optional[Any] = None
+
 # State management dictionary
 state: Dict[str, Any] = {}
 
@@ -94,6 +98,37 @@ def setup_logging() -> logging.Logger:
 
 
 logger = setup_logging()
+
+
+def get_learned_or_config(param_name: str, config_key: str, default: Any) -> Any:
+    """
+    🧠 Get parameter value - uses learning brain's defaults for pure experience system.
+    
+    Priority:
+    1. Learning brain's default/learned value (from pure experience system)
+    2. Config value (from ML optimizer)
+    3. Default (fallback)
+    
+    This ensures bot uses learned defaults while building pure experience database.
+    """
+    global learning_brain
+    
+    # First: Check if learning brain has learned params (pure experience system)
+    if learning_brain:
+        learned_params = learning_brain.get_learned_params()
+        learned_value = learned_params.get(param_name)
+        if learned_value is not None:
+            logger.debug(f"🧠 Using learned default for {param_name}: {learned_value}")
+            return learned_value
+    
+    # Second: Use config (which ML optimizer updates)
+    if config_key in CONFIG:
+        return CONFIG[config_key]
+    
+    # Last resort: Use default
+    logger.debug(f"📖 Using DEFAULT {param_name}: {default}")
+    return default
+
 
 
 # ============================================================================
@@ -831,6 +866,50 @@ def calculate_rsi(prices: List[float], period: int = 14) -> Optional[float]:
     return rsi
 
 
+def calculate_atr(symbol: str, period: int = 14) -> float:
+    """
+    Calculate Average True Range (ATR) for volatility measurement.
+    
+    Args:
+        symbol: Instrument symbol
+        period: ATR period (default 14)
+    
+    Returns:
+        ATR value in price units
+    """
+    bars = state[symbol]["bars_1min"]
+    
+    if len(bars) < period + 1:
+        # Not enough data, return a reasonable default
+        return CONFIG.get("tick_size", 0.25) * 8  # 8 ticks
+    
+    # Calculate True Range for each bar
+    true_ranges = []
+    for i in range(1, len(bars)):
+        prev_close = bars[i-1]["close"]
+        curr_high = bars[i]["high"]
+        curr_low = bars[i]["low"]
+        
+        # True Range = max of:
+        # - Current High - Current Low
+        # - |Current High - Previous Close|
+        # - |Current Low - Previous Close|
+        tr = max(
+            curr_high - curr_low,
+            abs(curr_high - prev_close),
+            abs(curr_low - prev_close)
+        )
+        true_ranges.append(tr)
+    
+    # Calculate ATR (simple moving average of TR)
+    if len(true_ranges) >= period:
+        atr = np.mean(true_ranges[-period:])
+    else:
+        atr = np.mean(true_ranges)
+    
+    return atr
+
+
 def calculate_macd(prices: List[float], fast_period: int = 12, 
                    slow_period: int = 26, signal_period: int = 9) -> Optional[Dict[str, float]]:
     """
@@ -1003,10 +1082,11 @@ def calculate_vwap(symbol: str) -> None:
     std_dev = variance ** 0.5
     state[symbol]["vwap_std_dev"] = std_dev
     
-    # Calculate bands using configured standard deviation multipliers
-    band_1_mult = CONFIG.get("vwap_std_dev_1", 1.5)
-    band_2_mult = CONFIG.get("vwap_std_dev_2", 2.0)
-    band_3_mult = CONFIG.get("vwap_std_dev_3", 3.5)
+    # Calculate bands using learned parameters (defaults for pure experience system)
+    band_2_mult = get_learned_or_config("vwap_entry_distance", "vwap_std_dev_2", 2.0)
+    band_1_mult = get_learned_or_config("vwap_warning_distance", "vwap_std_dev_1", 1.5)
+    band_3_mult = get_learned_or_config("vwap_exit_distance", "vwap_std_dev_3", 3.5)
+    
     state[symbol]["vwap_bands"]["upper_1"] = vwap + (std_dev * band_1_mult)
     state[symbol]["vwap_bands"]["upper_2"] = vwap + (std_dev * band_2_mult)
     state[symbol]["vwap_bands"]["upper_3"] = vwap + (std_dev * band_3_mult)
@@ -1156,138 +1236,130 @@ def validate_signal_requirements(symbol: str, bar_time: datetime) -> Tuple[bool,
 def check_long_signal_conditions(symbol: str, prev_bar: Dict[str, Any], 
                                  current_bar: Dict[str, Any]) -> bool:
     """
-    Check if long signal conditions are met - WITH-TREND MEAN REVERSION.
+    🧠 PURE LEARNING - NO HARDCODED FILTERS!
     
-    Strategy: Buy dips in uptrends (fade to VWAP from below)
+    The bot learns from experience what makes a good long setup:
+    - RSI levels that work (discovers it, not told)
+    - VWAP distances that win
+    - Market states that are profitable
+    - Volume patterns that confirm
+    - Trend conditions that matter
     
-    Args:
-        symbol: Instrument symbol
-        prev_bar: Previous 1-minute bar
-        current_bar: Current 1-minute bar
-    
-    Returns:
-        True if long signal detected
+    NO assumptions - just learned patterns!
     """
     vwap_bands = state[symbol]["vwap_bands"]
     vwap = state[symbol]["vwap"]
     
-    # TREND FILTER: Skip longs in downtrend (but allow in neutral/uptrend)
-    use_trend = CONFIG.get("use_trend_filter", False)
-    if use_trend:
-        trend = state[symbol]["trend_direction"]
-        if trend == "down":
-            logger.debug(f"Long rejected - trend is {trend}, counter to downtrend")
-            return False
-        logger.debug(f"Trend filter: {trend} ✓ (allows longs)")
-    
-    # PRIMARY: VWAP bounce condition (2.0 std dev)
+    # Gather ALL context (no filtering, just data collection)
     touched_lower = prev_bar["low"] <= vwap_bands["lower_2"]
     bounced_back = current_bar["close"] > vwap_bands["lower_2"]
     
+    # Calculate VWAP distance in standard deviations
+    vwap_std = state[symbol].get("vwap_std_dev", 1)
+    if vwap_std > 0:
+        vwap_distance_sigma = abs(current_bar["close"] - vwap) / vwap_std
+    else:
+        vwap_distance_sigma = 0
+    
+    # Get volume ratio - handle None case
+    avg_volume = state[symbol].get("avg_volume")
+    if avg_volume and avg_volume > 0:
+        volume_ratio = current_bar["volume"] / avg_volume
+    else:
+        volume_ratio = 1.0
+    
+    # Build COMPLETE setup context - everything the learning brain needs
+    setup_context = {
+        "signal_type": "long",
+        "rsi": state[symbol].get("rsi", 50),
+        "vwap_distance_sigma": vwap_distance_sigma,
+        "market_state": state[symbol].get("market_state", "unknown"),
+        "volatility": state[symbol].get("volatility_regime", "unknown"),
+        "trend_direction": state[symbol].get("trend_direction", "neutral"),
+        "volume_ratio": volume_ratio,
+        "touched_band": touched_lower,
+        "bounced_back": bounced_back,
+        "price_vs_vwap": "below" if current_bar["close"] < vwap else "above",
+        "time_of_day": datetime.now().hour if backtest_current_time is None else backtest_current_time.hour,
+        "confluence": 0  # Will be calculated by learning brain
+    }
+    
+    # 🧠 LET LEARNING BRAIN DECIDE - It knows from experience!
+    if learning_brain:
+        should_take, reason = learning_brain.should_take_trade(setup_context)
+        if should_take:
+            logger.info(f"✅ LONG SIGNAL: {reason}")
+        else:
+            logger.info(f"🧠 {reason}")
+        return should_take
+    
+    # Fallback if no learning brain (shouldn't happen in production)
     if not (touched_lower and bounced_back):
         return False
     
-    # FILTER 1: VWAP Direction - price should be BELOW VWAP (discount/oversold)
-    use_vwap_direction = CONFIG.get("use_vwap_direction_filter", False)
-    if use_vwap_direction and vwap is not None:
-        if current_bar["close"] >= vwap:
-            logger.debug(f"Long rejected - price above VWAP: {current_bar['close']:.2f} >= {vwap:.2f}")
-            return False
-        logger.debug(f"Price below VWAP: {current_bar['close']:.2f} < {vwap:.2f} ✓")
-    
-    # FILTER 2: RSI - extreme oversold
-    use_rsi = CONFIG.get("use_rsi_filter", True)
-    rsi_oversold = CONFIG.get("rsi_oversold", 25.0)
-    if use_rsi:
-        rsi = state[symbol]["rsi"]
-        if rsi is not None:
-            if rsi >= rsi_oversold:
-                logger.debug(f"Long rejected - RSI not extreme: {rsi:.2f} >= {rsi_oversold}")
-                return False
-            logger.debug(f"RSI extreme oversold: {rsi:.2f} < {rsi_oversold} ✓")
-    
-    # FILTER 3: Volume spike - confirmation of interest
-    use_volume = CONFIG.get("use_volume_filter", True)
-    volume_mult = CONFIG.get("volume_spike_multiplier", 1.5)
-    if use_volume:
-        avg_volume = state[symbol]["avg_volume"]
-        if avg_volume is not None and avg_volume > 0:
-            current_volume = current_bar["volume"]
-            if current_volume < avg_volume * volume_mult:
-                logger.debug(f"Long rejected - no volume spike: {current_volume} < {avg_volume * volume_mult:.0f}")
-                return False
-            logger.debug(f"Volume spike: {current_volume} >= {avg_volume * volume_mult:.0f} ✓")
-    
-    logger.info(f"✅ LONG SIGNAL (WITH-TREND DIP): VWAP bounce at {current_bar['close']:.2f} (band: {vwap_bands['lower_2']:.2f})")
+    logger.info(f"✅ LONG SIGNAL (No learning brain - taking basic setup)")
     return True
 
 
 def check_short_signal_conditions(symbol: str, prev_bar: Dict[str, Any], 
                                   current_bar: Dict[str, Any]) -> bool:
     """
-    Check if short signal conditions are met - WITH-TREND MEAN REVERSION.
+    🧠 PURE LEARNING - NO HARDCODED FILTERS!
     
-    Strategy: Sell rallies in downtrends (fade to VWAP from above)
-    
-    Args:
-        symbol: Instrument symbol
-        prev_bar: Previous 1-minute bar
-        current_bar: Current 1-minute bar
-    
-    Returns:
-        True if short signal detected
+    The bot learns from experience what makes a good short setup.
+    NO assumptions about RSI > 70 or anything - just learned patterns!
     """
     vwap_bands = state[symbol]["vwap_bands"]
     vwap = state[symbol]["vwap"]
     
-    # TREND FILTER: Skip shorts in uptrend (but allow in neutral/downtrend)
-    use_trend = CONFIG.get("use_trend_filter", False)
-    if use_trend:
-        trend = state[symbol]["trend_direction"]
-        if trend == "up":
-            logger.debug(f"Short rejected - trend is {trend}, counter to uptrend")
-            return False
-        logger.debug(f"Trend filter: {trend} ✓ (allows shorts)")
-    
-    # PRIMARY: VWAP bounce condition (2.0 std dev)
+    # Gather ALL context (no filtering, just data collection)
     touched_upper = prev_bar["high"] >= vwap_bands["upper_2"]
     bounced_back = current_bar["close"] < vwap_bands["upper_2"]
     
+    # Calculate VWAP distance in standard deviations
+    vwap_std = state[symbol].get("vwap_std_dev", 1)
+    if vwap_std > 0:
+        vwap_distance_sigma = abs(current_bar["close"] - vwap) / vwap_std
+    else:
+        vwap_distance_sigma = 0
+    
+    # Get volume ratio - handle None case
+    avg_volume = state[symbol].get("avg_volume")
+    if avg_volume and avg_volume > 0:
+        volume_ratio = current_bar["volume"] / avg_volume
+    else:
+        volume_ratio = 1.0
+    
+    # Build COMPLETE setup context
+    setup_context = {
+        "signal_type": "short",
+        "rsi": state[symbol].get("rsi", 50),
+        "vwap_distance_sigma": vwap_distance_sigma,
+        "market_state": state[symbol].get("market_state", "unknown"),
+        "volatility": state[symbol].get("volatility_regime", "unknown"),
+        "trend_direction": state[symbol].get("trend_direction", "neutral"),
+        "volume_ratio": volume_ratio,
+        "touched_band": touched_upper,
+        "bounced_back": bounced_back,
+        "price_vs_vwap": "above" if current_bar["close"] > vwap else "below",
+        "time_of_day": datetime.now().hour if backtest_current_time is None else backtest_current_time.hour,
+        "confluence": 0
+    }
+    
+    # 🧠 LET LEARNING BRAIN DECIDE - Pure experience-based decision!
+    if learning_brain:
+        should_take, reason = learning_brain.should_take_trade(setup_context)
+        if should_take:
+            logger.info(f"✅ SHORT SIGNAL: {reason}")
+        else:
+            logger.info(f"🧠 {reason}")
+        return should_take
+    
+    # Fallback if no learning brain
     if not (touched_upper and bounced_back):
         return False
     
-    # FILTER 1: VWAP Direction - price should be ABOVE VWAP (premium/overbought)
-    use_vwap_direction = CONFIG.get("use_vwap_direction_filter", False)
-    if use_vwap_direction and vwap is not None:
-        if current_bar["close"] <= vwap:
-            logger.debug(f"Short rejected - price below VWAP: {current_bar['close']:.2f} <= {vwap:.2f}")
-            return False
-        logger.debug(f"Price above VWAP: {current_bar['close']:.2f} > {vwap:.2f} ✓")
-    
-    # FILTER 2: RSI - extreme overbought
-    use_rsi = CONFIG.get("use_rsi_filter", True)
-    rsi_overbought = CONFIG.get("rsi_overbought", 75.0)
-    if use_rsi:
-        rsi = state[symbol]["rsi"]
-        if rsi is not None:
-            if rsi <= rsi_overbought:
-                logger.debug(f"Short rejected - RSI not extreme: {rsi:.2f} <= {rsi_overbought}")
-                return False
-            logger.debug(f"RSI extreme overbought: {rsi:.2f} > {rsi_overbought} ✓")
-    
-    # FILTER 3: Volume spike - confirmation of interest
-    use_volume = CONFIG.get("use_volume_filter", True)
-    volume_mult = CONFIG.get("volume_spike_multiplier", 1.5)
-    if use_volume:
-        avg_volume = state[symbol]["avg_volume"]
-        if avg_volume is not None and avg_volume > 0:
-            current_volume = current_bar["volume"]
-            if current_volume < avg_volume * volume_mult:
-                logger.debug(f"Short rejected - no volume spike: {current_volume} < {avg_volume * volume_mult:.0f}")
-                return False
-            logger.debug(f"Volume spike: {current_volume} >= {avg_volume * volume_mult:.0f} ✓")
-    
-    logger.info(f"✅ SHORT SIGNAL (WITH-TREND RALLY): VWAP bounce at {current_bar['close']:.2f} (band: {vwap_bands['upper_2']:.2f})")
+    logger.info(f"✅ SHORT SIGNAL (No learning brain - taking basic setup)")
     return True
 
 
@@ -1295,6 +1367,7 @@ def check_for_signals(symbol: str) -> None:
     """
     Check for trading signals on each completed 1-minute bar.
     Coordinates signal detection through helper functions.
+    NOW WITH PROFESSIONAL TRADER INTELLIGENCE!
     
     Args:
         symbol: Instrument symbol
@@ -1333,14 +1406,71 @@ def check_for_signals(symbol: str) -> None:
     logger.debug(f"Signal check: trend={trend}, prev_low={prev_bar['low']:.2f}, "
                 f"current_close={current_bar['close']:.2f}, lower_band_2={vwap_bands['lower_2']:.2f}")
     
+    # ========================================================================
+    # PROFESSIONAL TRADER INTELLIGENCE - Evaluate setup quality
+    # ========================================================================
+    signal_type = None
+    
     # Check for long signal
     if check_long_signal_conditions(symbol, prev_bar, current_bar):
-        execute_entry(symbol, "long", current_bar["close"])
-        return
-    
+        signal_type = "long"
     # Check for short signal
-    if check_short_signal_conditions(symbol, prev_bar, current_bar):
-        execute_entry(symbol, "short", current_bar["close"])
+    elif check_short_signal_conditions(symbol, prev_bar, current_bar):
+        signal_type = "short"
+    
+    # If we have a signal, evaluate quality with professional brain
+    if signal_type:
+        global learning_brain
+        if learning_brain is None:
+            from learning_brain import LearningBrain
+            logger.info("🧠 Initializing Reinforcement Learning Brain (ONE TIME ONLY)")
+            learning_brain = LearningBrain(CONFIG)
+        
+        # Calculate ATR for evaluation
+        atr = calculate_atr(symbol, period=14)
+        
+        # 🧠 PURE REINFORCEMENT LEARNING DECISION
+        # Capture current market state
+        market_state = learning_brain.capture_market_state(
+            rsi=current_bar.get('rsi', 50),
+            vwap_distance=abs(current_bar["close"] - vwap_bands["vwap"]) / vwap_bands["std_dev"],
+            market_condition=state[symbol].get("market_condition", "unknown"),
+            volume_ratio=state[symbol].get("volume_ratio", 1.0),
+            trend=state[symbol].get("trend", "none"),
+            hour=current_bar["timestamp"].hour,
+            minute=current_bar["timestamp"].minute,
+            day_of_week=current_bar["timestamp"].weekday(),
+            volatility=state[symbol].get("volatility", "medium")
+        )
+        
+        # Let RL brain decide action (explore or exploit)
+        action = learning_brain.decide_action(market_state)
+        
+        if not action.get("take_trade", False):
+            logger.info(f"🧠 RL DECISION: SKIP ({action.get('decision_type', 'unknown')})")
+            # Record the decision not to trade
+            learning_brain.record_experience(
+                market_state=market_state,
+                action=action,
+                outcome={"pnl": 0, "win": False, "decision": "no_trade"}
+            )
+            return
+        
+        logger.info(f"🧠 RL DECISION: TAKE TRADE ({action.get('decision_type', 'unknown')})")
+        if action.get('expected_reward'):
+            logger.info(f"   Expected reward: ${action['expected_reward']:.2f}")
+        
+        # Store RL action for position management
+        state[symbol]["rl_action"] = action
+        state[symbol]["rl_market_state"] = market_state
+        
+        # Use RL-recommended position size
+        adjusted_contracts = CONFIG.get("max_contracts", 3)  # Will be learned over time
+        state[symbol]["intelligent_position_size"] = adjusted_contracts
+        
+        # Execute the trade
+        execute_entry(symbol, signal_type, current_bar["close"])
+        
         return
 
 
@@ -1363,27 +1493,47 @@ def calculate_position_size(symbol: str, side: str, entry_price: float) -> Tuple
     # Get account equity
     equity = get_account_equity()
     
-    # Calculate risk allowance (0.1% of equity)
-    risk_dollars = equity * CONFIG["risk_per_trade"]
+    # 🧠 USE RL ACTION PARAMETERS if available (pure RL decision)
+    rl_action = state[symbol].get("rl_action")
+    
+    if rl_action and learning_brain:
+        # Use parameters from RL decision (exploration or learned)
+        learned_risk = rl_action.get("risk_per_trade", CONFIG["risk_per_trade"])
+        max_stop_ticks = rl_action.get("stop_distance_ticks", 11)
+        buffer_ticks = rl_action.get("stop_buffer_ticks", 2)
+        profit_multiplier = rl_action.get("target_distance_ticks", 22) / max(max_stop_ticks, 1)
+        logger.info(f"🧠 RL ACTION: {learned_risk*100:.2f}% risk, {max_stop_ticks}T stop, {profit_multiplier:.1f}x target")
+    elif learning_brain:
+        # Fallback to learned defaults (shouldn't happen in normal flow)
+        learned_params = learning_brain.get_learned_params()
+        learned_risk = learned_params.get("risk_per_trade", CONFIG["risk_per_trade"])
+        max_stop_ticks = learned_params.get("stop_distance_ticks", 11)
+        buffer_ticks = learned_params.get("stop_buffer_ticks", 2)
+        profit_multiplier = learned_params.get("profit_target_multiplier", 2.0)
+        logger.debug(f"🧠 Using learned defaults: {learned_risk*100:.2f}% risk, {max_stop_ticks}T stops")
+    else:
+        # No RL brain - use config
+        learned_risk = CONFIG["risk_per_trade"]
+        max_stop_ticks = 11
+        buffer_ticks = 2
+        profit_multiplier = 2.0
+    
+    risk_dollars = equity * learned_risk
     logger.info(f"Account equity: ${equity:.2f}, Risk allowance: ${risk_dollars:.2f}")
     
-    # Determine stop price - TIGHTER STOPS FOR MEAN REVERSION
+    # Determine stop price
     vwap_bands = state[symbol]["vwap_bands"]
     vwap = state[symbol]["vwap"]
     tick_size = CONFIG["tick_size"]
     
-    # IMPROVED: Use optimal stops (11 ticks) - sweet spot between tight and too tight
-    # Mean reversion = expect quick bounce, not slow grind
-    max_stop_ticks = 11  # Optimized to 11 ticks ($13.75 max risk per contract)
-    
     if side == "long":
-        # Stop 12 ticks below entry (or at lower band 3, whichever is tighter)
-        band_stop = vwap_bands["lower_3"] - (2 * tick_size)  # 2 tick buffer
+        # Stop based on learned distance OR band level, whichever is tighter
+        band_stop = vwap_bands["lower_3"] - (buffer_ticks * tick_size)
         tight_stop = entry_price - (max_stop_ticks * tick_size)
         stop_price = max(tight_stop, band_stop)  # Use tighter of the two
     else:  # short
-        # Stop 12 ticks above entry (or at upper band 3, whichever is tighter)
-        band_stop = vwap_bands["upper_3"] + (2 * tick_size)  # 2 tick buffer
+        # Stop based on learned distance OR band level, whichever is tighter
+        band_stop = vwap_bands["upper_3"] + (buffer_ticks * tick_size)
         tight_stop = entry_price + (max_stop_ticks * tick_size)
         stop_price = min(tight_stop, band_stop)  # Use tighter of the two
     
@@ -1410,17 +1560,15 @@ def calculate_position_size(symbol: str, side: str, entry_price: float) -> Tuple
         logger.warning(f"Position size too small: risk=${risk_per_contract:.2f}, allowance=${risk_dollars:.2f}")
         return 0, stop_price, None
     
-    # Calculate target price - Use 3.5σ band as target (opposite side from entry)
-    # Entry is at -2σ (lower band), target is at +3.5σ (upper band) for longs
-    # Entry is at +2σ (upper band), target is at -3.5σ (lower band) for shorts
-    vwap_bands = state[symbol]["vwap_bands"]
+    # 🧠 CALCULATE TARGET - Use profit_multiplier from RL action
+    stop_distance = abs(entry_price - stop_price)
     
     if side == "long":
-        # Long: entered at lower band, target at upper 3.5σ band
-        target_price = vwap_bands["upper_3"]
+        # Target is entry + (stop_distance * learned_multiplier)
+        target_price = entry_price + (stop_distance * profit_multiplier)
     else:
-        # Short: entered at upper band, target at lower 3.5σ band
-        target_price = vwap_bands["lower_3"]
+        # Target is entry - (stop_distance * learned_multiplier)
+        target_price = entry_price - (stop_distance * profit_multiplier)
     
     target_price = round_to_tick(target_price)
     target_distance = abs(target_price - entry_price)
@@ -1676,6 +1824,8 @@ def execute_entry(symbol: str, side: str, entry_price: float) -> None:
         "partial_exit_history": [],
         # Advanced Exit Management - General
         "initial_risk_ticks": stop_distance_ticks,
+        # 🧠 LEARNING: Track max profit for learning
+        "max_profit_ticks": 0,
     }
     
     # Place stop loss order
@@ -1749,20 +1899,28 @@ def check_target_reached(symbol: str, current_bar: Dict[str, Any], position: Dic
         if current_bar["low"] <= target_price:
             return True, target_price
     
-    # Phase Five: Time-based exit tightening after 3 PM
-    if bar_time.time() >= time(15, 0) and not bot_status["flatten_mode"]:
-        # After 3 PM - tighten profit taking to 1:1 R/R
-        stop_distance = abs(entry_price - stop_price)
-        tightened_target_distance = stop_distance  # 1:1 instead of 1.5:1
-        
-        if side == "long":
-            tightened_target = entry_price + tightened_target_distance
-            if current_bar["high"] >= tightened_target:
-                return True, tightened_target
-        else:  # short
-            tightened_target = entry_price - tightened_target_distance
-            if current_bar["low"] <= tightened_target:
-                return True, tightened_target
+    # 🧠 LEARNED TIME-BASED EXIT TIGHTENING - Discover if/when to tighten targets
+    # 🧠 TIME-BASED TIGHTENING - Bot learns when to adjust targets from experience
+    if not bot_status["flatten_mode"]:
+        # Get learned time parameters
+        if learning_brain:
+            learned_params = learning_brain.get_learned_params()
+            use_time_tightening = learned_params.get("use_time_tightening", False)
+            tightening_hour = learned_params.get("tightening_hour", 15)
+            tightening_ratio = learned_params.get("tightening_ratio", 1.0)
+            
+            if use_time_tightening and bar_time.time() >= time(tightening_hour, 0):
+                stop_distance = abs(entry_price - stop_price)
+                tightened_target_distance = stop_distance * tightening_ratio
+                
+                if side == "long":
+                    tightened_target = entry_price + tightened_target_distance
+                    if current_bar["high"] >= tightened_target:
+                        return True, tightened_target
+                else:  # short
+                    tightened_target = entry_price - tightened_target_distance
+                    if current_bar["low"] <= tightened_target:
+                        return True, tightened_target
     
     return False, None
 
@@ -1944,6 +2102,12 @@ def check_breakeven_protection(symbol: str, current_price: float) -> None:
         symbol: Instrument symbol
         current_price: Current market price
     """
+    # 🧠 CHECK LEARNING BRAIN RECOMMENDATION FIRST!
+    learned_strategy = state[symbol].get("learned_exit_strategy", {})
+    if learned_strategy and not learned_strategy.get("use_breakeven", True):
+        # Learning brain says DON'T use breakeven in this situation
+        return
+    
     # Only process if breakeven is enabled in config
     if not CONFIG.get("breakeven_enabled", True):
         return
@@ -1959,40 +2123,22 @@ def check_breakeven_protection(symbol: str, current_price: float) -> None:
     tick_size = CONFIG["tick_size"]
     
     # ========================================================================
-    # ADAPTIVE EXIT MANAGEMENT - Calculate dynamic thresholds
+    # RL BRAIN - Get breakeven parameters from RL action
     # ========================================================================
-    adaptive_enabled = CONFIG.get("adaptive_exits_enabled", False)
     
-    if adaptive_enabled:
-        try:
-            global adaptive_manager
-            if adaptive_manager is None:
-                from adaptive_exits import AdaptiveExitManager
-                adaptive_manager = AdaptiveExitManager(CONFIG)
-            
-            from adaptive_exits import get_adaptive_exit_params
-            
-            adaptive_params = get_adaptive_exit_params(
-                bars=state[symbol]["bars_1min"],
-                position=position,
-                current_price=current_price,
-                config=CONFIG,
-                adaptive_manager=adaptive_manager  # Pass global instance for persistence
-            )
-            
-            breakeven_threshold_ticks = adaptive_params["breakeven_threshold_ticks"]
-            breakeven_offset_ticks = adaptive_params["breakeven_offset_ticks"]
-            
-            logger.info(f"📊 ADAPTIVE BREAKEVEN: {breakeven_threshold_ticks}t threshold "
-                       f"| Regime: {adaptive_params['market_regime'].upper()} "
-                       f"| ATR: {adaptive_params['current_volatility_atr']:.2f} "
-                       f"| Aggressive: {adaptive_params['is_aggressive_mode']}")
-        except Exception as e:
-            logger.warning(f"Adaptive exits failed, using static params: {e}")
-            breakeven_threshold_ticks = CONFIG.get("breakeven_profit_threshold_ticks", 8)
-            breakeven_offset_ticks = CONFIG.get("breakeven_stop_offset_ticks", 1)
+    # 🧠 USE RL ACTION PARAMETERS (from the decision that took this trade)
+    rl_action = state[symbol].get("rl_action")
+    
+    if rl_action and learning_brain:
+        breakeven_threshold_ticks = rl_action.get("breakeven_threshold_ticks", 8)
+        breakeven_offset_ticks = rl_action.get("breakeven_offset_ticks", 1)
+        logger.debug(f"🧠 RL ACTION breakeven: {breakeven_threshold_ticks}t threshold, {breakeven_offset_ticks}t offset")
+    elif learning_brain:
+        learned_params = learning_brain.get_learned_params()
+        breakeven_threshold_ticks = learned_params.get("breakeven_threshold_ticks", 8)
+        breakeven_offset_ticks = learned_params.get("breakeven_offset_ticks", 1)
+        logger.debug(f"🧠 Using learned breakeven: {breakeven_threshold_ticks}t threshold, {breakeven_offset_ticks}t offset")
     else:
-        # Static parameters
         breakeven_threshold_ticks = CONFIG.get("breakeven_profit_threshold_ticks", 8)
         breakeven_offset_ticks = CONFIG.get("breakeven_stop_offset_ticks", 1)
     
@@ -2068,6 +2214,12 @@ def check_trailing_stop(symbol: str, current_price: float) -> None:
         symbol: Instrument symbol
         current_price: Current market price
     """
+    # 🧠 CHECK LEARNING BRAIN RECOMMENDATION FIRST!
+    learned_strategy = state[symbol].get("learned_exit_strategy", {})
+    if learned_strategy and not learned_strategy.get("use_trailing", True):
+        # Learning brain says DON'T use trailing in this situation
+        return
+    
     # Only process if trailing stop is enabled in config
     if not CONFIG.get("trailing_stop_enabled", True):
         return
@@ -2083,39 +2235,23 @@ def check_trailing_stop(symbol: str, current_price: float) -> None:
     tick_size = CONFIG["tick_size"]
     
     # ========================================================================
-    # ADAPTIVE EXIT MANAGEMENT - Calculate dynamic trailing parameters
+    # RL BRAIN - Get trailing parameters from RL action
     # ========================================================================
-    if CONFIG.get("adaptive_exits_enabled", False):
-        try:
-            global adaptive_manager
-            if adaptive_manager is None:
-                from adaptive_exits import AdaptiveExitManager
-                adaptive_manager = AdaptiveExitManager(CONFIG)
-            
-            from adaptive_exits import get_adaptive_exit_params
-            
-            adaptive_params = get_adaptive_exit_params(
-                bars=state[symbol]["bars_1min"],
-                position=position,
-                current_price=current_price,
-                config=CONFIG,
-                adaptive_manager=adaptive_manager  # Pass global instance for persistence
-            )
-            
-            trailing_distance_ticks = adaptive_params["trailing_distance_ticks"]
-            min_profit_ticks = adaptive_params["trailing_min_profit_ticks"]
-            
-            logger.info(f"📊 ADAPTIVE TRAILING: {trailing_distance_ticks}t distance, {min_profit_ticks}t min "
-                       f"| Regime: {adaptive_params['market_regime'].upper()} "
-                       f"| Aggressive: {adaptive_params['is_aggressive_mode']}")
-        except Exception as e:
-            logger.warning(f"Adaptive exits failed, using static params: {e}")
-            trailing_distance_ticks = CONFIG.get("trailing_stop_distance_ticks", 8)
-            min_profit_ticks = CONFIG.get("trailing_stop_min_profit_ticks", 12)
+    # 🧠 USE RL ACTION PARAMETERS
+    rl_action = state[symbol].get("rl_action")
+    
+    if rl_action and learning_brain:
+        trailing_distance_ticks = rl_action.get("trailing_distance_ticks", 8)
+        min_profit_ticks = rl_action.get("trailing_min_profit_ticks", 12)
+        logger.debug(f"🧠 RL ACTION trailing: {trailing_distance_ticks}t distance, {min_profit_ticks}t min profit")
+    elif learning_brain:
+        learned_params = learning_brain.get_learned_params()
+        trailing_distance_ticks = learned_params.get("trailing_stop_distance_ticks", 8)
+        min_profit_ticks = learned_params.get("trailing_min_profit_ticks", 12)
+        logger.debug(f"🧠 Using learned trailing: {trailing_distance_ticks}t distance, {min_profit_ticks}t min profit")
     else:
-        # Static parameters
         trailing_distance_ticks = CONFIG.get("trailing_stop_distance_ticks", 8)
-        min_profit_ticks = CONFIG.get("trailing_stop_min_profit_ticks", 12)
+        min_profit_ticks = CONFIG.get("trailing_min_profit_ticks", 12)
     
     # Calculate current profit
     if side == "long":
@@ -2221,6 +2357,12 @@ def check_time_decay_tightening(symbol: str, current_time: datetime) -> None:
         symbol: Instrument symbol
         current_time: Current datetime
     """
+    # 🧠 CHECK LEARNING BRAIN RECOMMENDATION FIRST!
+    learned_strategy = state[symbol].get("learned_exit_strategy", {})
+    if learned_strategy and not learned_strategy.get("use_time_decay", True):
+        # Learning brain says DON'T use time decay in this situation
+        return
+    
     # Only process if time-decay is enabled in config
     if not CONFIG.get("time_decay_enabled", True):
         return
@@ -2242,25 +2384,42 @@ def check_time_decay_tightening(symbol: str, current_time: datetime) -> None:
     tick_value = CONFIG["tick_value"]
     
     # Step 1 - Calculate time percentage
-    # Max holding period: use time until flatten mode (conservative)
-    # From entry window end (2:30 PM) to flatten deadline (4:45 PM) = 135 minutes
-    max_holding_minutes = 60  # Conservative 60 minute max hold as mentioned in config
+    # Use learned max hold time from learning brain if available
+    if learning_brain:
+        learned_params = learning_brain.get_learned_params()
+        max_holding_minutes = learned_params.get("max_hold_time_minutes", 60)
+        logger.debug(f"🧠 Using learned max hold time: {max_holding_minutes} minutes")
+    else:
+        max_holding_minutes = CONFIG.get("max_hold_time_minutes", 60)
     
     time_held = (current_time - entry_time).total_seconds() / 60.0  # minutes
     time_percentage = (time_held / max_holding_minutes) * 100.0
     
     # Step 2 - Determine tightening level
+    # 🧠 USE LEARNED TIME DECAY PERCENTAGES from experience
     tightening_pct = None
     threshold_flag = None
     
     if time_percentage >= 90 and not position["time_decay_90_triggered"]:
-        tightening_pct = CONFIG.get("time_decay_90_percent_tightening", 0.30)
+        if learning_brain:
+            learned_params = learning_brain.get_learned_params()
+            tightening_pct = learned_params.get("time_decay_90_tightening", 0.30)
+        else:
+            tightening_pct = CONFIG.get("time_decay_90_percent_tightening", 0.30)
         threshold_flag = "time_decay_90_triggered"
     elif time_percentage >= 75 and not position["time_decay_75_triggered"]:
-        tightening_pct = CONFIG.get("time_decay_75_percent_tightening", 0.20)
+        if learning_brain:
+            learned_params = learning_brain.get_learned_params()
+            tightening_pct = learned_params.get("time_decay_75_tightening", 0.20)
+        else:
+            tightening_pct = CONFIG.get("time_decay_75_percent_tightening", 0.20)
         threshold_flag = "time_decay_75_triggered"
     elif time_percentage >= 50 and not position["time_decay_50_triggered"]:
-        tightening_pct = CONFIG.get("time_decay_50_percent_tightening", 0.10)
+        if learning_brain:
+            learned_params = learning_brain.get_learned_params()
+            tightening_pct = learned_params.get("time_decay_50_tightening", 0.10)
+        else:
+            tightening_pct = CONFIG.get("time_decay_50_percent_tightening", 0.10)
         threshold_flag = "time_decay_50_triggered"
     
     # Step 3 - Check if already tightened (handled above with flags)
@@ -2355,6 +2514,12 @@ def check_partial_exits(symbol: str, current_price: float) -> None:
         symbol: Instrument symbol
         current_price: Current market price
     """
+    # 🧠 CHECK LEARNING BRAIN RECOMMENDATION FIRST!
+    learned_strategy = state[symbol].get("learned_exit_strategy", {})
+    if learned_strategy and not learned_strategy.get("use_partial_exits", True):
+        # Learning brain says DON'T use partial exits in this situation
+        return
+    
     # Only process if partial exits are enabled in config
     if not CONFIG.get("partial_exits_enabled", True):
         return
@@ -2393,34 +2558,59 @@ def check_partial_exits(symbol: str, current_price: float) -> None:
     
     # Check each partial exit threshold in order
     
-    # Step 2 & 3 & 4 - First partial (50% at 2.0R)
-    if (r_multiple >= CONFIG.get("partial_exit_1_r_multiple", 2.0) and 
-        not position["partial_exit_1_completed"]):
-        
-        partial_pct = CONFIG.get("partial_exit_1_percentage", 0.50)
-        contracts_to_close = int(original_quantity * partial_pct)
+    # Step 2 & 3 & 4 - First partial exit
+    # 🧠 USE RL ACTION PARTIAL EXIT LEVELS
+    rl_action = state[symbol].get("rl_action")
+    
+    if rl_action and learning_brain:
+        partial_1_r = rl_action.get("partial_exit_1_r", 2.0)
+        partial_1_pct = rl_action.get("partial_exit_1_pct", 0.50)
+    elif learning_brain:
+        learned_params = learning_brain.get_learned_params()
+        partial_1_r = learned_params.get("partial_exit_1_r_multiple", 2.0)
+        partial_1_pct = learned_params.get("partial_exit_1_percentage", 0.50)
+    else:
+        partial_1_r = CONFIG.get("partial_exit_1_r_multiple", 2.0)
+        partial_1_pct = CONFIG.get("partial_exit_1_percentage", 0.50)
+    
+    if (r_multiple >= partial_1_r and not position["partial_exit_1_completed"]):
+        contracts_to_close = int(original_quantity * partial_1_pct)
         
         if contracts_to_close >= 1:
             execute_partial_exit(symbol, contracts_to_close, current_price, r_multiple, 
-                                "partial_exit_1_completed", 1, partial_pct)
+                                "partial_exit_1_completed", 1, partial_1_pct)
             return  # Exit one partial per bar to avoid race conditions
     
-    # Step 5 & 6 & 7 - Second partial (30% at 3.0R)
-    if (r_multiple >= CONFIG.get("partial_exit_2_r_multiple", 3.0) and 
-        not position["partial_exit_2_completed"]):
-        
-        partial_pct = CONFIG.get("partial_exit_2_percentage", 0.30)
-        contracts_to_close = int(original_quantity * partial_pct)
+    # Step 5 & 6 & 7 - Second partial exit
+    # 🧠 USE RL ACTION PARTIAL EXIT LEVELS
+    if rl_action and learning_brain:
+        partial_2_r = rl_action.get("partial_exit_2_r", 3.0)
+        partial_2_pct = rl_action.get("partial_exit_2_pct", 0.30)
+    elif learning_brain:
+        learned_params = learning_brain.get_learned_params()
+        partial_2_r = learned_params.get("partial_exit_2_r_multiple", 3.0)
+        partial_2_pct = learned_params.get("partial_exit_2_percentage", 0.30)
+    else:
+        partial_2_r = CONFIG.get("partial_exit_2_r_multiple", 3.0)
+        partial_2_pct = CONFIG.get("partial_exit_2_percentage", 0.30)
+    
+    if (r_multiple >= partial_2_r and not position["partial_exit_2_completed"]):
+        contracts_to_close = int(original_quantity * partial_2_pct)
         
         if contracts_to_close >= 1:
             execute_partial_exit(symbol, contracts_to_close, current_price, r_multiple,
-                                "partial_exit_2_completed", 2, partial_pct)
+                                "partial_exit_2_completed", 2, partial_2_pct)
             return
     
-    # Step 8 & 9 - Third partial (remaining 20% at 5.0R)
-    if (r_multiple >= CONFIG.get("partial_exit_3_r_multiple", 5.0) and 
-        not position["partial_exit_3_completed"]):
-        
+    # Step 8 & 9 - Third partial exit (final runner)
+    # 🧠 USE LEARNED PARTIAL EXIT LEVEL from experience
+    if learning_brain:
+        learned_params = learning_brain.get_learned_params()
+        partial_3_r = learned_params.get("partial_exit_3_r_multiple", 5.0)
+    else:
+        partial_3_r = CONFIG.get("partial_exit_3_r_multiple", 5.0)
+    
+    if (r_multiple >= partial_3_r and not position["partial_exit_3_completed"]):
         # Close all remaining contracts (the final runner)
         remaining_quantity = position["remaining_quantity"]
         
@@ -2529,6 +2719,19 @@ def check_exit_conditions(symbol: str) -> None:
     side = position["side"]
     entry_price = position["entry_price"]
     stop_price = position["stop_price"]
+    
+    # 🧠 LEARNING: Track maximum profit reached (to learn when we give back profit)
+    tick_size = CONFIG["tick_size"]
+    if side == "long":
+        current_profit_ticks = (current_bar["close"] - entry_price) / tick_size
+    else:
+        current_profit_ticks = (entry_price - current_bar["close"]) / tick_size
+    
+    # Update max profit if we reached a new high
+    if "max_profit_ticks" not in position:
+        position["max_profit_ticks"] = 0
+    if current_profit_ticks > position["max_profit_ticks"]:
+        position["max_profit_ticks"] = current_profit_ticks
     
     # Phase Two: Check trading state
     trading_state = get_trading_state(bar_time)
@@ -2925,17 +3128,39 @@ def execute_exit(symbol: str, exit_price: float, reason: str) -> None:
     logger.info(f"  Entry: ${position['entry_price']:.2f}, Exit: ${exit_price:.2f}")
     logger.info(f"  Ticks: {ticks:+.1f}, P&L: ${pnl:+.2f}")
     
-    # ADAPTIVE EXIT MANAGEMENT - Record trade result for streak tracking
-    if CONFIG.get("adaptive_exits_enabled", False):
-        try:
-            global adaptive_manager
-            if adaptive_manager is None:
-                from adaptive_exits import AdaptiveExitManager
-                adaptive_manager = AdaptiveExitManager(CONFIG)
-            adaptive_manager.record_trade_result(pnl)
-            logger.info(f"📈 STREAK TRACKING: Recorded P&L ${pnl:+.2f} (Recent: {len(adaptive_manager.recent_trades)} trades)")
-        except Exception as e:
-            logger.debug(f"Streak tracking update skipped: {e}")
+    # 🧠 RL BRAIN - Record trade outcome for reinforcement learning
+    try:
+        global learning_brain
+        if learning_brain is not None and state[symbol].get("rl_market_state"):
+            # Calculate hold time
+            hold_time_minutes = 0
+            if position.get("entry_time"):
+                hold_duration = exit_time - position["entry_time"]
+                hold_time_minutes = hold_duration.total_seconds() / 60
+            
+            # Build outcome for RL
+            outcome = {
+                "pnl": pnl,
+                "win": pnl > 0,
+                "hold_time_minutes": hold_time_minutes,
+                "exit_reason": reason,
+                "profit_ticks": abs(ticks),
+                "duration": hold_time_minutes
+            }
+            
+            # Record experience (reward/punishment)
+            learning_brain.record_experience(
+                market_state=state[symbol]["rl_market_state"],
+                action=state[symbol].get("rl_action", {}),
+                outcome=outcome
+            )
+            
+            if pnl > 0:
+                logger.info(f"🧠 RL: WIN recorded - Reward ${pnl:.2f} ({hold_time_minutes:.1f}m)")
+            else:
+                logger.info(f"🧠 RL: LOSS recorded - Punishment ${pnl:.2f} ({hold_time_minutes:.1f}m)")
+    except Exception as e:
+        logger.debug(f"RL brain update skipped: {e}")
     
     # Log time-based exits with detailed audit trail
     time_based_reasons = [
