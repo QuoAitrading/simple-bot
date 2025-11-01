@@ -54389,15 +54389,1275 @@
       },
       "reward": -27.5,
       "duration": 6982.368135116666
+    },
+    {
+      "timestamp": "2025-11-01T12:42:07.302671",
+      "state": {
+        "rsi": 73.5645306477074,
+        "vwap_distance": 0.8064595113679848,
+        "atr": 1.5,
+        "volume_ratio": 0.08142493638676845,
+        "hour": 1,
+        "day_of_week": 1,
+        "recent_pnl": 0,
+        "streak": 0,
+        "side": "short",
+        "price": 6688.0
+      },
+      "action": {
+        "took_trade": true,
+        "exploration_rate": 0.29257462593656247
+      },
+      "reward": 442.5,
+      "duration": 66887.12171118332
+    },
+    {
+      "timestamp": "2025-11-01T12:42:08.487487",
+      "state": {
+        "rsi": 72.73052890027155,
+        "vwap_distance": 0.8290231411555765,
+        "atr": 4.428571428571429,
+        "volume_ratio": 0.050155242417005017,
+        "hour": 1,
+        "day_of_week": 0,
+        "recent_pnl": 0,
+        "streak": 0,
+        "side": "short",
+        "price": 6716.25
+      },
+      "action": {
+        "took_trade": true,
+        "exploration_rate": 0.2581152575744087
+      },
+      "reward": 442.5,
+      "duration": 58257.14142476666
+    },
+    {
+      "timestamp": "2025-11-01T12:42:09.035015",
+      "state": {
+        "rsi": 18.011734511985537,
+        "vwap_distance": 0.8051777044515234,
+        "atr": 5.0,
+        "volume_ratio": 0.08585018607875074,
+        "hour": 13,
+        "day_of_week": 1,
+        "recent_pnl": 0,
+        "streak": 0,
+        "side": "long",
+        "price": 6728.25
+      },
+      "action": {
+        "took_trade": true,
+        "exploration_rate": 0.2394197033045713
+      },
+      "reward": 67.5,
+      "duration": 56120.150550449995
+    },
+    {
+      "timestamp": "2025-11-01T12:42:09.337305",
+      "state": {
+        "rsi": 16.592510023720678,
+        "vwap_distance": 0.8070679550001548,
+        "atr": 6.517857142857143,
+        "volume_ratio": 0.20753668180435672,
+        "hour": 12,
+        "day_of_week": 2,
+        "recent_pnl": 0,
+        "streak": 0,
+        "side": "long",
+        "price": 6681.25
+      },
+      "action": {
+        "took_trade": true,
+        "exploration_rate": 0.2370314917641082
+      },
+      "reward": 795.0,
+      "duration": 54748.15559713334
+    },
+    {
+      "timestamp": "2025-11-01T12:42:09.973246",
+      "state": {
+        "rsi": 34.2311872070012,
+        "vwap_distance": 0.8130579817422274,
+        "atr": 5.535714285714286,
+        "volume_ratio": 0.13941217843294645,
+        "hour": 11,
+        "day_of_week": 0,
+        "recent_pnl": 0,
+        "streak": 0,
+        "side": "long",
+        "price": 6714.5
+      },
+      "action": {
+        "took_trade": true,
+        "exploration_rate": 0.21549866492958691
+      },
+      "reward": 217.5,
+      "duration": 47602.166204116664
+    },
+    {
+      "timestamp": "2025-11-01T12:42:11.147507",
+      "state": {
+        "rsi": 69.59824972391235,
+        "vwap_distance": 0.7437375809711131,
+        "atr": 6.625,
+        "volume_ratio": 0.07610024617442747,
+        "hour": 15,
+        "day_of_week": 1,
+        "recent_pnl": 0,
+        "streak": 0,
+        "side": "short",
+        "price": 6729.25
+      },
+      "action": {
+        "took_trade": true,
+        "exploration_rate": 0.19789597291321892
+      },
+      "reward": -177.5,
+      "duration": 45913.185760349996
+    },
+    {
+      "timestamp": "2025-11-01T12:42:11.625937",
+      "state": {
+        "rsi": 30.885423425740512,
+        "vwap_distance": 0.7106555752885594,
+        "atr": 1.9464285714285714,
+        "volume_ratio": 0.30481707527326646,
+        "hour": 2,
+        "day_of_week": 2,
+        "recent_pnl": 0,
+        "streak": 0,
+        "side": "long",
+        "price": 6703.75
+      },
+      "action": {
+        "took_trade": true,
+        "exploration_rate": 0.19107264776816332
+      },
+      "reward": -177.5,
+      "duration": 45261.19374891667
+    },
+    {
+      "timestamp": "2025-11-01T12:42:30.354251",
+      "state": {
+        "rsi": 72.16658327397822,
+        "vwap_distance": 0.8285127559160698,
+        "atr": 4.267857142857143,
+        "volume_ratio": 0.0745501001006537,
+        "hour": 8,
+        "day_of_week": 2,
+        "recent_pnl": 0,
+        "streak": 0,
+        "side": "short",
+        "price": 6713.75
+      },
+      "action": {
+        "took_trade": true,
+        "exploration_rate": 0.18634336149159647
+      },
+      "reward": 292.5,
+      "duration": 44920.50590418334
+    },
+    {
+      "timestamp": "2025-11-01T12:42:30.718451",
+      "state": {
+        "rsi": 21.83800132433487,
+        "vwap_distance": 0.7876062068393779,
+        "atr": 4.875,
+        "volume_ratio": 0.19438174386294094,
+        "hour": 11,
+        "day_of_week": 3,
+        "recent_pnl": 0,
+        "streak": 0,
+        "side": "long",
+        "price": 6746.5
+      },
+      "action": {
+        "took_trade": true,
+        "exploration_rate": 0.17112217762624363
+      },
+      "reward": 595.0,
+      "duration": 43296.51189171666
+    },
+    {
+      "timestamp": "2025-11-01T12:42:31.007565",
+      "state": {
+        "rsi": 34.86188281872812,
+        "vwap_distance": 0.7453020110489974,
+        "atr": 4.482142857142857,
+        "volume_ratio": 0.6659213756382034,
+        "hour": 9,
+        "day_of_week": 0,
+        "recent_pnl": 0,
+        "streak": 0,
+        "side": "long",
+        "price": 6775.75
+      },
+      "action": {
+        "took_trade": true,
+        "exploration_rate": 0.15793398373350792
+      },
+      "reward": 367.5,
+      "duration": 37617.51679275
+    },
+    {
+      "timestamp": "2025-11-01T12:42:31.704802",
+      "state": {
+        "rsi": 30.98954026868462,
+        "vwap_distance": 0.7773817961132352,
+        "atr": 4.446428571428571,
+        "volume_ratio": 0.6035127108814997,
+        "hour": 11,
+        "day_of_week": 1,
+        "recent_pnl": 0,
+        "streak": 0,
+        "side": "long",
+        "price": 6764.0
+      },
+      "action": {
+        "took_trade": true,
+        "exploration_rate": 0.14871424107031508
+      },
+      "reward": -5.0,
+      "duration": 36091.52839673333
+    },
+    {
+      "timestamp": "2025-11-01T12:42:32.630688",
+      "state": {
+        "rsi": 66.07223128389973,
+        "vwap_distance": 0.7899980317085801,
+        "atr": 3.2857142857142856,
+        "volume_ratio": 0.0039568842635189574,
+        "hour": 18,
+        "day_of_week": 2,
+        "recent_pnl": 0,
+        "streak": 0,
+        "side": "short",
+        "price": 6806.0
+      },
+      "action": {
+        "took_trade": true,
+        "exploration_rate": 0.1393325574992474
+      },
+      "reward": -52.5,
+      "duration": 34209.5437509
+    },
+    {
+      "timestamp": "2025-11-01T12:42:33.087229",
+      "state": {
+        "rsi": 66.19399923061167,
+        "vwap_distance": 0.8248572739296172,
+        "atr": 2.107142857142857,
+        "volume_ratio": 0.03979156797726196,
+        "hour": 2,
+        "day_of_week": 3,
+        "recent_pnl": 0,
+        "streak": 0,
+        "side": "short",
+        "price": 6806.5
+      },
+      "action": {
+        "took_trade": true,
+        "exploration_rate": 0.133186539639436
+      },
+      "reward": 667.5,
+      "duration": 33752.55143688333
+    },
+    {
+      "timestamp": "2025-11-01T12:42:33.720192",
+      "state": {
+        "rsi": 33.50784859088681,
+        "vwap_distance": 0.6281914868412828,
+        "atr": 2.7857142857142856,
+        "volume_ratio": 0.14036288942143102,
+        "hour": 4,
+        "day_of_week": 3,
+        "recent_pnl": 0,
+        "streak": 0,
+        "side": "long",
+        "price": 6798.0
+      },
+      "action": {
+        "took_trade": true,
+        "exploration_rate": 0.13252060694123882
+      },
+      "reward": 517.5,
+      "duration": 33594.5618452
+    },
+    {
+      "timestamp": "2025-11-01T12:42:34.074768",
+      "state": {
+        "rsi": 29.98651547043815,
+        "vwap_distance": 0.6920354355826607,
+        "atr": 8.803571428571429,
+        "volume_ratio": 0.09646357737793936,
+        "hour": 13,
+        "day_of_week": 3,
+        "recent_pnl": 0,
+        "streak": 0,
+        "side": "long",
+        "price": 6768.0
+      },
+      "action": {
+        "took_trade": true,
+        "exploration_rate": 0.13119871388699997
+      },
+      "reward": 217.5,
+      "duration": 33095.56789608333
+    },
+    {
+      "timestamp": "2025-11-01T12:42:34.622024",
+      "state": {
+        "rsi": 30.39661590745672,
+        "vwap_distance": 0.7686184059994136,
+        "atr": 8.357142857142858,
+        "volume_ratio": 0.12034038443640857,
+        "hour": 13,
+        "day_of_week": 3,
+        "recent_pnl": 0,
+        "streak": 0,
+        "side": "long",
+        "price": 6765.75
+      },
+      "action": {
+        "took_trade": true,
+        "exploration_rate": 0.13054272031756498
+      },
+      "reward": 292.5,
+      "duration": 33083.57697745
+    },
+    {
+      "timestamp": "2025-11-01T12:42:35.972630",
+      "state": {
+        "rsi": 65.58570117451904,
+        "vwap_distance": 0.8390748753592204,
+        "atr": 13.321428571428571,
+        "volume_ratio": 0.048399911669022924,
+        "hour": 13,
+        "day_of_week": 0,
+        "recent_pnl": 0,
+        "streak": 0,
+        "side": "short",
+        "price": 6710.0
+      },
+      "action": {
+        "took_trade": true,
+        "exploration_rate": 0.12731162521884287
+      },
+      "reward": -5.0,
+      "duration": 27337.5994748
+    },
+    {
+      "timestamp": "2025-11-01T12:42:36.663106",
+      "state": {
+        "rsi": 23.694065099155637,
+        "vwap_distance": 0.7883746366565849,
+        "atr": 9.375,
+        "volume_ratio": 0.10369118829284245,
+        "hour": 6,
+        "day_of_week": 1,
+        "recent_pnl": 0,
+        "streak": 0,
+        "side": "long",
+        "price": 6618.5
+      },
+      "action": {
+        "took_trade": true,
+        "exploration_rate": 0.124784425882006
+      },
+      "reward": -177.5,
+      "duration": 26278.611004666665
+    },
+    {
+      "timestamp": "2025-11-01T12:42:36.702902",
+      "state": {
+        "rsi": 19.035326770625872,
+        "vwap_distance": 0.7329414885756728,
+        "atr": 9.017857142857142,
+        "volume_ratio": 0.24480888771326545,
+        "hour": 6,
+        "day_of_week": 1,
+        "recent_pnl": 0,
+        "streak": 0,
+        "side": "long",
+        "price": 6612.5
+      },
+      "action": {
+        "took_trade": true,
+        "exploration_rate": 0.12416050375259596
+      },
+      "reward": -177.5,
+      "duration": 26269.61168175
+    },
+    {
+      "timestamp": "2025-11-01T12:42:36.799104",
+      "state": {
+        "rsi": 19.035326770625872,
+        "vwap_distance": 0.8380032724491755,
+        "atr": 9.017857142857142,
+        "volume_ratio": 0.09363840761803995,
+        "hour": 6,
+        "day_of_week": 1,
+        "recent_pnl": 0,
+        "streak": 0,
+        "side": "long",
+        "price": 6608.5
+      },
+      "action": {
+        "took_trade": true,
+        "exploration_rate": 0.12353970123383298
+      },
+      "reward": 747.5,
+      "duration": 26267.61326395
+    },
+    {
+      "timestamp": "2025-11-01T12:42:37.236881",
+      "state": {
+        "rsi": 33.59524954547619,
+        "vwap_distance": 0.760158936441613,
+        "atr": 11.071428571428571,
+        "volume_ratio": 0.1770425510893506,
+        "hour": 15,
+        "day_of_week": 1,
+        "recent_pnl": 0,
+        "streak": 0,
+        "side": "long",
+        "price": 6679.25
+      },
+      "action": {
+        "took_trade": true,
+        "exploration_rate": 0.12353970123383298
+      },
+      "reward": -27.5,
+      "duration": 25735.620587433335
+    },
+    {
+      "timestamp": "2025-11-01T12:43:03.783909",
+      "state": {
+        "rsi": 81.65746336909235,
+        "vwap_distance": 0.7254556813931345,
+        "atr": 5.142857142857143,
+        "volume_ratio": 0.18314058251154866,
+        "hour": 5,
+        "day_of_week": 2,
+        "recent_pnl": 0,
+        "streak": 0,
+        "side": "short",
+        "price": 6727.25
+      },
+      "action": {
+        "took_trade": true,
+        "exploration_rate": 0.1180903129228275
+      },
+      "reward": 592.5,
+      "duration": 24924.06306515
+    },
+    {
+      "timestamp": "2025-11-01T12:43:06.055448",
+      "state": {
+        "rsi": 34.28005031764144,
+        "vwap_distance": 0.7153670255239791,
+        "atr": 7.089285714285714,
+        "volume_ratio": 0.2762229527659396,
+        "hour": 10,
+        "day_of_week": 3,
+        "recent_pnl": 0,
+        "streak": 0,
+        "side": "long",
+        "price": 6721.0
+      },
+      "action": {
+        "took_trade": true,
+        "exploration_rate": 0.10682573468889885
+      },
+      "reward": 795.0,
+      "duration": 23188.1006824
+    },
+    {
+      "timestamp": "2025-11-01T12:43:12.448138",
+      "state": {
+        "rsi": 73.43447470058412,
+        "vwap_distance": 0.8031566785469908,
+        "atr": 5.892857142857143,
+        "volume_ratio": 0.051672275664889654,
+        "hour": 14,
+        "day_of_week": 0,
+        "recent_pnl": 0,
+        "streak": 0,
+        "side": "short",
+        "price": 6781.5
+      },
+      "action": {
+        "took_trade": true,
+        "exploration_rate": 0.09908823656864219
+      },
+      "reward": 245.0,
+      "duration": 17192.2074353
+    },
+    {
+      "timestamp": "2025-11-01T12:43:12.914358",
+      "state": {
+        "rsi": 31.59055416816524,
+        "vwap_distance": 0.7682131500488951,
+        "atr": 2.392857142857143,
+        "volume_ratio": 0.14022568868237636,
+        "hour": 1,
+        "day_of_week": 1,
+        "recent_pnl": 0,
+        "streak": 0,
+        "side": "long",
+        "price": 6772.25
+      },
+      "action": {
+        "took_trade": true,
+        "exploration_rate": 0.09859279538579897
+      },
+      "reward": 217.5,
+      "duration": 16538.215113066668
+    },
+    {
+      "timestamp": "2025-11-01T12:43:14.970855",
+      "state": {
+        "rsi": 31.280859843557664,
+        "vwap_distance": 0.7696483242951184,
+        "atr": 10.857142857142858,
+        "volume_ratio": 0.34307695851473063,
+        "hour": 12,
+        "day_of_week": 2,
+        "recent_pnl": 0,
+        "streak": 0,
+        "side": "long",
+        "price": 6718.0
+      },
+      "action": {
+        "took_trade": true,
+        "exploration_rate": 0.0887421356056369
+      },
+      "reward": 945.0,
+      "duration": 14409.249275433334
+    },
+    {
+      "timestamp": "2025-11-01T12:43:15.886219",
+      "state": {
+        "rsi": 32.456450930368064,
+        "vwap_distance": 0.7802378301902151,
+        "atr": 4.357142857142857,
+        "volume_ratio": 0.07749111131370225,
+        "hour": 5,
+        "day_of_week": 3,
+        "recent_pnl": 0,
+        "streak": 0,
+        "side": "long",
+        "price": 6737.25
+      },
+      "action": {
+        "took_trade": true,
+        "exploration_rate": 0.08611292881327588
+      },
+      "reward": -2.5,
+      "duration": 13391.264612283332
+    },
+    {
+      "timestamp": "2025-11-01T12:43:16.125272",
+      "state": {
+        "rsi": 30.82658225636365,
+        "vwap_distance": 0.837427865885463,
+        "atr": 4.303571428571429,
+        "volume_ratio": 0.17981568891885816,
+        "hour": 5,
+        "day_of_week": 3,
+        "recent_pnl": 0,
+        "streak": 0,
+        "side": "long",
+        "price": 6734.75
+      },
+      "action": {
+        "took_trade": true,
+        "exploration_rate": 0.0856823641692095
+      },
+      "reward": 442.5,
+      "duration": 13376.268701666668
+    },
+    {
+      "timestamp": "2025-11-01T12:43:17.221722",
+      "state": {
+        "rsi": 66.80891666681686,
+        "vwap_distance": 0.8250314629656814,
+        "atr": 3.3392857142857144,
+        "volume_ratio": 0.4762516112135326,
+        "hour": 10,
+        "day_of_week": 0,
+        "recent_pnl": 0,
+        "streak": 0,
+        "side": "short",
+        "price": 6889.5
+      },
+      "action": {
+        "took_trade": true,
+        "exploration_rate": 0.07673601068526661
+      },
+      "reward": -7.5,
+      "duration": 7358.28700225
+    },
+    {
+      "timestamp": "2025-11-01T12:43:36.804558",
+      "state": {
+        "rsi": 28.220909429816928,
+        "vwap_distance": 0.8130342047121611,
+        "atr": 3.3035714285714284,
+        "volume_ratio": 0.08731517885139536,
+        "hour": 5,
+        "day_of_week": 2,
+        "recent_pnl": 0,
+        "streak": 0,
+        "side": "long",
+        "price": 6934.0
+      },
+      "action": {
+        "took_trade": true,
+        "exploration_rate": 0.06185740397479174
+      },
+      "reward": -355.0,
+      "duration": 4765.6134093
+    },
+    {
+      "timestamp": "2025-11-01T13:17:57.664849",
+      "state": {
+        "rsi": 73.5645306477074,
+        "vwap_distance": 0.8064595113679848,
+        "atr": 1.5,
+        "volume_ratio": 0.08142493638676845,
+        "hour": 1,
+        "day_of_week": 1,
+        "recent_pnl": 0,
+        "streak": 0,
+        "side": "short",
+        "price": 6688.0
+      },
+      "action": {
+        "took_trade": true,
+        "exploration_rate": 0.29257462593656247
+      },
+      "reward": 442.5,
+      "duration": 66922.96108081666
+    },
+    {
+      "timestamp": "2025-11-01T13:17:57.753295",
+      "state": {
+        "rsi": 78.84799918468734,
+        "vwap_distance": 0.7983371676146265,
+        "atr": 2.4107142857142856,
+        "volume_ratio": 0.13348164627363737,
+        "hour": 4,
+        "day_of_week": 1,
+        "recent_pnl": 0,
+        "streak": 0,
+        "side": "short",
+        "price": 6696.25
+      },
+      "action": {
+        "took_trade": true,
+        "exploration_rate": 0.28820791307263105
+      },
+      "reward": -2.5,
+      "duration": 66745.96250083334
+    },
+    {
+      "timestamp": "2025-11-01T13:17:58.748954",
+      "state": {
+        "rsi": 72.73052890027155,
+        "vwap_distance": 0.8290231411555765,
+        "atr": 4.428571428571429,
+        "volume_ratio": 0.050155242417005017,
+        "hour": 1,
+        "day_of_week": 0,
+        "recent_pnl": 0,
+        "streak": 0,
+        "side": "short",
+        "price": 6716.25
+      },
+      "action": {
+        "took_trade": true,
+        "exploration_rate": 0.25941231917026
+      },
+      "reward": 442.5,
+      "duration": 58292.97907538333
+    },
+    {
+      "timestamp": "2025-11-01T13:17:59.097518",
+      "state": {
+        "rsi": 18.011734511985537,
+        "vwap_distance": 0.8051777044515234,
+        "atr": 5.0,
+        "volume_ratio": 0.08585018607875074,
+        "hour": 13,
+        "day_of_week": 1,
+        "recent_pnl": 0,
+        "streak": 0,
+        "side": "long",
+        "price": 6728.25
+      },
+      "action": {
+        "took_trade": true,
+        "exploration_rate": 0.24062281739152894
+      },
+      "reward": 67.5,
+      "duration": 56155.984937483336
+    },
+    {
+      "timestamp": "2025-11-01T13:17:59.360459",
+      "state": {
+        "rsi": 16.592510023720678,
+        "vwap_distance": 0.8070679550001548,
+        "atr": 6.517857142857143,
+        "volume_ratio": 0.20753668180435672,
+        "hour": 12,
+        "day_of_week": 2,
+        "recent_pnl": 0,
+        "streak": 0,
+        "side": "long",
+        "price": 6681.25
+      },
+      "action": {
+        "took_trade": true,
+        "exploration_rate": 0.2370314917641082
+      },
+      "reward": 795.0,
+      "duration": 54783.98934098333
+    },
+    {
+      "timestamp": "2025-11-01T13:18:00.117988",
+      "state": {
+        "rsi": 34.2311872070012,
+        "vwap_distance": 0.8130579817422274,
+        "atr": 5.535714285714286,
+        "volume_ratio": 0.13941217843294645,
+        "hour": 11,
+        "day_of_week": 0,
+        "recent_pnl": 0,
+        "streak": 0,
+        "side": "long",
+        "price": 6714.5
+      },
+      "action": {
+        "took_trade": true,
+        "exploration_rate": 0.21442117160493898
+      },
+      "reward": 217.5,
+      "duration": 47638.00188116667
+    },
+    {
+      "timestamp": "2025-11-01T13:18:21.596860",
+      "state": {
+        "rsi": 72.16658327397822,
+        "vwap_distance": 0.8285127559160698,
+        "atr": 4.267857142857143,
+        "volume_ratio": 0.0745501001006537,
+        "hour": 8,
+        "day_of_week": 2,
+        "recent_pnl": 0,
+        "streak": 0,
+        "side": "short",
+        "price": 6713.75
+      },
+      "action": {
+        "took_trade": true,
+        "exploration_rate": 0.172846319664901
+      },
+      "reward": 292.5,
+      "duration": 44956.359947666664
+    },
+    {
+      "timestamp": "2025-11-01T13:18:21.906627",
+      "state": {
+        "rsi": 21.83800132433487,
+        "vwap_distance": 0.7876062068393779,
+        "atr": 4.875,
+        "volume_ratio": 0.19438174386294094,
+        "hour": 11,
+        "day_of_week": 3,
+        "recent_pnl": 0,
+        "streak": 0,
+        "side": "long",
+        "price": 6746.5
+      },
+      "action": {
+        "took_trade": true,
+        "exploration_rate": 0.1595252480831372
+      },
+      "reward": 595.0,
+      "duration": 43332.365110449995
+    },
+    {
+      "timestamp": "2025-11-01T13:18:22.185103",
+      "state": {
+        "rsi": 34.86188281872812,
+        "vwap_distance": 0.7453020110489974,
+        "atr": 4.482142857142857,
+        "volume_ratio": 0.6659213756382034,
+        "hour": 9,
+        "day_of_week": 0,
+        "recent_pnl": 0,
+        "streak": 0,
+        "side": "long",
+        "price": 6775.75
+      },
+      "action": {
+        "took_trade": true,
+        "exploration_rate": 0.14723081651563868
+      },
+      "reward": 367.5,
+      "duration": 37653.3697223
+    },
+    {
+      "timestamp": "2025-11-01T13:18:22.387941",
+      "state": {
+        "rsi": 66.20730305331271,
+        "vwap_distance": 0.8162697556513444,
+        "atr": 1.8392857142857142,
+        "volume_ratio": 0.03070827142149579,
+        "hour": 0,
+        "day_of_week": 1,
+        "recent_pnl": 0,
+        "streak": 0,
+        "side": "short",
+        "price": 6785.5
+      },
+      "action": {
+        "took_trade": true,
+        "exploration_rate": 0.14430821128441426
+      },
+      "reward": -2.5,
+      "duration": 36764.37313235
+    },
+    {
+      "timestamp": "2025-11-01T13:18:22.726679",
+      "state": {
+        "rsi": 30.98954026868462,
+        "vwap_distance": 0.7773817961132352,
+        "atr": 4.446428571428571,
+        "volume_ratio": 0.6035127108814997,
+        "hour": 11,
+        "day_of_week": 1,
+        "recent_pnl": 0,
+        "streak": 0,
+        "side": "long",
+        "price": 6764.0
+      },
+      "action": {
+        "took_trade": true,
+        "exploration_rate": 0.1393325574992474
+      },
+      "reward": 395.0,
+      "duration": 36127.37873331667
+    },
+    {
+      "timestamp": "2025-11-01T13:18:23.131856",
+      "state": {
+        "rsi": 66.07223128389973,
+        "vwap_distance": 0.8189238336460937,
+        "atr": 3.2857142857142856,
+        "volume_ratio": 0.0005244063481772113,
+        "hour": 18,
+        "day_of_week": 2,
+        "recent_pnl": 0,
+        "streak": 0,
+        "side": "short",
+        "price": 6806.25
+      },
+      "action": {
+        "took_trade": true,
+        "exploration_rate": 0.12924055668239726
+      },
+      "reward": -27.5,
+      "duration": 34240.38551793333
+    },
+    {
+      "timestamp": "2025-11-01T13:18:23.508033",
+      "state": {
+        "rsi": 66.19399923061167,
+        "vwap_distance": 0.8248572739296172,
+        "atr": 2.107142857142857,
+        "volume_ratio": 0.03979156797726196,
+        "hour": 2,
+        "day_of_week": 3,
+        "recent_pnl": 0,
+        "streak": 0,
+        "side": "short",
+        "price": 6806.5
+      },
+      "action": {
+        "took_trade": true,
+        "exploration_rate": 0.124784425882006
+      },
+      "reward": 667.5,
+      "duration": 33788.39172493333
+    },
+    {
+      "timestamp": "2025-11-01T13:18:23.844098",
+      "state": {
+        "rsi": 33.50784859088681,
+        "vwap_distance": 0.6281914868412828,
+        "atr": 2.7857142857142856,
+        "volume_ratio": 0.14036288942143102,
+        "hour": 4,
+        "day_of_week": 3,
+        "recent_pnl": 0,
+        "streak": 0,
+        "side": "long",
+        "price": 6798.0
+      },
+      "action": {
+        "took_trade": true,
+        "exploration_rate": 0.12416050375259596
+      },
+      "reward": 517.5,
+      "duration": 33630.39740163334
+    },
+    {
+      "timestamp": "2025-11-01T13:18:23.959261",
+      "state": {
+        "rsi": 29.98651547043815,
+        "vwap_distance": 0.6920354355826607,
+        "atr": 8.803571428571429,
+        "volume_ratio": 0.09646357737793936,
+        "hour": 13,
+        "day_of_week": 3,
+        "recent_pnl": 0,
+        "streak": 0,
+        "side": "long",
+        "price": 6768.0
+      },
+      "action": {
+        "took_trade": true,
+        "exploration_rate": 0.12353970123383298
+      },
+      "reward": 217.5,
+      "duration": 33131.399292066664
+    },
+    {
+      "timestamp": "2025-11-01T13:18:24.087625",
+      "state": {
+        "rsi": 30.39661590745672,
+        "vwap_distance": 0.7686184059994136,
+        "atr": 8.357142857142858,
+        "volume_ratio": 0.12034038443640857,
+        "hour": 13,
+        "day_of_week": 3,
+        "recent_pnl": 0,
+        "streak": 0,
+        "side": "long",
+        "price": 6765.75
+      },
+      "action": {
+        "took_trade": true,
+        "exploration_rate": 0.12292200272766382
+      },
+      "reward": 292.5,
+      "duration": 33119.401460416666
+    },
+    {
+      "timestamp": "2025-11-01T13:18:24.391086",
+      "state": {
+        "rsi": 65.58570117451904,
+        "vwap_distance": 0.8390748753592204,
+        "atr": 13.321428571428571,
+        "volume_ratio": 0.048399911669022924,
+        "hour": 13,
+        "day_of_week": 0,
+        "recent_pnl": 0,
+        "streak": 0,
+        "side": "short",
+        "price": 6710.0
+      },
+      "action": {
+        "took_trade": true,
+        "exploration_rate": 0.11987952989139786
+      },
+      "reward": -5.0,
+      "duration": 27373.40645301667
+    },
+    {
+      "timestamp": "2025-11-01T13:18:24.610239",
+      "state": {
+        "rsi": 19.035326770625872,
+        "vwap_distance": 0.7329414885756728,
+        "atr": 9.017857142857142,
+        "volume_ratio": 0.24480888771326545,
+        "hour": 6,
+        "day_of_week": 1,
+        "recent_pnl": 0,
+        "streak": 0,
+        "side": "long",
+        "price": 6612.5
+      },
+      "action": {
+        "took_trade": true,
+        "exploration_rate": 0.11574616123995936
+      },
+      "reward": -177.5,
+      "duration": 26305.41017065
+    },
+    {
+      "timestamp": "2025-11-01T13:18:24.764309",
+      "state": {
+        "rsi": 19.035326770625872,
+        "vwap_distance": 0.8380032724491755,
+        "atr": 9.017857142857142,
+        "volume_ratio": 0.09363840761803995,
+        "hour": 6,
+        "day_of_week": 1,
+        "recent_pnl": 0,
+        "streak": 0,
+        "side": "long",
+        "price": 6608.5
+      },
+      "action": {
+        "took_trade": true,
+        "exploration_rate": 0.11516743043375956
+      },
+      "reward": 747.5,
+      "duration": 26303.412679283334
+    },
+    {
+      "timestamp": "2025-11-01T13:18:41.988731",
+      "state": {
+        "rsi": 81.65746336909235,
+        "vwap_distance": 0.7254556813931345,
+        "atr": 5.142857142857143,
+        "volume_ratio": 0.18314058251154866,
+        "hour": 5,
+        "day_of_week": 2,
+        "recent_pnl": 0,
+        "streak": 0,
+        "side": "short",
+        "price": 6727.25
+      },
+      "action": {
+        "took_trade": true,
+        "exploration_rate": 0.10898922523633443
+      },
+      "reward": 592.5,
+      "duration": 24959.699761933334
+    },
+    {
+      "timestamp": "2025-11-01T13:18:42.510555",
+      "state": {
+        "rsi": 34.28005031764144,
+        "vwap_distance": 0.7153670255239791,
+        "atr": 7.089285714285714,
+        "volume_ratio": 0.2762229527659396,
+        "hour": 10,
+        "day_of_week": 3,
+        "recent_pnl": 0,
+        "streak": 0,
+        "side": "long",
+        "price": 6721.0
+      },
+      "action": {
+        "took_trade": true,
+        "exploration_rate": 0.09809983140886998
+      },
+      "reward": 795.0,
+      "duration": 23223.708388583334
+    },
+    {
+      "timestamp": "2025-11-01T13:18:42.790265",
+      "state": {
+        "rsi": 85.69338461862206,
+        "vwap_distance": 0.8253931950883776,
+        "atr": 10.160714285714286,
+        "volume_ratio": 0.1367053998632946,
+        "hour": 1,
+        "day_of_week": 0,
+        "recent_pnl": 0,
+        "streak": 0,
+        "side": "short",
+        "price": 6727.0
+      },
+      "action": {
+        "took_trade": true,
+        "exploration_rate": 0.09283722473271075
+      },
+      "reward": -177.5,
+      "duration": 17970.71307273333
+    },
+    {
+      "timestamp": "2025-11-01T13:18:43.068637",
+      "state": {
+        "rsi": 73.43447470058412,
+        "vwap_distance": 0.8031566785469908,
+        "atr": 5.892857142857143,
+        "volume_ratio": 0.051672275664889654,
+        "hour": 14,
+        "day_of_week": 0,
+        "recent_pnl": 0,
+        "streak": 0,
+        "side": "short",
+        "price": 6781.5
+      },
+      "action": {
+        "took_trade": true,
+        "exploration_rate": 0.09053938766387146
+      },
+      "reward": 245.0,
+      "duration": 17227.717743116667
+    },
+    {
+      "timestamp": "2025-11-01T13:18:43.244411",
+      "state": {
+        "rsi": 31.59055416816524,
+        "vwap_distance": 0.7682131500488951,
+        "atr": 2.392857142857143,
+        "volume_ratio": 0.14022568868237636,
+        "hour": 1,
+        "day_of_week": 1,
+        "recent_pnl": 0,
+        "streak": 0,
+        "side": "long",
+        "price": 6772.25
+      },
+      "action": {
+        "took_trade": true,
+        "exploration_rate": 0.0900866907255521
+      },
+      "reward": 67.5,
+      "duration": 16573.720681349998
+    },
+    {
+      "timestamp": "2025-11-01T13:18:43.493068",
+      "state": {
+        "rsi": 68.17811469831537,
+        "vwap_distance": 0.8244927249341081,
+        "atr": 6.535714285714286,
+        "volume_ratio": 0.11796598878629189,
+        "hour": 11,
+        "day_of_week": 1,
+        "recent_pnl": 0,
+        "streak": 0,
+        "side": "short",
+        "price": 6784.5
+      },
+      "action": {
+        "took_trade": true,
+        "exploration_rate": 0.08829842492760871
+      },
+      "reward": 172.5,
+      "duration": 15969.724776216666
+    },
+    {
+      "timestamp": "2025-11-01T13:18:43.835544",
+      "state": {
+        "rsi": 72.672822697651,
+        "vwap_distance": 0.8146572790554834,
+        "atr": 3.267857142857143,
+        "volume_ratio": 0.04747371990505256,
+        "hour": 0,
+        "day_of_week": 2,
+        "recent_pnl": 0,
+        "streak": 0,
+        "side": "short",
+        "price": 6786.5
+      },
+      "action": {
+        "took_trade": true,
+        "exploration_rate": 0.08440354417368853
+      },
+      "reward": -2.5,
+      "duration": 15176.7305729
+    },
+    {
+      "timestamp": "2025-11-01T13:18:44.365287",
+      "state": {
+        "rsi": 31.280859843557664,
+        "vwap_distance": 0.7696483242951184,
+        "atr": 10.857142857142858,
+        "volume_ratio": 0.34307695851473063,
+        "hour": 12,
+        "day_of_week": 2,
+        "recent_pnl": 0,
+        "streak": 0,
+        "side": "long",
+        "price": 6718.0
+      },
+      "action": {
+        "took_trade": true,
+        "exploration_rate": 0.08356161882055599
+      },
+      "reward": 895.0,
+      "duration": 14444.739351616667
+    },
+    {
+      "timestamp": "2025-11-01T13:18:44.406083",
+      "state": {
+        "rsi": 25.517213402941792,
+        "vwap_distance": 0.7294445140923115,
+        "atr": 13.785714285714286,
+        "volume_ratio": 0.11647263727197726,
+        "hour": 13,
+        "day_of_week": 2,
+        "recent_pnl": 0,
+        "streak": 0,
+        "side": "long",
+        "price": 6711.75
+      },
+      "action": {
+        "took_trade": true,
+        "exploration_rate": 0.08356161882055599
+      },
+      "reward": -177.5,
+      "duration": 14390.739983366666
+    },
+    {
+      "timestamp": "2025-11-01T13:18:44.827690",
+      "state": {
+        "rsi": 30.82658225636365,
+        "vwap_distance": 0.837427865885463,
+        "atr": 4.303571428571429,
+        "volume_ratio": 0.17981568891885816,
+        "hour": 5,
+        "day_of_week": 3,
+        "recent_pnl": 0,
+        "streak": 0,
+        "side": "long",
+        "price": 6734.75
+      },
+      "action": {
+        "took_trade": true,
+        "exploration_rate": 0.08108589774077467
+      },
+      "reward": 442.5,
+      "duration": 13411.747052633333
+    },
+    {
+      "timestamp": "2025-11-01T13:18:45.381687",
+      "state": {
+        "rsi": 66.90584909241396,
+        "vwap_distance": 0.7633529795182299,
+        "atr": 1.875,
+        "volume_ratio": 0.02421307506053269,
+        "hour": 22,
+        "day_of_week": 3,
+        "recent_pnl": 0,
+        "streak": 0,
+        "side": "short",
+        "price": 6786.25
+      },
+      "action": {
+        "took_trade": true,
+        "exploration_rate": 0.07298439713428678
+      },
+      "reward": -27.5,
+      "duration": 12410.756325683333
     }
   ],
   "stats": {
-    "total_signals": 312,
-    "taken": 27,
-    "skipped": 285,
-    "take_rate": 8.653846153846153,
-    "recent_pnl": 6210.0,
+    "total_signals": 295,
+    "taken": 32,
+    "skipped": 263,
+    "take_rate": 10.847457627118644,
+    "recent_pnl": 5452.5,
     "recent_win_rate": 65.0,
-    "exploration_rate": 6.6687659952224
+    "exploration_rate": 7.298439713428678
   }
 }
