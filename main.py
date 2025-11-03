@@ -258,10 +258,14 @@ def run_backtest_with_params(symbol, days, initial_equity, params, return_bars=F
         engine = BacktestEngine(config=backtest_config, bot_config=bot_config_dict)
         
         # Import bot functions
-        from vwap_bounce_bot import initialize_state, on_tick, check_for_signals, check_exit_conditions, state, check_daily_reset
+        from vwap_bounce_bot import initialize_state, on_tick, check_for_signals, check_exit_conditions, state, check_daily_reset, rl_brain, adaptive_manager
         
         # Initialize bot state for the symbol
         initialize_state(symbol)
+        
+        # Track starting experience counts
+        starting_signal_count = len(rl_brain.experiences) if rl_brain else 0
+        starting_exit_count = len(adaptive_manager.exit_experiences) if adaptive_manager else 0
         
         et = tz  # Use same timezone
         
@@ -426,6 +430,27 @@ def run_backtest(args, bot_config):
     symbol = bot_config_dict['instrument']
     initialize_state(symbol)
     
+    # NOW import RL brain references after initialization
+    from vwap_bounce_bot import rl_brain, adaptive_manager
+    
+    # Track starting experience counts for learning summary
+    starting_signal_count = len(rl_brain.experiences) if rl_brain else 0
+    starting_exit_count = len(adaptive_manager.exit_experiences) if adaptive_manager else 0
+    
+    logger.info(f"Starting RL Brain State:")
+    logger.info(f"  Signal Experiences: {starting_signal_count}")
+    logger.info(f"  Exit Experiences: {starting_exit_count}")
+    
+    # Create a simple object to hold RL brain references for tracking
+    class BotRLReferences:
+        def __init__(self):
+            self.signal_rl = rl_brain
+            self.exit_manager = adaptive_manager
+    
+    # Set bot instance for RL tracking
+    bot_ref = BotRLReferences()
+    engine.set_bot_instance(bot_ref)
+    
     # Get ET timezone for daily reset checks
     et = pytz.timezone('US/Eastern')
     
@@ -481,8 +506,43 @@ def run_backtest(args, bot_config):
         
     results = engine.run_with_strategy(vwap_strategy_backtest)
     
+    # DEBUG
+    print("DEBUG: About to create report generator")
+    
     # Generate report
     report_gen = ReportGenerator(engine.metrics)
+    
+    # DEBUG
+    print("DEBUG: Report generator created, about to show RL summary")
+    
+    # Track RL learning progress FIRST (before trade breakdown which might be long)
+    print("\n" + "="*60)
+    print("RL BRAIN LEARNING SUMMARY")
+    print("="*60)
+    
+    try:
+        from vwap_bounce_bot import rl_brain, adaptive_manager
+        
+        if rl_brain is not None:
+            signal_count = len(rl_brain.experiences)
+            signal_wins = len([e for e in rl_brain.experiences if e['reward'] > 0])
+            signal_losses = len([e for e in rl_brain.experiences if e['reward'] < 0])
+            signal_wr = (signal_wins / signal_count * 100) if signal_count > 0 else 0
+            signal_gained = signal_count - starting_signal_count
+            
+            print(f"[SIGNALS] {signal_count} total experiences (+{signal_gained} gained this run)")
+            print(f"  Wins: {signal_wins} | Losses: {signal_losses} | Win Rate: {signal_wr:.1f}%")
+        
+        if adaptive_manager is not None:
+            exit_count = len(adaptive_manager.exit_experiences)
+            exit_gained = exit_count - starting_exit_count
+            print(f"[EXITS] {exit_count} total experiences (+{exit_gained} gained this run)")
+    except Exception as e:
+        print(f"Could not generate RL summary: {e}")
+        import traceback
+        traceback.print_exc()
+    
+    print("="*60)
     
     # Print results to console
     logger.info("\n" + "="*60)

@@ -42,9 +42,9 @@ class AdaptiveExitManager:
         
         # RL Learning for exit parameters
         self.exit_experiences = []  # All past exit outcomes
-        self.load_experiences()
         
         # Learned optimal parameters per regime (updated from experiences)
+        # MUST be initialized BEFORE load_experiences()
         self.learned_params = {
             'HIGH_VOL_CHOPPY': {'breakeven_mult': 0.75, 'trailing_mult': 0.7},
             'HIGH_VOL_TRENDING': {'breakeven_mult': 0.85, 'trailing_mult': 1.1},
@@ -54,6 +54,9 @@ class AdaptiveExitManager:
             'NORMAL_TRENDING': {'breakeven_mult': 1.0, 'trailing_mult': 1.1},
             'NORMAL_CHOPPY': {'breakeven_mult': 0.95, 'trailing_mult': 0.95}
         }
+        
+        # Load experiences AFTER learned_params is initialized
+        self.load_experiences()
         
         logger.info(f"[ADAPTIVE] Exit Manager initialized with RL learning ({len(self.exit_experiences)} past exits)")
     
