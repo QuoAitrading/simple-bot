@@ -77,6 +77,7 @@ class BotConfiguration:
     max_drawdown_percent: float = 5.0
     tick_timeout_seconds: int = 60
     proactive_stop_buffer_ticks: int = 2
+    flatten_buffer_ticks: int = 2  # Buffer for flatten price calculation
     
     # ATR-Based Dynamic Risk Management - ITERATION 3 (PROVEN WINNER!)
     use_atr_stops: bool = True  # ATR stops enabled
@@ -281,6 +282,7 @@ class BotConfiguration:
             "max_drawdown_percent": self.max_drawdown_percent,
             "tick_timeout_seconds": self.tick_timeout_seconds,
             "proactive_stop_buffer_ticks": self.proactive_stop_buffer_ticks,
+            "flatten_buffer_ticks": self.flatten_buffer_ticks,
             "tick_size": self.tick_size,
             "tick_value": self.tick_value,
             "dry_run": self.dry_run,

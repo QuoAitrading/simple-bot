@@ -33,7 +33,10 @@ import sys
 from datetime import datetime
 import pandas as pd
 from dotenv import load_dotenv
-from broker_interface import TopStepBroker
+
+# Add parent directory to path for imports
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+from src.broker_interface import TopStepBroker
 
 # Load environment variables from .env file
 load_dotenv()
