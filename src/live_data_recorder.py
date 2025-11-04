@@ -1,9 +1,9 @@
 """
 Live Market Data Recorder - Minimal Tick Recording for Backtesting
-Records only essential data: timestamp, bid, ask, last
+Records only essential data: timestamp, bid, ask, last in CSV format
 """
 
-import json
+import csv
 import logging
 import time
 from datetime import datetime
@@ -16,7 +16,7 @@ logger = logging.getLogger(__name__)
 class LiveDataRecorder:
     """
     Minimal tick-by-tick recorder for realistic backtesting
-    Records: timestamp, bid, ask, last - nothing else
+    Records: timestamp, bid, ask, last in CSV format
     """
     
     def __init__(
@@ -47,6 +47,7 @@ class LiveDataRecorder:
         
         # Current file
         self.tick_file = None
+        self.csv_writer = None
         self.tick_file_path = None
         self.tick_file_start_time = None
         
@@ -66,16 +67,20 @@ class LiveDataRecorder:
             self.tick_file.close()
         
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        filename = f"{self.symbol}_ticks_{timestamp}.jsonl"
+        filename = f"{self.symbol}_ticks_{timestamp}.csv"
         if self.compress:
             filename += ".gz"
         
         self.tick_file_path = self.output_dir / filename
         
         if self.compress:
-            self.tick_file = gzip.open(self.tick_file_path, 'wt', encoding='utf-8')
+            self.tick_file = gzip.open(self.tick_file_path, 'wt', encoding='utf-8', newline='')
         else:
-            self.tick_file = open(self.tick_file_path, 'w', encoding='utf-8')
+            self.tick_file = open(self.tick_file_path, 'w', encoding='utf-8', newline='')
+        
+        # Create CSV writer and write header
+        self.csv_writer = csv.writer(self.tick_file)
+        self.csv_writer.writerow(['time', 'bid', 'ask', 'last'])
         
         self.tick_file_start_time = time.time()
         logger.info(f"[RECORDER] New tick file: {filename}")
@@ -110,17 +115,9 @@ class LiveDataRecorder:
         """
         now = time.time()
         
-        # Only save essentials: time, bid, ask, last
-        tick = {
-            "time": now,
-            "bid": bid,
-            "ask": ask,
-            "last": last
-        }
-        
-        # Write to file
+        # Write CSV row: time, bid, ask, last
         try:
-            self.tick_file.write(json.dumps(tick) + '\n')
+            self.csv_writer.writerow([now, bid, ask, last])
             self.tick_file.flush()  # Ensure data is written immediately
             self.ticks_recorded += 1
             
