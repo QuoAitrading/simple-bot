@@ -8,6 +8,7 @@ from typing import Dict, Any, Optional, Callable, List
 from datetime import datetime
 import logging
 import time
+import asyncio
 
 # Import TopStep SDK (Project-X)
 try:
@@ -17,6 +18,14 @@ try:
 except ImportError:
     TOPSTEP_SDK_AVAILABLE = False
     logging.warning("TopStep SDK (project-x-py) not installed - broker operations will not work")
+
+# Import TopStep WebSocket streamer
+try:
+    from topstep_websocket import TopStepWebSocketStreamer
+    TOPSTEP_WEBSOCKET_AVAILABLE = True
+except ImportError:
+    TOPSTEP_WEBSOCKET_AVAILABLE = False
+    logging.warning("TopStep WebSocket module not found - live streaming will not work")
 
 
 logger = logging.getLogger(__name__)
@@ -192,6 +201,10 @@ class TopStepBroker(BrokerInterface):
         self.sdk_client: Optional[ProjectX] = None
         self.trading_suite: Optional[TradingSuite] = None
         
+        # WebSocket streamer for live data
+        self.websocket_streamer: Optional[TopStepWebSocketStreamer] = None
+        self._contract_id_cache: Dict[str, str] = {}  # symbol -> contract_id mapping
+        
         if not TOPSTEP_SDK_AVAILABLE:
             logger.error("TopStep SDK (project-x-py) not installed!")
             logger.error("Install with: pip install project-x-py")
@@ -236,6 +249,21 @@ class TopStepBroker(BrokerInterface):
                 from config import BotConfiguration
                 config = BotConfiguration()
                 config.auto_configure_for_account(account_balance, logger)
+                
+                # Initialize WebSocket streamer for live data
+                if TOPSTEP_WEBSOCKET_AVAILABLE:
+                    try:
+                        session_token = self.sdk_client.get_session_token()
+                        if session_token:
+                            logger.info("Initializing WebSocket streamer for live data...")
+                            self.websocket_streamer = TopStepWebSocketStreamer(session_token)
+                            self.websocket_streamer.connect()
+                            logger.info("✅ WebSocket streamer connected - Live tick data ready!")
+                        else:
+                            logger.warning("Failed to get session token - WebSocket streaming unavailable")
+                    except Exception as e:
+                        logger.warning(f"Failed to initialize WebSocket streamer: {e}")
+                        logger.warning("Continuing without live streaming")
                 
                 self.connected = True
                 self.failure_count = 0
@@ -469,61 +497,153 @@ class TopStepBroker(BrokerInterface):
             return None
     
     def subscribe_market_data(self, symbol: str, callback: Callable[[str, float, int, int], None]) -> None:
-        """Subscribe to real-time market data (trades)."""
-        if not self.connected or not self.sdk_client:
+        """Subscribe to real-time market data (trades) via WebSocket."""
+        if not self.connected:
             logger.error("Cannot subscribe: not connected")
             return
         
+        if not self.websocket_streamer:
+            logger.error("WebSocket streamer not initialized - cannot subscribe to live data")
+            logger.error("Make sure WebSocket module is available and session token is valid")
+            return
+        
         try:
-            # Subscribe to realtime data
-            realtime_client = self.sdk_client.get_realtime_client()
-            if realtime_client:
-                # Subscribe to trades/quotes for the symbol
-                realtime_client.subscribe_trades(
-                    symbol,
-                    lambda trade: callback(
-                        trade.instrument.symbol,
-                        float(trade.price),
-                        int(trade.size),
-                        int(trade.timestamp.timestamp() * 1000)
-                    )
-                )
-                logger.info(f"Subscribed to market data for {symbol}")
-            else:
-                logger.error("Failed to get realtime client")
+            # Get contract ID for the symbol (synchronous)
+            contract_id = self._get_contract_id_sync(symbol)
+            if not contract_id:
+                logger.error(f"Failed to get contract ID for {symbol}")
+                return
+            
+            # Define callback wrapper to convert WebSocket data format
+            def trade_callback(data):
+                """Handle trade data from WebSocket: [contract_id, [{trade1}, {trade2}, ...]]"""
+                if isinstance(data, list) and len(data) >= 2:
+                    trades = data[1]  # List of trade dicts
+                    if isinstance(trades, list):
+                        for trade in trades:
+                            price = float(trade.get('price', 0))
+                            volume = int(trade.get('volume', 0))
+                            
+                            # Parse timestamp (ISO format string to milliseconds)
+                            timestamp_str = trade.get('timestamp', '')
+                            try:
+                                from datetime import datetime
+                                if timestamp_str:
+                                    dt = datetime.fromisoformat(str(timestamp_str).replace('Z', '+00:00'))
+                                    timestamp = int(dt.timestamp() * 1000)
+                                else:
+                                    timestamp = int(datetime.now().timestamp() * 1000)
+                            except:
+                                timestamp = int(datetime.now().timestamp() * 1000)
+                            
+                            # Call bot's callback with tick data
+                            callback(symbol, price, volume, timestamp)
+            
+            # Subscribe to trades via WebSocket
+            self.websocket_streamer.subscribe_trades(contract_id, trade_callback)
+            logger.info(f"✅ Subscribed to LIVE trade data for {symbol} (contract: {contract_id})")
+            
         except Exception as e:
             logger.error(f"Error subscribing to market data: {e}")
             self._record_failure()
     
     def subscribe_quotes(self, symbol: str, callback: Callable[[str, float, float, int, int, float, int], None]) -> None:
-        """Subscribe to real-time bid/ask quotes."""
-        if not self.connected or not self.sdk_client:
+        """Subscribe to real-time bid/ask quotes via WebSocket."""
+        if not self.connected:
             logger.error("Cannot subscribe to quotes: not connected")
             return
         
+        if not self.websocket_streamer:
+            logger.warning("WebSocket streamer not initialized - quote subscription unavailable")
+            return
+        
         try:
-            # Subscribe to realtime quotes
-            realtime_client = self.sdk_client.get_realtime_client()
-            if realtime_client:
-                # Subscribe to quotes (bid/ask) for the symbol
-                realtime_client.subscribe_quotes(
-                    symbol,
-                    lambda quote: callback(
-                        quote.instrument.symbol,
-                        float(quote.bid_price),
-                        float(quote.ask_price),
-                        int(quote.bid_size),
-                        int(quote.ask_size),
-                        float(quote.last_price) if hasattr(quote, 'last_price') else float(quote.bid_price),
-                        int(quote.timestamp.timestamp() * 1000)
-                    )
-                )
-                logger.info(f"Subscribed to bid/ask quotes for {symbol}")
-            else:
-                logger.error("Failed to get realtime client")
+            # Get contract ID for the symbol (synchronous)
+            contract_id = self._get_contract_id_sync(symbol)
+            if not contract_id:
+                logger.error(f"Failed to get contract ID for {symbol}")
+                return
+            
+            # Define callback wrapper to convert WebSocket data format
+            def quote_callback(data):
+                """Handle quote data from WebSocket: [contract_id, {quote_dict}]"""
+                if isinstance(data, list) and len(data) >= 2:
+                    quote = data[1]  # Quote dict
+                    if isinstance(quote, dict):
+                        bid_price = float(quote.get('bestBid', 0))
+                        ask_price = float(quote.get('bestAsk', 0))
+                        last_price = float(quote.get('lastPrice', 0))
+                        bid_size = 1  # TopStep doesn't provide sizes in quote data
+                        ask_size = 1
+                        
+                        # Parse timestamp (ISO format string to milliseconds)
+                        timestamp_str = quote.get('timestamp', '')
+                        try:
+                            from datetime import datetime
+                            if timestamp_str:
+                                dt = datetime.fromisoformat(timestamp_str.replace('Z', '+00:00'))
+                                timestamp = int(dt.timestamp() * 1000)
+                            else:
+                                timestamp = int(datetime.now().timestamp() * 1000)
+                        except:
+                            timestamp = int(datetime.now().timestamp() * 1000)
+                        
+                        # Call bot's callback with quote data
+                        callback(symbol, bid_price, ask_price, bid_size, ask_size, last_price, timestamp)
+            
+            # Subscribe to quotes via WebSocket
+            self.websocket_streamer.subscribe_quotes(contract_id, quote_callback)
+            logger.info(f"✅ Subscribed to LIVE quote data for {symbol} (contract: {contract_id})")
+            
         except Exception as e:
             logger.error(f"Error subscribing to quotes: {e}")
             self._record_failure()
+    
+    def _get_contract_id_sync(self, symbol: str) -> Optional[str]:
+        """
+        Get TopStep contract ID for a symbol (e.g., ES -> CON.F.US.EP.Z25).
+        Uses cache to avoid repeated API calls. Synchronous wrapper around async method.
+        """
+        # Check cache first
+        if symbol in self._contract_id_cache:
+            return self._contract_id_cache[symbol]
+        
+        # Remove leading slash if present (e.g., /ES -> ES)
+        clean_symbol = symbol.lstrip('/')
+        
+        try:
+            # Run the async method in a new event loop (safe from sync context)
+            import asyncio
+            from concurrent.futures import ThreadPoolExecutor
+            
+            # Create a new event loop in a thread to avoid conflicts
+            def run_async_search():
+                # Create new event loop for this thread
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                try:
+                    return loop.run_until_complete(self.sdk_client.search_instruments(query=clean_symbol))
+                finally:
+                    loop.close()
+            
+            # Run in thread pool to avoid event loop conflicts
+            with ThreadPoolExecutor(max_workers=1) as executor:
+                future = executor.submit(run_async_search)
+                instruments = future.result(timeout=10)
+            
+            if instruments and len(instruments) > 0:
+                # Get the first matching contract
+                contract_id = instruments[0].id
+                self._contract_id_cache[symbol] = contract_id
+                logger.info(f"Contract ID for {symbol}: {contract_id}")
+                return contract_id
+            
+            logger.error(f"No contracts found for symbol: {symbol}")
+            return None
+            
+        except Exception as e:
+            logger.error(f"Error getting contract ID for {symbol}: {e}")
+            return None
     
     def fetch_historical_bars(self, symbol: str, timeframe: str, count: int, 
                              start_date: datetime = None, end_date: datetime = None) -> List[Dict[str, Any]]:
