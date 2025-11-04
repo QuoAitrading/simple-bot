@@ -14,12 +14,13 @@ logger = logging.getLogger(__name__)
 class TopStepWebSocketStreamer:
     """Real-time WebSocket streamer for TopStep market data via SignalR"""
     
-    def __init__(self, session_token: str):
+    def __init__(self, session_token: str, max_reconnect_attempts: int = 5):
         """
         Initialize WebSocket streamer
         
         Args:
             session_token: TopStep session token (from ProjectX.get_session_token())
+            max_reconnect_attempts: Maximum reconnection attempts (default: 5)
         """
         self.session_token = session_token
         self.hub_url = "wss://rtc.topstepx.com/hubs/market"
@@ -36,6 +37,11 @@ class TopStepWebSocketStreamer:
         self.trades_received = 0
         self.depth_updates_received = 0
         self.last_message_time = None
+        
+        # Reconnection tracking
+        self.max_reconnect_attempts = max_reconnect_attempts
+        self.reconnect_attempt = 0
+        self.subscriptions = []  # Track active subscriptions for resubscription
     
     def connect(self) -> bool:
         """Connect to TopStep SignalR market hub"""
@@ -78,11 +84,45 @@ class TopStepWebSocketStreamer:
         """Called when WebSocket connection opens"""
         logger.info("[CONNECTED] WebSocket connection opened")
         self.is_connected = True
+        self.reconnect_attempt = 0  # Reset reconnect counter on successful connection
+        
+        # Resubscribe to previous subscriptions after reconnection
+        if self.subscriptions:
+            logger.info(f"Resubscribing to {len(self.subscriptions)} symbols...")
+            for sub_type, symbol in self.subscriptions:
+                try:
+                    if sub_type == "quotes":
+                        self.connection.send("SubscribeContractQuotes", [symbol])
+                    elif sub_type == "trades":
+                        self.connection.send("SubscribeContractTrades", [symbol])
+                    elif sub_type == "depth":
+                        self.connection.send("Subscribe", [symbol, "Depth"])
+                    logger.info(f"Resubscribed to {sub_type} for {symbol}")
+                except Exception as e:
+                    logger.error(f"Failed to resubscribe to {sub_type} for {symbol}: {e}")
     
     def _on_close(self):
-        """Called when WebSocket connection closes"""
+        """Called when WebSocket connection closes - attempt manual reconnect if auto-reconnect fails"""
         logger.warning("⚠️ WebSocket connection closed")
         self.is_connected = False
+        
+        # SignalR has built-in auto-reconnect, but if that fails, try manual reconnect
+        if self.reconnect_attempt < self.max_reconnect_attempts:
+            self.reconnect_attempt += 1
+            wait_time = min(2 ** self.reconnect_attempt, 30)  # Exponential backoff (2s, 4s, 8s...)
+            logger.info(f"Attempting manual reconnection {self.reconnect_attempt}/{self.max_reconnect_attempts} in {wait_time}s...")
+            time.sleep(wait_time)
+            
+            try:
+                self.connect()
+                logger.info("[SUCCESS] Manual reconnection successful!")
+            except Exception as e:
+                logger.error(f"Manual reconnection attempt {self.reconnect_attempt} failed: {e}")
+                if self.reconnect_attempt >= self.max_reconnect_attempts:
+                    logger.error(f"⚠️ CRITICAL: All {self.max_reconnect_attempts} reconnection attempts failed!")
+                    logger.error("WebSocket will remain disconnected. Bot will continue with REST API polling.")
+        else:
+            logger.error("⚠️ Max reconnection attempts reached - WebSocket remains disconnected")
     
     def _on_error(self, error):
         """Called when WebSocket error occurs"""
@@ -142,6 +182,11 @@ class TopStepWebSocketStreamer:
             # The calling code should pass the contract ID
             self.connection.send("SubscribeContractQuotes", [symbol])
             logger.info(f"[SUCCESS] Subscribed to quotes for contract {symbol}")
+            
+            # Track subscription for reconnection
+            sub = ("quotes", symbol)
+            if sub not in self.subscriptions:
+                self.subscriptions.append(sub)
         except Exception as e:
             logger.error(f"Failed to subscribe to quotes: {e}", exc_info=True)
     
@@ -154,6 +199,11 @@ class TopStepWebSocketStreamer:
             # The calling code should pass the contract ID
             self.connection.send("SubscribeContractTrades", [symbol])
             logger.info(f"[SUCCESS] Subscribed to trades for contract {symbol}")
+            
+            # Track subscription for reconnection
+            sub = ("trades", symbol)
+            if sub not in self.subscriptions:
+                self.subscriptions.append(sub)
         except Exception as e:
             logger.error(f"Failed to subscribe to trades: {e}", exc_info=True)
     
@@ -164,6 +214,11 @@ class TopStepWebSocketStreamer:
             # Try common SignalR method variations
             self.connection.send("Subscribe", [symbol, "Depth"])
             logger.info(f"[SUCCESS] Subscribed to market depth for {symbol}")
+            
+            # Track subscription for reconnection
+            sub = ("depth", symbol)
+            if sub not in self.subscriptions:
+                self.subscriptions.append(sub)
         except Exception as e:
             logger.error(f"Failed to subscribe to depth: {e}", exc_info=True)
             logger.error(f"Failed to subscribe to depth: {e}")

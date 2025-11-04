@@ -215,8 +215,16 @@ class TopStepBroker(BrokerInterface):
             logger.error("Install with: pip install project-x-py")
             raise RuntimeError("TopStep SDK not available")
     
-    def connect(self) -> bool:
-        """Connect to TopStep SDK."""
+    def connect(self, max_retries: int = None) -> bool:
+        """
+        Connect to TopStep SDK with retry logic.
+        
+        Args:
+            max_retries: Override default max retries (default: 3)
+        
+        Returns:
+            True if connected, False if all retries failed
+        """
         import asyncio
         
         if self.circuit_breaker_open:
@@ -224,93 +232,141 @@ class TopStepBroker(BrokerInterface):
             return False
         
         # Use the async version wrapped in asyncio.run
-        return asyncio.run(self.connect_async())
+        retries = max_retries if max_retries is not None else self.max_retries
+        return asyncio.run(self.connect_async(retries))
     
-    async def connect_async(self) -> bool:
-        """Connect to TopStep SDK asynchronously (for use within async context)."""
+    async def connect_async(self, max_retries: int = 3) -> bool:
+        """
+        Connect to TopStep SDK asynchronously with exponential backoff retry.
+        
+        Args:
+            max_retries: Maximum retry attempts
+        
+        Returns:
+            True if connected, False if all retries failed
+        """
         if self.circuit_breaker_open:
             logger.error("Circuit breaker is open - cannot connect")
             return False
         
-        try:
-            logger.info("Connecting to TopStep SDK (Project-X)...")
-            
-            # Initialize SDK client with username and API key
-            self.sdk_client = ProjectX(
-                username=self.username or "",
-                api_key=self.api_token,
-                config=ProjectXConfig()
-            )
-            
-            # Authenticate first (async method)
-            logger.info("Authenticating with TopStep...")
+        for attempt in range(max_retries):
             try:
-                await self.sdk_client.authenticate()
-                logger.info("Authentication successful!")
-                # Give SDK a moment to establish session
-                await asyncio.sleep(0.5)
-            except Exception as auth_error:
-                logger.error(f"Authentication error: {auth_error}")
-                self._record_failure()
-                return False
-            
-            # Trading suite is optional - only needed for live trading, not historical data
-            self.trading_suite = None
-            
-            # Test connection by getting account info
-            try:
-                account = self.sdk_client.get_account_info()
-                logger.info(f"Account info retrieved: {account}")
-            except Exception as account_error:
-                logger.error(f"Failed to get account info: {account_error}")
-                self._record_failure()
-                return False
+                if attempt > 0:
+                    # Exponential backoff: 2^attempt seconds (2s, 4s, 8s)
+                    wait_time = min(2 ** attempt, 30)  # Max 30 seconds
+                    logger.info(f"Retry attempt {attempt + 1}/{max_retries} in {wait_time}s...")
+                    await asyncio.sleep(wait_time)
                 
-            if account:
-                account_id = getattr(account, 'account_id', getattr(account, 'id', 'N/A'))
-                account_balance = float(getattr(account, 'balance', getattr(account, 'equity', 0)))
+                logger.info(f"Connecting to TopStep SDK... (attempt {attempt + 1}/{max_retries})")
                 
-                logger.info(f"Connected to TopStep - Account: {account_id}")
-                logger.info(f"Account Balance: ${account_balance:,.2f}")
+                # Initialize SDK client with username and API key
+                self.sdk_client = ProjectX(
+                    username=self.username or "",
+                    api_key=self.api_token,
+                    config=ProjectXConfig()
+                )
                 
-                # AUTO-CONFIGURE: Set risk limits based on account size
-                # This makes the bot work on ANY TopStep account automatically!
-                from config import BotConfiguration
-                config = BotConfiguration()
-                config.auto_configure_for_account(account_balance, logger)
-                
-                # Store config and balance for dynamic reconfiguration
-                self.config = config
-                self._last_configured_balance = account_balance
-                
-                # Initialize WebSocket streamer for real-time market data
+                # Authenticate first (async method)
+                logger.info("Authenticating with TopStep...")
                 try:
-                    session_token = self.sdk_client.get_session_token()
-                    if session_token:
-                        logger.info("Initializing WebSocket streamer...")
-                        self.websocket_streamer = TopStepWebSocketStreamer(session_token)
-                        if self.websocket_streamer.connect():
-                            logger.info("[SUCCESS] WebSocket streamer initialized and connected")
-                        else:
-                            logger.warning("WebSocket connection failed - will use REST API polling")
+                    await self.sdk_client.authenticate()
+                    logger.info("[SUCCESS] Authentication successful!")
+                    # Give SDK a moment to establish session
+                    await asyncio.sleep(0.5)
+                except Exception as auth_error:
+                    logger.error(f"Authentication error: {auth_error}")
+                    if attempt == max_retries - 1:
+                        # Last attempt failed
+                        logger.error(f"[FAILED] Authentication failed after {max_retries} attempts")
+                        self._record_failure()
+                        return False
                     else:
-                        logger.warning("No session token available - WebSocket disabled")
-                except Exception as ws_error:
-                    logger.warning(f"WebSocket initialization failed: {ws_error} - will use REST API")
-                    self.websocket_streamer = None
+                        # Will retry
+                        logger.warning("Authentication failed, will retry...")
+                        continue
                 
-                self.connected = True
-                self.failure_count = 0
-                return True
-            else:
-                logger.error("Failed to retrieve account info")
-                self._record_failure()
-                return False
-            
-        except Exception as e:
-            logger.error(f"Failed to connect to TopStep SDK: {e}")
-            self._record_failure()
-            return False
+                # Trading suite is optional - only needed for live trading, not historical data
+                self.trading_suite = None
+                
+                # Test connection by getting account info
+                try:
+                    account = self.sdk_client.get_account_info()
+                    logger.info(f"Account info retrieved: {account}")
+                except Exception as account_error:
+                    logger.error(f"Failed to get account info: {account_error}")
+                    if attempt == max_retries - 1:
+                        logger.error(f"[FAILED] Account query failed after {max_retries} attempts")
+                        self._record_failure()
+                        return False
+                    else:
+                        logger.warning("Account query failed, will retry...")
+                        continue
+                
+                # Connection successful! Setup account info and WebSocket
+                if account:
+                    account_id = getattr(account, 'account_id', getattr(account, 'id', 'N/A'))
+                    account_balance = float(getattr(account, 'balance', getattr(account, 'equity', 0)))
+                    
+                    logger.info(f"Connected to TopStep - Account: {account_id}")
+                    logger.info(f"Account Balance: ${account_balance:,.2f}")
+                    
+                    # AUTO-CONFIGURE: Set risk limits based on account size
+                    # This makes the bot work on ANY TopStep account automatically!
+                    from config import BotConfiguration
+                    config = BotConfiguration()
+                    config.auto_configure_for_account(account_balance, logger)
+                    
+                    # Store config and balance for dynamic reconfiguration
+                    self.config = config
+                    self._last_configured_balance = account_balance
+                    
+                    # Initialize WebSocket streamer for real-time market data
+                    try:
+                        session_token = self.sdk_client.get_session_token()
+                        if session_token:
+                            logger.info("Initializing WebSocket streamer...")
+                            self.websocket_streamer = TopStepWebSocketStreamer(session_token)
+                            if self.websocket_streamer.connect():
+                                logger.info("[SUCCESS] WebSocket streamer initialized and connected")
+                            else:
+                                logger.warning("WebSocket connection failed - will use REST API polling")
+                        else:
+                            logger.warning("No session token available - WebSocket disabled")
+                    except Exception as ws_error:
+                        logger.warning(f"WebSocket initialization failed: {ws_error} - will use REST API")
+                        self.websocket_streamer = None
+                    
+                    # SUCCESS! Connection established
+                    self.connected = True
+                    self.failure_count = 0
+                    logger.info(f"[SUCCESS] TopStep connection established on attempt {attempt + 1}")
+                    return True
+                else:
+                    logger.error("Account info was None")
+                    if attempt == max_retries - 1:
+                        logger.error(f"[FAILED] Connection failed after {max_retries} attempts")
+                        self._record_failure()
+                        return False
+                    else:
+                        logger.warning("Will retry connection...")
+                        continue
+                
+            except Exception as e:
+                logger.error(f"Connection attempt {attempt + 1} failed: {e}")
+                if attempt == max_retries - 1:
+                    # Last attempt - fail permanently
+                    logger.error(f"[FAILED] All {max_retries} connection attempts failed")
+                    self._record_failure()
+                    return False
+                else:
+                    # Will retry
+                    logger.warning(f"Will retry connection (error: {str(e)[:100]}...)")
+                    continue
+        
+        # Should never reach here, but handle it gracefully
+        logger.error("[FAILED] Unexpected exit from connection loop")
+        self._record_failure()
+        return False
     
     def disconnect(self) -> None:
         """Disconnect from TopStep SDK."""
