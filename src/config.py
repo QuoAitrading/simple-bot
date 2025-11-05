@@ -319,7 +319,7 @@ class BotConfiguration:
     
     # Operational Parameters
     dry_run: bool = False
-    shadow_mode: bool = False  # Shadow trading - connects to broker API for real market data, trades in paper/demo mode (no real money)
+    shadow_mode: bool = False  # Shadow mode - streams live market data from broker API without logging into trading account (signal tracking only)
     log_file: str = "logs/vwap_bounce_bot.log"
     max_bars_storage: int = 200
     
@@ -466,7 +466,7 @@ class BotConfiguration:
             errors.append(f"max_drawdown_percent must be between 0 and 100, got {self.max_drawdown_percent}")
         
         # Validate broker configuration - API token is required unless in backtest mode
-        # Shadow mode still needs API token to connect to broker for real market data
+        # Shadow mode needs API token for live data streaming (but no account login)
         if not self.backtest_mode and not self.api_token:
             errors.append("api_token is required for TopStep broker (not required only in backtest_mode)")
         

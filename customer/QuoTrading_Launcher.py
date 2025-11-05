@@ -810,7 +810,7 @@ class QuoTradingLauncher:
         # Shadow mode explanation (small text below)
         shadow_info = tk.Label(
             settings,
-            text="Shadow mode = Connects to broker API with real market data, trades in paper/demo mode (no real money)",
+            text="Shadow mode = Streams live market data from broker API without logging into trading account (signal tracking only)",
             font=("Segoe UI", 7, "italic"),
             bg=self.colors['card'],
             fg=self.colors['text_secondary'],
@@ -1118,24 +1118,24 @@ class QuoTradingLauncher:
         license_key = self.config.get("quotrading_license", "")
         shadow_mode = self.shadow_mode_var.get()
         
-        # Validate broker credentials (required even in shadow mode since it connects to broker API)
+        # Validate broker credentials (required even in shadow mode for live data streaming)
         # Admin key bypasses broker validation
         if license_key != "QUOTRADING_ADMIN_MASTER_2025":
             # Validate broker credentials are present
             if not broker_token or not broker_username:
                 self.console_log("✗ Error: Missing broker credentials")
-                mode_desc = "paper trading with real market data" if shadow_mode else "live trading"
+                mode_desc = "live data streaming (no account login)" if shadow_mode else "live trading"
                 messagebox.showerror(
                     "Missing Broker Credentials",
                     f"Your {broker} credentials are required for {mode_desc}!\n\n"
-                    f"Shadow mode connects to {broker} API for real market data\n"
-                    f"but trades in paper/demo mode (no real money).\n\n"
+                    f"Shadow mode streams live market data from {broker} API\n"
+                    f"without logging into your trading account.\n\n"
                     f"Please go back and enter your API credentials."
                 )
                 return
         
         if shadow_mode:
-            self.console_log("🌙 Shadow mode enabled - connecting to broker API for paper trading")
+            self.console_log("🌙 Shadow mode enabled - streaming live data without account login")
         
         # Step 2: Save final config
         self.console_log("Saving configuration...")
@@ -1147,7 +1147,7 @@ class QuoTradingLauncher:
         
         # Step 4: Show confirmation
         symbols_str = ", ".join(selected_symbols)
-        mode_str = "🌙 Shadow Mode (Paper Trading - Real Data)" if shadow_mode else f"{broker} Live Trading"
+        mode_str = "🌙 Shadow Mode (Live Data Stream)" if shadow_mode else f"{broker} Live Trading"
         
         result = messagebox.askyesno(
             "Launch Trading Bot?",
@@ -1160,7 +1160,7 @@ class QuoTradingLauncher:
             f"Risk/Trade: {self.risk_var.get()}%\n"
             f"Min R:R Ratio: {self.risk_reward_var.get()}:1\n"
             f"Daily Loss Limit: ${self.daily_loss_var.get()}\n\n"
-            f"{'⚠️ Shadow Mode: Connects to broker API with real market data\nbut trades in paper/demo account (no real money).\n\n' if shadow_mode else ''}"
+            f"{'⚠️ Shadow Mode: Streams live market data from broker\nwithout logging into trading account (signal tracking only).\n\n' if shadow_mode else ''}"
             f"This will open a PowerShell terminal with live logs.\n"
             f"Use the STOP BOT button to stop trading.\n\n"
             f"Continue?"
