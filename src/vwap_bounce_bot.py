@@ -5250,11 +5250,11 @@ def get_trading_state(dt: datetime = None) -> str:
     if weekday == 5:  # Saturday
         return 'closed'
     
-    # CLOSED: Sunday before 6:00 PM ET
+    # CLOSED: Sunday before 6:00 PM ET (opens AT 6:00 PM exactly)
     if weekday == 6 and current_time < datetime_time(18, 0):
         return 'closed'
     
-    # CLOSED: Friday after 5:00 PM ET (weekend starts)
+    # CLOSED: Friday at/after 5:00 PM ET (closes AT 5:00 PM exactly - weekend starts)
     if weekday == 4 and current_time >= datetime_time(17, 0):
         return 'closed'
     
