@@ -14,6 +14,9 @@ import pytz
 import pandas as pd
 from dotenv import load_dotenv
 
+# Determine project root directory (parent of src/)
+PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
 # Load environment variables from .env file
 load_dotenv()
 
@@ -273,17 +276,19 @@ def run_backtest_with_params(symbol, days, initial_equity, params, return_bars=F
         
         # Initialize RL brain with experience file FROM PARENT DIRECTORY (not src/)
         if vwap_bounce_bot.rl_brain is None:
+            signal_exp_file = os.path.join(PROJECT_ROOT, "data/signal_experience.json")
             vwap_bounce_bot.rl_brain = SignalConfidenceRL(
-                experience_file="data/signal_experience.json",
+                experience_file=signal_exp_file,
                 backtest_mode=True
             )
             logger.info(f"✓ RL BRAIN INITIALIZED for backtest - {len(vwap_bounce_bot.rl_brain.experiences)} signal experiences loaded")
         
         # Initialize adaptive exit manager FROM PARENT DIRECTORY
         if vwap_bounce_bot.adaptive_manager is None:
+            exit_exp_file = os.path.join(PROJECT_ROOT, "data/exit_experience.json")
             vwap_bounce_bot.adaptive_manager = AdaptiveExitManager(
                 config=vwap_bounce_bot.CONFIG,
-                experience_file="data/exit_experience.json"
+                experience_file=exit_exp_file
             )
             logger.info(f"✓ ADAPTIVE EXITS INITIALIZED for backtest - {len(vwap_bounce_bot.adaptive_manager.exit_experiences)} exit experiences loaded")
         
@@ -536,7 +541,8 @@ def run_backtest(args, bot_config):
     # Read the experience files directly since module globals get cleared
     try:
         import json
-        with open('data/signal_experience.json', 'r') as f:
+        signal_exp_file = os.path.join(PROJECT_ROOT, "data/signal_experience.json")
+        with open(signal_exp_file, 'r') as f:
             signal_data = json.load(f)
             signal_count = len(signal_data['experiences'])
             signal_wins = len([e for e in signal_data['experiences'] if e['reward'] > 0])
@@ -549,7 +555,8 @@ def run_backtest(args, bot_config):
         print(f"Could not load signal experiences: {e}")
         
     try:
-        with open('data/exit_experience.json', 'r') as f:
+        exit_exp_file = os.path.join(PROJECT_ROOT, "data/exit_experience.json")
+        with open(exit_exp_file, 'r') as f:
             exit_data = json.load(f)
             exit_count = len(exit_data['exit_experiences'])
             print(f"[EXITS] {exit_count} total experiences")
