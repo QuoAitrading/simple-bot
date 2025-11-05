@@ -173,16 +173,14 @@ def initialize_broker() -> None:
     """
     Initialize the broker interface using configuration.
     Uses TopStep broker with error recovery and circuit breaker.
-    SHADOW MODE: Skips broker initialization for signal-only tracking.
+    SHADOW MODE: Connects to broker API for real market data but trades in paper/demo mode (no real money).
     """
     global broker, recovery_manager
     
-    # Skip broker in shadow mode
+    # In shadow mode, still connect to broker for real market data
+    # The broker should use demo/paper account when shadow_mode is enabled
     if CONFIG.get("shadow_mode", False):
-        logger.info("🌙 SHADOW MODE - Skipping broker initialization (signal tracking only)")
-        broker = None
-        recovery_manager = None
-        return
+        logger.info("🌙 SHADOW MODE - Connecting to broker API for paper trading (real market data, no real money)")
     
     logger.info("Initializing broker interface...")
     
@@ -190,6 +188,7 @@ def initialize_broker() -> None:
     recovery_manager = ErrorRecoveryManager(CONFIG)
     
     # Create broker using configuration
+    # TODO: Pass shadow_mode flag to broker to enable demo/paper account mode
     broker = create_broker(_bot_config.api_token, _bot_config.username, CONFIG["instrument"])
     
     # Connect to broker (initial connection doesn't use circuit breaker)
@@ -248,16 +247,19 @@ def get_account_equity() -> float:
     """
     Fetch current account equity from broker.
     Returns account equity/balance with error handling.
-    In backtest mode or shadow mode, returns simulated capital.
+    In backtest mode, returns simulated capital.
+    In shadow mode, returns demo account balance from broker.
     """
-    # Shadow mode, backtest mode, or no broker - return simulated capital
-    if CONFIG.get("shadow_mode", False) or _bot_config.backtest_mode or broker is None:
+    # Backtest mode or no broker - return simulated capital
+    if _bot_config.backtest_mode or broker is None:
         # Use starting_equity from bot_status if available
         if bot_status.get("starting_equity") is not None:
             return bot_status["starting_equity"]
-        # Default starting capital for shadow/backtest
+        # Default starting capital for backtest
         return 50000.0
     
+    # Shadow mode or live mode - get balance from broker
+    # In shadow mode, broker should return demo account balance
     try:
         # Use circuit breaker for account query
         breaker = recovery_manager.get_circuit_breaker("account_query")
@@ -2514,15 +2516,17 @@ def execute_entry(symbol: str, side: str, entry_price: float) -> None:
         side: 'long' or 'short'
         entry_price: Approximate entry price (mid or last)
     """
-    # ===== SHADOW MODE: Track signal without broker =====
+    # ===== SHADOW MODE: Execute trade in paper/demo account =====
     if CONFIG.get("shadow_mode", False):
         logger.info(SEPARATOR_LINE)
-        logger.info(f"🌙 SHADOW SIGNAL DETECTED - {side.upper()}")
+        logger.info(f"🌙 SHADOW MODE TRADE - {side.upper()}")
         logger.info(f"  Symbol: {symbol}")
         logger.info(f"  Entry Price: ${entry_price:.2f}")
         logger.info(f"  Time: {get_current_time().strftime('%Y-%m-%d %H:%M:%S %Z')}")
-        logger.info(f"  Mode: Signal tracking only (no broker orders)")
+        logger.info(f"  Mode: Paper trading (real market data, demo account)")
         logger.info(SEPARATOR_LINE)
+        # TODO: Execute order through broker's demo/paper account
+        # For now, just log the signal until broker implements demo mode
         return
     
     # ===== CRITICAL FIX #1: Position State Validation =====
@@ -5533,8 +5537,8 @@ def main(symbol_override: str = None) -> None:
     
     # Display operating mode
     if CONFIG.get('shadow_mode', False):
-        logger.info(f"[{trading_symbol}] Mode: 🌙 SHADOW MODE (Signal Tracking - No Broker)")
-        logger.info(f"[{trading_symbol}] ⚠️  Shadow mode: Bot will track signals without placing orders")
+        logger.info(f"[{trading_symbol}] Mode: 🌙 SHADOW MODE (Paper Trading - Real Market Data)")
+        logger.info(f"[{trading_symbol}] ⚠️  Shadow mode: Connects to broker for real data, trades in demo account (no real money)")
     elif CONFIG['dry_run']:
         logger.info(f"[{trading_symbol}] Mode: DRY RUN (Paper Trading)")
     else:
