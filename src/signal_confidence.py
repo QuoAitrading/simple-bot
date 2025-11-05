@@ -257,8 +257,8 @@ class SignalConfidenceRL:
             # Not enough data - use conservative default (50% minimum confidence)
             return 0.50
         
-        # Test different thresholds and see which gives best expected value
-        # EXPANDED RANGE: Test lower thresholds (30%, 35%, 40%) to capture more trades
+        # Test different thresholds and see which gives best profit per trade
+        # CONSERVATIVE APPROACH: Only test higher thresholds (50%+) for quality over quantity
         threshold_results = {}
         
         # OPTIMIZATION: Pre-calculate confidences once instead of for each threshold
