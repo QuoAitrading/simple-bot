@@ -810,7 +810,7 @@ class QuoTradingLauncher:
         # Shadow mode explanation (small text below)
         shadow_info = tk.Label(
             settings,
-            text="Shadow mode = Streams live market data from broker API without logging into trading account (signal tracking only)",
+            text="Shadow mode = Simulates full trading with live data (no account login, tracks positions/P&L locally)",
             font=("Segoe UI", 7, "italic"),
             bg=self.colors['card'],
             fg=self.colors['text_secondary'],
@@ -1124,18 +1124,18 @@ class QuoTradingLauncher:
             # Validate broker credentials are present
             if not broker_token or not broker_username:
                 self.console_log("✗ Error: Missing broker credentials")
-                mode_desc = "live data streaming (no account login)" if shadow_mode else "live trading"
+                mode_desc = "simulated trading with live data (no account)" if shadow_mode else "live trading"
                 messagebox.showerror(
                     "Missing Broker Credentials",
                     f"Your {broker} credentials are required for {mode_desc}!\n\n"
-                    f"Shadow mode streams live market data from {broker} API\n"
+                    f"Shadow mode simulates full trading using live market data\n"
                     f"without logging into your trading account.\n\n"
                     f"Please go back and enter your API credentials."
                 )
                 return
         
         if shadow_mode:
-            self.console_log("🌙 Shadow mode enabled - streaming live data without account login")
+            self.console_log("🌙 Shadow mode enabled - simulating trades with live data (no account)")
         
         # Step 2: Save final config
         self.console_log("Saving configuration...")
@@ -1147,7 +1147,7 @@ class QuoTradingLauncher:
         
         # Step 4: Show confirmation
         symbols_str = ", ".join(selected_symbols)
-        mode_str = "🌙 Shadow Mode (Live Data Stream)" if shadow_mode else f"{broker} Live Trading"
+        mode_str = "🌙 Shadow Mode (Simulated Trading)" if shadow_mode else f"{broker} Live Trading"
         
         result = messagebox.askyesno(
             "Launch Trading Bot?",
@@ -1160,7 +1160,7 @@ class QuoTradingLauncher:
             f"Risk/Trade: {self.risk_var.get()}%\n"
             f"Min R:R Ratio: {self.risk_reward_var.get()}:1\n"
             f"Daily Loss Limit: ${self.daily_loss_var.get()}\n\n"
-            f"{'⚠️ Shadow Mode: Streams live market data from broker\nwithout logging into trading account (signal tracking only).\n\n' if shadow_mode else ''}"
+            f"{'⚠️ Shadow Mode: Simulates full trading with live data\n(tracks positions/P&L locally without account login).\n\n' if shadow_mode else ''}"
             f"This will open a PowerShell terminal with live logs.\n"
             f"Use the STOP BOT button to stop trading.\n\n"
             f"Continue?"

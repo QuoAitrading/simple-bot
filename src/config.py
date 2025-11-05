@@ -319,7 +319,7 @@ class BotConfiguration:
     
     # Operational Parameters
     dry_run: bool = False
-    shadow_mode: bool = False  # Shadow mode - streams live market data from broker API without logging into trading account (signal tracking only)
+    shadow_mode: bool = False  # Shadow mode - simulates full trading with live data (no account login, tracks positions/P&L locally)
     log_file: str = "logs/vwap_bounce_bot.log"
     max_bars_storage: int = 200
     
