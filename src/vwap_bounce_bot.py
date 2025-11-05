@@ -3285,7 +3285,7 @@ def check_trailing_stop(symbol: str, current_price: float) -> None:
     # ========================================================================
     # ADAPTIVE EXIT MANAGEMENT - Calculate dynamic trailing parameters
     # ========================================================================
-    if CONFIG.get("adaptive_exits_enabled", False) and adaptive_manager is not None:
+    if CONFIG.get("adaptive_exits_enabled", True) and adaptive_manager is not None:
         try:
             from adaptive_exits import get_adaptive_exit_params
             
@@ -4275,7 +4275,7 @@ def execute_exit(symbol: str, exit_price: float, reason: str) -> None:
     logger.info(f"  Ticks: {ticks:+.1f}, P&L: ${pnl:+.2f}")
     
     # ADAPTIVE EXIT MANAGEMENT - Record trade result for streak tracking
-    if CONFIG.get("adaptive_exits_enabled", False) and adaptive_manager is not None:
+    if CONFIG.get("adaptive_exits_enabled", True) and adaptive_manager is not None:
         try:
             adaptive_manager.record_trade_result(pnl)
             logger.info(f" STREAK TRACKING: Recorded P&L ${pnl:+.2f} (Recent: {len(adaptive_manager.recent_trades)} trades)")
@@ -4328,7 +4328,7 @@ def execute_exit(symbol: str, exit_price: float, reason: str) -> None:
             logger.debug(f"RL outcome recording failed: {e}")
     
     # ADAPTIVE EXIT LEARNING - Record exit parameters and outcome
-    if CONFIG.get("adaptive_exits_enabled", False):
+    if CONFIG.get("adaptive_exits_enabled", True):
         try:
             if adaptive_manager is not None and hasattr(adaptive_manager, 'record_exit_outcome'):
                 # Get exit parameters that were used
