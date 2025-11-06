@@ -22,6 +22,7 @@ import subprocess
 import re
 import threading
 import time
+import requests  # For cloud API calls
 
 
 class QuoTradingLauncher:
@@ -57,6 +58,9 @@ class QuoTradingLauncher:
         
         # Default fallback symbol
         self.DEFAULT_SYMBOL = 'ES'
+        
+        # Cloud validation API URL
+        self.VALIDATION_API_URL = "http://localhost:5000/api/validate"  # Update with your cloud server URL
         
         self.root.configure(bg=self.colors['background'])
         
@@ -372,16 +376,16 @@ class QuoTradingLauncher:
         thread.start()
     
     def setup_username_screen(self):
-        """Screen 0: Username and password creation screen."""
+        """Screen 0: Login screen with cloud validation."""
         # Clear window
         for widget in self.root.winfo_children():
             widget.destroy()
         
         self.current_screen = 0
-        self.root.title("QuoTrading - Welcome")
+        self.root.title("QuoTrading - Login")
         
         # Header
-        header = self.create_header("Welcome to QuoTrading", "Create your account")
+        header = self.create_header("QuoTrading Login", "Enter your credentials")
         
         # Main container
         main = tk.Frame(self.root, bg=self.colors['background'], padx=30, pady=20)
@@ -399,7 +403,7 @@ class QuoTradingLauncher:
         # Welcome message
         welcome = tk.Label(
             content,
-            text="Create Your Account",
+            text="Sign In",
             font=("Arial", 14, "bold"),
             bg=self.colors['card'],
             fg=self.colors['text']
@@ -408,7 +412,7 @@ class QuoTradingLauncher:
         
         info = tk.Label(
             content,
-            text="Enter your username and password to get started.",
+            text="Enter your credentials to access QuoTrading AI",
             font=("Arial", 9),
             bg=self.colors['card'],
             fg=self.colors['text_light'],
@@ -422,33 +426,17 @@ class QuoTradingLauncher:
         # Password input
         self.password_entry = self.create_input_field(content, "Password:", is_password=True, placeholder="Enter your password")
         
-        # Remember credentials checkbox
-        remember_frame = tk.Frame(content, bg=self.colors['card'])
-        remember_frame.pack(fill=tk.X, pady=10)
-        
-        self.remember_var = tk.BooleanVar(value=self.config.get("remember_credentials", False))
-        remember_cb = tk.Checkbutton(
-            remember_frame,
-            text="Remember credentials",
-            variable=self.remember_var,
-            font=("Arial", 9),
-            bg=self.colors['card'],
-            fg=self.colors['text'],
-            selectcolor=self.colors['input_bg'],
-            activebackground=self.colors['card'],
-            activeforeground=self.colors['success'],
-            cursor="hand2"
-        )
-        remember_cb.pack(anchor=tk.W)
+        # API Key input
+        self.api_key_entry = self.create_input_field(content, "API Key:", is_password=True, placeholder=self.config.get("user_api_key", "Enter your API key"))
         
         # Instructions
         instructions = tk.Label(
             content,
-            text="• Username: 3-20 characters (letters, numbers, underscores)\n• Password: Minimum 6 characters",
+            text="All fields are required for authentication",
             font=("Arial", 8),
             bg=self.colors['card'],
             fg=self.colors['text_secondary'],
-            justify=tk.LEFT
+            justify=tk.CENTER
         )
         instructions.pack(pady=(5, 15))
         
@@ -456,66 +444,137 @@ class QuoTradingLauncher:
         button_frame = tk.Frame(content, bg=self.colors['card'])
         button_frame.pack(fill=tk.X, pady=10)
         
-        # Next button
-        next_btn = self.create_button(button_frame, "NEXT →", self.validate_username, "next")
-        next_btn.pack()
+        # Login button
+        login_btn = self.create_button(button_frame, "LOGIN", self.validate_login, "next")
+        login_btn.pack()
     
-    def validate_username(self):
-        """Validate username and password and proceed to QuoTrading setup."""
+    def validate_login(self):
+        """Validate login credentials with cloud server."""
         username = self.username_entry.get().strip()
         password = self.password_entry.get().strip()
+        api_key = self.api_key_entry.get().strip()
         
-        # Remove placeholder if present
+        # Remove placeholders if present
         if username == "Enter your username":
             username = ""
         if password == "Enter your password":
             password = ""
+        if api_key == "Enter your API key" or api_key == self.config.get("user_api_key", ""):
+            api_key = ""
         
-        # Validation
+        # Basic validation
         if not username:
             messagebox.showerror(
                 "Username Required",
-                "Please enter a username to continue."
+                "Please enter your username."
             )
             return
         
-        if len(username) < 3 or len(username) > 20:
-            messagebox.showerror(
-                "Invalid Username",
-                "Username must be between 3 and 20 characters."
-            )
-            return
-        
-        if not re.match(r'^[a-zA-Z0-9_]+$', username):
-            messagebox.showerror(
-                "Invalid Username",
-                "Username can only contain letters, numbers, and underscores."
-            )
-            return
-        
-        # Password validation
         if not password:
             messagebox.showerror(
                 "Password Required",
-                "Please enter a password to continue."
+                "Please enter your password."
             )
             return
         
-        if len(password) < 6:
+        if not api_key:
             messagebox.showerror(
-                "Invalid Password",
-                "Password must be at least 6 characters."
+                "API Key Required",
+                "Please enter your API key."
             )
             return
         
-        # Save username and password to config
-        self.config["username"] = username
-        self.config["password"] = password
-        self.config["remember_credentials"] = self.remember_var.get()
-        self.save_config()
+        # Show loading spinner
+        self.show_loading("Validating credentials...")
         
-        # Proceed to QuoTrading setup
-        self.setup_quotrading_screen()
+        # Define success callback
+        def on_success(user_data):
+            self.hide_loading()
+            # Save credentials
+            self.config["username"] = username
+            self.config["password"] = password
+            self.config["user_api_key"] = api_key
+            self.config["validated"] = True
+            if user_data:
+                self.config["user_data"] = user_data
+            self.save_config()
+            
+            # Show success message
+            messagebox.showinfo(
+                "Login Successful",
+                f"Welcome, {username}!\n\nYour credentials have been validated."
+            )
+            
+            # Proceed to QuoTrading setup
+            self.setup_quotrading_screen()
+        
+        # Define error callback
+        def on_error(error_msg):
+            self.hide_loading()
+            messagebox.showerror(
+                "Login Failed",
+                f"Authentication failed: {error_msg}\n\n"
+                f"Please check your credentials and try again."
+            )
+        
+        # Make cloud API validation call
+        credentials = {
+            "username": username,
+            "password": password,
+            "api_key": api_key
+        }
+        self.validate_cloud_credentials(credentials, on_success, on_error)
+    
+    def validate_cloud_credentials(self, credentials, success_callback, error_callback):
+        """Validate credentials with cloud API.
+        
+        This method makes an HTTP request to the cloud validation server.
+        
+        Args:
+            credentials: dict with username, password, and api_key
+            success_callback: function to call on successful validation (receives user_data)
+            error_callback: function to call on validation failure (receives error message)
+        """
+        def api_call():
+            try:
+                # Make HTTP POST request to cloud validation server
+                response = requests.post(
+                    self.VALIDATION_API_URL,
+                    json=credentials,
+                    timeout=10
+                )
+                
+                if response.status_code == 200:
+                    data = response.json()
+                    if data.get("valid"):
+                        # Successful validation
+                        user_data = data.get("user_data", {})
+                        self.root.after(0, lambda: success_callback(user_data))
+                    else:
+                        # Invalid credentials
+                        error_msg = data.get("message", "Invalid credentials")
+                        self.root.after(0, lambda: error_callback(error_msg))
+                else:
+                    # Server error
+                    error_msg = f"Server error: {response.status_code}"
+                    self.root.after(0, lambda: error_callback(error_msg))
+                    
+            except requests.exceptions.ConnectionError:
+                self.root.after(0, lambda: error_callback(
+                    "Cannot connect to validation server. Please check your internet connection."
+                ))
+            except requests.exceptions.Timeout:
+                self.root.after(0, lambda: error_callback(
+                    "Request timed out. Please try again."
+                ))
+            except Exception as e:
+                self.root.after(0, lambda: error_callback(
+                    f"Validation error: {str(e)}"
+                ))
+        
+        # Start API call in background thread
+        thread = threading.Thread(target=api_call, daemon=True)
+        thread.start()
     
     def setup_quotrading_screen(self):
         """Screen 1: QuoTrading Account Setup with Email + API Key validation."""
