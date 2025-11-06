@@ -1023,7 +1023,13 @@ class QuoTradingLauncher:
             )
     
     def create_env_file(self):
-        """Create .env file from GUI settings."""
+        """Create .env file from GUI settings.
+        
+        Security Note: This intentionally writes credentials to .env file, which is the
+        standard configuration method for this application. The .env file is in .gitignore
+        and should never be committed to version control. Users are responsible for
+        securing their .env file on their local system.
+        """
         selected_symbols = [code for code, var in self.symbol_vars.items() if var.get()]
         if not selected_symbols:
             selected_symbols = [self.DEFAULT_SYMBOL]  # Use class constant instead of magic string
@@ -1088,7 +1094,12 @@ BOT_LOG_LEVEL=INFO
         return {}
     
     def save_config(self):
-        """Save current configuration."""
+        """Save current configuration.
+        
+        Security Note: config.json may contain sensitive data (API keys). It is
+        included in .gitignore to prevent accidental commits. Users should secure
+        this file on their local system.
+        """
         with open(self.config_file, 'w') as f:
             json.dump(self.config, f, indent=2)
     
