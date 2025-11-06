@@ -1204,7 +1204,7 @@ class QuoTradingLauncher:
         advanced_row = tk.Frame(content, bg=self.colors['card'])
         advanced_row.pack(fill=tk.X, pady=(0, 10))
         
-        # Max Contracts with account type awareness
+        # Max Contracts with account type awareness and enforcement
         contracts_frame = tk.Frame(advanced_row, bg=self.colors['card'])
         contracts_frame.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 8))
         
@@ -1216,49 +1216,34 @@ class QuoTradingLauncher:
             fg=self.colors['text']
         ).pack(anchor=tk.W, pady=(0, 3))
         
-        # Get account type to set recommended limits (but allow up to 25)
+        # Get account type to set ENFORCED limits
         account_type = self.config.get("broker_type", "Prop Firm")
-        recommended_max = 5 if account_type == "Prop Firm" else 10
         
-        # Store recommended max for validation
-        self.recommended_contract_limit = recommended_max
+        # Enforce actual broker limits - exceeding these will cause trade rejection
+        if account_type == "Prop Firm":
+            max_contracts_allowed = 5  # Prop firm strict limit
+        else:
+            max_contracts_allowed = 25  # Live broker flexible limit
+        
+        # Store for validation
+        self.max_contracts_allowed = max_contracts_allowed
         self.account_type = account_type
         
-        self.contracts_var = tk.IntVar(value=min(self.config.get("max_contracts", 3), recommended_max))
-        
-        # Add validation command to check if user exceeds recommended limit
-        def validate_contracts(*args):
-            try:
-                value = self.contracts_var.get()
-                if value > self.recommended_contract_limit:
-                    # Show warning and info
-                    contracts_info.config(
-                        text=f"⚠ Exceeds recommended max ({self.recommended_contract_limit} for {self.account_type})",
-                        fg=self.colors['warning'] if hasattr(self.colors, '__getitem__') and 'warning' in self.colors else '#FFA500'
-                    )
-                else:
-                    contracts_info.config(
-                        text=f"Recommended max: {self.recommended_contract_limit} for {self.account_type}",
-                        fg=self.colors['text_secondary']
-                    )
-            except:
-                pass
-        
-        self.contracts_var.trace_add('write', validate_contracts)
+        self.contracts_var = tk.IntVar(value=min(self.config.get("max_contracts", 3), max_contracts_allowed))
         
         contracts_spin = ttk.Spinbox(
             contracts_frame,
             from_=1,
-            to=25,  # Allow up to 25 contracts
+            to=max_contracts_allowed,  # Enforced based on account type
             textvariable=self.contracts_var,
             width=12
         )
         contracts_spin.pack(fill=tk.X, ipady=2)
         
-        # Info label showing contract limit
+        # Info label showing enforced contract limit
         contracts_info = tk.Label(
             contracts_frame,
-            text=f"Recommended max: {recommended_max} for {account_type}",
+            text=f"Max {max_contracts_allowed} for {account_type} (enforced)",
             font=("Arial", 7),
             bg=self.colors['card'],
             fg=self.colors['text_secondary']
@@ -1575,7 +1560,7 @@ class QuoTradingLauncher:
         thread.start()
     
     def auto_adjust_parameters(self):
-        """Auto-adjust trading parameters based on account balance."""
+        """Auto-adjust trading parameters based on sophisticated risk management analysis."""
         # Check if account info has been fetched
         accounts = self.config.get("accounts", [])
         if not accounts:
@@ -1588,45 +1573,117 @@ class QuoTradingLauncher:
         # Get the selected account or first account
         selected_account = accounts[0]
         balance = selected_account.get("balance", 10000)
+        equity = selected_account.get("equity", balance)
         
         # Get account type from config (Prop Firm or Live Broker)
         account_type = self.config.get("broker_type", "Prop Firm")
+        account_size = self.config.get("account_size", "50k")
         
-        # Calculate optimal settings based on account balance
-        # Daily loss limit as fixed dollar amount (not percentage)
-        if balance < 25000:
-            daily_loss_limit = 500
-        elif balance < 50000:
-            daily_loss_limit = 1000
-        elif balance < 100000:
-            daily_loss_limit = 2000
-        elif balance < 150000:
-            daily_loss_limit = 3000
-        else:
-            daily_loss_limit = 5000
+        # Parse account size for sophisticated calculations
+        size_num = int(account_size.replace("k", "000"))
         
-        risk_per_trade = 1.0 if balance < 50000 else (0.75 if balance < 100000 else 0.5)
+        # Calculate drawdown percentage (how far from starting balance)
+        drawdown_pct = ((size_num - equity) / size_num) * 100 if size_num > 0 else 0
+        drawdown_pct = max(0, drawdown_pct)  # Ensure non-negative
         
-        # Account type awareness: Prop firms typically have contract limits
+        # Sophisticated risk management for Prop Firms
         if account_type == "Prop Firm":
-            max_contracts = min(5, max(1, int(balance / 25000)))  # Prop firm max 5 contracts
-        else:
-            max_contracts = max(1, min(10, int(balance / 25000)))  # Live broker up to 10
+            # Prop firm rules: Be more conservative as drawdown increases
+            # Most prop firms fail traders at 10% drawdown
+            
+            # Calculate distance to failure (assuming 10% max drawdown rule)
+            distance_to_failure = 10.0 - drawdown_pct
+            
+            # Daily loss limit: Scale based on distance to failure
+            if distance_to_failure > 7:  # Safe zone (0-3% drawdown)
+                daily_loss_pct = 0.025  # 2.5% of equity
+            elif distance_to_failure > 5:  # Caution zone (3-5% drawdown)
+                daily_loss_pct = 0.02   # 2% of equity
+            elif distance_to_failure > 3:  # Warning zone (5-7% drawdown)
+                daily_loss_pct = 0.015  # 1.5% of equity
+            else:  # Danger zone (7-10% drawdown)
+                daily_loss_pct = 0.01   # 1% of equity - very conservative
+            
+            daily_loss_limit = equity * daily_loss_pct
+            
+            # Risk per trade: More conservative as drawdown increases
+            if distance_to_failure > 7:
+                risk_per_trade = 0.75
+            elif distance_to_failure > 5:
+                risk_per_trade = 0.5
+            elif distance_to_failure > 3:
+                risk_per_trade = 0.35
+            else:
+                risk_per_trade = 0.25  # Very conservative in danger zone
+            
+            # Contracts: Strategic based on account size and drawdown
+            # Never max out contracts - leave room for error
+            if drawdown_pct < 2:  # Very safe
+                max_contracts = min(3, max(1, int(equity / 30000)))
+            elif drawdown_pct < 5:  # Moderately safe
+                max_contracts = min(2, max(1, int(equity / 40000)))
+            else:  # In drawdown - very conservative
+                max_contracts = 1  # Single contract only
+            
+            # Trades per day: Fewer trades = more selective
+            if distance_to_failure > 5:
+                max_trades = 12
+            else:
+                max_trades = 8  # Very selective when in drawdown
+                
+        else:  # Live Broker - More flexible but still strategic
+            # Calculate based on account size and equity
+            equity_pct = (equity / size_num) * 100 if size_num > 0 else 100
+            
+            # Daily loss limit: 2-4% based on account size
+            if equity < 25000:
+                daily_loss_limit = equity * 0.02  # 2%
+            elif equity < 50000:
+                daily_loss_limit = equity * 0.025  # 2.5%
+            elif equity < 100000:
+                daily_loss_limit = equity * 0.03  # 3%
+            else:
+                daily_loss_limit = equity * 0.035  # 3.5%
+            
+            # Risk per trade: Scale with account size
+            if equity < 25000:
+                risk_per_trade = 1.0
+            elif equity < 50000:
+                risk_per_trade = 0.85
+            elif equity < 100000:
+                risk_per_trade = 0.75
+            else:
+                risk_per_trade = 0.6
+            
+            # Contracts: Strategic based on equity
+            max_contracts = max(1, min(10, int(equity / 20000)))
+            
+            # Trades: More flexible with live brokers
+            if equity < 50000:
+                max_trades = 15
+            elif equity < 100000:
+                max_trades = 18
+            else:
+                max_trades = 20
         
-        max_trades = 15 if balance < 100000 else 20
-        
-        # Apply the recommended settings directly (no dialog)
+        # Apply the calculated settings
         self.loss_entry.delete(0, tk.END)
         self.loss_entry.insert(0, f"{daily_loss_limit:.2f}")
         self.risk_var.set(risk_per_trade)
         self.contracts_var.set(max_contracts)
         self.trades_var.set(max_trades)
         
-        # Update info label to show what was changed
-        self.auto_adjust_info_label.config(
-            text=f"✓ Settings adjusted for ${balance:,.2f} ({account_type}) - You can edit any field",
-            fg=self.colors['success']
-        )
+        # Update info label with detailed feedback
+        if account_type == "Prop Firm":
+            self.auto_adjust_info_label.config(
+                text=f"✓ Strategic settings for ${equity:,.2f} equity ({drawdown_pct:.1f}% drawdown) - Optimized for prop firm rules",
+                fg=self.colors['success']
+            )
+        else:
+            self.auto_adjust_info_label.config(
+                text=f"✓ Settings optimized for ${equity:,.2f} equity ({account_type}) - You can adjust as needed",
+                fg=self.colors['success']
+            )
     
     def start_bot(self):
         """Validate settings and start the trading bot."""
@@ -1691,10 +1748,10 @@ class QuoTradingLauncher:
         confirmation_text += f"Max Contracts: {self.contracts_var.get()}\n"
         confirmation_text += f"Risk/Trade: {self.risk_var.get()}%\n"
         confirmation_text += f"Daily Loss Limit: ${loss_limit}\n"
-        confirmation_text += f"  → Bot will automatically shut down if this limit is hit\n"
+        confirmation_text += f"  → Bot stays on but will NOT execute trades if limit is hit\n"
         confirmation_text += f"  → Resets daily after market maintenance\n"
         confirmation_text += f"Max Trades/Day: {self.trades_var.get()}\n"
-        confirmation_text += f"  → Bot will stop trading after reaching this limit\n"
+        confirmation_text += f"  → Bot stays on but will NOT execute trades after limit\n"
         confirmation_text += f"  → Resets daily after market maintenance\n"
         confirmation_text += f"Confidence Threshold: {self.confidence_var.get()}%\n"
         if self.shadow_mode_var.get():
@@ -1795,10 +1852,10 @@ TRADOVATE_USERNAME={self.config.get("broker_username", "")}
 BOT_INSTRUMENTS={symbols_str}
 BOT_MAX_CONTRACTS={self.contracts_var.get()}
 BOT_MAX_TRADES_PER_DAY={self.trades_var.get()}
-# Bot will stop trading after reaching max trades per day (resets daily after market maintenance)
+# Bot stays on but will NOT execute trades after reaching max (resets daily after market maintenance)
 BOT_RISK_PER_TRADE={self.risk_var.get() / 100}
 BOT_DAILY_LOSS_LIMIT={self.loss_entry.get()}
-# Bot will automatically shut down if daily loss limit (in dollars) is hit (resets daily after market maintenance)
+# Bot stays on but will NOT execute trades if this limit (in dollars) is hit (resets daily after market maintenance)
 
 # AI/Confidence Settings
 BOT_CONFIDENCE_THRESHOLD={self.confidence_var.get()}
