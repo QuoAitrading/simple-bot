@@ -182,7 +182,7 @@ class QuoTradingLauncher:
             fg = self.colors['text']
             width = 12
             height = 1
-        else:  # start or continue
+        else:  # start, continue, or other button types
             bg = self.colors['success']
             fg = 'white'
             width = 20
@@ -214,7 +214,7 @@ class QuoTradingLauncher:
         
         # Add hover effects
         def on_enter(e):
-            if button_type == "next" or button_type == "start" or button_type == "continue":
+            if button_type in {'next', 'start', 'continue'}:
                 button.config(bg=self.colors['button_hover'])
             else:
                 button.config(bg=self.colors['card_elevated'])
@@ -1354,9 +1354,14 @@ BOT_LOG_LEVEL=INFO
     def save_config(self):
         """Save current configuration.
         
-        Security Note: config.json may contain sensitive data (API keys). It is
-        included in .gitignore to prevent accidental commits. Users should secure
+        Security Note: config.json may contain sensitive data (API keys, passwords). 
+        It is included in .gitignore to prevent accidental commits. Users should secure
         this file on their local system.
+        
+        Password Storage: The password is stored in plain text when "remember credentials"
+        is enabled. This is for convenience in a local desktop application context where
+        the user has physical access to the machine. For production deployments, consider
+        implementing password hashing or using OS keyring services.
         """
         with open(self.config_file, 'w') as f:
             json.dump(self.config, f, indent=2)
