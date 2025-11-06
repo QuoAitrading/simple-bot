@@ -1204,27 +1204,41 @@ class QuoTradingLauncher:
         advanced_row = tk.Frame(content, bg=self.colors['card'])
         advanced_row.pack(fill=tk.X, pady=(0, 10))
         
-        # Max Contracts
+        # Max Contracts with account type awareness
         contracts_frame = tk.Frame(advanced_row, bg=self.colors['card'])
         contracts_frame.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 8))
         
         tk.Label(
             contracts_frame,
-            text="Max Contracts:",
+            text="Contracts Per Trade:",
             font=("Arial", 9, "bold"),
             bg=self.colors['card'],
             fg=self.colors['text']
         ).pack(anchor=tk.W, pady=(0, 3))
         
-        self.contracts_var = tk.IntVar(value=self.config.get("max_contracts", 3))
+        # Get account type to set limits
+        account_type = self.config.get("broker_type", "Prop Firm")
+        max_allowed = 5 if account_type == "Prop Firm" else 10
+        
+        self.contracts_var = tk.IntVar(value=min(self.config.get("max_contracts", 3), max_allowed))
         contracts_spin = ttk.Spinbox(
             contracts_frame,
             from_=1,
-            to=25,
+            to=max_allowed,
             textvariable=self.contracts_var,
             width=12
         )
         contracts_spin.pack(fill=tk.X, ipady=2)
+        
+        # Info label showing contract limit
+        contracts_info = tk.Label(
+            contracts_frame,
+            text=f"Max {max_allowed} for {account_type}",
+            font=("Arial", 7),
+            bg=self.colors['card'],
+            fg=self.colors['text_secondary']
+        )
+        contracts_info.pack(anchor=tk.W, pady=(2, 0))
         
         # Max Trades Per Day
         trades_frame = tk.Frame(advanced_row, bg=self.colors['card'])
@@ -1550,14 +1564,10 @@ class QuoTradingLauncher:
         selected_account = accounts[0]
         balance = selected_account.get("balance", 10000)
         
-        # Calculate optimal settings based on account balance
-        # Risk management rules:
-        # - Daily loss limit: Suggested fixed dollar amount based on account size
-        # - Max contracts: Based on account size and risk
-        # - Risk per trade: 0.5-2% depending on account size
-        # - Max trades per day: 10-20 based on account size (resets daily after maintenance)
+        # Get account type from config (Prop Firm or Live Broker)
+        account_type = self.config.get("broker_type", "Prop Firm")
         
-        # Calculate recommended settings
+        # Calculate optimal settings based on account balance
         # Daily loss limit as fixed dollar amount (not percentage)
         if balance < 25000:
             daily_loss_limit = 500
@@ -1571,56 +1581,27 @@ class QuoTradingLauncher:
             daily_loss_limit = 5000
         
         risk_per_trade = 1.0 if balance < 50000 else (0.75 if balance < 100000 else 0.5)
-        max_contracts = max(1, min(10, int(balance / 25000)))  # 1 contract per 25k
+        
+        # Account type awareness: Prop firms typically have contract limits
+        if account_type == "Prop Firm":
+            max_contracts = min(5, max(1, int(balance / 25000)))  # Prop firm max 5 contracts
+        else:
+            max_contracts = max(1, min(10, int(balance / 25000)))  # Live broker up to 10
+        
         max_trades = 15 if balance < 100000 else 20
         
-        # Show preview dialog
-        preview_text = f"Auto-Adjust will optimize settings for your account:\n\n"
-        preview_text += f"Current Account Balance: ${balance:,.2f}\n\n"
-        preview_text += f"Recommended Settings:\n"
-        preview_text += f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        preview_text += f"Daily Loss Limit: ${daily_loss_limit:,.2f}\n"
-        preview_text += f"Risk per Trade: {risk_per_trade}%\n"
-        preview_text += f"Max Contracts: {max_contracts}\n"
-        preview_text += f"Max Trades/Day: {max_trades}\n\n"
-        preview_text += f"Current Settings:\n"
-        preview_text += f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        # Apply the recommended settings directly (no dialog)
+        self.loss_entry.delete(0, tk.END)
+        self.loss_entry.insert(0, f"{daily_loss_limit:.2f}")
+        self.risk_var.set(risk_per_trade)
+        self.contracts_var.set(max_contracts)
+        self.trades_var.set(max_trades)
         
-        try:
-            current_loss = float(self.loss_entry.get())
-            preview_text += f"Daily Loss Limit: ${current_loss:,.2f}\n"
-        except:
-            preview_text += f"Daily Loss Limit: Not set\n"
-        
-        preview_text += f"Risk per Trade: {self.risk_var.get()}%\n"
-        preview_text += f"Max Contracts: {self.contracts_var.get()}\n"
-        preview_text += f"Max Trades/Day: {self.trades_var.get()}\n\n"
-        preview_text += f"Apply these recommended settings?"
-        
-        result = messagebox.askyesno(
-            "Auto-Adjust Parameters",
-            preview_text
+        # Update info label to show what was changed
+        self.auto_adjust_info_label.config(
+            text=f"✓ Settings adjusted for ${balance:,.2f} ({account_type}) - You can edit any field",
+            fg=self.colors['success']
         )
-        
-        if result:
-            # Apply the recommended settings
-            self.loss_entry.delete(0, tk.END)
-            self.loss_entry.insert(0, f"{daily_loss_limit:.2f}")
-            self.risk_var.set(risk_per_trade)
-            self.contracts_var.set(max_contracts)
-            self.trades_var.set(max_trades)
-            
-            # Update info label
-            self.auto_adjust_info_label.config(
-                text=f"✓ Parameters optimized for ${balance:,.2f} account balance",
-                fg=self.colors['success']
-            )
-            
-            messagebox.showinfo(
-                "Settings Applied",
-                "Auto-adjusted parameters have been applied successfully!\n\n"
-                "These settings are optimized for risk management based on your account size."
-            )
     
     def start_bot(self):
         """Validate settings and start the trading bot."""
