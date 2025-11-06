@@ -31,8 +31,16 @@ class SignalConfidenceRL:
     Reward: Profit/loss from trade outcome
     """
     
-    def __init__(self, experience_file: str = "data/signal_experience.json", backtest_mode: bool = False):
-        """Initialize RL confidence scorer."""
+    def __init__(self, experience_file: str = "data/signal_experience.json", backtest_mode: bool = False, confidence_threshold: Optional[float] = None):
+        """
+        Initialize RL confidence scorer.
+        
+        Args:
+            experience_file: Path to experience file
+            backtest_mode: Whether in backtest mode
+            confidence_threshold: Optional fixed threshold (0.1-1.0). If None, uses learned optimal threshold.
+                                 If provided, this becomes the user-configured minimum confidence level.
+        """
         self.experience_file = experience_file
         self.experiences = []  # All past (state, action, reward) tuples
         self.recent_trades = deque(maxlen=20)  # Last 20 outcomes
@@ -46,7 +54,11 @@ class SignalConfidenceRL:
         self.min_exploration = 0.05  # Never go below 5%
         self.exploration_decay = 0.995
         
+        # User-configured threshold (if provided, overrides learned threshold)
+        self.user_threshold = confidence_threshold
+        
         # Cached optimal threshold (recalculate only when needed)
+        # Only used if user_threshold is None
         self.cached_threshold = None
         self.last_threshold_calc_signal_count = 0
         self.last_threshold_calc_exp_count = 0
@@ -71,6 +83,12 @@ class SignalConfidenceRL:
         
         self.load_experience()
         logger.info(f" Signal Confidence RL initialized: {len(self.experiences)} past experiences")
+        
+        # Log threshold configuration
+        if self.user_threshold is not None:
+            logger.info(f" CONFIDENCE THRESHOLD: {self.user_threshold:.1%} (USER CONFIGURED)")
+        else:
+            logger.info(f" CONFIDENCE THRESHOLD: Will be calculated from experiences (ADAPTIVE)")
         
         # Log exploration mode
         if self.backtest_mode:
@@ -126,24 +144,31 @@ class SignalConfidenceRL:
         # ALWAYS calculate confidence from experiences
         confidence, reason = self.calculate_confidence(state)
         
-        # CACHED ADAPTIVE THRESHOLD: Only recalculate every 100 signals or when experiences grow by 50+
-        should_recalc = (
-            self.cached_threshold is None or
-            self.total_signals - self.last_threshold_calc_signal_count >= 100 or
-            len(self.experiences) - self.last_threshold_calc_exp_count >= 50
-        )
-        
-        if should_recalc:
-            self.cached_threshold = self._calculate_optimal_threshold()
-            self.last_threshold_calc_signal_count = self.total_signals
-            self.last_threshold_calc_exp_count = len(self.experiences)
-        
-        optimal_threshold = self.cached_threshold
+        # Determine which threshold to use
+        if self.user_threshold is not None:
+            # User has configured a specific threshold - use it
+            optimal_threshold = self.user_threshold
+        else:
+            # No user threshold - calculate optimal from experiences
+            # CACHED ADAPTIVE THRESHOLD: Only recalculate every 100 signals or when experiences grow by 50+
+            should_recalc = (
+                self.cached_threshold is None or
+                self.total_signals - self.last_threshold_calc_signal_count >= 100 or
+                len(self.experiences) - self.last_threshold_calc_exp_count >= 50
+            )
+            
+            if should_recalc:
+                self.cached_threshold = self._calculate_optimal_threshold()
+                self.last_threshold_calc_signal_count = self.total_signals
+                self.last_threshold_calc_exp_count = len(self.experiences)
+            
+            optimal_threshold = self.cached_threshold
         
         # Exploration: Sometimes use random decision to explore
         if random.random() < effective_exploration:
             take = random.choice([True, False])
-            reason = f"Exploring ({effective_exploration*100:.0f}% random, {len(self.experiences)} exp) | Threshold: {optimal_threshold:.1%}"
+            threshold_source = "User" if self.user_threshold is not None else "Learned"
+            reason = f"Exploring ({effective_exploration*100:.0f}% random, {len(self.experiences)} exp) | Threshold: {optimal_threshold:.1%} ({threshold_source})"
             
             if take:
                 self.signals_taken += 1

@@ -190,9 +190,12 @@ def initialize_rl_brains_for_backtest() -> Tuple[Any, Any]:
     # Initialize RL brain with experience file using PROJECT_ROOT
     if vwap_bounce_bot.rl_brain is None:
         signal_exp_file = os.path.join(PROJECT_ROOT, "data/signal_experience.json")
+        # Get confidence threshold from config (if set)
+        confidence_threshold = vwap_bounce_bot.CONFIG.get('rl_confidence_threshold', None)
         vwap_bounce_bot.rl_brain = SignalConfidenceRL(
             experience_file=signal_exp_file,
-            backtest_mode=True
+            backtest_mode=True,
+            confidence_threshold=confidence_threshold
         )
         logger.info(f"✓ RL BRAIN INITIALIZED for backtest - {len(vwap_bounce_bot.rl_brain.experiences)} signal experiences loaded")
     

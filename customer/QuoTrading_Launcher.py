@@ -450,6 +450,25 @@ class QuoTradingLauncher:
         # Update credential fields
         self.update_broker_fields()
     
+    def update_confidence_label(self, value):
+        """Update the confidence threshold display label and hint text."""
+        value_int = int(float(value))
+        self.confidence_value_label.config(text=f"{value_int}%")
+        self.confidence_hint_label.config(text=self.get_confidence_hint(value_int))
+    
+    def get_confidence_hint(self, value):
+        """Get helpful hint text based on confidence threshold value."""
+        if value < 30:
+            return "⚠️ Very Low - Many trades, high risk, less reliable signals"
+        elif value < 50:
+            return "📈 Low - More trades but lower quality, moderate risk"
+        elif value < 70:
+            return "⚖️ Balanced - Good mix of trade frequency and quality"
+        elif value < 85:
+            return "✨ High - Fewer trades, higher quality, more selective"
+        else:
+            return "🎯 Very High - Very few trades, only highest confidence signals"
+    
     def validate_and_continue(self):
         """Validate license key and move to settings screen. Broker credentials validated later."""
         broker_full = self.broker_var.get()
@@ -771,6 +790,89 @@ class QuoTradingLauncher:
         )
         trades_spin.pack(fill=tk.X, pady=(3, 0), ipady=0)
         
+        # Section 4: AI Confidence Threshold (new slider control)
+        confidence_frame = tk.Frame(settings, bg=self.colors['card'])
+        confidence_frame.pack(fill=tk.X, pady=(8, 3))
+        
+        # Label with explanation
+        confidence_label_frame = tk.Frame(confidence_frame, bg=self.colors['card'])
+        confidence_label_frame.pack(fill=tk.X, pady=(0, 3))
+        
+        tk.Label(
+            confidence_label_frame,
+            text="AI Confidence Threshold",
+            font=("Segoe UI", 9, "bold"),
+            bg=self.colors['card'],
+            fg=self.colors['text']
+        ).pack(side=tk.LEFT, anchor=tk.W)
+        
+        # Info icon with helpful message
+        confidence_info = tk.Label(
+            confidence_label_frame,
+            text="ⓘ",
+            font=("Segoe UI", 10, "bold"),
+            bg=self.colors['card'],
+            fg=self.colors['secondary'],
+            cursor="hand2"
+        )
+        confidence_info.pack(side=tk.LEFT, anchor=tk.W, padx=(5, 0))
+        
+        # Bind hover tooltip
+        def show_confidence_tooltip(event):
+            tooltip_text = (
+                "Lower threshold = More trades but less selective\n"
+                "Higher threshold = Fewer trades but higher quality\n\n"
+                "The AI calculates confidence for each signal.\n"
+                "Only signals above your threshold are taken."
+            )
+            # Simple tooltip using label (basic implementation)
+            pass
+        
+        confidence_info.bind("<Enter>", show_confidence_tooltip)
+        
+        # Current value display
+        self.confidence_var = tk.IntVar(value=int(self.config.get("rl_confidence_threshold", 0.5) * 100))
+        
+        self.confidence_value_label = tk.Label(
+            confidence_label_frame,
+            text=f"{self.confidence_var.get()}%",
+            font=("Segoe UI", 9, "bold"),
+            bg=self.colors['card'],
+            fg=self.colors['success']
+        )
+        self.confidence_value_label.pack(side=tk.RIGHT, anchor=tk.E)
+        
+        # Slider
+        slider_frame = tk.Frame(confidence_frame, bg=self.colors['card'])
+        slider_frame.pack(fill=tk.X, pady=(0, 3))
+        
+        self.confidence_slider = tk.Scale(
+            slider_frame,
+            from_=10,
+            to=100,
+            orient=tk.HORIZONTAL,
+            variable=self.confidence_var,
+            showvalue=0,
+            bg=self.colors['card'],
+            fg=self.colors['text'],
+            troughcolor=self.colors['background'],
+            activebackground=self.colors['secondary'],
+            highlightthickness=0,
+            command=self.update_confidence_label
+        )
+        self.confidence_slider.pack(fill=tk.X)
+        
+        # Helper text based on value
+        self.confidence_hint_label = tk.Label(
+            confidence_frame,
+            text=self.get_confidence_hint(self.confidence_var.get()),
+            font=("Segoe UI", 7, "italic"),
+            bg=self.colors['card'],
+            fg=self.colors['text_secondary'],
+            justify=tk.LEFT
+        )
+        self.confidence_hint_label.pack(anchor=tk.W, pady=(0, 0))
+        
         # Section 5: Auto-Calculate Toggle & Shadow Mode (compact row)
         toggles_frame = tk.Frame(settings, bg=self.colors['card'])
         toggles_frame.pack(fill=tk.X, pady=(3, 0))
@@ -1035,6 +1137,13 @@ class QuoTradingLauncher:
         try:
             if hasattr(self, 'shadow_mode_var'):
                 config["shadow_mode"] = self.shadow_mode_var.get()
+        except:
+            pass
+        
+        try:
+            if hasattr(self, 'confidence_var'):
+                # Convert from percentage (10-100) to decimal (0.1-1.0)
+                config["rl_confidence_threshold"] = self.confidence_var.get() / 100.0
         except:
             pass
         

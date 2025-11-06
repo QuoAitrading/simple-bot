@@ -5657,9 +5657,12 @@ def main(symbol_override: str = None) -> None:
     global rl_brain
     if CONFIG.get("rl_enabled", True):  # RL enabled by default
         logger.info("Initializing RL brain at startup...")
+        # Get confidence threshold from config (if set)
+        confidence_threshold = CONFIG.get('rl_confidence_threshold', None)
         rl_brain = SignalConfidenceRL(
             experience_file="data/signal_experience.json",
-            backtest_mode=_bot_config.backtest_mode
+            backtest_mode=_bot_config.backtest_mode,
+            confidence_threshold=confidence_threshold
         )
         logger.info("[RL] RL BRAIN READY - Ready to evaluate signals with learned intelligence")
     
