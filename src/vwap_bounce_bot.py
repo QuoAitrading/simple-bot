@@ -2043,7 +2043,10 @@ def calculate_position_size(symbol: str, side: str, entry_price: float, rl_confi
     user_max_contracts = CONFIG["max_contracts"]
     
     # Apply RL confidence to dynamically scale WITHIN user's limit
-    if rl_confidence is not None and CONFIG.get("rl_enabled", True):
+    # Check if dynamic contracts feature is enabled (GUI setting)
+    dynamic_contracts_enabled = CONFIG.get("dynamic_contracts", False)
+    
+    if rl_confidence is not None and CONFIG.get("rl_enabled", True) and dynamic_contracts_enabled:
         global rl_brain
         if rl_brain is not None:
             size_multiplier = rl_brain.get_position_size_multiplier(rl_confidence)
@@ -2075,10 +2078,12 @@ def calculate_position_size(symbol: str, side: str, entry_price: float, rl_confi
         else:
             confidence_level = "VERY HIGH"
             
-        logger.info(f"[RL DYNAMIC SIZING] {confidence_level} confidence ({rl_confidence:.1%}) × Max {user_max_contracts} = {rl_scaled_max} contracts (capped at {contracts} by risk)")
+        logger.info(f"[DYNAMIC CONTRACTS] {confidence_level} confidence ({rl_confidence:.1%}) × Max {user_max_contracts} = {rl_scaled_max} contracts (capped at {contracts} by risk)")
     else:
-        # No RL confidence - cap at user's max
+        # No RL confidence or dynamic contracts disabled - use fixed max
         contracts = min(contracts, user_max_contracts)
+        if not dynamic_contracts_enabled and rl_confidence is not None:
+            logger.info(f"[FIXED CONTRACTS] Using fixed max of {user_max_contracts} contracts (dynamic contracts disabled)")
     
     # RECOVERY MODE: Further reduce position size when approaching limits
     if bot_status.get("recovery_confidence_threshold") is not None:
@@ -5073,14 +5078,26 @@ def check_safety_conditions(symbol: str) -> Tuple[bool, Optional[str]]:
         # - recovery_mode=False (DISABLED, default): Bot STOPS trading (safe, prevents failure)
         if CONFIG.get("recovery_mode", False):
             # RECOVERY MODE ENABLED: Continue trading with high confidence requirements
-            required_confidence = get_recovery_confidence_threshold(severity)
+            # Check if dynamic confidence is enabled (GUI setting)
+            dynamic_confidence_enabled = CONFIG.get("dynamic_confidence", False)
+            
+            if dynamic_confidence_enabled:
+                # Auto-scale confidence based on severity
+                required_confidence = get_recovery_confidence_threshold(severity)
+            else:
+                # Use user's fixed confidence threshold (no auto-scaling)
+                required_confidence = CONFIG.get("rl_confidence_threshold", 0.65)
+            
             if bot_status.get("stop_reason") != "recovery_mode":
                 logger.warning("=" * 80)
                 logger.warning("RECOVERY MODE: APPROACHING LIMITS - CONTINUING WITH HIGH CONFIDENCE")
                 logger.warning(f"Reason: {approach_reason}")
                 logger.warning(f"Severity: {severity*100:.1f}%")
-                logger.warning(f"Required confidence increased to {required_confidence*100:.1f}%")
-                logger.warning("Bot will ONLY take highest-confidence signals")
+                if dynamic_confidence_enabled:
+                    logger.warning(f"Required confidence DYNAMICALLY increased to {required_confidence*100:.1f}%")
+                    logger.warning("Bot will ONLY take highest-confidence signals")
+                else:
+                    logger.warning(f"Using FIXED confidence threshold: {required_confidence*100:.1f}% (dynamic confidence disabled)")
                 logger.warning("Position size will be dynamically reduced")
                 logger.warning("⚠️ Attempting to recover from losses")
                 logger.warning("=" * 80)
