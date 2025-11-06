@@ -9,7 +9,7 @@ import sys
 import os
 import logging
 from datetime import datetime, timedelta
-from typing import List, Dict, Any, Tuple, Optional
+from typing import List, Dict, Any, Tuple, Optional, Union
 import pytz
 import pandas as pd
 from dotenv import load_dotenv
@@ -180,7 +180,7 @@ def initialize_rl_brains_for_backtest() -> Tuple[Any, Any]:
     other bot components are initialized.
     
     Returns:
-        Tuple[SignalConfidenceRL, AdaptiveExitManager]: The initialized RL brain instances
+        Tuple[Any, Any]: The initialized (rl_brain, adaptive_manager) instances
     """
     logger = logging.getLogger('main')
     import vwap_bounce_bot
@@ -208,7 +208,13 @@ def initialize_rl_brains_for_backtest() -> Tuple[Any, Any]:
     return vwap_bounce_bot.rl_brain, vwap_bounce_bot.adaptive_manager
 
 
-def run_backtest_with_params(symbol, days, initial_equity, params, return_bars=False):
+def run_backtest_with_params(
+    symbol: str, 
+    days: int, 
+    initial_equity: float, 
+    params: Dict[str, Any], 
+    return_bars: bool = False
+) -> Union[Dict[str, Any], Tuple[Dict[str, Any], List[Dict[str, Any]]]]:
     """
     Run a backtest with custom parameters and return results.
     This is a helper function for continuous learning.
@@ -413,10 +419,17 @@ def run_backtest_with_params(symbol, days, initial_equity, params, return_bars=F
             setattr(cfg, key, value)
 
 
-def run_backtest(args, bot_config):
+def run_backtest(args: argparse.Namespace, bot_config: Any) -> Dict[str, Any]:
     """
     Run backtesting mode - completely independent of broker API.
     Uses historical data to replay market conditions and simulate trading.
+    
+    Args:
+        args: Parsed command-line arguments from argparse
+        bot_config: Bot configuration object
+        
+    Returns:
+        Dictionary with backtest performance metrics
     """
     logger = logging.getLogger('main')
     logger.info("="*60)
