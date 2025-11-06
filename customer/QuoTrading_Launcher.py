@@ -2232,7 +2232,7 @@ BOT_INSTRUMENTS={symbols_str}
 BOT_MAX_CONTRACTS={self.contracts_var.get()}
 BOT_MAX_TRADES_PER_DAY={self.trades_var.get()}
 # Bot stays on but will NOT execute trades after reaching max (resets daily after market maintenance)
-BOT_MAX_DRAWDOWN={self.drawdown_var.get()}
+BOT_MAX_DRAWDOWN_PERCENT={self.drawdown_var.get()}
 # Maximum drawdown percentage before bot stops trading (account type aware)
 BOT_TRAILING_DRAWDOWN={'true' if self.trailing_drawdown_var.get() else 'false'}
 # SOFT FLOOR: Optional personal protection. When enabled, floor moves UP with profits (never down).
