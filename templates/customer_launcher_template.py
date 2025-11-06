@@ -2,10 +2,10 @@
 QuoTrading AI - Customer Launcher
 ==================================
 Professional GUI application for easy setup and launch.
-4-Screen Progressive Onboarding Flow with Validation.
+4-Screen Progressive Onboarding Flow with Cloud Validation.
 
 Flow:
-1. Screen 0: Username Creation
+1. Screen 0: Login (Cloud-validated username, password, API key)
 2. Screen 1: QuoTrading Account Setup (Email + API Key validation)
 3. Screen 2: Broker Connection Setup (Prop Firm/Live Broker with validation)
 4. Screen 3: Trading Preferences (Symbol selection, risk settings, launch)
@@ -26,7 +26,7 @@ import requests  # For cloud API calls
 
 
 class QuoTradingLauncher:
-    """Professional GUI launcher for QuoTrading AI bot - Green/Black Theme."""
+    """Professional GUI launcher for QuoTrading AI bot - Blue/White Theme with Cloud Authentication."""
     
     def __init__(self):
         self.root = tk.Tk()
