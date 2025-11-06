@@ -1402,6 +1402,24 @@ class QuoTradingLauncher:
         )
         self.account_info_label.pack(side=tk.LEFT, fill=tk.X, expand=True)
         
+        # Auto-adjust parameters section
+        auto_adjust_frame = tk.Frame(fetch_content, bg=self.colors['card_elevated'])
+        auto_adjust_frame.pack(fill=tk.X, pady=(8, 0))
+        
+        auto_adjust_btn = self.create_button(auto_adjust_frame, "Auto-Adjust Parameters", self.auto_adjust_parameters, "next")
+        auto_adjust_btn.pack(side=tk.LEFT, padx=(0, 10))
+        
+        # Auto-adjust info label
+        self.auto_adjust_info_label = tk.Label(
+            auto_adjust_frame,
+            text="Automatically optimizes settings based on account balance",
+            font=("Arial", 8),
+            bg=self.colors['card_elevated'],
+            fg=self.colors['text_secondary'],
+            anchor=tk.W
+        )
+        self.auto_adjust_info_label.pack(side=tk.LEFT, fill=tk.X, expand=True)
+        
         # Summary display
         summary_frame = tk.Frame(content, bg=self.colors['secondary'], relief=tk.FLAT, bd=0)
         summary_frame.pack(fill=tk.X, pady=(8, 12))
@@ -1517,6 +1535,82 @@ class QuoTradingLauncher:
         thread = threading.Thread(target=fetch_in_thread, daemon=True)
         thread.start()
     
+    def auto_adjust_parameters(self):
+        """Auto-adjust trading parameters based on account balance."""
+        # Check if account info has been fetched
+        accounts = self.config.get("accounts", [])
+        if not accounts:
+            messagebox.showwarning(
+                "No Account Info",
+                "Please fetch account information first using the 'Fetch Account Info' button."
+            )
+            return
+        
+        # Get the selected account or first account
+        selected_account = accounts[0]
+        balance = selected_account.get("balance", 10000)
+        
+        # Calculate optimal settings based on account balance
+        # Risk management rules:
+        # - Daily loss limit: 2-4% of account balance
+        # - Max contracts: Based on account size and risk
+        # - Risk per trade: 0.5-2% depending on account size
+        # - Max trades per day: 10-20 based on account size
+        
+        # Calculate recommended settings
+        daily_loss_limit = balance * 0.03  # 3% of account
+        risk_per_trade = 1.0 if balance < 50000 else (0.75 if balance < 100000 else 0.5)
+        max_contracts = max(1, min(10, int(balance / 25000)))  # 1 contract per 25k
+        max_trades = 15 if balance < 100000 else 20
+        
+        # Show preview dialog
+        preview_text = f"Auto-Adjust will optimize settings for your account:\n\n"
+        preview_text += f"Current Account Balance: ${balance:,.2f}\n\n"
+        preview_text += f"Recommended Settings:\n"
+        preview_text += f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        preview_text += f"Daily Loss Limit: ${daily_loss_limit:,.2f}\n"
+        preview_text += f"Risk per Trade: {risk_per_trade}%\n"
+        preview_text += f"Max Contracts: {max_contracts}\n"
+        preview_text += f"Max Trades/Day: {max_trades}\n\n"
+        preview_text += f"Current Settings:\n"
+        preview_text += f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        
+        try:
+            current_loss = float(self.loss_entry.get())
+            preview_text += f"Daily Loss Limit: ${current_loss:,.2f}\n"
+        except:
+            preview_text += f"Daily Loss Limit: Not set\n"
+        
+        preview_text += f"Risk per Trade: {self.risk_var.get()}%\n"
+        preview_text += f"Max Contracts: {self.contracts_var.get()}\n"
+        preview_text += f"Max Trades/Day: {self.trades_var.get()}\n\n"
+        preview_text += f"Apply these recommended settings?"
+        
+        result = messagebox.askyesno(
+            "Auto-Adjust Parameters",
+            preview_text
+        )
+        
+        if result:
+            # Apply the recommended settings
+            self.loss_entry.delete(0, tk.END)
+            self.loss_entry.insert(0, f"{daily_loss_limit:.2f}")
+            self.risk_var.set(risk_per_trade)
+            self.contracts_var.set(max_contracts)
+            self.trades_var.set(max_trades)
+            
+            # Update info label
+            self.auto_adjust_info_label.config(
+                text=f"✓ Parameters optimized for ${balance:,.2f} account balance",
+                fg=self.colors['success']
+            )
+            
+            messagebox.showinfo(
+                "Settings Applied",
+                "Auto-adjusted parameters have been applied successfully!\n\n"
+                "These settings are optimized for risk management based on your account size."
+            )
+    
     def start_bot(self):
         """Validate settings and start the trading bot."""
         # Validate at least one symbol selected
@@ -1581,6 +1675,9 @@ class QuoTradingLauncher:
         confirmation_text += f"Max Trades/Day: {self.trades_var.get()}\n"
         confirmation_text += f"Risk/Trade: {self.risk_var.get()}%\n"
         confirmation_text += f"Daily Loss Limit: ${loss_limit}\n"
+        confirmation_text += f"  → Bot will automatically shut down if this limit is hit\n"
+        confirmation_text += f"Max Trades/Day: {self.trades_var.get()}\n"
+        confirmation_text += f"  → Bot will stop trading after reaching this limit\n"
         confirmation_text += f"Confidence Threshold: {self.confidence_var.get()}%\n"
         if self.shadow_mode_var.get():
             confirmation_text += f"Shadow Mode: ON (paper trading)\n"
@@ -1680,12 +1777,16 @@ TRADOVATE_USERNAME={self.config.get("broker_username", "")}
 BOT_INSTRUMENTS={symbols_str}
 BOT_MAX_CONTRACTS={self.contracts_var.get()}
 BOT_MAX_TRADES_PER_DAY={self.trades_var.get()}
+# Bot will stop trading after reaching max trades per day
 BOT_RISK_PER_TRADE={self.risk_var.get() / 100}
 BOT_DAILY_LOSS_LIMIT={self.loss_entry.get()}
+# Bot will automatically shut down if daily loss limit is hit
 
 # AI/Confidence Settings
 BOT_CONFIDENCE_THRESHOLD={self.confidence_var.get()}
+# Bot only takes signals above this confidence threshold
 BOT_DYNAMIC_CONTRACTS={'true' if self.dynamic_contracts_var.get() else 'false'}
+# Uses signal confidence to determine contract size dynamically
 
 # Trading Mode
 BOT_SHADOW_MODE={'true' if self.shadow_mode_var.get() else 'false'}
