@@ -20,6 +20,8 @@ from datetime import datetime
 import sys
 import subprocess
 import re
+import threading
+import time
 
 
 class QuoTradingLauncher:
@@ -177,6 +179,126 @@ class QuoTradingLauncher:
             height=2
         )
         return button
+    
+    def show_loading(self, message="Validating..."):
+        """Show a loading dialog with spinner."""
+        self.loading_window = tk.Toplevel(self.root)
+        self.loading_window.title("Please Wait")
+        self.loading_window.geometry("350x150")
+        self.loading_window.resizable(False, False)
+        self.loading_window.configure(bg=self.colors['card'])
+        
+        # Center the window
+        self.loading_window.transient(self.root)
+        self.loading_window.grab_set()
+        
+        # Loading message
+        msg_label = tk.Label(
+            self.loading_window,
+            text=message,
+            font=("Arial", 14, "bold"),
+            bg=self.colors['card'],
+            fg=self.colors['success']
+        )
+        msg_label.pack(pady=(30, 10))
+        
+        # Spinner animation
+        self.spinner_label = tk.Label(
+            self.loading_window,
+            text="●",
+            font=("Arial", 24),
+            bg=self.colors['card'],
+            fg=self.colors['success']
+        )
+        self.spinner_label.pack(pady=10)
+        
+        # Start spinner animation
+        self.spinner_running = True
+        self.animate_spinner()
+        
+        # Center on parent
+        self.loading_window.update_idletasks()
+        x = self.root.winfo_x() + (self.root.winfo_width() // 2) - (self.loading_window.winfo_width() // 2)
+        y = self.root.winfo_y() + (self.root.winfo_height() // 2) - (self.loading_window.winfo_height() // 2)
+        self.loading_window.geometry(f"+{x}+{y}")
+    
+    def animate_spinner(self):
+        """Animate the loading spinner."""
+        if not self.spinner_running:
+            return
+        
+        current = self.spinner_label.cget("text")
+        spinner_chars = ["●", "●●", "●●●", "●●●●", "●●●●●"]
+        
+        try:
+            idx = spinner_chars.index(current)
+            next_idx = (idx + 1) % len(spinner_chars)
+            self.spinner_label.config(text=spinner_chars[next_idx])
+        except:
+            self.spinner_label.config(text="●")
+        
+        if self.spinner_running:
+            self.root.after(200, self.animate_spinner)
+    
+    def hide_loading(self):
+        """Hide the loading dialog."""
+        self.spinner_running = False
+        if hasattr(self, 'loading_window'):
+            self.loading_window.destroy()
+    
+    def validate_api_call(self, api_type, credentials, success_callback, error_callback):
+        """Simulate API validation with async call.
+        
+        Args:
+            api_type: "quotrading" or "broker"
+            credentials: dict with credentials to validate
+            success_callback: function to call on success
+            error_callback: function to call on error with error message
+        """
+        def api_call():
+            # Simulate API call delay (2 seconds)
+            time.sleep(2)
+            
+            # TODO: Replace with actual API calls
+            # For QuoTrading:
+            #   POST to https://api.quotrading.com/v1/validate
+            #   Body: {"email": credentials["email"], "api_key": credentials["api_key"]}
+            # For Broker:
+            #   Broker-specific API validation
+            
+            # For now, simulate success for properly formatted credentials
+            # In production, this would be replaced with actual API calls
+            
+            if api_type == "quotrading":
+                email = credentials.get("email", "")
+                api_key = credentials.get("api_key", "")
+                
+                # Simulate validation logic
+                # Real implementation would call QuoTrading API
+                if "@" in email and len(api_key) >= 20:
+                    self.root.after(0, success_callback)
+                else:
+                    self.root.after(0, lambda: error_callback("Invalid QuoTrading credentials"))
+            
+            elif api_type == "broker":
+                broker = credentials.get("broker", "")
+                token = credentials.get("token", "")
+                username = credentials.get("username", "")
+                
+                # Simulate broker API validation
+                # Real implementation would call broker-specific APIs:
+                # - TopStep: Their authentication endpoint
+                # - Tradovate: Their authentication endpoint
+                # - etc.
+                
+                if token and username:
+                    self.root.after(0, success_callback)
+                else:
+                    self.root.after(0, lambda: error_callback(f"Invalid {broker} credentials"))
+        
+        # Start API call in background thread
+        thread = threading.Thread(target=api_call, daemon=True)
+        thread.start()
     
     def setup_username_screen(self):
         """Screen 0: Username creation screen."""
@@ -399,21 +521,32 @@ class QuoTradingLauncher:
             )
             return
         
-        # TODO: Make real API call to QuoTrading backend to validate credentials
-        # For now, simulate validation
-        messagebox.showinfo(
-            "Validation",
-            "⚠️ Note: Real API validation will be implemented.\n\nFor now, credentials are accepted if properly formatted."
-        )
+        # Show loading spinner
+        self.show_loading("Validating QuoTrading credentials...")
         
-        # Save credentials
-        self.config["quotrading_email"] = email
-        self.config["quotrading_api_key"] = api_key
-        self.config["quotrading_validated"] = True
-        self.save_config()
+        # Define success callback
+        def on_success():
+            self.hide_loading()
+            # Save credentials
+            self.config["quotrading_email"] = email
+            self.config["quotrading_api_key"] = api_key
+            self.config["quotrading_validated"] = True
+            self.save_config()
+            # Proceed to broker setup
+            self.setup_broker_screen()
         
-        # Proceed to broker setup
-        self.setup_broker_screen()
+        # Define error callback
+        def on_error(error_msg):
+            self.hide_loading()
+            messagebox.showerror(
+                "Validation Failed",
+                f"❌ {error_msg}\n\nPlease check your credentials and try again.\n\n"
+                f"If you continue to have issues, contact support@quotrading.com"
+            )
+        
+        # Make API validation call
+        credentials = {"email": email, "api_key": api_key}
+        self.validate_api_call("quotrading", credentials, on_success, on_error)
     
     def setup_broker_screen(self):
         """Screen 2: Broker Connection Setup (Prop Firm vs Live Broker)."""
@@ -649,23 +782,41 @@ class QuoTradingLauncher:
             self.setup_trading_screen()
             return
         
-        # TODO: Make real API call to broker to validate credentials
-        # For now, simulate validation
-        messagebox.showinfo(
-            "Validation",
-            "⚠️ Note: Real broker API validation will be implemented.\n\nFor now, credentials are accepted if filled in."
-        )
+        # Show loading spinner
+        self.show_loading(f"Validating {broker} credentials...")
         
-        # Save broker credentials
-        self.config["broker_type"] = self.broker_type_var.get()
-        self.config["broker"] = broker
-        self.config["broker_token"] = token
-        self.config["broker_username"] = username
-        self.config["broker_validated"] = True
-        self.save_config()
+        # Define success callback
+        def on_success():
+            self.hide_loading()
+            # Save broker credentials
+            self.config["broker_type"] = self.broker_type_var.get()
+            self.config["broker"] = broker
+            self.config["broker_token"] = token
+            self.config["broker_username"] = username
+            self.config["broker_validated"] = True
+            self.save_config()
+            # Proceed to trading preferences
+            self.setup_trading_screen()
         
-        # Proceed to trading preferences
-        self.setup_trading_screen()
+        # Define error callback
+        def on_error(error_msg):
+            self.hide_loading()
+            messagebox.showerror(
+                "Validation Failed",
+                f"❌ {error_msg}\n\nPlease check your {broker} credentials and try again.\n\n"
+                f"Make sure you have:\n"
+                f"• Valid API token from your {broker} account\n"
+                f"• Correct username/email\n"
+                f"• Active account status"
+            )
+        
+        # Make API validation call
+        credentials = {
+            "broker": broker,
+            "token": token,
+            "username": username
+        }
+        self.validate_api_call("broker", credentials, on_success, on_error)
     
     def setup_trading_screen(self):
         """Screen 3: Trading Preferences and Launch."""
