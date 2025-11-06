@@ -4847,21 +4847,23 @@ def check_approaching_failure(symbol: str) -> Tuple[bool, Optional[str], Optiona
     reasons = []
     
     # Check daily loss limit approach (80% threshold)
-    if state[symbol]["daily_pnl"] <= -CONFIG["daily_loss_limit"] * 0.8:
-        daily_loss_severity = abs(state[symbol]["daily_pnl"]) / CONFIG["daily_loss_limit"]
+    daily_loss_limit = CONFIG.get("daily_loss_limit", 1000.0)
+    if daily_loss_limit > 0 and state[symbol]["daily_pnl"] <= -daily_loss_limit * 0.8:
+        daily_loss_severity = abs(state[symbol]["daily_pnl"]) / daily_loss_limit
         max_severity = max(max_severity, daily_loss_severity)
-        reasons.append(f"Daily loss at {daily_loss_severity*100:.1f}% of limit (${state[symbol]['daily_pnl']:.2f}/${-CONFIG['daily_loss_limit']:.2f})")
+        reasons.append(f"Daily loss at {daily_loss_severity*100:.1f}% of limit (${state[symbol]['daily_pnl']:.2f}/${-daily_loss_limit:.2f})")
     
     # Check max drawdown approach (80% threshold)
-    if bot_status["starting_equity"] is not None:
+    max_drawdown_percent = CONFIG.get("max_drawdown_percent", 4.0)
+    if bot_status["starting_equity"] is not None and max_drawdown_percent > 0:
         current_equity = get_account_equity()
         drawdown_percent = ((bot_status["starting_equity"] - current_equity) / 
                            bot_status["starting_equity"] * 100)
-        drawdown_severity = drawdown_percent / CONFIG["max_drawdown_percent"]
+        drawdown_severity = drawdown_percent / max_drawdown_percent
         
         if drawdown_severity >= 0.8:
             max_severity = max(max_severity, drawdown_severity)
-            reasons.append(f"Drawdown at {drawdown_severity*100:.1f}% of limit ({drawdown_percent:.2f}%/{CONFIG['max_drawdown_percent']:.2f}%)")
+            reasons.append(f"Drawdown at {drawdown_severity*100:.1f}% of limit ({drawdown_percent:.2f}%/{max_drawdown_percent:.2f}%)")
     
     if reasons:
         return True, "; ".join(reasons), max_severity

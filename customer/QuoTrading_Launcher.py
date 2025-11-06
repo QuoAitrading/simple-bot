@@ -1473,7 +1473,7 @@ class QuoTradingLauncher:
         account_type = self.config.get("broker_type", "Prop Firm")
         
         # Default: Stop trading when approaching failure (safest for prop firms)
-        default_stop_mode = True if account_type == "Prop Firm" else False
+        default_stop_mode = account_type == "Prop Firm"
         self.stop_on_approach_var = tk.BooleanVar(value=self.config.get("stop_on_approach", default_stop_mode))
         
         # Checkbox for stop on approach
