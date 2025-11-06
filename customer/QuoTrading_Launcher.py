@@ -1453,40 +1453,42 @@ class QuoTradingLauncher:
             account_type = self.config.get("broker_type", "Prop Firm")
             broker_name = self.config.get("broker", "")
             
+            # Future-ready: Detect brokers that REQUIRE trailing drawdown (enforced)
+            # This will be used when Apex or similar brokers are added
+            requires_trailing = False
+            if broker_name == "Apex":  # Future support
+                requires_trailing = True
+                # Would disable checkbox: trailing_dd_cb.config(state='disabled')
+                # Would update label: "(Required by Apex)"
+            
             # Session-aware: Check if account has fetched data to provide contextual advice
             accounts = self.config.get("accounts", [])
             has_account_data = len(accounts) > 0
             
             if enabled:
-                if account_type == "Prop Firm":
-                    # Prop firm rules awareness - incorporate industry best practices
-                    # Most prop firms (TopStep, Apex, etc.) benefit from trailing drawdown
-                    # This helps traders avoid the common mistake of "giving back" a good week
-                    if has_account_data:
-                        trailing_dd_info.config(
-                            text="✓ Enabled - Smart! Floor moves up with profits, never down. Protects from giving back gains (Prop firm best practice)",
-                            fg=self.colors['success']
-                        )
-                    else:
-                        trailing_dd_info.config(
-                            text="✓ Enabled - Highly recommended for prop firms. Locks in profits automatically as account grows",
-                            fg=self.colors['success']
-                        )
-                else:  # Live Broker
+                # Unified security-focused message for all account types
+                # Emphasizes protection and "circuit breaker" function
+                if has_account_data:
+                    # Show concrete dollar benefit when possible
                     trailing_dd_info.config(
-                        text="✓ Enabled - Excellent! Provides emotional discipline and prevents revenge trading after profitable days",
+                        text="✓ Secured - Floor moves UP with profits, never down. Stops bot before giving back gains. (Circuit breaker for account protection)",
+                        fg=self.colors['success']
+                    )
+                else:
+                    trailing_dd_info.config(
+                        text="✓ Secured - Floor moves UP with profits, never down. Bot stops trading when floor is violated. (Protects from extended losing streaks)",
                         fg=self.colors['success']
                     )
             else:
+                # Optional but helpful security message - no judgment, just information
                 if account_type == "Prop Firm":
-                    # For prop firms, provide stronger guidance to enable it
                     trailing_dd_info.config(
-                        text="⚠ Consider enabling - Most successful prop traders use trailing drawdown to protect profits and avoid account failure",
-                        fg=self.colors['warning']
+                        text="Optional but recommended - Adds extra security layer to protect your funded account from giving back profits",
+                        fg=self.colors['text_secondary']
                     )
                 else:  # Live Broker
                     trailing_dd_info.config(
-                        text="Optional - Recommended for profit protection. Helps maintain emotional discipline during winning streaks",
+                        text="Optional - Adds security to protect your capital from extended losing streaks after profitable periods",
                         fg=self.colors['text_secondary']
                     )
         
@@ -1521,12 +1523,21 @@ class QuoTradingLauncher:
         # Trigger initial info update
         update_trailing_drawdown_info()
         
-        # Explanation text for trailing drawdown
+        # Comprehensive explanation text for trailing drawdown
         trailing_dd_explanation = tk.Label(
             trailing_dd_content,
-            text="ℹ️ How it works: Your max drawdown 'floor' moves UP with your profits but never down.\n"
-                 "Example: Start at $50k → Grow to $55k → New floor is $55k minus your max drawdown %.\n"
-                 "This protects you from giving back gains after profitable periods.",
+            text="ℹ️ What It Does:\n"
+                 "• Sets a safety floor that moves UP with your profits (never down)\n"
+                 "• Example: $50K start → $52K → $55K peak → Floor rises to $52K (with 10% max DD)\n"
+                 "• Bot STOPS trading when balance drops below floor (circuit breaker)\n"
+                 "• Prevents giving back all gains during losing streaks\n"
+                 "\n"
+                 "ℹ️ What It Does NOT Do:\n"
+                 "• Does NOT close winning trades early - bot still uses adaptive exits\n"
+                 "• Does NOT force withdrawals - you keep trading until floor is hit\n"
+                 "• Does NOT change position sizing - bot still uses AI for entries/exits\n"
+                 "\n"
+                 "Think of it like: A floating platform that rises with water level but never goes back down.",
             font=("Arial", 7, "italic"),
             bg=self.colors['card_elevated'],
             fg=self.colors['text_secondary'],
