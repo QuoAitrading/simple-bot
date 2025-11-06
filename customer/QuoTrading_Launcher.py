@@ -1595,20 +1595,20 @@ class QuoTradingLauncher:
                 )
             else:
                 recovery_info.config(
-                    text="✓ SAFE MODE: Bot will WARN when approaching limits but NEVER lock you out. "
+                    text="ℹ️ Bot will WARN when approaching limits but NEVER lock you out. "
                          "You maintain full control. Bot shows warnings and recommendations, but YOU decide whether to trade. "
                          "Recommended for cautious traders who want guidance without restrictions.",
-                    fg=self.colors['success']
+                    fg=self.colors['text']
                 )
                 recovery_explanation.config(
-                    text="When Recovery Mode is DISABLED (Safe Mode):\n"
+                    text="When Recovery Mode is DISABLED:\n"
                          "• Bot WARNS at 80% of daily loss (e.g., $1600 of $2000 limit)\n"
                          "• Bot WARNS at 80% of max drawdown with dollar amounts\n"
                          "• Bot NEVER stops you from trading - you maintain full control\n"
                          "• Smart recommendations provided (confidence, contracts, limits)\n"
                          "• Bot continues running and monitoring market conditions\n"
                          "• One-click apply recommendations if desired\n"
-                         "• Safest option with maximum user control",
+                         "• User maintains full control with intelligent warnings",
                     fg=self.colors['text_secondary']
                 )
         
@@ -1848,9 +1848,20 @@ class QuoTradingLauncher:
         )
         self.account_dropdown.pack(side=tk.LEFT, fill=tk.X, expand=True)
         
-        # Fetch button and info display
+        # Fetch button and info display - VERY IMPORTANT
         fetch_button_frame = tk.Frame(fetch_content, bg=self.colors['card_elevated'])
         fetch_button_frame.pack(fill=tk.X)
+        
+        # Add emphasis label
+        important_label = tk.Label(
+            fetch_button_frame,
+            text="⚠️ VERY IMPORTANT:",
+            font=("Arial", 9, "bold"),
+            bg=self.colors['card_elevated'],
+            fg=self.colors['error'],
+            anchor=tk.W
+        )
+        important_label.pack(side=tk.LEFT, padx=(0, 5))
         
         fetch_btn = self.create_button(fetch_button_frame, "Fetch Account Info", self.fetch_account_info, "next")
         fetch_btn.pack(side=tk.LEFT, padx=(0, 10))
@@ -1858,7 +1869,7 @@ class QuoTradingLauncher:
         # Account info display label
         self.account_info_label = tk.Label(
             fetch_button_frame,
-            text="Click to fetch account balance and details",
+            text="Fetching helps bot determine account type and provide best settings",
             font=("Arial", 8),
             bg=self.colors['card_elevated'],
             fg=self.colors['text_secondary'],
@@ -1950,8 +1961,8 @@ class QuoTradingLauncher:
                 
                 # Mock account data - replace with actual API call
                 accounts = [
-                    {"id": "ACC001", "name": f"{broker} Account 1", "balance": 50000.00, "equity": 51234.56},
-                    {"id": "ACC002", "name": f"{broker} Account 2", "balance": 100000.00, "equity": 102456.78}
+                    {"id": "ACC001", "name": f"{broker} Account 1", "balance": 50000.00, "equity": 51234.56, "type": "prop_firm"},
+                    {"id": "ACC002", "name": f"{broker} Account 2", "balance": 100000.00, "equity": 102456.78, "type": "prop_firm"}
                 ]
                 
                 # Update UI on main thread
@@ -1966,12 +1977,32 @@ class QuoTradingLauncher:
                     # Store accounts data
                     self.config["accounts"] = accounts
                     self.config["selected_account"] = account_names[0]
+                    self.config["fetched_account_balance"] = accounts[0]['balance']
+                    self.config["fetched_account_type"] = accounts[0].get('type', 'live_broker')
                     self.save_config()
+                    
+                    # Check for mismatch between user input and fetched data
+                    user_account_size = float(self.config.get("account_size", "0"))
+                    fetched_balance = accounts[0]['balance']
+                    
+                    mismatch_warning = ""
+                    if user_account_size > 0 and abs(user_account_size - fetched_balance) > 1000:
+                        mismatch_warning = (
+                            f"\n\n⚠️ MISMATCH DETECTED:\n"
+                            f"You entered: ${user_account_size:,.2f}\n"
+                            f"Fetched account: ${fetched_balance:,.2f}\n\n"
+                            f"Using fetched account data (more accurate)."
+                        )
+                        # Update account size to fetched value
+                        self.config["account_size"] = str(int(fetched_balance))
+                        self.account_entry.delete(0, tk.END)
+                        self.account_entry.insert(0, str(int(fetched_balance)))
+                        self.save_config()
                     
                     # Update info label
                     selected_acc = accounts[0]
                     self.account_info_label.config(
-                        text=f"✓ Balance: ${selected_acc['balance']:,.2f} | Equity: ${selected_acc['equity']:,.2f}",
+                        text=f"✓ Balance: ${selected_acc['balance']:,.2f} | Equity: ${selected_acc['equity']:,.2f} | Type: {selected_acc.get('type', 'Unknown')}",
                         fg=self.colors['success']
                     )
                     
@@ -1980,7 +2011,9 @@ class QuoTradingLauncher:
                         f"Successfully retrieved {len(accounts)} account(s) from {broker}.\n\n"
                         f"Selected: {selected_acc['name']}\n"
                         f"Balance: ${selected_acc['balance']:,.2f}\n"
-                        f"Equity: ${selected_acc['equity']:,.2f}"
+                        f"Equity: ${selected_acc['equity']:,.2f}\n"
+                        f"Type: {selected_acc.get('type', 'Unknown')}"
+                        f"{mismatch_warning}"
                     )
                 
                 self.root.after(0, update_ui)
@@ -2000,49 +2033,65 @@ class QuoTradingLauncher:
         thread.start()
     
     def auto_adjust_parameters(self):
-        """Auto-adjust trading parameters based on account balance and type."""
+        """Auto-adjust trading parameters based on FETCHED account data (prioritized over user input)."""
+        # IMPORTANT: Prioritize fetched account data over user input
         # Check if account info has been fetched
         accounts = self.config.get("accounts", [])
-        if not accounts:
+        fetched_balance = self.config.get("fetched_account_balance")
+        fetched_type = self.config.get("fetched_account_type", "live_broker")
+        
+        if not accounts and not fetched_balance:
             messagebox.showwarning(
                 "No Account Info",
-                "Please fetch account information first using the 'Fetch Account Info' button."
+                "⚠️ IMPORTANT: Please fetch account information first using the 'Fetch Account Info' button.\n\n"
+                "Fetching helps the bot:\n"
+                "• Detect your account type (prop firm vs live broker)\n"
+                "• Determine accurate account size\n"
+                "• Provide optimal risk settings\n"
+                "• Apply broker-specific rules"
             )
             return
         
-        # Get the selected account or first account
-        selected_account = accounts[0]
-        balance = selected_account.get("balance", 10000)
-        equity = selected_account.get("equity", balance)
+        # Use FETCHED data (most accurate) - prioritize over user input
+        if fetched_balance:
+            balance = fetched_balance
+            equity = fetched_balance  # Use balance as equity if not provided
+            account_type = fetched_type
+        else:
+            # Fallback to accounts data
+            selected_account = accounts[0]
+            balance = selected_account.get("balance", 10000)
+            equity = selected_account.get("equity", balance)
+            account_type = selected_account.get("type", "live_broker")
         
-        # Get account type from config (Prop Firm or Live Broker)
-        account_type = self.config.get("broker_type", "Prop Firm")
-        account_size = self.config.get("account_size", "50k")
-        
-        # Parse account size for calculations
-        size_num = int(account_size.replace("k", "000"))
+        # Update account size with fetched data (overrides user input)
+        self.config["account_size"] = str(int(balance))
+        self.account_entry.delete(0, tk.END)
+        self.account_entry.insert(0, str(int(balance)))
         
         # Calculate drawdown percentage (how far from starting balance)
-        drawdown_pct = ((size_num - equity) / size_num) * 100 if size_num > 0 else 0
+        drawdown_pct = ((balance - equity) / balance) * 100 if balance > 0 else 0
         drawdown_pct = max(0, drawdown_pct)  # Ensure non-negative
         
-        # Sophisticated risk management for Prop Firms
-        if account_type == "Prop Firm":
+        # Sophisticated risk management based on ACCOUNT TYPE (from fetched data)
+        if account_type == "prop_firm":
             # Prop firm rules: Be more conservative as drawdown increases
-            # Most prop firms fail traders at 10% drawdown
+            # Most prop firms fail traders at 8-10% drawdown
             
-            # Calculate distance to failure (assuming 10% max drawdown rule)
-            distance_to_failure = 10.0 - drawdown_pct
+            # Calculate distance to failure (assuming 8% max drawdown rule for most prop firms)
+            max_dd = 8.0
+            distance_to_failure = max_dd - drawdown_pct
             
             # Daily loss limit: Scale based on distance to failure
-            if distance_to_failure > 7:  # Safe zone (0-3% drawdown)
-                daily_loss_pct = 0.025  # 2.5% of equity
-            elif distance_to_failure > 5:  # Caution zone (3-5% drawdown)
-                daily_loss_pct = 0.02   # 2% of equity
-            elif distance_to_failure > 3:  # Warning zone (5-7% drawdown)
-                daily_loss_pct = 0.015  # 1.5% of equity
-            else:  # Danger zone (7-10% drawdown)
-                daily_loss_pct = 0.01   # 1% of equity - very conservative
+            # Use 2% rule as baseline for prop firms
+            if distance_to_failure > 6:  # Safe zone (0-2% drawdown)
+                daily_loss_pct = 0.02  # 2% of equity (standard prop firm rule)
+            elif distance_to_failure > 4:  # Caution zone (2-4% drawdown)
+                daily_loss_pct = 0.015   # 1.5% of equity
+            elif distance_to_failure > 2:  # Warning zone (4-6% drawdown)
+                daily_loss_pct = 0.01  # 1% of equity
+            else:  # Danger zone (6-8% drawdown)
+                daily_loss_pct = 0.005   # 0.5% of equity - very conservative
             
             daily_loss_limit = equity * daily_loss_pct
             
