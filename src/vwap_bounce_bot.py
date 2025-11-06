@@ -132,6 +132,9 @@ bid_ask_manager: Optional[BidAskManager] = None
 # Global adaptive exit manager (for streak tracking persistence)
 adaptive_manager: Optional[Any] = None
 
+# Global session state manager (for cross-session awareness)
+session_manager: Optional[Any] = None
+
 # State management dictionary
 state: Dict[str, Any] = {}
 
@@ -157,6 +160,7 @@ bot_status: Dict[str, Any] = {
     # Recovery Mode: Dynamic risk management when approaching limits
     "recovery_confidence_threshold": None,  # Set when in recovery mode (higher confidence required)
     "recovery_severity": None,  # Severity level (0.8-1.0) indicating proximity to failure
+    "aggressive_exit_mode": False,  # Set when at critical severity to aggressively manage positions
 }
 
 
@@ -4461,6 +4465,21 @@ def execute_exit(symbol: str, exit_price: float, reason: str) -> None:
     logger.info(f"Trades today: {state[symbol]['daily_trade_count']}/{CONFIG['max_trades_per_day']}")
     logger.info(SEPARATOR_LINE)
     
+    # Update session state for cross-session awareness
+    if session_manager:
+        try:
+            current_equity = get_account_equity()
+            session_manager.update_trading_state(
+                starting_equity=bot_status.get("starting_equity", current_equity),
+                current_equity=current_equity,
+                daily_pnl=state[symbol]["daily_pnl"],
+                daily_trades=state[symbol]["daily_trade_count"],
+                broker=CONFIG.get("broker", "Unknown"),
+                account_type=None  # Will be inferred
+            )
+        except Exception as e:
+            logger.error(f"Failed to update session state: {e}")
+    
     # Write trade summary to file for GUI display
     try:
         import json
@@ -5059,6 +5078,28 @@ def check_safety_conditions(symbol: str) -> Tuple[bool, Optional[str]]:
             # Store recovery threshold and severity for use in signal evaluation and position sizing
             bot_status["recovery_confidence_threshold"] = required_confidence
             bot_status["recovery_severity"] = severity
+            
+            # SMART POSITION MANAGEMENT: If severity is critical (95%+), consider closing losing positions
+            if severity >= 0.95 and state[symbol]["position"]["active"]:
+                position = state[symbol]["position"]
+                entry_price = position.get("entry_price", 0)
+                current_price = state[symbol]["bars"][-1]["close"] if state[symbol]["bars"] else entry_price
+                
+                # Check if position is losing
+                is_losing = False
+                if position["side"] == "long" and current_price < entry_price:
+                    is_losing = True
+                elif position["side"] == "short" and current_price > entry_price:
+                    is_losing = True
+                
+                if is_losing:
+                    logger.warning("=" * 80)
+                    logger.warning("SMART POSITION MANAGEMENT: Critical severity (95%+) with losing position")
+                    logger.warning("Considering early exit to prevent account failure")
+                    logger.warning("=" * 80)
+                    # Let exit management handle it - just flag for aggressive management
+                    bot_status["aggressive_exit_mode"] = True
+            
             # Don't stop trading, but signal evaluation will use higher threshold
         else:
             # RECOVERY MODE DISABLED (Safe Mode): Stop trading when approaching failure
@@ -5731,7 +5772,7 @@ def main(symbol_override: str = None) -> None:
         symbol_override: Optional symbol to trade (overrides CONFIG["instrument"])
                         Used for multi-symbol bot instances
     """
-    global event_loop, timer_manager, bid_ask_manager
+    global event_loop, timer_manager, bid_ask_manager, session_manager
     
     # Use symbol override if provided (for multi-symbol support)
     trading_symbol = symbol_override if symbol_override else CONFIG["instrument"]
@@ -5739,6 +5780,15 @@ def main(symbol_override: str = None) -> None:
     logger.info(SEPARATOR_LINE)
     logger.info(f"VWAP Bounce Bot Starting [{trading_symbol}]")
     logger.info(SEPARATOR_LINE)
+    
+    # Initialize session state manager for cross-session awareness
+    try:
+        from session_state import SessionStateManager
+        session_manager = SessionStateManager()
+        logger.info(f"[{trading_symbol}] Session state manager initialized")
+    except ImportError:
+        logger.warning(f"[{trading_symbol}] Session state manager not available")
+        session_manager = None
     
     # Log symbol specifications if loaded
     if SYMBOL_SPEC:

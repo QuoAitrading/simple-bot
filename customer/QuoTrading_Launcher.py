@@ -40,6 +40,7 @@ class QuoTradingLauncher:
             'success_dark': '#1E40AF',   # Darker blue for buttons/headers
             'success_darker': '#1E3A8A', # Even darker blue for depth
             'error': '#DC2626',          # Red for error messages
+            'warning': '#F59E0B',        # Orange for warnings
             'background': '#FFFFFF',     # White main background
             'card': '#F8FAFC',           # Very light gray card background
             'card_elevated': '#EFF6FF',  # Light blue tint for elevation
@@ -65,6 +66,15 @@ class QuoTradingLauncher:
         # Load saved config
         self.config_file = Path("config.json")
         self.config = self.load_config()
+        
+        # Initialize session state manager
+        sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
+        try:
+            from session_state import SessionStateManager
+            self.session_manager = SessionStateManager()
+        except ImportError:
+            self.session_manager = None
+            print("⚠️ Session state manager not available")
         
         # Current screen tracker
         self.current_screen = 0
@@ -1044,6 +1054,79 @@ class QuoTradingLauncher:
         }
         self.validate_api_call("broker", credentials, on_success, on_error)
     
+    def _show_session_warnings(self):
+        """Display warnings and recommendations based on session state."""
+        if not self.session_manager:
+            return
+        
+        # Get current settings
+        account_size = float(self.config.get("account_size", "50000"))
+        max_drawdown = self.config.get("max_drawdown", 8.0)
+        daily_loss_limit = self.config.get("daily_loss_limit", 1000.0)
+        confidence = self.config.get("rl_confidence_threshold", 0.65) * 100
+        max_contracts = self.config.get("max_contracts", 3)
+        recovery_mode = self.config.get("recovery_mode", False)
+        
+        # Check for warnings and recommendations
+        warnings, recommendations, smart_settings = self.session_manager.check_warnings_and_recommendations(
+            account_size=account_size,
+            max_drawdown_percent=max_drawdown,
+            daily_loss_limit=daily_loss_limit,
+            current_confidence=confidence,
+            max_contracts=max_contracts,
+            recovery_mode_enabled=recovery_mode
+        )
+        
+        # Show warnings in a dialog if critical
+        if warnings:
+            critical_warnings = [w for w in warnings if w.get("level") == "critical"]
+            if critical_warnings:
+                warning_text = "\n\n".join([w["message"] for w in warnings])
+                if recommendations:
+                    warning_text += "\n\n📋 RECOMMENDATIONS:\n"
+                    warning_text += "\n".join([f"• {r['message']}" for r in recommendations[:3]])
+                
+                # Ask if user wants to apply smart settings
+                if smart_settings:
+                    warning_text += "\n\n⚙️ Would you like to apply recommended settings automatically?"
+                    result = messagebox.askyesno(
+                        "⚠️ Account Status Warning",
+                        warning_text,
+                        icon='warning'
+                    )
+                    
+                    if result and smart_settings:
+                        # Apply smart settings
+                        if "confidence_threshold" in smart_settings:
+                            self.config["rl_confidence_threshold"] = smart_settings["confidence_threshold"] / 100
+                        if "max_contracts" in smart_settings:
+                            self.config["max_contracts"] = smart_settings["max_contracts"]
+                        if "daily_loss_limit" in smart_settings:
+                            self.config["daily_loss_limit"] = smart_settings["daily_loss_limit"]
+                        self.save_config()
+                        messagebox.showinfo("Settings Applied", "✓ Smart recommendations applied successfully!")
+                else:
+                    messagebox.showwarning("⚠️ Account Status Warning", warning_text)
+            elif warnings and recommendations:
+                # Non-critical warnings - show as info
+                warning_text = "📊 Session Status:\n\n"
+                warning_text += "\n".join([w["message"] for w in warnings])
+                if recommendations:
+                    warning_text += "\n\n💡 RECOMMENDATIONS:\n"
+                    warning_text += "\n".join([f"• {r['message']}" for r in recommendations[:3]])
+                
+                if smart_settings:
+                    warning_text += "\n\n⚙️ Apply recommended settings?"
+                    result = messagebox.askyesno("Session Status", warning_text)
+                    if result:
+                        if "confidence_threshold" in smart_settings:
+                            self.config["rl_confidence_threshold"] = smart_settings["confidence_threshold"] / 100
+                        if "max_contracts" in smart_settings:
+                            self.config["max_contracts"] = smart_settings["max_contracts"]
+                        if "daily_loss_limit" in smart_settings:
+                            self.config["daily_loss_limit"] = smart_settings["daily_loss_limit"]
+                        self.save_config()
+    
     def setup_trading_screen(self):
         """Screen 1: Trading Controls and Launch."""
         # Clear window
@@ -1055,6 +1138,10 @@ class QuoTradingLauncher:
         
         # Header
         header = self.create_header("Trading Controls", "Configure your trading strategy")
+        
+        # Check session state and show warnings/recommendations
+        if self.session_manager:
+            self._show_session_warnings()
         
         # Main container with scrollbar capability
         main = tk.Frame(self.root, bg=self.colors['background'], padx=25, pady=12)
