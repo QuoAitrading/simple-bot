@@ -2,10 +2,10 @@
 QuoTrading AI - Customer Launcher
 ==================================
 Professional GUI application for easy setup and launch.
-4-Screen Progressive Onboarding Flow with Validation.
+4-Screen Progressive Onboarding Flow with Cloud Validation.
 
 Flow:
-1. Screen 0: Username Creation
+1. Screen 0: Login (Cloud-validated username, password, API key)
 2. Screen 1: QuoTrading Account Setup (Email + API Key validation)
 3. Screen 2: Broker Connection Setup (Prop Firm/Live Broker with validation)
 4. Screen 3: Trading Preferences (Symbol selection, risk settings, launch)
@@ -22,41 +22,45 @@ import subprocess
 import re
 import threading
 import time
+import requests  # For cloud API calls
 
 
 class QuoTradingLauncher:
-    """Professional GUI launcher for QuoTrading AI bot - Green/Black Theme."""
+    """Professional GUI launcher for QuoTrading AI bot - Blue/White Theme with Cloud Authentication."""
     
     def __init__(self):
         self.root = tk.Tk()
         self.root.title("QuoTrading - Professional Trading Platform")
-        self.root.geometry("750x700")
+        self.root.geometry("600x550")
         self.root.resizable(False, False)
         
-        # Green and Black color scheme - Premium Matrix-style theme
+        # Blue and White color scheme - Professional theme
         self.colors = {
-            'primary': '#000000',        # Pure black background
-            'secondary': '#0A0A0A',      # Near black for secondary cards
-            'success': '#00FF41',        # Matrix green (bright) - primary accent
-            'success_dark': '#00B82E',   # Darker green for buttons/headers
-            'success_darker': '#008F28', # Even darker green for depth
-            'error': '#FF0000',          # Red for error messages
-            'background': '#000000',     # Black main background
-            'card': '#0F0F0F',           # Dark gray card background
-            'card_elevated': '#1A1A1A',  # Slightly lighter for elevation
-            'text': '#00FF41',           # Bright green text (primary)
-            'text_light': '#00CC33',     # Medium green (secondary labels)
-            'text_secondary': '#008822', # Dark green (tertiary/hints)
-            'border': '#00FF41',         # Green border (glowing effect)
-            'border_subtle': '#00AA30',  # Subtle border
-            'input_bg': '#1A1A1A',       # Very dark gray for input fields
-            'input_focus': '#252525',    # Input field on focus
-            'button_hover': '#00DD38',   # Slightly darker green for hover state
-            'shadow': '#050505'          # Very dark for shadow effect
+            'primary': '#FFFFFF',        # White background
+            'secondary': '#F0F4F8',      # Light gray/blue for secondary cards
+            'success': '#2563EB',        # Blue - primary accent
+            'success_dark': '#1E40AF',   # Darker blue for buttons/headers
+            'success_darker': '#1E3A8A', # Even darker blue for depth
+            'error': '#DC2626',          # Red for error messages
+            'background': '#FFFFFF',     # White main background
+            'card': '#F8FAFC',           # Very light gray card background
+            'card_elevated': '#EFF6FF',  # Light blue tint for elevation
+            'text': '#1F2937',           # Dark gray text (primary)
+            'text_light': '#4B5563',     # Medium gray (secondary labels)
+            'text_secondary': '#6B7280', # Light gray (tertiary/hints)
+            'border': '#2563EB',         # Blue border
+            'border_subtle': '#93C5FD',  # Light blue subtle border
+            'input_bg': '#FFFFFF',       # White for input fields
+            'input_focus': '#EFF6FF',    # Light blue tint on focus
+            'button_hover': '#3B82F6',   # Lighter blue for hover state
+            'shadow': '#E5E7EB'          # Light gray for shadow effect
         }
         
         # Default fallback symbol
         self.DEFAULT_SYMBOL = 'ES'
+        
+        # Cloud validation API URL
+        self.VALIDATION_API_URL = "http://localhost:5000/api/validate"  # Update with your cloud server URL
         
         self.root.configure(bg=self.colors['background'])
         
@@ -75,7 +79,7 @@ class QuoTradingLauncher:
     
     def create_header(self, title, subtitle=""):
         """Create a professional header for each screen with premium styling."""
-        header = tk.Frame(self.root, bg=self.colors['success_dark'], height=110)
+        header = tk.Frame(self.root, bg=self.colors['success_dark'], height=80)
         header.pack(fill=tk.X)
         header.pack_propagate(False)
         
@@ -86,21 +90,21 @@ class QuoTradingLauncher:
         title_label = tk.Label(
             header,
             text=title,
-            font=("Segoe UI", 26, "bold"),  # Better font, larger size
+            font=("Segoe UI", 18, "bold"),
             bg=self.colors['success_dark'],
-            fg=self.colors['background']
+            fg='white'
         )
-        title_label.pack(pady=(22, 5))
+        title_label.pack(pady=(15, 3))
         
         if subtitle:
             subtitle_label = tk.Label(
                 header,
                 text=subtitle,
-                font=("Segoe UI", 12),
+                font=("Segoe UI", 10),
                 bg=self.colors['success_dark'],
-                fg=self.colors['background']
+                fg='white'
             )
-            subtitle_label.pack(pady=(0, 8))
+            subtitle_label.pack(pady=(0, 5))
         
         # Bottom shadow effect
         bottom_shadow = tk.Frame(header, bg=self.colors['shadow'], height=2)
@@ -111,16 +115,16 @@ class QuoTradingLauncher:
     def create_input_field(self, parent, label_text, is_password=False, placeholder=""):
         """Create a styled input field with label and premium design."""
         container = tk.Frame(parent, bg=self.colors['card'])
-        container.pack(fill=tk.X, pady=12)
+        container.pack(fill=tk.X, pady=8)
         
         label = tk.Label(
             container,
             text=label_text,
-            font=("Segoe UI", 11, "bold"),
+            font=("Segoe UI", 10, "bold"),
             bg=self.colors['card'],
             fg=self.colors['text']
         )
-        label.pack(anchor=tk.W, pady=(0, 6))
+        label.pack(anchor=tk.W, pady=(0, 4))
         
         # Create frame for input with border effect
         input_frame = tk.Frame(container, bg=self.colors['border'], bd=0)
@@ -128,7 +132,7 @@ class QuoTradingLauncher:
         
         entry = tk.Entry(
             input_frame,
-            font=("Segoe UI", 11),
+            font=("Segoe UI", 10),
             bg=self.colors['input_bg'],
             fg=self.colors['text'],
             insertbackground=self.colors['success'],
@@ -136,7 +140,7 @@ class QuoTradingLauncher:
             bd=0,
             show="●" if is_password else ""
         )
-        entry.pack(fill=tk.X, ipady=10, padx=2, pady=2)
+        entry.pack(fill=tk.X, ipady=8, padx=2, pady=2)
         
         # Add focus effects
         def on_focus_in(event):
@@ -174,19 +178,19 @@ class QuoTradingLauncher:
         """Create a styled button with premium design and hover effects."""
         if button_type == "next":
             bg = self.colors['success_dark']
-            fg = self.colors['background']
-            width = 20
-            height = 2
+            fg = 'white'
+            width = 18
+            height = 1
         elif button_type == "back":
             bg = self.colors['secondary']
             fg = self.colors['text']
-            width = 15
-            height = 2
-        else:  # start
+            width = 12
+            height = 1
+        else:  # start, continue, or other button types
             bg = self.colors['success']
-            fg = self.colors['background']
-            width = 25
-            height = 2
+            fg = 'white'
+            width = 20
+            height = 1
         
         # Create frame for button with shadow effect
         button_container = tk.Frame(parent, bg=parent.cget('bg'))
@@ -198,11 +202,11 @@ class QuoTradingLauncher:
         button = tk.Button(
             button_container,
             text=text,
-            font=("Segoe UI", 13, "bold"),
+            font=("Segoe UI", 11, "bold"),
             bg=bg,
             fg=fg,
             activebackground=self.colors['button_hover'],
-            activeforeground=self.colors['background'],
+            activeforeground='white',
             relief=tk.FLAT,
             bd=0,
             command=command,
@@ -214,10 +218,10 @@ class QuoTradingLauncher:
         
         # Add hover effects
         def on_enter(e):
-            if button_type == "next" or button_type == "start":
+            if button_type in {'next', 'start', 'continue'}:
                 button.config(bg=self.colors['button_hover'])
             else:
-                button.config(bg=self.colors['card'])
+                button.config(bg=self.colors['card_elevated'])
         
         def on_leave(e):
             button.config(bg=bg)
@@ -231,7 +235,7 @@ class QuoTradingLauncher:
         """Show a loading dialog with spinner and premium styling."""
         self.loading_window = tk.Toplevel(self.root)
         self.loading_window.title("Please Wait")
-        self.loading_window.geometry("380x170")
+        self.loading_window.geometry("350x140")
         self.loading_window.resizable(False, False)
         self.loading_window.configure(bg=self.colors['card'])
         
@@ -254,21 +258,21 @@ class QuoTradingLauncher:
         msg_label = tk.Label(
             inner_frame,
             text=message,
-            font=("Segoe UI", 14, "bold"),
+            font=("Segoe UI", 12, "bold"),
             bg=self.colors['card'],
             fg=self.colors['success']
         )
-        msg_label.pack(pady=(35, 15))
+        msg_label.pack(pady=(25, 12))
         
         # Spinner animation
         self.spinner_label = tk.Label(
             inner_frame,
             text="●",
-            font=("Segoe UI", 28),
+            font=("Segoe UI", 22),
             bg=self.colors['card'],
             fg=self.colors['success']
         )
-        self.spinner_label.pack(pady=15)
+        self.spinner_label.pack(pady=12)
         
         # Start spinner animation
         self.spinner_running = True
@@ -372,108 +376,205 @@ class QuoTradingLauncher:
         thread.start()
     
     def setup_username_screen(self):
-        """Screen 0: Username creation screen."""
+        """Screen 0: Login screen with cloud validation."""
         # Clear window
         for widget in self.root.winfo_children():
             widget.destroy()
         
         self.current_screen = 0
-        self.root.title("QuoTrading - Welcome")
+        self.root.title("QuoTrading - Login")
         
         # Header
-        header = self.create_header("Welcome to QuoTrading", "Create your trading profile")
+        header = self.create_header("QuoTrading Login", "Enter your credentials")
         
         # Main container
-        main = tk.Frame(self.root, bg=self.colors['background'], padx=40, pady=40)
+        main = tk.Frame(self.root, bg=self.colors['background'], padx=30, pady=20)
         main.pack(fill=tk.BOTH, expand=True)
         
         # Card
         card = tk.Frame(main, bg=self.colors['card'], relief=tk.FLAT, bd=0)
-        card.pack(fill=tk.BOTH, expand=True, padx=20, pady=20)
+        card.pack(fill=tk.BOTH, expand=True, padx=15, pady=10)
         card.configure(highlightbackground=self.colors['border'], highlightthickness=2)
         
         # Card content
-        content = tk.Frame(card, bg=self.colors['card'], padx=30, pady=30)
+        content = tk.Frame(card, bg=self.colors['card'], padx=25, pady=20)
         content.pack(fill=tk.BOTH, expand=True)
         
         # Welcome message
         welcome = tk.Label(
             content,
-            text="Create Your Username",
-            font=("Arial", 18, "bold"),
+            text="Sign In",
+            font=("Arial", 14, "bold"),
             bg=self.colors['card'],
             fg=self.colors['text']
         )
-        welcome.pack(pady=(0, 10))
+        welcome.pack(pady=(0, 5))
         
         info = tk.Label(
             content,
-            text="This username will be used to identify your trading profile.\nChoose something you'll remember.",
-            font=("Arial", 10),
+            text="Enter your credentials to access QuoTrading AI",
+            font=("Arial", 9),
             bg=self.colors['card'],
             fg=self.colors['text_light'],
             justify=tk.CENTER
         )
-        info.pack(pady=(0, 30))
+        info.pack(pady=(0, 15))
         
         # Username input
         self.username_entry = self.create_input_field(content, "Username:", placeholder=self.config.get("username", "Enter your username"))
         
+        # Password input
+        self.password_entry = self.create_input_field(content, "Password:", is_password=True, placeholder="Enter your password")
+        
+        # API Key input
+        self.api_key_entry = self.create_input_field(content, "API Key:", is_password=True, placeholder=self.config.get("user_api_key", "Enter your API key"))
+        
         # Instructions
         instructions = tk.Label(
             content,
-            text="• 3-20 characters\n• Letters, numbers, and underscores only\n• Will be saved to your profile",
-            font=("Arial", 9),
+            text="All fields are required for authentication",
+            font=("Arial", 8),
             bg=self.colors['card'],
             fg=self.colors['text_secondary'],
-            justify=tk.LEFT
+            justify=tk.CENTER
         )
-        instructions.pack(pady=(10, 30))
+        instructions.pack(pady=(5, 15))
         
         # Button container
         button_frame = tk.Frame(content, bg=self.colors['card'])
-        button_frame.pack(fill=tk.X, pady=20)
+        button_frame.pack(fill=tk.X, pady=10)
         
-        # Next button
-        next_btn = self.create_button(button_frame, "NEXT →", self.validate_username, "next")
-        next_btn.pack()
+        # Login button
+        login_btn = self.create_button(button_frame, "LOGIN", self.validate_login, "next")
+        login_btn.pack()
     
-    def validate_username(self):
-        """Validate username and proceed to QuoTrading setup."""
+    def validate_login(self):
+        """Validate login credentials with cloud server."""
         username = self.username_entry.get().strip()
+        password = self.password_entry.get().strip()
+        api_key = self.api_key_entry.get().strip()
         
-        # Remove placeholder if present
+        # Remove placeholders if present
         if username == "Enter your username":
             username = ""
+        if password == "Enter your password":
+            password = ""
+        if api_key == "Enter your API key" or api_key == self.config.get("user_api_key", ""):
+            api_key = ""
         
-        # Validation
+        # Basic validation
         if not username:
             messagebox.showerror(
                 "Username Required",
-                "Please enter a username to continue."
+                "Please enter your username."
             )
             return
         
-        if len(username) < 3 or len(username) > 20:
+        if not password:
             messagebox.showerror(
-                "Invalid Username",
-                "Username must be between 3 and 20 characters."
+                "Password Required",
+                "Please enter your password."
             )
             return
         
-        if not re.match(r'^[a-zA-Z0-9_]+$', username):
+        if not api_key:
             messagebox.showerror(
-                "Invalid Username",
-                "Username can only contain letters, numbers, and underscores."
+                "API Key Required",
+                "Please enter your API key."
             )
             return
         
-        # Save username to config
-        self.config["username"] = username
-        self.save_config()
+        # Show loading spinner
+        self.show_loading("Validating credentials...")
         
-        # Proceed to QuoTrading setup
-        self.setup_quotrading_screen()
+        # Define success callback
+        def on_success(user_data):
+            self.hide_loading()
+            # Save credentials
+            self.config["username"] = username
+            self.config["password"] = password
+            self.config["user_api_key"] = api_key
+            self.config["validated"] = True
+            if user_data:
+                self.config["user_data"] = user_data
+            self.save_config()
+            
+            # Show success message
+            messagebox.showinfo(
+                "Login Successful",
+                f"Welcome, {username}!\n\nYour credentials have been validated."
+            )
+            
+            # Proceed to QuoTrading setup
+            self.setup_quotrading_screen()
+        
+        # Define error callback
+        def on_error(error_msg):
+            self.hide_loading()
+            messagebox.showerror(
+                "Login Failed",
+                f"Authentication failed: {error_msg}\n\n"
+                f"Please check your credentials and try again."
+            )
+        
+        # Make cloud API validation call
+        credentials = {
+            "username": username,
+            "password": password,
+            "api_key": api_key
+        }
+        self.validate_cloud_credentials(credentials, on_success, on_error)
+    
+    def validate_cloud_credentials(self, credentials, success_callback, error_callback):
+        """Validate credentials with cloud API.
+        
+        This method makes an HTTP request to the cloud validation server.
+        
+        Args:
+            credentials: dict with username, password, and api_key
+            success_callback: function to call on successful validation (receives user_data)
+            error_callback: function to call on validation failure (receives error message)
+        """
+        def api_call():
+            try:
+                # Make HTTP POST request to cloud validation server
+                response = requests.post(
+                    self.VALIDATION_API_URL,
+                    json=credentials,
+                    timeout=10
+                )
+                
+                if response.status_code == 200:
+                    data = response.json()
+                    if data.get("valid"):
+                        # Successful validation
+                        user_data = data.get("user_data", {})
+                        self.root.after(0, lambda: success_callback(user_data))
+                    else:
+                        # Invalid credentials
+                        error_msg = data.get("message", "Invalid credentials")
+                        self.root.after(0, lambda: error_callback(error_msg))
+                else:
+                    # Server error
+                    error_msg = f"Server error: {response.status_code}"
+                    self.root.after(0, lambda: error_callback(error_msg))
+                    
+            except requests.exceptions.ConnectionError:
+                self.root.after(0, lambda: error_callback(
+                    "Cannot connect to validation server. Please check your internet connection."
+                ))
+            except requests.exceptions.Timeout:
+                self.root.after(0, lambda: error_callback(
+                    "Request timed out. Please try again."
+                ))
+            except Exception as e:
+                self.root.after(0, lambda: error_callback(
+                    f"Validation error: {str(e)}"
+                ))
+        
+        # Start API call in background thread
+        thread = threading.Thread(target=api_call, daemon=True)
+        thread.start()
     
     def setup_quotrading_screen(self):
         """Screen 1: QuoTrading Account Setup with Email + API Key validation."""
@@ -488,7 +589,7 @@ class QuoTradingLauncher:
         header = self.create_header("QuoTrading Account", "Enter your subscription credentials")
         
         # Main container
-        main = tk.Frame(self.root, bg=self.colors['background'], padx=40, pady=30)
+        main = tk.Frame(self.root, bg=self.colors['background'], padx=30, pady=15)
         main.pack(fill=tk.BOTH, expand=True)
         
         # Card
@@ -497,19 +598,19 @@ class QuoTradingLauncher:
         card.configure(highlightbackground=self.colors['border'], highlightthickness=2)
         
         # Card content
-        content = tk.Frame(card, bg=self.colors['card'], padx=30, pady=30)
+        content = tk.Frame(card, bg=self.colors['card'], padx=25, pady=20)
         content.pack(fill=tk.BOTH, expand=True)
         
         # Info message
         info = tk.Label(
             content,
             text="Enter your QuoTrading subscription details.\nWe'll validate your access before proceeding.",
-            font=("Arial", 11),
+            font=("Arial", 9),
             bg=self.colors['card'],
             fg=self.colors['text_light'],
             justify=tk.CENTER
         )
-        info.pack(pady=(0, 20))
+        info.pack(pady=(0, 15))
         
         # Email input
         self.email_entry = self.create_input_field(
@@ -530,16 +631,16 @@ class QuoTradingLauncher:
         help_text = tk.Label(
             content,
             text="📧 Check your email for your API key\n💡 Contact support@quotrading.com if you need help",
-            font=("Arial", 9),
+            font=("Arial", 8),
             bg=self.colors['card'],
             fg=self.colors['text_secondary'],
             justify=tk.CENTER
         )
-        help_text.pack(pady=(10, 20))
+        help_text.pack(pady=(5, 15))
         
         # Button container
         button_frame = tk.Frame(content, bg=self.colors['card'])
-        button_frame.pack(fill=tk.X, pady=20)
+        button_frame.pack(fill=tk.X, pady=10)
         
         # Back button
         back_btn = self.create_button(button_frame, "← BACK", self.setup_username_screen, "back")
@@ -632,7 +733,7 @@ class QuoTradingLauncher:
         header = self.create_header("Broker Connection", "Select your account type and broker")
         
         # Main container
-        main = tk.Frame(self.root, bg=self.colors['background'], padx=40, pady=30)
+        main = tk.Frame(self.root, bg=self.colors['background'], padx=30, pady=15)
         main.pack(fill=tk.BOTH, expand=True)
         
         # Card
@@ -641,33 +742,33 @@ class QuoTradingLauncher:
         card.configure(highlightbackground=self.colors['border'], highlightthickness=2)
         
         # Card content
-        content = tk.Frame(card, bg=self.colors['card'], padx=30, pady=30)
+        content = tk.Frame(card, bg=self.colors['card'], padx=25, pady=20)
         content.pack(fill=tk.BOTH, expand=True)
         
         # Info message
         info = tk.Label(
             content,
             text="Choose your broker type and enter credentials",
-            font=("Arial", 11),
+            font=("Arial", 9),
             bg=self.colors['card'],
             fg=self.colors['text_light'],
             justify=tk.CENTER
         )
-        info.pack(pady=(0, 20))
+        info.pack(pady=(0, 10))
         
         # Broker Type Selection - Card-style buttons
         type_label = tk.Label(
             content,
             text="Account Type:",
-            font=("Arial", 13, "bold"),
+            font=("Arial", 10, "bold"),
             bg=self.colors['card'],
             fg=self.colors['text']
         )
-        type_label.pack(pady=(0, 15))
+        type_label.pack(pady=(0, 8))
         
         # Container for cards
         cards_container = tk.Frame(content, bg=self.colors['card'])
-        cards_container.pack(fill=tk.X, pady=(0, 20))
+        cards_container.pack(fill=tk.X, pady=(0, 10))
         
         # Initialize broker type variable
         self.broker_type_var = tk.StringVar(value=self.config.get("broker_type", "Prop Firm"))
@@ -685,10 +786,10 @@ class QuoTradingLauncher:
                 bg=self.colors['secondary'],
                 relief=tk.FLAT,
                 bd=0,
-                highlightthickness=3,
+                highlightthickness=2,
                 highlightbackground=self.colors['border'] if self.broker_type_var.get() == btype else self.colors['text_secondary']
             )
-            card_frame.pack(side=tk.LEFT, expand=True, fill=tk.BOTH, padx=10)
+            card_frame.pack(side=tk.LEFT, expand=True, fill=tk.BOTH, padx=5)
             
             # Make card clickable
             def make_select(bt=btype):
@@ -698,14 +799,14 @@ class QuoTradingLauncher:
             
             # Card content
             inner = tk.Frame(card_frame, bg=self.colors['secondary'])
-            inner.pack(expand=True, fill=tk.BOTH, padx=20, pady=20)
+            inner.pack(expand=True, fill=tk.BOTH, padx=10, pady=10)
             inner.bind("<Button-1>", make_select(btype))
             
             # Icon
             icon_label = tk.Label(
                 inner,
                 text=icon,
-                font=("Arial", 30),
+                font=("Arial", 20),
                 bg=self.colors['secondary'],
                 fg=self.colors['text']
             )
@@ -716,18 +817,18 @@ class QuoTradingLauncher:
             type_name = tk.Label(
                 inner,
                 text=btype,
-                font=("Arial", 13, "bold"),
+                font=("Arial", 10, "bold"),
                 bg=self.colors['secondary'],
                 fg=self.colors['text']
             )
-            type_name.pack(pady=(10, 5))
+            type_name.pack(pady=(5, 3))
             type_name.bind("<Button-1>", make_select(btype))
             
             # Description
             desc_label = tk.Label(
                 inner,
                 text=desc,
-                font=("Arial", 9),
+                font=("Arial", 8),
                 bg=self.colors['secondary'],
                 fg=self.colors['text_light']
             )
@@ -740,21 +841,21 @@ class QuoTradingLauncher:
         broker_label = tk.Label(
             content,
             text="Select Broker:",
-            font=("Arial", 12, "bold"),
+            font=("Arial", 10, "bold"),
             bg=self.colors['card'],
             fg=self.colors['text']
         )
-        broker_label.pack(anchor=tk.W, pady=(10, 5))
+        broker_label.pack(anchor=tk.W, pady=(8, 3))
         
         self.broker_var = tk.StringVar(value=self.config.get("broker", "TopStep"))
         self.broker_dropdown = ttk.Combobox(
             content,
             textvariable=self.broker_var,
             state="readonly",
-            font=("Arial", 11),
+            font=("Arial", 9),
             width=35
         )
-        self.broker_dropdown.pack(fill=tk.X, pady=(0, 15))
+        self.broker_dropdown.pack(fill=tk.X, pady=(0, 10))
         
         # Update broker options based on selected type
         self.update_broker_options()
@@ -777,15 +878,15 @@ class QuoTradingLauncher:
         help_text = tk.Label(
             content,
             text="💡 Get your API credentials from your broker's account dashboard",
-            font=("Arial", 9),
+            font=("Arial", 8),
             bg=self.colors['card'],
             fg=self.colors['text_secondary']
         )
-        help_text.pack(pady=(5, 20))
+        help_text.pack(pady=(3, 12))
         
         # Button container
         button_frame = tk.Frame(content, bg=self.colors['card'])
-        button_frame.pack(fill=tk.X, pady=10)
+        button_frame.pack(fill=tk.X, pady=5)
         
         # Back button
         back_btn = self.create_button(button_frame, "← BACK", self.setup_quotrading_screen, "back")
@@ -802,9 +903,9 @@ class QuoTradingLauncher:
         # Update card styling
         for btype, card in self.broker_cards.items():
             if btype == broker_type:
-                card.config(highlightbackground=self.colors['border'], highlightthickness=3)
+                card.config(highlightbackground=self.colors['border'], highlightthickness=2)
             else:
-                card.config(highlightbackground=self.colors['text_secondary'], highlightthickness=3)
+                card.config(highlightbackground=self.colors['text_secondary'], highlightthickness=2)
         
         # Update broker dropdown
         self.update_broker_options()
@@ -896,7 +997,7 @@ class QuoTradingLauncher:
         header = self.create_header("Trading Preferences", "Configure your trading strategy")
         
         # Main container with scrollbar capability
-        main = tk.Frame(self.root, bg=self.colors['background'], padx=30, pady=20)
+        main = tk.Frame(self.root, bg=self.colors['background'], padx=25, pady=12)
         main.pack(fill=tk.BOTH, expand=True)
         
         # Card
@@ -905,22 +1006,22 @@ class QuoTradingLauncher:
         card.configure(highlightbackground=self.colors['border'], highlightthickness=2)
         
         # Card content
-        content = tk.Frame(card, bg=self.colors['card'], padx=25, pady=25)
+        content = tk.Frame(card, bg=self.colors['card'], padx=20, pady=15)
         content.pack(fill=tk.BOTH, expand=True)
         
         # Symbol Selection
         symbol_label = tk.Label(
             content,
             text="Trading Symbols (select at least one):",
-            font=("Arial", 12, "bold"),
+            font=("Arial", 10, "bold"),
             bg=self.colors['card'],
             fg=self.colors['text']
         )
-        symbol_label.pack(anchor=tk.W, pady=(0, 10))
+        symbol_label.pack(anchor=tk.W, pady=(0, 6))
         
         # Symbol checkboxes - 2 columns
         symbol_frame = tk.Frame(content, bg=self.colors['card'])
-        symbol_frame.pack(fill=tk.X, pady=(0, 15))
+        symbol_frame.pack(fill=tk.X, pady=(0, 10))
         
         self.symbol_vars = {}
         symbols = [
@@ -947,7 +1048,7 @@ class QuoTradingLauncher:
                 symbol_frame,
                 text=f"{code} - {name}",
                 variable=var,
-                font=("Arial", 10),
+                font=("Arial", 9),
                 bg=self.colors['card'],
                 fg=self.colors['text'],
                 selectcolor=self.colors['secondary'],
@@ -955,27 +1056,27 @@ class QuoTradingLauncher:
                 activeforeground=self.colors['success'],
                 cursor="hand2"
             )
-            cb.grid(row=row, column=col, sticky=tk.W, padx=10, pady=3)
+            cb.grid(row=row, column=col, sticky=tk.W, padx=8, pady=2)
         
         # Account Settings Row
         settings_row = tk.Frame(content, bg=self.colors['card'])
-        settings_row.pack(fill=tk.X, pady=(0, 15))
+        settings_row.pack(fill=tk.X, pady=(0, 10))
         
         # Account Size
         acc_frame = tk.Frame(settings_row, bg=self.colors['card'])
-        acc_frame.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 10))
+        acc_frame.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 8))
         
         tk.Label(
             acc_frame,
             text="Account Size ($):",
-            font=("Arial", 11, "bold"),
+            font=("Arial", 9, "bold"),
             bg=self.colors['card'],
             fg=self.colors['text']
-        ).pack(anchor=tk.W, pady=(0, 5))
+        ).pack(anchor=tk.W, pady=(0, 3))
         
         self.account_entry = tk.Entry(
             acc_frame,
-            font=("Arial", 11),
+            font=("Arial", 9),
             bg=self.colors['input_bg'],
             fg=self.colors['text'],
             insertbackground=self.colors['success'],
@@ -985,20 +1086,20 @@ class QuoTradingLauncher:
             highlightbackground=self.colors['border'],
             highlightcolor=self.colors['success']
         )
-        self.account_entry.pack(fill=tk.X, ipady=6, padx=2)
+        self.account_entry.pack(fill=tk.X, ipady=4, padx=2)
         self.account_entry.insert(0, self.config.get("account_size", "10000"))
         
         # Risk Per Trade
         risk_frame = tk.Frame(settings_row, bg=self.colors['card'])
-        risk_frame.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 10))
+        risk_frame.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 8))
         
         tk.Label(
             risk_frame,
             text="Risk per Trade (%):",
-            font=("Arial", 11, "bold"),
+            font=("Arial", 9, "bold"),
             bg=self.colors['card'],
             fg=self.colors['text']
-        ).pack(anchor=tk.W, pady=(0, 5))
+        ).pack(anchor=tk.W, pady=(0, 3))
         
         self.risk_var = tk.DoubleVar(value=self.config.get("risk_per_trade", 1.0))
         risk_spin = ttk.Spinbox(
@@ -1007,10 +1108,10 @@ class QuoTradingLauncher:
             to=5.0,
             increment=0.1,
             textvariable=self.risk_var,
-            width=15,
+            width=12,
             format="%.1f"
         )
-        risk_spin.pack(fill=tk.X, ipady=4)
+        risk_spin.pack(fill=tk.X, ipady=2)
         
         # Daily Loss Limit
         loss_frame = tk.Frame(settings_row, bg=self.colors['card'])
@@ -1019,14 +1120,14 @@ class QuoTradingLauncher:
         tk.Label(
             loss_frame,
             text="Daily Loss Limit ($):",
-            font=("Arial", 11, "bold"),
+            font=("Arial", 9, "bold"),
             bg=self.colors['card'],
             fg=self.colors['text']
-        ).pack(anchor=tk.W, pady=(0, 5))
+        ).pack(anchor=tk.W, pady=(0, 3))
         
         self.loss_entry = tk.Entry(
             loss_frame,
-            font=("Arial", 11),
+            font=("Arial", 9),
             bg=self.colors['input_bg'],
             fg=self.colors['text'],
             insertbackground=self.colors['success'],
@@ -1036,24 +1137,24 @@ class QuoTradingLauncher:
             highlightbackground=self.colors['border'],
             highlightcolor=self.colors['success']
         )
-        self.loss_entry.pack(fill=tk.X, ipady=6, padx=2)
+        self.loss_entry.pack(fill=tk.X, ipady=4, padx=2)
         self.loss_entry.insert(0, self.config.get("daily_loss_limit", "2000"))
         
         # Advanced Settings Row
         advanced_row = tk.Frame(content, bg=self.colors['card'])
-        advanced_row.pack(fill=tk.X, pady=(0, 15))
+        advanced_row.pack(fill=tk.X, pady=(0, 10))
         
         # Max Contracts
         contracts_frame = tk.Frame(advanced_row, bg=self.colors['card'])
-        contracts_frame.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 10))
+        contracts_frame.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 8))
         
         tk.Label(
             contracts_frame,
             text="Max Contracts:",
-            font=("Arial", 11, "bold"),
+            font=("Arial", 9, "bold"),
             bg=self.colors['card'],
             fg=self.colors['text']
-        ).pack(anchor=tk.W, pady=(0, 5))
+        ).pack(anchor=tk.W, pady=(0, 3))
         
         self.contracts_var = tk.IntVar(value=self.config.get("max_contracts", 3))
         contracts_spin = ttk.Spinbox(
@@ -1061,9 +1162,9 @@ class QuoTradingLauncher:
             from_=1,
             to=25,
             textvariable=self.contracts_var,
-            width=15
+            width=12
         )
-        contracts_spin.pack(fill=tk.X, ipady=4)
+        contracts_spin.pack(fill=tk.X, ipady=2)
         
         # Max Trades Per Day
         trades_frame = tk.Frame(advanced_row, bg=self.colors['card'])
@@ -1072,10 +1173,10 @@ class QuoTradingLauncher:
         tk.Label(
             trades_frame,
             text="Max Trades/Day:",
-            font=("Arial", 11, "bold"),
+            font=("Arial", 9, "bold"),
             bg=self.colors['card'],
             fg=self.colors['text']
-        ).pack(anchor=tk.W, pady=(0, 5))
+        ).pack(anchor=tk.W, pady=(0, 3))
         
         self.trades_var = tk.IntVar(value=self.config.get("max_trades", 10))
         trades_spin = ttk.Spinbox(
@@ -1083,26 +1184,26 @@ class QuoTradingLauncher:
             from_=1,
             to=50,
             textvariable=self.trades_var,
-            width=15
+            width=12
         )
-        trades_spin.pack(fill=tk.X, ipady=4)
+        trades_spin.pack(fill=tk.X, ipady=2)
         
         # Summary display
         summary_frame = tk.Frame(content, bg=self.colors['secondary'], relief=tk.FLAT, bd=0)
-        summary_frame.pack(fill=tk.X, pady=(10, 20))
+        summary_frame.pack(fill=tk.X, pady=(8, 12))
         summary_frame.configure(highlightbackground=self.colors['border'], highlightthickness=1)
         
-        summary_content = tk.Frame(summary_frame, bg=self.colors['secondary'], padx=15, pady=10)
+        summary_content = tk.Frame(summary_frame, bg=self.colors['secondary'], padx=12, pady=8)
         summary_content.pack(fill=tk.X)
         
         summary_title = tk.Label(
             summary_content,
             text="✓ Ready to Trade",
-            font=("Arial", 12, "bold"),
+            font=("Arial", 10, "bold"),
             bg=self.colors['secondary'],
             fg=self.colors['success']
         )
-        summary_title.pack(pady=(0, 5))
+        summary_title.pack(pady=(0, 3))
         
         username = self.config.get("username", "Trader")
         broker = self.config.get("broker", "TopStep")
@@ -1110,7 +1211,7 @@ class QuoTradingLauncher:
         summary_text = tk.Label(
             summary_content,
             text=f"User: {username} | Broker: {broker}\nAll credentials validated and ready",
-            font=("Arial", 9),
+            font=("Arial", 8),
             bg=self.colors['secondary'],
             fg=self.colors['text_light'],
             justify=tk.CENTER
@@ -1119,15 +1220,15 @@ class QuoTradingLauncher:
         
         # Button container
         button_frame = tk.Frame(content, bg=self.colors['card'])
-        button_frame.pack(fill=tk.X, pady=15)
+        button_frame.pack(fill=tk.X, pady=8)
         
         # Back button
         back_btn = self.create_button(button_frame, "← BACK", self.setup_broker_screen, "back")
         back_btn.pack(side=tk.LEFT, padx=(0, 10))
         
-        # Start Bot button
-        start_btn = self.create_button(button_frame, "START BOT", self.start_bot, "start")
-        start_btn.pack(side=tk.RIGHT)
+        # Continue button
+        continue_btn = self.create_button(button_frame, "CONTINUE", self.start_bot, "continue")
+        continue_btn.pack(side=tk.RIGHT)
     
     def start_bot(self):
         """Validate settings and start the trading bot."""
@@ -1312,9 +1413,14 @@ BOT_LOG_LEVEL=INFO
     def save_config(self):
         """Save current configuration.
         
-        Security Note: config.json may contain sensitive data (API keys). It is
-        included in .gitignore to prevent accidental commits. Users should secure
+        Security Note: config.json may contain sensitive data (API keys, passwords). 
+        It is included in .gitignore to prevent accidental commits. Users should secure
         this file on their local system.
+        
+        Password Storage: The password is stored in plain text when "remember credentials"
+        is enabled. This is for convenience in a local desktop application context where
+        the user has physical access to the machine. For production deployments, consider
+        implementing password hashing or using OS keyring services.
         """
         with open(self.config_file, 'w') as f:
             json.dump(self.config, f, indent=2)
