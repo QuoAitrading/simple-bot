@@ -41,11 +41,9 @@ def test_launcher_structure():
     
     # Check required methods
     required_methods = [
-        'setup_username_screen',      # Screen 0: Username, password, and API key
-        'validate_login',             # Validates credentials and moves to broker screen
-        'setup_broker_screen',        # Screen 1: Broker setup
-        'validate_broker',            # Validates and moves to trading screen
-        'setup_trading_screen',       # Screen 2: Trading settings
+        'setup_broker_screen',        # Screen 0: Broker credentials + QuoTrading API key
+        'validate_broker',            # Validates credentials and moves to trading screen
+        'setup_trading_screen',       # Screen 1: Trading controls
         'start_bot',                  # Starts the bot
         'create_button',              # Creates navigation buttons
     ]
@@ -73,16 +71,13 @@ def test_navigation_flow_logic():
     with open(launcher_path, 'r') as f:
         content = f.read()
     
-    # Test flow: Screen 0 -> Screen 1 -> Screen 2
+    # Test flow: Screen 0 -> Screen 1
     flow_checks = [
-        ("Screen 0 (username/password/API key)", 'def setup_username_screen', 'self.current_screen = 0'),
-        ("Screen 0 next button", 'def validate_login', 'self.setup_broker_screen()'),
-        ("Screen 1 (Broker)", 'def setup_broker_screen', 'self.current_screen = 1'),
-        ("Screen 1 back button", 'setup_broker_screen', 'setup_username_screen'),
-        ("Screen 1 next button", 'validate_broker', 'self.setup_trading_screen()'),
-        ("Screen 2 (Trading)", 'def setup_trading_screen', 'self.current_screen = 2'),
-        ("Screen 2 back button", 'setup_trading_screen', 'setup_broker_screen'),
-        ("Screen 2 start button", 'def start_bot', 'self.save_config()'),
+        ("Screen 0 (broker setup)", 'def setup_broker_screen', 'self.current_screen = 0'),
+        ("Screen 0 next button", 'def validate_broker', 'self.setup_trading_screen()'),
+        ("Screen 1 (trading controls)", 'def setup_trading_screen', 'self.current_screen = 1'),
+        ("Screen 1 back button", 'setup_trading_screen', 'setup_broker_screen'),
+        ("Screen 1 start button", 'def start_bot', 'self.save_config()'),
     ]
     
     print("\nChecking navigation flow:")
@@ -108,11 +103,9 @@ def test_button_existence():
         content = f.read()
     
     button_checks = [
-        ("Screen 0 has NEXT button", 'setup_username_screen', '"NEXT →"'),
-        ("Screen 1 has BACK button", 'setup_broker_screen', '"← BACK"'),
-        ("Screen 1 has NEXT button", 'setup_broker_screen', '"NEXT →"'),
-        ("Screen 2 has BACK button", 'setup_trading_screen', '"← BACK"'),
-        ("Screen 2 has START button", 'setup_trading_screen', '"START BOT →"'),
+        ("Screen 0 has NEXT button", 'setup_broker_screen', '"NEXT →"'),
+        ("Screen 1 has BACK button", 'setup_trading_screen', '"← BACK"'),
+        ("Screen 1 has START button", 'setup_trading_screen', '"START BOT →"'),
     ]
     
     print("\nChecking navigation buttons:")
@@ -185,7 +178,6 @@ def test_screen_flow_documentation():
     expected_flow = [
         "Screen 0:",
         "Screen 1:",
-        "Screen 2:",
     ]
     
     print("\nChecking documentation:")
@@ -221,9 +213,8 @@ def main():
     if test1_pass and test2_pass and test3_pass and test4_pass:
         print("✅ ALL TESTS PASSED - Navigation flow is correctly implemented!")
         print("\nNavigation Flow:")
-        print("  Screen 0: Username, Password & API Key → [NEXT] →")
-        print("  Screen 1: Broker Setup → [NEXT] → (← BACK to Screen 0)")
-        print("  Screen 2: Trading Settings → [START BOT] (← BACK to Screen 1)")
+        print("  Screen 0: Broker Setup (credentials + QuoTrading API key + account size) → [NEXT] →")
+        print("  Screen 1: Trading Controls → [START BOT] (← BACK to Screen 0)")
         return 0
     else:
         print("❌ SOME TESTS FAILED - Check errors above")

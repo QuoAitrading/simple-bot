@@ -2,12 +2,11 @@
 QuoTrading AI - Customer Launcher
 ==================================
 Professional GUI application for easy setup and launch.
-3-Screen Progressive Onboarding Flow with Cloud Validation.
+2-Screen Progressive Onboarding Flow.
 
 Flow:
-1. Screen 0: Login (username, password, API key)
-2. Screen 1: Broker Connection Setup (Broker credentials)
-3. Screen 2: Trading Preferences (Symbol selection, risk settings, launch)
+1. Screen 0: Broker Setup (Broker credentials, QuoTrading API key, account size)
+2. Screen 1: Trading Controls (Symbol selection, risk settings, launch)
 """
 
 import tkinter as tk
@@ -73,8 +72,8 @@ class QuoTradingLauncher:
         # Bot process reference
         self.bot_process = None
         
-        # Start with username screen (Screen 0)
-        self.setup_username_screen()
+        # Start with broker screen (Screen 0)
+        self.setup_broker_screen()
     
     def create_header(self, title, subtitle=""):
         """Create a professional header for each screen with premium styling."""
@@ -741,12 +740,12 @@ class QuoTradingLauncher:
         self.validate_api_call("quotrading", credentials, on_success, on_error)
     
     def setup_broker_screen(self):
-        """Screen 1: Broker Connection Setup (Prop Firm vs Live Broker)."""
+        """Screen 0: Broker Connection Setup with QuoTrading API Key and Account Size."""
         # Clear window
         for widget in self.root.winfo_children():
             widget.destroy()
         
-        self.current_screen = 1
+        self.current_screen = 0
         self.root.title("QuoTrading - Broker Setup")
         
         # Header
@@ -880,6 +879,35 @@ class QuoTradingLauncher:
         # Update broker options based on selected type
         self.update_broker_options()
         
+        # QuoTrading API Key
+        self.quotrading_api_key_entry = self.create_input_field(
+            content,
+            "QuoTrading API Key:",
+            is_password=True,
+            placeholder=self.config.get("quotrading_api_key", "")
+        )
+        
+        # Account Size dropdown
+        account_label = tk.Label(
+            content,
+            text="Account Size:",
+            font=("Arial", 10, "bold"),
+            bg=self.colors['card'],
+            fg=self.colors['text']
+        )
+        account_label.pack(anchor=tk.W, pady=(8, 3))
+        
+        self.account_size_var = tk.StringVar(value=self.config.get("account_size", "50k"))
+        self.account_size_dropdown = ttk.Combobox(
+            content,
+            textvariable=self.account_size_var,
+            state="readonly",
+            font=("Arial", 9),
+            width=35,
+            values=["50k", "100k", "150k", "200k", "250k"]
+        )
+        self.account_size_dropdown.pack(fill=tk.X, pady=(0, 10))
+        
         # Broker credentials
         self.broker_token_entry = self.create_input_field(
             content,
@@ -908,11 +936,7 @@ class QuoTradingLauncher:
         button_frame = tk.Frame(content, bg=self.colors['card'])
         button_frame.pack(fill=tk.X, pady=5)
         
-        # Back button
-        back_btn = self.create_button(button_frame, "← BACK", self.setup_username_screen, "back")
-        back_btn.pack(side=tk.LEFT, padx=(0, 10))
-        
-        # Next button
+        # Next button (no back button on first screen)
         next_btn = self.create_button(button_frame, "NEXT →", self.validate_broker, "next")
         next_btn.pack(side=tk.RIGHT)
     
@@ -935,18 +959,24 @@ class QuoTradingLauncher:
         broker_type = self.broker_type_var.get()
         
         if broker_type == "Prop Firm":
-            options = ["TopStep", "Earn2Trade", "The5ers", "FTMO"]
+            options = ["TopStep"]
         else:  # Live Broker
-            options = ["Tradovate", "Rithmic", "Interactive Brokers", "NinjaTrader"]
+            options = ["Tradovate"]
         
         self.broker_dropdown['values'] = options
         self.broker_dropdown.current(0)
     
     def validate_broker(self):
-        """Validate broker credentials before proceeding."""
+        """Validate broker credentials and QuoTrading API key before proceeding."""
         broker = self.broker_var.get()
         token = self.broker_token_entry.get().strip()
         username = self.broker_username_entry.get().strip()
+        quotrading_api_key = self.quotrading_api_key_entry.get().strip()
+        account_size = self.account_size_var.get()
+        
+        # Remove placeholder if present
+        if quotrading_api_key == self.config.get("quotrading_api_key", ""):
+            quotrading_api_key = ""
         
         # Validation
         if not token or not username:
@@ -956,13 +986,21 @@ class QuoTradingLauncher:
             )
             return
         
-        # Check if using admin key - bypass broker validation
-        user_key = self.config.get("user_api_key", "")
-        if user_key == "QUOTRADING_ADMIN_MASTER_2025":
+        if not quotrading_api_key:
+            messagebox.showerror(
+                "Missing API Key",
+                "Please enter your QuoTrading API Key."
+            )
+            return
+        
+        # Check if using admin key - bypass validation
+        if quotrading_api_key == "QUOTRADING_ADMIN_MASTER_2025":
             self.config["broker_type"] = self.broker_type_var.get()
             self.config["broker"] = broker
             self.config["broker_token"] = token
             self.config["broker_username"] = username
+            self.config["quotrading_api_key"] = quotrading_api_key
+            self.config["account_size"] = account_size
             self.config["broker_validated"] = True
             self.save_config()
             self.setup_trading_screen()
@@ -979,6 +1017,8 @@ class QuoTradingLauncher:
             self.config["broker"] = broker
             self.config["broker_token"] = token
             self.config["broker_username"] = username
+            self.config["quotrading_api_key"] = quotrading_api_key
+            self.config["account_size"] = account_size
             self.config["broker_validated"] = True
             self.save_config()
             # Proceed to trading preferences
@@ -1005,16 +1045,16 @@ class QuoTradingLauncher:
         self.validate_api_call("broker", credentials, on_success, on_error)
     
     def setup_trading_screen(self):
-        """Screen 2: Trading Preferences and Launch."""
+        """Screen 1: Trading Controls and Launch."""
         # Clear window
         for widget in self.root.winfo_children():
             widget.destroy()
         
-        self.current_screen = 2
-        self.root.title("QuoTrading - Trading Settings")
+        self.current_screen = 1
+        self.root.title("QuoTrading - Trading Controls")
         
         # Header
-        header = self.create_header("Trading Preferences", "Configure your trading strategy")
+        header = self.create_header("Trading Controls", "Configure your trading strategy")
         
         # Main container with scrollbar capability
         main = tk.Frame(self.root, bg=self.colors['background'], padx=25, pady=12)
@@ -1225,12 +1265,12 @@ class QuoTradingLauncher:
         )
         summary_title.pack(pady=(0, 3))
         
-        username = self.config.get("username", "Trader")
         broker = self.config.get("broker", "TopStep")
+        account_size = self.config.get("account_size", "50k")
         
         summary_text = tk.Label(
             summary_content,
-            text=f"User: {username} | Broker: {broker}\nAll credentials validated and ready",
+            text=f"Broker: {broker} | Account: {account_size}\nAll credentials validated and ready",
             font=("Arial", 8),
             bg=self.colors['secondary'],
             fg=self.colors['text_light'],
@@ -1382,9 +1422,9 @@ class QuoTradingLauncher:
 # Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
 # DO NOT EDIT MANUALLY - Use the launcher to change settings
 
-# User Account
-USERNAME={self.config.get("username", "")}
-USER_API_KEY={self.config.get("user_api_key", "")}
+# QuoTrading Account
+QUOTRADING_API_KEY={self.config.get("quotrading_api_key", "")}
+ACCOUNT_SIZE={self.config.get("account_size", "50k")}
 
 # Broker Configuration
 BROKER={broker}
