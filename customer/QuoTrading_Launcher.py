@@ -1586,7 +1586,8 @@ class QuoTradingLauncher:
                     text="When Recovery Mode is ENABLED:\n"
                          "• Bot continues trading even when close to daily loss or max drawdown limits\n"
                          "• Confidence auto-scales: 75% @ 80% of limits, 85% @ 90%, 90% @ 95%+\n"
-                         "• Position size dynamically reduced as approaching limits\n"
+                         "• Position size dynamically adjusts: reduces when approaching, increases when safe\n"
+                         "• Contracts scale: 33%→50%→75%→85%→95%→100% as you get safer\n"
                          "• Only takes highest-quality signals when close to failure\n"
                          "• Attempts to recover from losses with smart risk management\n"
                          "• Applies to ALL account types (prop firms, live brokers, etc.)",
@@ -1594,19 +1595,20 @@ class QuoTradingLauncher:
                 )
             else:
                 recovery_info.config(
-                    text="✓ SAFE MODE: Bot will stop making NEW trades (but stay running) when approaching 80% of daily loss limit or max drawdown. "
-                         "This protects you from account failure. Bot continues monitoring and will resume after daily reset.",
+                    text="✓ SAFE MODE: Bot will WARN when approaching limits but NEVER lock you out. "
+                         "You maintain full control. Bot shows warnings and recommendations, but YOU decide whether to trade. "
+                         "Recommended for cautious traders who want guidance without restrictions.",
                     fg=self.colors['success']
                 )
                 recovery_explanation.config(
                     text="When Recovery Mode is DISABLED (Safe Mode):\n"
-                         "• Bot stops NEW trades at 80% of daily loss limit (e.g., $1600/$2000)\n"
-                         "• Bot stops NEW trades at 80% of max drawdown (e.g., 6.4%/8%)\n"
-                         "• Existing positions are managed normally (stop losses, exits)\n"
+                         "• Bot WARNS at 80% of daily loss (e.g., $1600 of $2000 limit)\n"
+                         "• Bot WARNS at 80% of max drawdown with dollar amounts\n"
+                         "• Bot NEVER stops you from trading - you maintain full control\n"
+                         "• Smart recommendations provided (confidence, contracts, limits)\n"
                          "• Bot continues running and monitoring market conditions\n"
-                         "• Bot will NOT attempt recovery trades\n"
-                         "• Resumes trading after daily reset (maintenance window)\n"
-                         "• Safest option - prevents account failure",
+                         "• One-click apply recommendations if desired\n"
+                         "• Safest option with maximum user control",
                     fg=self.colors['text_secondary']
                 )
         

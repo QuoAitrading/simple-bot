@@ -2083,24 +2083,35 @@ def calculate_position_size(symbol: str, side: str, entry_price: float, rl_confi
     # RECOVERY MODE: Further reduce position size when approaching limits
     if bot_status.get("recovery_confidence_threshold") is not None:
         severity = bot_status.get("recovery_severity", RECOVERY_DEFAULT_SEVERITY)
-        # Reduce position size based on proximity to failure
-        # At 80% severity: 75% of normal size
-        # At 90% severity: 50% of normal size
+        # Dynamically scale position size based on proximity to failure
+        # As bot gets FURTHER from failure, INCREASE contracts back to original
         # At 95%+ severity: 33% of normal size
+        # At 90% severity: 50% of normal size  
+        # At 80% severity: 75% of normal size
+        # At 70% severity: 85% of normal size (scaling back up)
+        # At 60% severity: 95% of normal size (almost back to normal)
+        # Below 50% severity: 100% of normal size (fully restored)
         if severity >= RECOVERY_SIZE_CRITICAL:
-            recovery_multiplier = RECOVERY_MULTIPLIER_CRITICAL
+            recovery_multiplier = RECOVERY_MULTIPLIER_CRITICAL  # 33%
         elif severity >= RECOVERY_SIZE_HIGH:
-            recovery_multiplier = RECOVERY_MULTIPLIER_HIGH
+            recovery_multiplier = RECOVERY_MULTIPLIER_HIGH  # 50%
         elif severity >= RECOVERY_SIZE_MODERATE:
-            recovery_multiplier = RECOVERY_MULTIPLIER_MODERATE
+            recovery_multiplier = RECOVERY_MULTIPLIER_MODERATE  # 75%
+        elif severity >= 0.70:
+            recovery_multiplier = 0.85  # Scaling back up - 85%
+        elif severity >= 0.60:
+            recovery_multiplier = 0.95  # Almost back to normal - 95%
         else:
-            recovery_multiplier = 1.0
+            recovery_multiplier = 1.0  # Fully restored - 100%
         
         original_contracts = contracts
         contracts = max(1, int(round(contracts * recovery_multiplier)))
         
         if contracts != original_contracts:
-            logger.warning(f"[RECOVERY MODE] Position size reduced: {original_contracts} → {contracts} contracts (severity: {severity*100:.0f}%)")
+            if recovery_multiplier < 1.0:
+                logger.warning(f"[RECOVERY MODE] Position size adjusted: {original_contracts} → {contracts} contracts (severity: {severity*100:.0f}%, multiplier: {recovery_multiplier*100:.0f}%)")
+            else:
+                logger.info(f"[RECOVERY MODE] Position size restored: {original_contracts} → {contracts} contracts (severity: {severity*100:.0f}%, safe zone)")
     
     if contracts == 0:
         logger.warning(f"Position size too small: risk=${risk_per_contract:.2f}, allowance=${risk_dollars:.2f}")
@@ -5101,19 +5112,20 @@ def check_safety_conditions(symbol: str) -> Tuple[bool, Optional[str]]:
             
             # Don't stop trading, but signal evaluation will use higher threshold
         else:
-            # RECOVERY MODE DISABLED (Safe Mode): Stop trading when approaching failure
-            if bot_status.get("stop_reason") != "approaching_failure":
+            # RECOVERY MODE DISABLED (Safe Mode): WARN but DON'T stop trading
+            # User maintains full control - bot provides guidance but doesn't lock them out
+            if bot_status.get("stop_reason") != "approaching_failure_warning":
                 logger.warning("=" * 80)
-                logger.warning("SAFE MODE: APPROACHING FAILURE - STOPPING NEW TRADES")
+                logger.warning("⚠️ WARNING: APPROACHING FAILURE - PROCEED WITH CAUTION")
                 logger.warning(f"Reason: {approach_reason}")
                 logger.warning(f"Severity: {severity*100:.1f}%")
-                logger.warning("Bot will STOP making NEW trades (existing positions managed normally)")
-                logger.warning("Bot continues running and monitoring")
-                logger.warning("Will resume trading after daily reset (maintenance window)")
+                logger.warning("RECOMMENDATION: Enable Recovery Mode for smart risk management")
+                logger.warning("Bot will CONTINUE trading - User maintains full control")
+                logger.warning("⚠️ CAUTION: Higher risk of account failure without recovery mode")
                 logger.warning("=" * 80)
-                bot_status["trading_enabled"] = False
-                bot_status["stop_reason"] = "approaching_failure"
-            return False, f"Approaching failure: {approach_reason}"
+                bot_status["stop_reason"] = "approaching_failure_warning"
+            # DON'T set trading_enabled = False - never lock user out
+            # Just provide warning and let user decide
     else:
         # Not approaching failure - clear any safety mode that was set
         if bot_status.get("stop_reason") in ["approaching_failure", "recovery_mode"]:

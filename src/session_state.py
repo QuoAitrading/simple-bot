@@ -183,9 +183,10 @@ class SessionStateManager:
             })
         
         if daily_loss_pct > 1.5 and account_type == "prop_firm":
+            loss_dollars = abs(daily_pnl)
             warnings.append({
                 "level": "warning",
-                "message": f"Daily loss at {daily_loss_pct:.1f}% of account. Prop firm accounts have strict rules."
+                "message": f"Daily loss: ${loss_dollars:.0f} of ${daily_loss_limit:.0f}. Prop firm accounts have strict rules."
             })
         
         # Generate recommendations based on account type and state
@@ -246,6 +247,20 @@ class SessionStateManager:
                     "priority": "medium",
                     "message": "🛡️ SUGGEST: Enable trailing drawdown protection for prop firm accounts"
                 })
+        
+        # Show dollar amounts instead of percentages for clarity
+        if daily_pnl < 0:
+            recommendations.append({
+                "priority": "info",
+                "message": f"📊 Current Daily Loss: ${abs(daily_pnl):.0f} of ${daily_loss_limit:.0f} limit"
+            })
+        
+        if current_equity < account_size:
+            drawdown_dollars = account_size - current_equity
+            recommendations.append({
+                "priority": "info",
+                "message": f"📉 Current Drawdown: ${drawdown_dollars:.0f} from starting ${account_size:.0f}"
+            })
         
         # Save warnings and recommendations to state
         self.state["warnings"] = warnings
