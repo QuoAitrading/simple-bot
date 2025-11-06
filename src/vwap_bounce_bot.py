@@ -5126,9 +5126,10 @@ def check_safety_conditions(symbol: str) -> Tuple[bool, Optional[str]]:
                 bot_status["stop_reason"] = "approaching_failure_warning"
             # DON'T set trading_enabled = False - never lock user out
             # Just provide warning and let user decide
+            # Continue with normal trading - no return False
     else:
         # Not approaching failure - clear any safety mode that was set
-        if bot_status.get("stop_reason") in ["approaching_failure", "recovery_mode"]:
+        if bot_status.get("stop_reason") in ["approaching_failure", "approaching_failure_warning", "recovery_mode"]:
             logger.info("=" * 80)
             logger.info("SAFE ZONE: Back to normal operation")
             logger.info("Bot has moved away from failure thresholds")
