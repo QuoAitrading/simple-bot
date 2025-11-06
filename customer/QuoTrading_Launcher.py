@@ -1552,13 +1552,24 @@ class QuoTradingLauncher:
         
         # Calculate optimal settings based on account balance
         # Risk management rules:
-        # - Daily loss limit: 2-4% of account balance
+        # - Daily loss limit: Suggested fixed dollar amount based on account size
         # - Max contracts: Based on account size and risk
         # - Risk per trade: 0.5-2% depending on account size
-        # - Max trades per day: 10-20 based on account size
+        # - Max trades per day: 10-20 based on account size (resets daily after maintenance)
         
         # Calculate recommended settings
-        daily_loss_limit = balance * 0.03  # 3% of account
+        # Daily loss limit as fixed dollar amount (not percentage)
+        if balance < 25000:
+            daily_loss_limit = 500
+        elif balance < 50000:
+            daily_loss_limit = 1000
+        elif balance < 100000:
+            daily_loss_limit = 2000
+        elif balance < 150000:
+            daily_loss_limit = 3000
+        else:
+            daily_loss_limit = 5000
+        
         risk_per_trade = 1.0 if balance < 50000 else (0.75 if balance < 100000 else 0.5)
         max_contracts = max(1, min(10, int(balance / 25000)))  # 1 contract per 25k
         max_trades = 15 if balance < 100000 else 20
@@ -1672,12 +1683,13 @@ class QuoTradingLauncher:
         confirmation_text += f"Account: {self.account_dropdown_var.get()}\n"
         confirmation_text += f"Symbols: {symbols_str}\n"
         confirmation_text += f"Max Contracts: {self.contracts_var.get()}\n"
-        confirmation_text += f"Max Trades/Day: {self.trades_var.get()}\n"
         confirmation_text += f"Risk/Trade: {self.risk_var.get()}%\n"
         confirmation_text += f"Daily Loss Limit: ${loss_limit}\n"
         confirmation_text += f"  → Bot will automatically shut down if this limit is hit\n"
+        confirmation_text += f"  → Resets daily after market maintenance\n"
         confirmation_text += f"Max Trades/Day: {self.trades_var.get()}\n"
         confirmation_text += f"  → Bot will stop trading after reaching this limit\n"
+        confirmation_text += f"  → Resets daily after market maintenance\n"
         confirmation_text += f"Confidence Threshold: {self.confidence_var.get()}%\n"
         if self.shadow_mode_var.get():
             confirmation_text += f"Shadow Mode: ON (paper trading)\n"
@@ -1777,10 +1789,10 @@ TRADOVATE_USERNAME={self.config.get("broker_username", "")}
 BOT_INSTRUMENTS={symbols_str}
 BOT_MAX_CONTRACTS={self.contracts_var.get()}
 BOT_MAX_TRADES_PER_DAY={self.trades_var.get()}
-# Bot will stop trading after reaching max trades per day
+# Bot will stop trading after reaching max trades per day (resets daily after market maintenance)
 BOT_RISK_PER_TRADE={self.risk_var.get() / 100}
 BOT_DAILY_LOSS_LIMIT={self.loss_entry.get()}
-# Bot will automatically shut down if daily loss limit is hit
+# Bot will automatically shut down if daily loss limit (in dollars) is hit (resets daily after market maintenance)
 
 # AI/Confidence Settings
 BOT_CONFIDENCE_THRESHOLD={self.confidence_var.get()}
