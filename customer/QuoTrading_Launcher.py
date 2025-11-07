@@ -1102,24 +1102,36 @@ class QuoTradingLauncher:
         self.broker_username_entry = self.create_input_field(
             content,
             "Username/Email:",
-            placeholder=self.config.get("broker_username", "")
+            placeholder=""
         )
+        # Load saved username if exists
+        saved_username = self.config.get("broker_username", "")
+        if saved_username:
+            self.broker_username_entry.insert(0, saved_username)
         
         # Broker API Token
         self.broker_token_entry = self.create_input_field(
             content,
             "Broker API Key:",
             is_password=True,
-            placeholder=self.config.get("broker_token", "")
+            placeholder=""
         )
+        # Load saved token if exists
+        saved_token = self.config.get("broker_token", "")
+        if saved_token:
+            self.broker_token_entry.insert(0, saved_token)
         
         # QuoTrading API Key
         self.quotrading_api_key_entry = self.create_input_field(
             content,
             "QuoTrading API Key:",
             is_password=True,
-            placeholder=self.config.get("quotrading_api_key", "")
+            placeholder=""
         )
+        # Load saved QuoTrading key if exists
+        saved_quotrading_key = self.config.get("quotrading_api_key", "")
+        if saved_quotrading_key:
+            self.quotrading_api_key_entry.insert(0, saved_quotrading_key)
         
         # Remember credentials checkbox
         remember_frame = tk.Frame(content, bg=self.colors['card'])
@@ -1235,7 +1247,7 @@ class QuoTradingLauncher:
             
             # Only save credentials if "Remember" is checked
             if self.remember_credentials_var.get():
-                self.config["broker_token"] = "admin_bypass"
+                self.config["broker_token"] = token
                 self.config["broker_username"] = username if username else "admin"
                 self.config["quotrading_api_key"] = quotrading_api_key
                 self.config["remember_credentials"] = True
@@ -1360,14 +1372,14 @@ class QuoTradingLauncher:
             fg=self.colors['text_light']
         ).pack(anchor=tk.W)
         
-        self.account_dropdown_var = tk.StringVar(value=self.config.get("selected_account", "Default Account"))
+        self.account_dropdown_var = tk.StringVar(value="Click 'Fetch Account Info' to load accounts")
         self.account_dropdown = ttk.Combobox(
             account_select_frame,
             textvariable=self.account_dropdown_var,
             state="readonly",
             font=("Segoe UI", 7),
             width=20,
-            values=["Default Account"]
+            values=["Click 'Fetch Account Info' to load accounts"]
         )
         self.account_dropdown.pack(fill=tk.X)
         
@@ -2132,34 +2144,24 @@ class QuoTradingLauncher:
         confirmation_text += f"Symbols: {symbols_str}\n"
         confirmation_text += f"Contracts Per Trade: {self.contracts_var.get()}\n"
         confirmation_text += f"Daily Loss Limit: ${loss_limit}\n"
-        confirmation_text += f"  → AI stays on but will NOT execute trades if limit is hit\n"
-        confirmation_text += f"  → Resets daily after market maintenance\n"
         confirmation_text += f"Max Trades/Day: {self.trades_var.get()}\n"
-        confirmation_text += f"  → AI stays on but will NOT execute trades after limit\n"
-        confirmation_text += f"  → Resets daily after market maintenance\n"
         confirmation_text += f"Confidence Threshold: {self.confidence_var.get()}%\n"
+        
+        # Only show enabled features
         if self.shadow_mode_var.get():
-            confirmation_text += f"Shadow Mode: ON (paper trading)\n"
+            confirmation_text += f"\n✓ Shadow Mode: ON (paper trading - no real trades)\n"
+        
         if self.dynamic_contracts_var.get():
-            confirmation_text += f"Dynamic Contracts: ON (confidence-based sizing)\n"
+            confirmation_text += f"✓ Dynamic Contracts: ENABLED\n"
+            confirmation_text += f"  → Auto-increases contracts with higher confidence\n"
         
-        # Add Dynamic Confidence info
         if self.dynamic_confidence_var.get():
-            confirmation_text += f"\n✓ Dynamic Confidence: ENABLED\n"
-            confirmation_text += f"  → Auto-increases confidence when performing poorly\n"
-            confirmation_text += f"  → AI continues trading but becomes more selective\n"
-            confirmation_text += f"  → Stops only at daily loss limit\n"
+            confirmation_text += f"✓ Dynamic Confidence: ENABLED\n"
+            confirmation_text += f"  → Auto-adjusts threshold based on performance\n"
         
-        # Add Recovery Mode info
         if self.recovery_mode_var.get():
-            confirmation_text += f"\n⚠️ Recovery Mode: ENABLED\n"
-            confirmation_text += f"  → AI continues trading when close to limits\n"
-            confirmation_text += f"  → Auto-scales confidence (75-90%) and reduces risk dynamically\n"
-            confirmation_text += f"  → Attempts to recover from losses\n"
-        else:
-            confirmation_text += f"\nSafe Mode: AI stops NEW trades at 80% of limits\n"
-            confirmation_text += f"  → AI stops trading when approaching failure\n"
-            confirmation_text += f"  → Continues monitoring, resumes after daily reset\n"
+            confirmation_text += f"✓ Recovery Mode: ENABLED\n"
+            confirmation_text += f"  → Attempts recovery when approaching limits\n"
         
         confirmation_text += f"\nThis will open a PowerShell terminal with live logs.\n"
         confirmation_text += f"Use the window's close button to stop the bot.\n\n"

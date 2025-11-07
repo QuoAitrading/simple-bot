@@ -61,6 +61,24 @@ GUI_REQUIREMENTS = """
 tkinter  # Built-in with Python
 pillow>=10.0.0  # For images/icons
 
+# TopStep SDK and dependencies (for Fetch Account Info)
+project-x-py>=3.5.9
+cachetools>=6.1.0
+deprecated>=1.2.18
+httpx[http2]>=0.27.0
+lz4>=4.4.4
+msgpack-python>=0.5.6
+numpy>=2.3.2
+orjson>=3.11.1
+plotly>=6.3.0
+polars>=1.31.0
+pydantic>=2.11.7
+pytz>=2025.2
+pyyaml>=6.0.2
+requests>=2.32.4
+rich>=14.1.0
+signalrcore>=0.9.5
+
 # EXE Packaging (for building standalone executable)
 pyinstaller>=6.0.0  # Convert to Windows EXE
 """

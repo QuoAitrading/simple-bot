@@ -2,17 +2,17 @@
   "quotrading_license": "QUOTRADING_ADMIN_MASTER_2025",
   "market_type": "Futures",
   "broker": "TopStep",
-  "broker_token": "admin_bypass",
+  "broker_token": "0lqxI8Gt4JRDhbuP9wOoHmdxJE49fIQCxIU+mSbPqGs=",
   "broker_username": "alvarezjose4201@gmail.com",
   "symbols": [
     "ES"
   ],
   "account_size": "50000",
-  "max_contracts": 5,
+  "max_contracts": 1,
   "max_trades_per_day": 9999,
   "risk_per_trade": 0.012,
   "min_risk_reward": 2.0,
-  "daily_loss_limit": 2000.0,
+  "daily_loss_limit": 1000.0,
   "auto_calculate_limits": true,
   "rl_confidence_threshold": 0.65,
   "rl_exploration_rate": 0.05,
@@ -35,20 +35,21 @@
   "broker_validated": true,
   "accounts": [
     {
-      "id": "DEMO_ACCOUNT",
-      "name": "TopStep Demo Account (alvarezjose4201@gmail.com)",
+      "id": "TOPSTEP_MAIN",
+      "name": "TopStep Account (alvarezjose4201@gmail.com)",
       "balance": 50000.0,
       "equity": 50000.0,
       "type": "prop_firm"
     }
   ],
-  "selected_account": "TopStep Demo Account (alvarezjose4201@gmail.com) - $50,000.00",
+  "selected_account": "TopStep Account (alvarezjose4201@gmail.com) - $50,000.00",
   "fetched_account_balance": 50000.0,
   "fetched_account_type": "prop_firm",
-  "max_trades": 10,
+  "max_trades": 12,
   "confidence_threshold": 65.0,
   "shadow_mode": false,
   "dynamic_contracts": false,
   "recovery_mode": false,
-  "remember_credentials": true
+  "remember_credentials": true,
+  "dynamic_confidence": true
 }
