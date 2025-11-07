@@ -1049,9 +1049,9 @@ class QuoTradingLauncher:
         button_frame = tk.Frame(content, bg=self.colors['card'])
         button_frame.pack(fill=tk.X, pady=5)
         
-        # Next button (no back button on first screen)
-        next_btn = self.create_button(button_frame, "NEXT →", self.validate_broker, "next")
-        next_btn.pack(side=tk.RIGHT)
+        # Continue button (no back button on first screen)
+        continue_btn = self.create_button(button_frame, "CONTINUE →", self.validate_broker, "next")
+        continue_btn.pack(side=tk.RIGHT)
     
     def select_broker_type(self, broker_type):
         """Select broker type and update UI."""
