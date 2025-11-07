@@ -132,9 +132,6 @@ bid_ask_manager: Optional[BidAskManager] = None
 # Global adaptive exit manager (for streak tracking persistence)
 adaptive_manager: Optional[Any] = None
 
-# Global session state manager (for cross-session awareness)
-session_manager: Optional[Any] = None
-
 # State management dictionary
 state: Dict[str, Any] = {}
 
@@ -2043,7 +2040,10 @@ def calculate_position_size(symbol: str, side: str, entry_price: float, rl_confi
     user_max_contracts = CONFIG["max_contracts"]
     
     # Apply RL confidence to dynamically scale WITHIN user's limit
-    if rl_confidence is not None and CONFIG.get("rl_enabled", True):
+    # Check if dynamic contracts feature is enabled (GUI setting)
+    dynamic_contracts_enabled = CONFIG.get("dynamic_contracts", False)
+    
+    if rl_confidence is not None and CONFIG.get("rl_enabled", True) and dynamic_contracts_enabled:
         global rl_brain
         if rl_brain is not None:
             size_multiplier = rl_brain.get_position_size_multiplier(rl_confidence)
@@ -2075,10 +2075,15 @@ def calculate_position_size(symbol: str, side: str, entry_price: float, rl_confi
         else:
             confidence_level = "VERY HIGH"
             
-        logger.info(f"[RL DYNAMIC SIZING] {confidence_level} confidence ({rl_confidence:.1%}) × Max {user_max_contracts} = {rl_scaled_max} contracts (capped at {contracts} by risk)")
+        logger.info(f"[DYNAMIC CONTRACTS] {confidence_level} confidence ({rl_confidence:.1%}) × Max {user_max_contracts} = {rl_scaled_max} contracts (capped at {contracts} by risk)")
     else:
-        # No RL confidence - cap at user's max
+        # No RL confidence or dynamic contracts disabled - use fixed max
         contracts = min(contracts, user_max_contracts)
+        # Only log once when dynamic contracts are first disabled (avoid spamming logs)
+        if not dynamic_contracts_enabled and rl_confidence is not None:
+            if not hasattr(calculate_position_size, '_logged_fixed_mode'):
+                logger.info(f"[FIXED CONTRACTS] Using fixed max of {user_max_contracts} contracts (dynamic contracts disabled)")
+                calculate_position_size._logged_fixed_mode = True
     
     # RECOVERY MODE: Further reduce position size when approaching limits
     if bot_status.get("recovery_confidence_threshold") is not None:
@@ -4477,19 +4482,6 @@ def execute_exit(symbol: str, exit_price: float, reason: str) -> None:
     logger.info(SEPARATOR_LINE)
     
     # Update session state for cross-session awareness
-    if session_manager:
-        try:
-            current_equity = get_account_equity()
-            session_manager.update_trading_state(
-                starting_equity=bot_status.get("starting_equity", current_equity),
-                current_equity=current_equity,
-                daily_pnl=state[symbol]["daily_pnl"],
-                daily_trades=state[symbol]["daily_trade_count"],
-                broker=CONFIG.get("broker", "Unknown"),
-                account_type=None  # Will be inferred
-            )
-        except Exception as e:
-            logger.error(f"Failed to update session state: {e}")
     
     # Write trade summary to file for GUI display
     try:
@@ -4829,11 +4821,13 @@ def perform_daily_reset(symbol: str, new_date: Any) -> None:
         "after_noon_force_flattened": 0  # After-noon entries force-closed
     }
     
-    # Re-enable trading if it was stopped for daily limits
-    if bot_status["stop_reason"] == "daily_loss_limit":
+    # Re-enable trading if it was stopped for any daily limit reason
+    # "daily_loss_limit" = specific daily loss limit breached
+    # "daily_limits_reached" = approaching failure without recovery mode
+    if bot_status["stop_reason"] in ["daily_loss_limit", "daily_limits_reached"]:
         bot_status["trading_enabled"] = True
         bot_status["stop_reason"] = None
-        logger.info("Trading re-enabled for new day")
+        logger.info("Trading re-enabled for new day after maintenance hour reset")
     
     # Reset flatten mode flag for new day
     bot_status["flatten_mode"] = False
@@ -4867,69 +4861,36 @@ def check_daily_loss_limit(symbol: str) -> Tuple[bool, Optional[str]]:
     return True, None
 
 
-def check_max_drawdown() -> Tuple[bool, Optional[str]]:
-    """
-    Check if maximum drawdown has been exceeded.
-    
-    Returns:
-        Tuple of (is_safe, reason)
-    """
-    if bot_status["starting_equity"] is not None:
-        current_equity = get_account_equity()
-        drawdown_percent = ((bot_status["starting_equity"] - current_equity) / 
-                           bot_status["starting_equity"] * 100)
-        
-        if drawdown_percent >= CONFIG["max_drawdown_percent"]:
-            if not bot_status["emergency_stop"]:
-                logger.critical(f"MAXIMUM DRAWDOWN EXCEEDED: {drawdown_percent:.2f}%")
-                logger.critical(f"Starting: ${bot_status['starting_equity']:.2f}, "
-                              f"Current: ${current_equity:.2f}")
-                logger.critical("EMERGENCY STOP ACTIVATED")
-                bot_status["emergency_stop"] = True
-                bot_status["trading_enabled"] = False
-                bot_status["stop_reason"] = "max_drawdown_exceeded"
-            return False, f"Max drawdown exceeded: {drawdown_percent:.2f}%"
-    return True, None
 
 
 def check_approaching_failure(symbol: str) -> Tuple[bool, Optional[str], Optional[float]]:
     """
     Check if bot is approaching failure thresholds.
-    Used for Recovery Mode (all account types).
+    Used for Recovery Mode - ONLY checks daily loss limit.
+    
+    Note: User is responsible for tracking max drawdown themselves.
+    Recommended max drawdown limits (for reference):
+    - TopStep: 4% from starting balance
+    - Apex: 4% trailing (from peak)
+    - Live accounts: User preference (typically 2-5%)
+    
+    Bot only enforces daily loss limit for recovery mode decisions.
     
     Args:
         symbol: Instrument symbol
     
     Returns:
         Tuple of (is_approaching, reason, severity_level)
-        - is_approaching: True if at RECOVERY_APPROACHING_THRESHOLD (80%) or more of any limit
+        - is_approaching: True if at RECOVERY_APPROACHING_THRESHOLD (80%) or more of daily loss limit
         - reason: Description of what limit is being approached
         - severity_level: 0.0-1.0 indicating how close to failure (0.8 = at 80%, 1.0 = at 100%)
     """
-    max_severity = 0.0
-    reasons = []
-    
-    # Check daily loss limit approach
+    # Only check daily loss limit - user tracks max drawdown themselves
     daily_loss_limit = CONFIG.get("daily_loss_limit", 1000.0)
     if daily_loss_limit > 0 and state[symbol]["daily_pnl"] <= -daily_loss_limit * RECOVERY_APPROACHING_THRESHOLD:
         daily_loss_severity = abs(state[symbol]["daily_pnl"]) / daily_loss_limit
-        max_severity = max(max_severity, daily_loss_severity)
-        reasons.append(f"Daily loss at {daily_loss_severity*100:.1f}% of limit (${state[symbol]['daily_pnl']:.2f}/${-daily_loss_limit:.2f})")
-    
-    # Check max drawdown approach
-    max_drawdown_percent = CONFIG.get("max_drawdown_percent", 4.0)
-    if bot_status["starting_equity"] is not None and max_drawdown_percent > 0:
-        current_equity = get_account_equity()
-        drawdown_percent = ((bot_status["starting_equity"] - current_equity) / 
-                           bot_status["starting_equity"] * 100)
-        drawdown_severity = drawdown_percent / max_drawdown_percent
-        
-        if drawdown_severity >= RECOVERY_APPROACHING_THRESHOLD:
-            max_severity = max(max_severity, drawdown_severity)
-            reasons.append(f"Drawdown at {drawdown_severity*100:.1f}% of limit ({drawdown_percent:.2f}%/{max_drawdown_percent:.2f}%)")
-    
-    if reasons:
-        return True, "; ".join(reasons), max_severity
+        reason = f"Daily loss at {daily_loss_severity*100:.1f}% of limit (${state[symbol]['daily_pnl']:.2f}/${-daily_loss_limit:.2f})"
+        return True, reason, daily_loss_severity
     
     return False, None, 0.0
 
@@ -4938,27 +4899,33 @@ def get_recovery_confidence_threshold(severity_level: float) -> float:
     """
     Calculate required confidence threshold for recovery mode.
     Higher severity = higher confidence requirement.
+    Confidence NEVER goes below user's initial threshold - it only increases.
     
     Args:
         severity_level: How close to failure (0.8 = at 80%, 1.0 = at 100%)
     
     Returns:
-        Required confidence threshold (0.0-1.0)
+        Required confidence threshold (0.0-1.0), never below user's initial setting
     """
-    # Base threshold is user's setting
+    # Base threshold is user's setting - this is the MINIMUM
     base_threshold = CONFIG.get("rl_confidence_threshold", 0.65)
     
+    # Calculate dynamic threshold based on severity
     # At 80% of limits, require 75% confidence
     # At 90% of limits, require 85% confidence
     # At 95%+ of limits, require 90% confidence
     if severity_level >= 0.95:
-        return 0.90  # Only take absolute best signals
+        dynamic_threshold = 0.90  # Only take absolute best signals
     elif severity_level >= 0.90:
-        return 0.85  # Very selective
+        dynamic_threshold = 0.85  # Very selective
     elif severity_level >= 0.80:
-        return 0.75  # Selective
+        dynamic_threshold = 0.75  # Selective
     else:
-        return base_threshold  # Normal operation
+        dynamic_threshold = base_threshold  # Normal operation
+    
+    # NEVER go below user's initial threshold
+    # As bot moves away from limits, confidence stays at or above initial threshold
+    return max(base_threshold, dynamic_threshold)
 
 
 def check_tick_timeout(current_time: datetime) -> Tuple[bool, Optional[str]]:
@@ -5059,12 +5026,7 @@ def check_safety_conditions(symbol: str) -> Tuple[bool, Optional[str]]:
     # if not is_safe:
     #     return False, reason
     
-    # Check maximum drawdown
-    is_safe, reason = check_max_drawdown()
-    if not is_safe:
-        return False, reason
-    
-    # Check if approaching failure (Recovery Mode for All Account Types)
+    # Check if approaching failure (Recovery Mode - only checks daily loss limit)
     is_approaching, approach_reason, severity = check_approaching_failure(symbol)
     if is_approaching:
         # Use recovery_mode setting to determine behavior
@@ -5073,16 +5035,28 @@ def check_safety_conditions(symbol: str) -> Tuple[bool, Optional[str]]:
         # - recovery_mode=False (DISABLED, default): Bot STOPS trading (safe, prevents failure)
         if CONFIG.get("recovery_mode", False):
             # RECOVERY MODE ENABLED: Continue trading with high confidence requirements
-            required_confidence = get_recovery_confidence_threshold(severity)
+            # Check if dynamic confidence is enabled (GUI setting)
+            dynamic_confidence_enabled = CONFIG.get("dynamic_confidence", False)
+            
+            if dynamic_confidence_enabled:
+                # Auto-scale confidence based on severity
+                required_confidence = get_recovery_confidence_threshold(severity)
+            else:
+                # Use user's fixed confidence threshold (no auto-scaling)
+                required_confidence = CONFIG.get("rl_confidence_threshold", 0.65)
+            
             if bot_status.get("stop_reason") != "recovery_mode":
                 logger.warning("=" * 80)
-                logger.warning("RECOVERY MODE: APPROACHING LIMITS - CONTINUING WITH HIGH CONFIDENCE")
+                logger.warning("RECOVERY MODE: APPROACHING LIMITS - CONTINUING WITH SAME LOGIC")
                 logger.warning(f"Reason: {approach_reason}")
                 logger.warning(f"Severity: {severity*100:.1f}%")
-                logger.warning(f"Required confidence increased to {required_confidence*100:.1f}%")
-                logger.warning("Bot will ONLY take highest-confidence signals")
+                if dynamic_confidence_enabled:
+                    logger.warning(f"Required confidence DYNAMICALLY increased to {required_confidence*100:.1f}%")
+                    logger.warning("Bot will ONLY take highest-confidence signals")
+                else:
+                    logger.warning(f"Using confidence threshold: {required_confidence*100:.1f}%")
                 logger.warning("Position size will be dynamically reduced")
-                logger.warning("⚠️ Attempting to recover from losses")
+                logger.warning("⚠️ Attempting to recover - bot continues trading")
                 logger.warning("=" * 80)
                 bot_status["stop_reason"] = "recovery_mode"
             
@@ -5110,26 +5084,24 @@ def check_safety_conditions(symbol: str) -> Tuple[bool, Optional[str]]:
                     # Let exit management handle it - just flag for aggressive management
                     bot_status["aggressive_exit_mode"] = True
             
-            # Don't stop trading, but signal evaluation will use higher threshold
+            # Don't stop trading - recovery mode continues with same logic
         else:
-            # RECOVERY MODE DISABLED (Safe Mode): WARN but DON'T stop trading
-            # User maintains full control - bot provides guidance but doesn't lock them out
-            if bot_status.get("stop_reason") != "approaching_failure_warning":
-                logger.warning("=" * 80)
-                logger.warning("⚠️ WARNING: APPROACHING FAILURE - PROCEED WITH CAUTION")
-                logger.warning(f"Reason: {approach_reason}")
-                logger.warning(f"Severity: {severity*100:.1f}%")
-                logger.warning("RECOMMENDATION: Enable Recovery Mode for smart risk management")
-                logger.warning("Bot will CONTINUE trading - User maintains full control")
-                logger.warning("⚠️ CAUTION: Higher risk of account failure without recovery mode")
-                logger.warning("=" * 80)
-                bot_status["stop_reason"] = "approaching_failure_warning"
-            # DON'T set trading_enabled = False - never lock user out
-            # Just provide warning and let user decide
-            # Continue with normal trading - no return False
+            # RECOVERY MODE DISABLED: STOP trading until next session (after maintenance)
+            # Bot stays running but doesn't execute new trades until daily reset at 6 PM ET
+            logger.warning("=" * 80)
+            logger.warning("⚠️ LIMITS REACHED - STOPPING TRADING UNTIL NEXT SESSION")
+            logger.warning(f"Reason: {approach_reason}")
+            logger.warning(f"Severity: {severity*100:.1f}%")
+            logger.warning("Bot will STOP making new trades until daily reset at 6 PM ET")
+            logger.warning("Bot continues running and monitoring - will resume after maintenance hour")
+            logger.warning("To continue trading when approaching limits, enable Recovery Mode")
+            logger.warning("=" * 80)
+            bot_status["trading_enabled"] = False
+            bot_status["stop_reason"] = "daily_limits_reached"
+            return False, "Daily limits reached - trading stopped until next session (6 PM ET reset)"
     else:
         # Not approaching failure - clear any safety mode that was set
-        if bot_status.get("stop_reason") in ["approaching_failure", "approaching_failure_warning", "recovery_mode"]:
+        if bot_status.get("stop_reason") in ["daily_limits_reached", "recovery_mode"]:
             logger.info("=" * 80)
             logger.info("SAFE ZONE: Back to normal operation")
             logger.info("Bot has moved away from failure thresholds")
@@ -5784,7 +5756,7 @@ def main(symbol_override: str = None) -> None:
         symbol_override: Optional symbol to trade (overrides CONFIG["instrument"])
                         Used for multi-symbol bot instances
     """
-    global event_loop, timer_manager, bid_ask_manager, session_manager
+    global event_loop, timer_manager, bid_ask_manager
     
     # Use symbol override if provided (for multi-symbol support)
     trading_symbol = symbol_override if symbol_override else CONFIG["instrument"]
@@ -5792,15 +5764,6 @@ def main(symbol_override: str = None) -> None:
     logger.info(SEPARATOR_LINE)
     logger.info(f"VWAP Bounce Bot Starting [{trading_symbol}]")
     logger.info(SEPARATOR_LINE)
-    
-    # Initialize session state manager for cross-session awareness
-    try:
-        from session_state import SessionStateManager
-        session_manager = SessionStateManager()
-        logger.info(f"[{trading_symbol}] Session state manager initialized")
-    except ImportError:
-        logger.warning(f"[{trading_symbol}] Session state manager not available")
-        session_manager = None
     
     # Log symbol specifications if loaded
     if SYMBOL_SPEC:
@@ -5827,7 +5790,6 @@ def main(symbol_override: str = None) -> None:
     logger.info(f"[{trading_symbol}] Max Trades/Day: {CONFIG['max_trades_per_day']}")
     logger.info(f"[{trading_symbol}] Risk Per Trade: {CONFIG['risk_per_trade'] * 100:.1f}%")
     logger.info(f"[{trading_symbol}] Daily Loss Limit: ${CONFIG['daily_loss_limit']}")
-    logger.info(f"[{trading_symbol}] Max Drawdown: {CONFIG['max_drawdown_percent']}%")
     logger.info(SEPARATOR_LINE)
     
     # Phase Fifteen: Validate timezone configuration

@@ -73,15 +73,6 @@ class QuoTradingLauncher:
         self.config_file = Path("config.json")
         self.config = self.load_config()
         
-        # Initialize session state manager
-        sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
-        try:
-            from session_state import SessionStateManager
-            self.session_manager = SessionStateManager()
-        except ImportError:
-            self.session_manager = None
-            print("⚠️ Session state manager not available")
-        
         # Current screen tracker
         self.current_screen = 0
         
@@ -417,7 +408,7 @@ class QuoTradingLauncher:
         welcome = tk.Label(
             content,
             text="Sign In",
-            font=("Arial", 14, "bold"),
+            font=("Segoe UI", 14, "bold"),
             bg=self.colors['card'],
             fg=self.colors['text']
         )
@@ -426,7 +417,7 @@ class QuoTradingLauncher:
         info = tk.Label(
             content,
             text="Enter your credentials to access QuoTrading AI",
-            font=("Arial", 9),
+            font=("Segoe UI", 9),
             bg=self.colors['card'],
             fg=self.colors['text_light'],
             justify=tk.CENTER
@@ -446,7 +437,7 @@ class QuoTradingLauncher:
         instructions = tk.Label(
             content,
             text="All fields are required for authentication",
-            font=("Arial", 8),
+            font=("Segoe UI", 8),
             bg=self.colors['card'],
             fg=self.colors['text_secondary'],
             justify=tk.CENTER
@@ -640,7 +631,7 @@ class QuoTradingLauncher:
         info = tk.Label(
             content,
             text="Enter your QuoTrading subscription details.\nWe'll validate your access before proceeding.",
-            font=("Arial", 9),
+            font=("Segoe UI", 9),
             bg=self.colors['card'],
             fg=self.colors['text_light'],
             justify=tk.CENTER
@@ -666,7 +657,7 @@ class QuoTradingLauncher:
         help_text = tk.Label(
             content,
             text="📧 Check your email for your API key\n💡 Contact support@quotrading.com if you need help",
-            font=("Arial", 8),
+            font=("Segoe UI", 8),
             bg=self.colors['card'],
             fg=self.colors['text_secondary'],
             justify=tk.CENTER
@@ -784,7 +775,7 @@ class QuoTradingLauncher:
         info = tk.Label(
             content,
             text="Choose your broker type and enter credentials",
-            font=("Arial", 9),
+            font=("Segoe UI", 9),
             bg=self.colors['card'],
             fg=self.colors['text_light'],
             justify=tk.CENTER
@@ -795,7 +786,7 @@ class QuoTradingLauncher:
         type_label = tk.Label(
             content,
             text="Account Type:",
-            font=("Arial", 10, "bold"),
+            font=("Segoe UI", 10, "bold"),
             bg=self.colors['card'],
             fg=self.colors['text']
         )
@@ -841,7 +832,7 @@ class QuoTradingLauncher:
             icon_label = tk.Label(
                 inner,
                 text=icon,
-                font=("Arial", 20),
+                font=("Segoe UI", 20),
                 bg=self.colors['secondary'],
                 fg=self.colors['text']
             )
@@ -852,7 +843,7 @@ class QuoTradingLauncher:
             type_name = tk.Label(
                 inner,
                 text=btype,
-                font=("Arial", 10, "bold"),
+                font=("Segoe UI", 10, "bold"),
                 bg=self.colors['secondary'],
                 fg=self.colors['text']
             )
@@ -863,7 +854,7 @@ class QuoTradingLauncher:
             desc_label = tk.Label(
                 inner,
                 text=desc,
-                font=("Arial", 8),
+                font=("Segoe UI", 8),
                 bg=self.colors['secondary'],
                 fg=self.colors['text_light']
             )
@@ -876,7 +867,7 @@ class QuoTradingLauncher:
         broker_label = tk.Label(
             content,
             text="Select Broker:",
-            font=("Arial", 10, "bold"),
+            font=("Segoe UI", 10, "bold"),
             bg=self.colors['card'],
             fg=self.colors['text']
         )
@@ -887,7 +878,7 @@ class QuoTradingLauncher:
             content,
             textvariable=self.broker_var,
             state="readonly",
-            font=("Arial", 9),
+            font=("Segoe UI", 9),
             width=35
         )
         self.broker_dropdown.pack(fill=tk.X, pady=(0, 10))
@@ -907,7 +898,7 @@ class QuoTradingLauncher:
         account_label = tk.Label(
             content,
             text="Account Size:",
-            font=("Arial", 10, "bold"),
+            font=("Segoe UI", 10, "bold"),
             bg=self.colors['card'],
             fg=self.colors['text']
         )
@@ -918,7 +909,7 @@ class QuoTradingLauncher:
             content,
             textvariable=self.account_size_var,
             state="readonly",
-            font=("Arial", 9),
+            font=("Segoe UI", 9),
             width=35,
             values=["50k", "100k", "150k", "200k", "250k"]
         )
@@ -942,7 +933,7 @@ class QuoTradingLauncher:
         help_text = tk.Label(
             content,
             text="💡 Get your API credentials from your broker's account dashboard",
-            font=("Arial", 8),
+            font=("Segoe UI", 8),
             bg=self.colors['card'],
             fg=self.colors['text_secondary']
         )
@@ -1060,76 +1051,6 @@ class QuoTradingLauncher:
         }
         self.validate_api_call("broker", credentials, on_success, on_error)
     
-    def _apply_smart_settings(self, smart_settings: Dict[str, Any]):
-        """Apply smart recommended settings to config."""
-        if "confidence_threshold" in smart_settings:
-            self.config["rl_confidence_threshold"] = smart_settings["confidence_threshold"] / 100
-        if "max_contracts" in smart_settings:
-            self.config["max_contracts"] = smart_settings["max_contracts"]
-        if "daily_loss_limit" in smart_settings:
-            self.config["daily_loss_limit"] = smart_settings["daily_loss_limit"]
-        self.save_config()
-    
-    def _show_session_warnings(self):
-        """Display warnings and recommendations based on session state."""
-        if not self.session_manager:
-            return
-        
-        # Get current settings
-        account_size = float(self.config.get("account_size", "50000"))
-        max_drawdown = self.config.get("max_drawdown", 8.0)
-        daily_loss_limit = self.config.get("daily_loss_limit", 1000.0)
-        confidence = self.config.get("rl_confidence_threshold", 0.65) * 100
-        max_contracts = self.config.get("max_contracts", 3)
-        recovery_mode = self.config.get("recovery_mode", False)
-        
-        # Check for warnings and recommendations
-        warnings, recommendations, smart_settings = self.session_manager.check_warnings_and_recommendations(
-            account_size=account_size,
-            max_drawdown_percent=max_drawdown,
-            daily_loss_limit=daily_loss_limit,
-            current_confidence=confidence,
-            max_contracts=max_contracts,
-            recovery_mode_enabled=recovery_mode
-        )
-        
-        # Show warnings in a dialog if critical
-        if warnings:
-            critical_warnings = [w for w in warnings if w.get("level") == "critical"]
-            if critical_warnings:
-                warning_text = "\n\n".join([w["message"] for w in warnings])
-                if recommendations:
-                    warning_text += "\n\n📋 RECOMMENDATIONS:\n"
-                    warning_text += "\n".join([f"• {r['message']}" for r in recommendations[:3]])
-                
-                # Ask if user wants to apply smart settings
-                if smart_settings:
-                    warning_text += "\n\n⚙️ Would you like to apply recommended settings automatically?"
-                    result = messagebox.askyesno(
-                        "⚠️ Account Status Warning",
-                        warning_text,
-                        icon='warning'
-                    )
-                    
-                    if result and smart_settings:
-                        # Apply smart settings
-                        self._apply_smart_settings(smart_settings)
-                        messagebox.showinfo("Settings Applied", "✓ Smart recommendations applied successfully!")
-                else:
-                    messagebox.showwarning("⚠️ Account Status Warning", warning_text)
-            elif warnings and recommendations:
-                # Non-critical warnings - show as info
-                warning_text = "📊 Session Status:\n\n"
-                warning_text += "\n".join([w["message"] for w in warnings])
-                if recommendations:
-                    warning_text += "\n\n💡 RECOMMENDATIONS:\n"
-                    warning_text += "\n".join([f"• {r['message']}" for r in recommendations[:3]])
-                
-                if smart_settings:
-                    warning_text += "\n\n⚙️ Apply recommended settings?"
-                    result = messagebox.askyesno("Session Status", warning_text)
-                    if result:
-                        self._apply_smart_settings(smart_settings)
     
     def setup_trading_screen(self):
         """Screen 1: Trading Controls and Launch."""
@@ -1142,10 +1063,6 @@ class QuoTradingLauncher:
         
         # Header
         header = self.create_header("Trading Controls", "Configure your trading strategy")
-        
-        # Check session state and show warnings/recommendations
-        if self.session_manager:
-            self._show_session_warnings()
         
         # Main container with scrollbar capability
         main = tk.Frame(self.root, bg=self.colors['background'], padx=25, pady=12)
@@ -1164,7 +1081,7 @@ class QuoTradingLauncher:
         symbol_label = tk.Label(
             content,
             text="Trading Symbols (select at least one):",
-            font=("Arial", 10, "bold"),
+            font=("Segoe UI", 10, "bold"),
             bg=self.colors['card'],
             fg=self.colors['text']
         )
@@ -1199,7 +1116,7 @@ class QuoTradingLauncher:
                 symbol_frame,
                 text=f"{code} - {name}",
                 variable=var,
-                font=("Arial", 9),
+                font=("Segoe UI", 9),
                 bg=self.colors['card'],
                 fg=self.colors['text'],
                 selectcolor=self.colors['secondary'],
@@ -1220,14 +1137,14 @@ class QuoTradingLauncher:
         tk.Label(
             acc_frame,
             text="Account Size ($):",
-            font=("Arial", 9, "bold"),
+            font=("Segoe UI", 9, "bold"),
             bg=self.colors['card'],
             fg=self.colors['text']
         ).pack(anchor=tk.W, pady=(0, 3))
         
         self.account_entry = tk.Entry(
             acc_frame,
-            font=("Arial", 9),
+            font=("Segoe UI", 9),
             bg=self.colors['input_bg'],
             fg=self.colors['text'],
             insertbackground=self.colors['success'],
@@ -1247,7 +1164,7 @@ class QuoTradingLauncher:
         tk.Label(
             drawdown_frame,
             text="Max Drawdown (%):",
-            font=("Arial", 9, "bold"),
+            font=("Segoe UI", 9, "bold"),
             bg=self.colors['card'],
             fg=self.colors['text']
         ).pack(anchor=tk.W, pady=(0, 3))
@@ -1312,7 +1229,7 @@ class QuoTradingLauncher:
         drawdown_info = tk.Label(
             drawdown_frame,
             text=f"Safe zone for {account_type}",
-            font=("Arial", 7),
+            font=("Segoe UI", 7),
             bg=self.colors['card'],
             fg=self.colors['text_secondary']
         )
@@ -1328,14 +1245,14 @@ class QuoTradingLauncher:
         tk.Label(
             loss_frame,
             text="Daily Loss Limit ($):",
-            font=("Arial", 9, "bold"),
+            font=("Segoe UI", 9, "bold"),
             bg=self.colors['card'],
             fg=self.colors['text']
         ).pack(anchor=tk.W, pady=(0, 3))
         
         self.loss_entry = tk.Entry(
             loss_frame,
-            font=("Arial", 9),
+            font=("Segoe UI", 9),
             bg=self.colors['input_bg'],
             fg=self.colors['text'],
             insertbackground=self.colors['success'],
@@ -1359,7 +1276,7 @@ class QuoTradingLauncher:
         tk.Label(
             contracts_frame,
             text="Contracts Per Trade:",
-            font=("Arial", 9, "bold"),
+            font=("Segoe UI", 9, "bold"),
             bg=self.colors['card'],
             fg=self.colors['text']
         ).pack(anchor=tk.W, pady=(0, 3))
@@ -1392,7 +1309,7 @@ class QuoTradingLauncher:
         contracts_info = tk.Label(
             contracts_frame,
             text=f"Max {max_contracts_allowed} for {account_type} (enforced)",
-            font=("Arial", 7),
+            font=("Segoe UI", 7),
             bg=self.colors['card'],
             fg=self.colors['text_secondary']
         )
@@ -1405,7 +1322,7 @@ class QuoTradingLauncher:
         tk.Label(
             trades_frame,
             text="Max Trades/Day:",
-            font=("Arial", 9, "bold"),
+            font=("Segoe UI", 9, "bold"),
             bg=self.colors['card'],
             fg=self.colors['text']
         ).pack(anchor=tk.W, pady=(0, 3))
@@ -1431,7 +1348,7 @@ class QuoTradingLauncher:
         tk.Label(
             confidence_frame,
             text="Confidence Threshold (%):",
-            font=("Arial", 9, "bold"),
+            font=("Segoe UI", 9, "bold"),
             bg=self.colors['card'],
             fg=self.colors['text']
         ).pack(anchor=tk.W, pady=(0, 3))
@@ -1452,7 +1369,7 @@ class QuoTradingLauncher:
         confidence_info = tk.Label(
             confidence_frame,
             text="Minimum confidence - bot takes signals above this",
-            font=("Arial", 7),
+            font=("Segoe UI", 7),
             bg=self.colors['card'],
             fg=self.colors['text_secondary']
         )
@@ -1464,7 +1381,7 @@ class QuoTradingLauncher:
             confidence_frame,
             text="Enable Dynamic Confidence",
             variable=self.dynamic_confidence_var,
-            font=("Arial", 8),
+            font=("Segoe UI", 8),
             bg=self.colors['card'],
             fg=self.colors['text'],
             selectcolor=self.colors['secondary'],
@@ -1478,7 +1395,7 @@ class QuoTradingLauncher:
         dynamic_conf_info = tk.Label(
             confidence_frame,
             text="Auto-increases (never below your setting) when bot\nperforms poorly or approaching account limits",
-            font=("Arial", 7),
+            font=("Segoe UI", 7),
             bg=self.colors['card'],
             fg=self.colors['text_secondary'],
             justify=tk.LEFT
@@ -1494,7 +1411,7 @@ class QuoTradingLauncher:
             shadow_frame,
             text="Shadow Mode",
             variable=self.shadow_mode_var,
-            font=("Arial", 9, "bold"),
+            font=("Segoe UI", 9, "bold"),
             bg=self.colors['card'],
             fg=self.colors['text'],
             selectcolor=self.colors['secondary'],
@@ -1508,7 +1425,7 @@ class QuoTradingLauncher:
         shadow_info = tk.Label(
             shadow_frame,
             text="Paper trade mode - no real trades executed",
-            font=("Arial", 7),
+            font=("Segoe UI", 7),
             bg=self.colors['card'],
             fg=self.colors['text_secondary']
         )
@@ -1523,7 +1440,7 @@ class QuoTradingLauncher:
             dynamic_row,
             text="Dynamic Contract Mode",
             variable=self.dynamic_contracts_var,
-            font=("Arial", 9, "bold"),
+            font=("Segoe UI", 9, "bold"),
             bg=self.colors['card'],
             fg=self.colors['text'],
             selectcolor=self.colors['secondary'],
@@ -1537,7 +1454,7 @@ class QuoTradingLauncher:
         dynamic_info = tk.Label(
             dynamic_row,
             text="Uses signal confidence to scale contracts (1 to your max) dynamically",
-            font=("Arial", 7),
+            font=("Segoe UI", 7),
             bg=self.colors['card'],
             fg=self.colors['text_secondary']
         )
@@ -1554,7 +1471,7 @@ class QuoTradingLauncher:
         recovery_label = tk.Label(
             recovery_content,
             text="Recovery Mode (All Account Types):",
-            font=("Arial", 10, "bold"),
+            font=("Segoe UI", 10, "bold"),
             bg=self.colors['card_elevated'],
             fg=self.colors['text']
         )
@@ -1569,7 +1486,7 @@ class QuoTradingLauncher:
             recovery_content,
             text="Enable Recovery Mode",
             variable=self.recovery_mode_var,
-            font=("Arial", 9, "bold"),
+            font=("Segoe UI", 9, "bold"),
             bg=self.colors['card_elevated'],
             fg=self.colors['text'],
             selectcolor=self.colors['secondary'],
@@ -1624,7 +1541,7 @@ class QuoTradingLauncher:
         recovery_info = tk.Label(
             recovery_content,
             text="",
-            font=("Arial", 7),
+            font=("Segoe UI", 7),
             bg=self.colors['card_elevated'],
             fg=self.colors['text_secondary'],
             wraplength=520,
@@ -1636,7 +1553,7 @@ class QuoTradingLauncher:
         recovery_explanation = tk.Label(
             recovery_content,
             text="",
-            font=("Arial", 7, "italic"),
+            font=("Segoe UI", 7, "italic"),
             bg=self.colors['card_elevated'],
             fg=self.colors['text_secondary'],
             wraplength=520,
@@ -1658,7 +1575,7 @@ class QuoTradingLauncher:
         trailing_dd_label = tk.Label(
             trailing_dd_content,
             text="Advanced Risk Protection:",
-            font=("Arial", 10, "bold"),
+            font=("Segoe UI", 10, "bold"),
             bg=self.colors['card_elevated'],
             fg=self.colors['text']
         )
@@ -1757,7 +1674,7 @@ class QuoTradingLauncher:
             trailing_dd_content,
             text="Enable Trailing Drawdown",
             variable=self.trailing_drawdown_var,
-            font=("Arial", 9, "bold"),
+            font=("Segoe UI", 9, "bold"),
             bg=self.colors['card_elevated'],
             fg=self.colors['text'],
             selectcolor=self.colors['secondary'],
@@ -1771,7 +1688,7 @@ class QuoTradingLauncher:
         trailing_dd_info = tk.Label(
             trailing_dd_content,
             text="",
-            font=("Arial", 7),
+            font=("Segoe UI", 7),
             bg=self.colors['card_elevated'],
             fg=self.colors['text_secondary'],
             wraplength=520,
@@ -1806,7 +1723,7 @@ class QuoTradingLauncher:
                  "• Hard floor still $47K - you're $2K away, still safe!\n"
                  "• Bot continues running and monitoring performance\n"
                  "• May resume if dynamic confidence helps create safety margin",
-            font=("Arial", 7, "italic"),
+            font=("Segoe UI", 7, "italic"),
             bg=self.colors['card_elevated'],
             fg=self.colors['text_secondary'],
             wraplength=520,
@@ -1825,7 +1742,7 @@ class QuoTradingLauncher:
         fetch_label = tk.Label(
             fetch_content,
             text="Account Information:",
-            font=("Arial", 10, "bold"),
+            font=("Segoe UI", 10, "bold"),
             bg=self.colors['card_elevated'],
             fg=self.colors['text']
         )
@@ -1838,7 +1755,7 @@ class QuoTradingLauncher:
         tk.Label(
             account_select_frame,
             text="Select Account:",
-            font=("Arial", 9),
+            font=("Segoe UI", 9),
             bg=self.colors['card_elevated'],
             fg=self.colors['text_light']
         ).pack(side=tk.LEFT, padx=(0, 8))
@@ -1848,7 +1765,7 @@ class QuoTradingLauncher:
             account_select_frame,
             textvariable=self.account_dropdown_var,
             state="readonly",
-            font=("Arial", 9),
+            font=("Segoe UI", 9),
             width=25,
             values=["Default Account"]
         )
@@ -1862,7 +1779,7 @@ class QuoTradingLauncher:
         important_label = tk.Label(
             fetch_button_frame,
             text="⚠️ VERY IMPORTANT:",
-            font=("Arial", 9, "bold"),
+            font=("Segoe UI", 9, "bold"),
             bg=self.colors['card_elevated'],
             fg=self.colors['error'],
             anchor=tk.W
@@ -1876,7 +1793,7 @@ class QuoTradingLauncher:
         self.account_info_label = tk.Label(
             fetch_button_frame,
             text="Fetching helps bot determine account type and provide best settings",
-            font=("Arial", 8),
+            font=("Segoe UI", 8),
             bg=self.colors['card_elevated'],
             fg=self.colors['text_secondary'],
             anchor=tk.W
@@ -1894,7 +1811,7 @@ class QuoTradingLauncher:
         self.auto_adjust_info_label = tk.Label(
             auto_adjust_frame,
             text="Automatically optimizes settings based on account balance",
-            font=("Arial", 8),
+            font=("Segoe UI", 8),
             bg=self.colors['card_elevated'],
             fg=self.colors['text_secondary'],
             anchor=tk.W
@@ -1912,7 +1829,7 @@ class QuoTradingLauncher:
         summary_title = tk.Label(
             summary_content,
             text="✓ Ready to Trade",
-            font=("Arial", 10, "bold"),
+            font=("Segoe UI", 10, "bold"),
             bg=self.colors['secondary'],
             fg=self.colors['success']
         )
@@ -1924,7 +1841,7 @@ class QuoTradingLauncher:
         summary_text = tk.Label(
             summary_content,
             text=f"Broker: {broker} | Account: {account_size}\nAll credentials validated and ready",
-            font=("Arial", 8),
+            font=("Segoe UI", 8),
             bg=self.colors['secondary'],
             fg=self.colors['text_light'],
             justify=tk.CENTER
