@@ -1,5 +1,5 @@
 {
-  "last_updated": "2025-11-07T03:24:41.309576",
+  "last_updated": "2025-11-07T03:36:17.953052",
   "trading_date": "2025-11-07",
   "starting_equity": 50000.0,
   "current_equity": 48300.0,
@@ -14,7 +14,7 @@
   "warnings": [
     {
       "level": "warning",
-      "message": "\u26a0\ufe0f WARNING: Approaching daily loss limit (85% of max). Consider enabling Recovery Mode."
+      "message": "\u26a0\ufe0f WARNING: Approaching daily loss limit (85% of max). Bot will STOP trading. Consider enabling Recovery Mode."
     },
     {
       "level": "warning",
@@ -24,7 +24,7 @@
   "recommendations": [
     {
       "priority": "high",
-      "message": "\ud83d\udd04 RECOMMEND: Enable Recovery Mode to attempt recovery with high-confidence signals"
+      "message": "\ud83d\udd04 RECOMMEND: Enable Recovery Mode to continue trading when approaching limits with high-confidence signals"
     },
     {
       "priority": "high",

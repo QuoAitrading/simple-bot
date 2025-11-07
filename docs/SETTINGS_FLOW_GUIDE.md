@@ -39,10 +39,18 @@ The GUI collects the following settings from the user:
 - **Shadow Mode**: Paper trading mode (no real trades)
 
 ### Recovery Mode
-- **Recovery Mode**: Enable/disable recovery mode
-  - **Enabled**: Bot continues trading when close to daily loss limit with higher confidence
-  - **Disabled**: Bot stops trading at 80% of daily loss limit, shows warnings
-  - **Tracks**: Initial balance (from account_size) and daily loss limit
+- **Recovery Mode**: Enable/disable recovery mode behavior when approaching daily loss limit
+  - **Enabled (ON)**: 
+    - ✅ Bot **CONTINUES TRADING** when approaching daily loss limit
+    - Auto-increases confidence threshold (75-90% based on severity)
+    - Dynamically reduces position size
+    - Shows warning: "RECOVERY MODE ACTIVE - Bot continues trading"
+  - **Disabled (OFF - Default)**:
+    - ⛔ Bot **STOPS TRADING** at 80% of daily loss limit
+    - Bot stays running and monitoring
+    - Resumes trading after daily reset (6 PM ET)
+    - Shows warning: "Bot will STOP trading. Consider enabling Recovery Mode"
+  - **Tracks**: Initial balance (from account_size) and daily loss limit only
 
 ## 2. Configuration Persistence (config.json)
 
@@ -179,21 +187,25 @@ All settings are validated at multiple levels:
 
 ## 8. Recovery Mode Behavior
 
-### When DISABLED (Default - Safest)
-- Bot **warns** at 80% of daily loss limit
-- Shows recommendations but user maintains full control
-- Bot continues running and monitoring
-- User can choose to apply recommendations
+### When DISABLED (Default - Safest) ⛔
+- Bot **STOPS TRADING** at 80% of daily loss limit
+- Warning: "Bot will STOP trading. Consider enabling Recovery Mode"
+- Bot continues running and monitoring (doesn't shut down)
+- Trading resumes after daily reset at 6 PM ET (maintenance hour)
+- User maintains full control - can manually enable recovery mode anytime
+- **Best for**: Conservative traders, prop firm accounts, beginners
 
-### When ENABLED (Aggressive Recovery)
-- Bot **continues trading** when approaching daily loss limit
+### When ENABLED (Aggressive Recovery) ✅
+- Bot **CONTINUES TRADING** when approaching daily loss limit
+- Warning: "RECOVERY MODE ACTIVE - Bot continues trading with increased confidence"
 - Auto-increases confidence (75-90% based on severity of daily loss)
 - Auto-reduces position size dynamically
-- Attempts to recover from losses with highest-quality signals
+- Only takes highest-confidence signals to attempt recovery
 - Example progression:
   - 80% of daily loss limit → 75% confidence, 75% position size
   - 90% of daily loss limit → 85% confidence, 50% position size
   - 95%+ of daily loss limit → 90% confidence, 33% position size
+- **Best for**: Experienced traders, live broker accounts, managed risk tolerance
 
 **Note**: Recovery mode only tracks daily loss limit and initial balance. No maximum drawdown or trailing drawdown tracking.
 
