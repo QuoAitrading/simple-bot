@@ -29,8 +29,9 @@ class QuoTradingLauncher:
     def __init__(self):
         self.root = tk.Tk()
         self.root.title("QuoTrading - Professional Trading Platform")
-        self.root.geometry("600x600")
-        self.root.resizable(False, False)
+        self.root.geometry("700x800")
+        self.root.resizable(True, True)
+        self.root.minsize(700, 800)
         
         # Blue and White color scheme - Professional theme
         self.colors = {
@@ -758,12 +759,38 @@ class QuoTradingLauncher:
         # Header
         header = self.create_header("Broker Connection", "Select your account type and broker")
         
-        # Main container
-        main = tk.Frame(self.root, bg=self.colors['background'], padx=30, pady=15)
+        # Main container with scrolling
+        main = tk.Frame(self.root, bg=self.colors['background'])
         main.pack(fill=tk.BOTH, expand=True)
         
+        # Create canvas for scrolling
+        canvas = tk.Canvas(main, bg=self.colors['background'], highlightthickness=0)
+        scrollbar = tk.Scrollbar(main, orient="vertical", command=canvas.yview)
+        scrollable_frame = tk.Frame(canvas, bg=self.colors['background'])
+        
+        scrollable_frame.bind(
+            "<Configure>",
+            lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
+        )
+        
+        canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
+        canvas.configure(yscrollcommand=scrollbar.set)
+        
+        # Pack scrollbar and canvas
+        scrollbar.pack(side="right", fill="y")
+        canvas.pack(side="left", fill="both", expand=True)
+        
+        # Enable mouse wheel scrolling
+        def _on_mousewheel(event):
+            canvas.yview_scroll(int(-1*(event.delta/120)), "units")
+        canvas.bind_all("<MouseWheel>", _on_mousewheel)
+        
+        # Container inside scrollable frame
+        container = tk.Frame(scrollable_frame, bg=self.colors['background'], padx=30, pady=15)
+        container.pack(fill=tk.BOTH, expand=True)
+        
         # Card
-        card = tk.Frame(main, bg=self.colors['card'], relief=tk.FLAT, bd=0)
+        card = tk.Frame(container, bg=self.colors['card'], relief=tk.FLAT, bd=0)
         card.pack(fill=tk.BOTH, expand=True)
         card.configure(highlightbackground=self.colors['border'], highlightthickness=2)
         
@@ -1187,11 +1214,37 @@ class QuoTradingLauncher:
         header = self.create_header("Trading Controls", "Configure your trading strategy")
         
         # Main container with scrollbar capability
-        main = tk.Frame(self.root, bg=self.colors['background'], padx=25, pady=12)
+        main = tk.Frame(self.root, bg=self.colors['background'])
         main.pack(fill=tk.BOTH, expand=True)
         
+        # Create canvas for scrolling
+        canvas = tk.Canvas(main, bg=self.colors['background'], highlightthickness=0)
+        scrollbar = tk.Scrollbar(main, orient="vertical", command=canvas.yview)
+        scrollable_frame = tk.Frame(canvas, bg=self.colors['background'])
+        
+        scrollable_frame.bind(
+            "<Configure>",
+            lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
+        )
+        
+        canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
+        canvas.configure(yscrollcommand=scrollbar.set)
+        
+        # Pack scrollbar and canvas
+        scrollbar.pack(side="right", fill="y")
+        canvas.pack(side="left", fill="both", expand=True)
+        
+        # Enable mouse wheel scrolling
+        def _on_mousewheel(event):
+            canvas.yview_scroll(int(-1*(event.delta/120)), "units")
+        canvas.bind_all("<MouseWheel>", _on_mousewheel)
+        
+        # Container inside scrollable frame
+        container = tk.Frame(scrollable_frame, bg=self.colors['background'], padx=25, pady=12)
+        container.pack(fill=tk.BOTH, expand=True)
+        
         # Card
-        card = tk.Frame(main, bg=self.colors['card'], relief=tk.FLAT, bd=0)
+        card = tk.Frame(container, bg=self.colors['card'], relief=tk.FLAT, bd=0)
         card.pack(fill=tk.BOTH, expand=True)
         card.configure(highlightbackground=self.colors['border'], highlightthickness=2)
         
