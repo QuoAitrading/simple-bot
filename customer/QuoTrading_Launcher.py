@@ -780,10 +780,25 @@ class QuoTradingLauncher:
         scrollbar.pack(side="right", fill="y")
         canvas.pack(side="left", fill="both", expand=True)
         
-        # Enable mouse wheel scrolling
-        def _on_mousewheel(event):
-            canvas.yview_scroll(int(-1*(event.delta/120)), "units")
-        canvas.bind_all("<MouseWheel>", _on_mousewheel)
+        # Enable mouse wheel scrolling with cross-platform support
+        def _on_mousewheel_broker(event):
+            # Platform-specific mouse wheel handling
+            import platform
+            system = platform.system()
+            if system == "Windows":
+                canvas.yview_scroll(int(-1*(event.delta/120)), "units")
+            elif system == "Darwin":  # macOS
+                canvas.yview_scroll(int(-1*event.delta), "units")
+            else:  # Linux and others
+                if event.num == 4:
+                    canvas.yview_scroll(-1, "units")
+                elif event.num == 5:
+                    canvas.yview_scroll(1, "units")
+        
+        # Bind to canvas only (not global) to avoid conflicts
+        canvas.bind("<MouseWheel>", _on_mousewheel_broker)  # Windows/macOS
+        canvas.bind("<Button-4>", _on_mousewheel_broker)    # Linux scroll up
+        canvas.bind("<Button-5>", _on_mousewheel_broker)    # Linux scroll down
         
         # Container inside scrollable frame
         container = tk.Frame(scrollable_frame, bg=self.colors['background'], padx=30, pady=15)
@@ -1234,10 +1249,25 @@ class QuoTradingLauncher:
         scrollbar.pack(side="right", fill="y")
         canvas.pack(side="left", fill="both", expand=True)
         
-        # Enable mouse wheel scrolling
-        def _on_mousewheel(event):
-            canvas.yview_scroll(int(-1*(event.delta/120)), "units")
-        canvas.bind_all("<MouseWheel>", _on_mousewheel)
+        # Enable mouse wheel scrolling with cross-platform support
+        def _on_mousewheel_trading(event):
+            # Platform-specific mouse wheel handling
+            import platform
+            system = platform.system()
+            if system == "Windows":
+                canvas.yview_scroll(int(-1*(event.delta/120)), "units")
+            elif system == "Darwin":  # macOS
+                canvas.yview_scroll(int(-1*event.delta), "units")
+            else:  # Linux and others
+                if event.num == 4:
+                    canvas.yview_scroll(-1, "units")
+                elif event.num == 5:
+                    canvas.yview_scroll(1, "units")
+        
+        # Bind to canvas only (not global) to avoid conflicts
+        canvas.bind("<MouseWheel>", _on_mousewheel_trading)  # Windows/macOS
+        canvas.bind("<Button-4>", _on_mousewheel_trading)    # Linux scroll up
+        canvas.bind("<Button-5>", _on_mousewheel_trading)    # Linux scroll down
         
         # Container inside scrollable frame
         container = tk.Frame(scrollable_frame, bg=self.colors['background'], padx=25, pady=12)
