@@ -165,9 +165,9 @@ chmod +x deploy-azure.sh
 ./deploy-azure.sh
 ```
 
-After deployment, update your bot configuration:
-```python
-CLOUD_API_BASE_URL = "https://your-app.azurewebsites.net"
+After deployment, set environment variable:
+```bash
+export QUOTRADING_API_URL="https://your-app.azurewebsites.net"
 ```
 
 ## 📝 License
