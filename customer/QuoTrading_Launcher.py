@@ -33,8 +33,8 @@ class QuoTradingLauncher:
         self.root.geometry("650x600")
         self.root.resizable(False, False)
         
-        # Windows-style Gray color scheme - Professional theme
-        self.colors = {
+        # Windows-style Gray color scheme - Professional theme with improved contrast
+        self.light_theme_colors = {
             'primary': '#E0E0E0',        # Medium gray background
             'secondary': '#D0D0D0',      # Darker gray for secondary cards
             'success': '#0078D4',        # Windows blue accent
@@ -45,9 +45,9 @@ class QuoTradingLauncher:
             'background': '#E0E0E0',     # Medium gray main background
             'card': '#ECECEC',           # Light gray card background
             'card_elevated': '#D8D8D8',  # Medium gray for elevation
-            'text': '#1F2937',           # Dark gray text (primary)
-            'text_light': '#4B5563',     # Medium gray (secondary labels)
-            'text_secondary': '#6B7280', # Light gray (tertiary/hints)
+            'text': '#1A1A1A',           # Almost black text (primary) - improved contrast
+            'text_light': '#3A3A3A',     # Dark gray (secondary labels) - improved
+            'text_secondary': '#5A5A5A', # Medium gray (tertiary/hints) - improved
             'border': '#0078D4',         # Windows blue border
             'border_subtle': '#BBBBBB',  # Gray subtle border
             'input_bg': '#FFFFFF',       # White for input fields
@@ -56,11 +56,37 @@ class QuoTradingLauncher:
             'shadow': '#C0C0C0'          # Medium gray for shadow effect
         }
         
+        # Dark theme colors - Modern black/blue with better contrast
+        self.dark_theme_colors = {
+            'primary': '#1E1E1E',        # Black background
+            'secondary': '#252525',      # Slightly lighter black
+            'success': '#0078D4',        # Windows blue accent
+            'success_dark': '#0078D4',   # Same blue for buttons/headers
+            'success_darker': '#005A9E', # Darker blue for depth
+            'error': '#DC2626',          # Red for error messages
+            'warning': '#F59E0B',        # Orange for warnings
+            'background': '#1E1E1E',     # Black main background
+            'card': '#2D2D2D',           # Dark gray card background
+            'card_elevated': '#3A3A3A',  # Lighter gray for elevation
+            'text': '#FFFFFF',           # White text (primary) - improved contrast
+            'text_light': '#D0D0D0',     # Light gray (secondary labels) - improved
+            'text_secondary': '#A0A0A0', # Medium gray (tertiary/hints) - improved
+            'border': '#0078D4',         # Windows blue border
+            'border_subtle': '#404040',  # Dark gray subtle border
+            'input_bg': '#2D2D2D',       # Dark input fields
+            'input_focus': '#1A3A52',    # Dark blue tint on focus
+            'button_hover': '#0078D4',   # Windows blue for hover state
+            'shadow': '#000000'          # Black for shadow effect
+        }
+        
+        # Set initial colors (will be overridden by theme loading)
+        self.colors = self.light_theme_colors.copy()
+        
         # Default fallback symbol
         self.DEFAULT_SYMBOL = 'ES'
         
         # Account mismatch detection threshold
-        self.ACCOUNT_MISMATCH_THRESHOLD = 1000  # Dollars - warn if difference is > $1000
+        self.ACCOUNT_MISMATCH_THRESHOLD = 5000  # Dollars - warn if difference is > $5000 (catches wrong account tier selection)
         
         # Prop firm maximum drawdown percentage (most common rule)
         self.PROP_FIRM_MAX_DRAWDOWN = 8.0  # 8% for most prop firms (some use 10%)
@@ -82,6 +108,14 @@ class QuoTradingLauncher:
         # Load saved config
         self.config_file = Path("config.json")
         self.config = self.load_config()
+        
+        # Apply saved theme
+        saved_theme = self.config.get("theme", "light")
+        if saved_theme == "dark":
+            self.colors = self.dark_theme_colors.copy()
+        else:
+            self.colors = self.light_theme_colors.copy()
+        self.root.configure(bg=self.colors['background'])
         
         # Current screen tracker
         self.current_screen = 0
@@ -1232,7 +1266,7 @@ class QuoTradingLauncher:
         self.broker_dropdown.current(0)
     
     def validate_broker(self):
-        """Validate broker credentials and QuoTrading API key before proceeding."""
+        """Validate broker credentials by connecting to API and pre-loading accounts."""
         broker = self.broker_var.get()
         token = self.broker_token_entry.get().strip()
         username = self.broker_username_entry.get().strip()
@@ -1246,34 +1280,12 @@ class QuoTradingLauncher:
         else:
             account_size = "10000"  # Default fallback
         
-        # Check if using admin key FIRST - bypass all validation
-        if quotrading_api_key == "QUOTRADING_ADMIN_MASTER_2025":
-            self.config["broker_type"] = self.broker_type_var.get()
-            self.config["broker"] = broker
-            self.config["account_type"] = account_type
-            self.config["account_size"] = account_size
-            self.config["broker_validated"] = True
-            
-            # Only save credentials if "Remember" is checked
-            if self.remember_credentials_var.get():
-                self.config["broker_token"] = token
-                self.config["broker_username"] = username if username else "admin"
-                self.config["quotrading_api_key"] = quotrading_api_key
-                self.config["remember_credentials"] = True
-            else:
-                # Clear saved credentials
-                self.config["broker_token"] = ""
-                self.config["broker_username"] = ""
-                self.config["quotrading_api_key"] = ""
-                self.config["remember_credentials"] = False
-            
-            self.save_config()
-            self.setup_trading_screen()
-            return
-        
-        # Remove placeholder if present
-        if quotrading_api_key == self.config.get("quotrading_api_key", ""):
+        # Remove placeholder if present (but not if it's the admin key)
+        if quotrading_api_key == self.config.get("quotrading_api_key", "") and quotrading_api_key != "QUOTRADING_ADMIN_MASTER_2025":
             quotrading_api_key = ""
+        
+        # Check if using admin master key
+        is_admin = (quotrading_api_key == "QUOTRADING_ADMIN_MASTER_2025")
         
         # Validation
         if not token or not username:
@@ -1283,61 +1295,212 @@ class QuoTradingLauncher:
             )
             return
         
-        if not quotrading_api_key:
+        # Require quo key unless using admin key
+        if not is_admin and not quotrading_api_key:
             messagebox.showerror(
                 "Missing API Key",
                 "Please enter your QuoTrading API Key."
             )
             return
         
+        # Validate by actually connecting and fetching accounts
+        def validate_in_thread():
+            import traceback
+            print(f"[DEBUG] validate_in_thread started")
+            print(f"[DEBUG] broker={broker}, username={username}, is_admin={quotrading_api_key == 'QUOTRADING_ADMIN_MASTER_2025'}")
+            try:
+                # Import broker interface
+                import sys
+                from pathlib import Path
+                src_path = Path(__file__).parent.parent / "src"
+                if str(src_path) not in sys.path:
+                    sys.path.insert(0, str(src_path))
+                
+                accounts = []
+                
+                # Check if using admin key - still fetch accounts but bypass if connection fails
+                is_admin = (quotrading_api_key == "QUOTRADING_ADMIN_MASTER_2025")
+                
+                # Connect to broker API
+                if broker == "TopStep":
+                    from broker_interface import TopStepBroker
+                    
+                    ts_broker = TopStepBroker(api_token=token, username=username)
+                    connected = ts_broker.connect()
+                    
+                    if connected:
+                        # Get account info from SDK client property (list_accounts has bugs)
+                        # The account_info property is populated automatically after connect()
+                        try:
+                            account_info = ts_broker.sdk_client.account_info
+                            
+                            if account_info:
+                                # Extract real account details from TopStep
+                                # Use the account name (e.g., "50KTC-V2-398684-33989413") as the display ID
+                                account_name = getattr(account_info, 'name', f'TopStep Account')
+                                account_id = account_name  # Use name as ID for display
+                                internal_id = str(getattr(account_info, 'id', 'TOPSTEP_MAIN'))  # Keep numeric ID for storage
+                                current_balance = float(getattr(account_info, 'balance', 0))
+                                is_simulated = getattr(account_info, 'simulated', True)
+                                acc_type = 'prop_firm' if is_simulated else 'live'
+                                
+                                # Check if we have a stored starting balance for this account (use internal ID)
+                                stored_balances = self.config.get("topstep_starting_balances", {})
+                                if internal_id in stored_balances:
+                                    starting_balance = stored_balances[internal_id]
+                                    equity = current_balance
+                                else:
+                                    starting_balance = current_balance
+                                    equity = current_balance
+                                    # Store starting balance for this account
+                                    if "topstep_starting_balances" not in self.config:
+                                        self.config["topstep_starting_balances"] = {}
+                                    self.config["topstep_starting_balances"][internal_id] = starting_balance
+                                
+                                accounts = [{
+                                    "id": account_id,  # Display name
+                                    "name": account_name,
+                                    "balance": starting_balance,
+                                    "equity": equity,
+                                    "type": acc_type
+                                }]
+                            else:
+                                raise Exception("No account info available")
+                        except Exception as e:
+                            # Fallback if account_info is not available
+                            print(f"[DEBUG] account_info failed ({str(e)}), using fallback")
+                            current_equity = ts_broker.get_account_equity()
+                            stored_starting_balance = self.config.get("topstep_starting_balance")
+                            if stored_starting_balance:
+                                starting_balance = stored_starting_balance
+                                equity = current_equity
+                            else:
+                                starting_balance = current_equity
+                                equity = current_equity
+                                self.config["topstep_starting_balance"] = starting_balance
+                            
+                            accounts = [{
+                                "id": "TOPSTEP_MAIN",
+                                "name": f"TopStep Account ({username})",
+                                "balance": starting_balance,
+                                "equity": equity,
+                                "type": "prop_firm"
+                            }]
+                        
+                        ts_broker.disconnect()
+                    else:
+                        # If connection fails and using admin key, create dummy accounts
+                        if is_admin:
+                            try:
+                                user_account_size = int(account_size)
+                            except:
+                                user_account_size = 50000
+                            
+                            accounts = [{
+                                "id": "ADMIN_DEMO",
+                                "name": f"Admin Test Account ({username})",
+                                "balance": user_account_size,
+                                "equity": user_account_size,
+                                "type": "demo"
+                            }]
+                        else:
+                            raise Exception("Failed to connect to TopStep API. Check your API token and username.")
+                
+                elif broker == "Tradovate":
+                    raise Exception("Tradovate API integration coming soon. Please use TopStep for now.")
+                else:
+                    raise Exception(f"Unsupported broker: {broker}")
+                
+                if not accounts:
+                    raise Exception("No accounts retrieved from broker API")
+                
+                # Success - update UI on main thread
+                def on_success_ui():
+                    self.hide_loading()
+                    
+                    # Check for account size mismatch (compare selected tier vs actual starting balance)
+                    user_selected_size = float(account_size)
+                    actual_starting_balance = accounts[0]['balance']  # This is the starting balance, not equity
+                    
+                    mismatch_warning = ""
+                    if abs(user_selected_size - actual_starting_balance) > self.ACCOUNT_MISMATCH_THRESHOLD:
+                        mismatch_warning = (
+                            f"\n\n⚠️ ACCOUNT SIZE MISMATCH:\n\n"
+                            f"You selected: {account_type} (${user_selected_size:,.0f})\n"
+                            f"Actual account: ${actual_starting_balance:,.0f}\n\n"
+                            f"The bot will use the actual account balance for risk calculations.\n"
+                            f"Make sure you selected the correct account type!"
+                        )
+                    
+                    # Save config
+                    self.config["broker_type"] = self.broker_type_var.get()
+                    self.config["broker"] = broker
+                    self.config["account_type"] = account_type
+                    self.config["account_size"] = str(int(actual_starting_balance))  # Use actual balance
+                    self.config["broker_validated"] = True
+                    self.config["accounts"] = accounts
+                    self.config["fetched_account_balance"] = accounts[0]['balance']
+                    self.config["fetched_account_type"] = accounts[0].get('type', 'live_broker')
+                    
+                    if self.remember_credentials_var.get():
+                        self.config["broker_token"] = token
+                        self.config["broker_username"] = username
+                        self.config["quotrading_api_key"] = quotrading_api_key
+                        self.config["remember_credentials"] = True
+                    else:
+                        self.config["broker_token"] = ""
+                        self.config["broker_username"] = ""
+                        self.config["quotrading_api_key"] = ""
+                        self.config["remember_credentials"] = False
+                    
+                    self.save_config()
+                    
+                    # Show mismatch warning if needed
+                    if mismatch_warning:
+                        messagebox.showwarning(
+                            "Account Size Mismatch",
+                            f"Login successful!{mismatch_warning}"
+                        )
+                    
+                    # Proceed to trading screen with accounts pre-loaded
+                    self.setup_trading_screen()
+                
+                self.root.after(0, on_success_ui)
+                
+            except Exception as error:
+                error_msg = str(error)
+                error_traceback = traceback.format_exc()
+                
+                def on_error_ui():
+                    self.hide_loading()
+                    messagebox.showerror(
+                        "Login Failed",
+                        f"❌ Failed to connect to {broker}:\n\n{error_msg}\n\n"
+                        f"Please check your credentials:\n"
+                        f"• Valid API token from your {broker} account\n"
+                        f"• Correct username/email\n"
+                        f"• Active account status\n\n"
+                        f"Contact support if the issue persists."
+                    )
+                    
+                    print(f"\n{'='*60}")
+                    print(f"LOGIN ERROR - {broker}")
+                    print(f"{'='*60}")
+                    print(f"Username: {username}")
+                    print(f"Error: {error_msg}")
+                    print(f"\nFull traceback:")
+                    print(error_traceback)
+                    print(f"{'='*60}\n")
+                
+                self.root.after(0, on_error_ui)
+        
         # Show loading spinner
-        self.show_loading(f"Validating {broker} credentials...")
+        self.show_loading(f"Connecting to {broker} API...")
+        self.root.update_idletasks()  # Non-blocking UI update
         
-        # Define success callback
-        def on_success():
-            self.hide_loading()
-            # Only save credentials if "Remember" is checked
-            self.config["broker_type"] = self.broker_type_var.get()
-            self.config["broker"] = broker
-            self.config["account_type"] = account_type
-            self.config["account_size"] = account_size
-            self.config["broker_validated"] = True
-            
-            if self.remember_credentials_var.get():
-                self.config["broker_token"] = token
-                self.config["broker_username"] = username
-                self.config["quotrading_api_key"] = quotrading_api_key
-                self.config["remember_credentials"] = True
-            else:
-                # Clear saved credentials
-                self.config["broker_token"] = ""
-                self.config["broker_username"] = ""
-                self.config["quotrading_api_key"] = ""
-                self.config["remember_credentials"] = False
-            
-            self.save_config()
-            # Proceed to trading preferences
-            self.setup_trading_screen()
-        
-        # Define error callback
-        def on_error(error_msg):
-            self.hide_loading()
-            messagebox.showerror(
-                "Validation Failed",
-                f"❌ {error_msg}\n\nPlease check your {broker} credentials and try again.\n\n"
-                f"Make sure you have:\n"
-                f"• Valid API token from your {broker} account\n"
-                f"• Correct username/email\n"
-                f"• Active account status"
-            )
-        
-        # Make API validation call
-        credentials = {
-            "broker": broker,
-            "token": token,
-            "username": username
-        }
-        self.validate_api_call("broker", credentials, on_success, on_error)
+        # Start validation in background thread
+        thread = threading.Thread(target=validate_in_thread, daemon=True)
+        thread.start()
     
     
     def setup_trading_screen(self):
@@ -1376,36 +1539,49 @@ class QuoTradingLauncher:
         tk.Label(
             account_select_frame,
             text="Select Account:",
-            font=("Segoe UI", 7),
+            font=("Segoe UI", 9, "bold"),
             bg=self.colors['card'],
-            fg=self.colors['text_light']
+            fg=self.colors['text']
         ).pack(anchor=tk.W)
         
-        self.account_dropdown_var = tk.StringVar(value="Click 'Fetch Account Info' to load accounts")
+        # Check if accounts were already fetched during login
+        pre_loaded_accounts = self.config.get("accounts", [])
+        if pre_loaded_accounts:
+            # Just show the account ID
+            account_names = [acc['id'] for acc in pre_loaded_accounts]
+            default_value = account_names[0]
+        else:
+            account_names = ["Click 'Fetch Account Info' to load accounts"]
+            default_value = account_names[0]
+        
+        self.account_dropdown_var = tk.StringVar(value=default_value)
         self.account_dropdown = ttk.Combobox(
             account_select_frame,
             textvariable=self.account_dropdown_var,
             state="readonly",
-            font=("Segoe UI", 7),
+            font=("Segoe UI", 9),
             width=20,
-            values=["Click 'Fetch Account Info' to load accounts"]
+            values=account_names
         )
         self.account_dropdown.pack(fill=tk.X)
+        self.account_dropdown.bind("<<ComboboxSelected>>", self.on_account_selected)
         
-        # Middle: Fetch button with label
+        # Middle: Sync button with label
         fetch_button_frame = tk.Frame(fetch_frame, bg=self.colors['card'])
         fetch_button_frame.pack(side=tk.LEFT, padx=5)
         
-        important_label = tk.Label(
+        sync_label = tk.Label(
             fetch_button_frame,
-            text="⚠️ IMPORTANT:",
-            font=("Segoe UI", 7, "bold"),
+            text="🔄 SYNC:",
+            font=("Segoe UI", 8, "bold"),
             bg=self.colors['card'],
-            fg=self.colors['error']
+            fg=self.colors['success']  # Changed from 'primary' to 'success' for better visibility
         )
-        important_label.pack(anchor=tk.W)
+        sync_label.pack(anchor=tk.W)
         
-        fetch_btn = self.create_button(fetch_button_frame, "Fetch Account Info", self.fetch_account_info, "next")
+        # Change button text based on whether accounts are pre-loaded
+        button_text = "Sync Accounts" if pre_loaded_accounts else "Load Accounts"
+        fetch_btn = self.create_button(fetch_button_frame, button_text, self.fetch_account_info, "next")
         fetch_btn.pack()
         
         # Right: Auto-adjust button
@@ -1415,21 +1591,29 @@ class QuoTradingLauncher:
         tk.Label(
             auto_adjust_frame,
             text="Quick Setup:",
-            font=("Segoe UI", 7),
+            font=("Segoe UI", 9, "bold"),
             bg=self.colors['card'],
-            fg=self.colors['text_light']
+            fg=self.colors['text']
         ).pack(anchor=tk.W)
         
         auto_adjust_btn = self.create_button(auto_adjust_frame, "Auto Configure", self.auto_adjust_parameters, "next")
         auto_adjust_btn.pack()
         
         # Info label below everything
+        if pre_loaded_accounts:
+            selected_acc = pre_loaded_accounts[0]
+            info_text = f"✓ Balance: ${selected_acc['balance']:,.2f} | Equity: ${selected_acc['equity']:,.2f} | Type: {selected_acc.get('type', 'Unknown')}"
+            info_color = self.colors['success']
+        else:
+            info_text = "Helps AI auto-configure optimal settings for your account"
+            info_color = self.colors['text_light']
+        
         self.account_info_label = tk.Label(
             content,
-            text="Fetching helps AI determine account type and provide best settings",
-            font=("Segoe UI", 6),
+            text=info_text,
+            font=("Segoe UI", 7, "bold"),
             bg=self.colors['card'],
-            fg=self.colors['text_secondary'],
+            fg=info_color,
             anchor=tk.W
         )
         self.account_info_label.pack(anchor=tk.W, pady=(0, 4))
@@ -1471,7 +1655,8 @@ class QuoTradingLauncher:
             ("6E", "Euro FX"),
             ("ZN", "10-Year Treasury Note"),
             ("MES", "Micro E-mini S&P 500"),
-            ("MNQ", "Micro E-mini Nasdaq 100")
+            ("MNQ", "Micro E-mini Nasdaq 100"),
+            ("MBTX", "Micro Bitcoin")
         ]
         
         saved_symbols = self.config.get("symbols", ["ES"])
@@ -1489,7 +1674,7 @@ class QuoTradingLauncher:
                 symbol_frame,
                 text=f"{code} - {name}",
                 variable=var,
-                font=("Segoe UI", 7),
+                font=("Segoe UI", 8, "bold"),
                 bg=self.colors['card'],
                 fg=self.colors['text'],
                 selectcolor=self.colors['secondary'],
@@ -1497,7 +1682,7 @@ class QuoTradingLauncher:
                 activeforeground=self.colors['success'],
                 cursor="hand2"
             )
-            cb.grid(row=row, column=col, sticky=tk.W, padx=4, pady=0)
+            cb.grid(row=row, column=col, sticky=tk.W, padx=4, pady=1)
         
         # Right side - Trading Modes
         modes_section = tk.Frame(symbols_modes_container, bg=self.colors['card'])
@@ -1514,7 +1699,7 @@ class QuoTradingLauncher:
             text="📰 Avoid High-Impact News Days",
             variable=self.avoid_news_var,
             command=self.save_config,
-            font=("Segoe UI", 7, "bold"),
+            font=("Segoe UI", 8, "bold"),
             bg=self.colors['card'],
             fg=self.colors['text'],
             selectcolor=self.colors['secondary'],
@@ -1525,11 +1710,11 @@ class QuoTradingLauncher:
         
         tk.Label(
             news_avoid_frame,
-            text="Skip trading during major economic events (NFP, FOMC, CPI, PPI)",
-            font=("Segoe UI", 6),
+            text="Stops trading during major news events",
+            font=("Segoe UI", 7, "bold"),
             bg=self.colors['card'],
-            fg=self.colors['text_secondary']
-        ).pack(anchor=tk.W)
+            fg=self.colors['text_light']
+        ).pack(anchor=tk.W, padx=(20, 0))
         
         # Confidence Trading
         conf_mode_frame = tk.Frame(modes_section, bg=self.colors['card'])
@@ -1554,7 +1739,7 @@ class QuoTradingLauncher:
             text="⚖️ Confidence Trading",
             variable=self.confidence_trading_var,
             command=on_confidence_trading_toggle,
-            font=("Segoe UI", 7, "bold"),
+            font=("Segoe UI", 8, "bold"),
             bg=self.colors['card'],
             fg=self.colors['text'],
             selectcolor=self.colors['secondary'],
@@ -1565,11 +1750,11 @@ class QuoTradingLauncher:
         
         tk.Label(
             conf_mode_frame,
-            text="Smart contract sizing based on account risk level",
-            font=("Segoe UI", 6),
+            text="Smart position sizing by risk level",
+            font=("Segoe UI", 7, "bold"),
             bg=self.colors['card'],
-            fg=self.colors['text_secondary']
-        ).pack(anchor=tk.W)
+            fg=self.colors['text_light']
+        ).pack(anchor=tk.W, padx=(20, 0))
         
         # Shadow Mode
         shadow_mode_frame = tk.Frame(modes_section, bg=self.colors['card'])
@@ -1578,9 +1763,9 @@ class QuoTradingLauncher:
         self.shadow_mode_var = tk.BooleanVar(value=self.config.get("shadow_mode", False))
         tk.Checkbutton(
             shadow_mode_frame,
-            text="👁️ Shadow Mode",
+            text="👁 Shadow Mode",
             variable=self.shadow_mode_var,
-            font=("Segoe UI", 7, "bold"),
+            font=("Segoe UI", 8, "bold"),
             bg=self.colors['card'],
             fg=self.colors['text'],
             selectcolor=self.colors['secondary'],
@@ -1592,10 +1777,10 @@ class QuoTradingLauncher:
         tk.Label(
             shadow_mode_frame,
             text="Watch signals without executing",
-            font=("Segoe UI", 6),
+            font=("Segoe UI", 7, "bold"),
             bg=self.colors['card'],
-            fg=self.colors['text_secondary']
-        ).pack(anchor=tk.W)
+            fg=self.colors['text_light']
+        ).pack(anchor=tk.W, padx=(20, 0))
         
         # Recovery Mode
         recovery_mode_frame = tk.Frame(modes_section, bg=self.colors['card'])
@@ -1647,7 +1832,7 @@ class QuoTradingLauncher:
             text="🔄 Recovery Mode",
             variable=self.recovery_mode_var,
             command=on_recovery_mode_toggle,
-            font=("Segoe UI", 7, "bold"),
+            font=("Segoe UI", 8, "bold"),
             bg=self.colors['card'],
             fg=self.colors['text'],
             selectcolor=self.colors['secondary'],
@@ -1659,48 +1844,11 @@ class QuoTradingLauncher:
         
         tk.Label(
             recovery_mode_frame,
-            text="Reduces contract size when losing, keeps trading past daily limit",
-            font=("Segoe UI", 6),
-            bg=self.colors['card'],
-            fg=self.colors['text_secondary']
-        ).pack(anchor=tk.W)
-        
-        # Alert Notifications
-        alerts_frame = tk.Frame(modes_section, bg=self.colors['card'])
-        alerts_frame.pack(fill=tk.X, pady=(0, 5))
-        
-        self.alerts_enabled_var = tk.BooleanVar(value=self.config.get("alerts_enabled", False))
-        
-        def on_alerts_toggle():
-            """Show alert configuration dialog when enabling alerts."""
-            if self.alerts_enabled_var.get():
-                # User is enabling alerts - show configuration dialog
-                self.show_alerts_config_dialog()
-            else:
-                # User is disabling alerts
-                self.save_config()
-        
-        tk.Checkbutton(
-            alerts_frame,
-            text="🔔 Enable Trade Alerts",
-            variable=self.alerts_enabled_var,
-            command=on_alerts_toggle,
+            text="Reduces size when losing, trades past limit",
             font=("Segoe UI", 7, "bold"),
             bg=self.colors['card'],
-            fg=self.colors['text'],
-            selectcolor=self.colors['secondary'],
-            activebackground=self.colors['card'],
-            activeforeground=self.colors['success'],
-            cursor="hand2"
-        ).pack(anchor=tk.W)
-        
-        tk.Label(
-            alerts_frame,
-            text="Get notified via Email/SMS for trades, errors, and daily summaries",
-            font=("Segoe UI", 6),
-            bg=self.colors['card'],
-            fg=self.colors['text_secondary']
-        ).pack(anchor=tk.W)
+            fg=self.colors['text_light']
+        ).pack(anchor=tk.W, padx=(20, 0))
         
         # Account Settings Row - COMPACT
         settings_row = tk.Frame(content, bg=self.colors['card'])
@@ -1804,9 +1952,9 @@ class QuoTradingLauncher:
         contracts_info = tk.Label(
             contracts_frame,
             text=f"Max {max_contracts_allowed} for {account_type} (enforced)",
-            font=("Segoe UI", 6),
+            font=("Segoe UI", 7, "bold"),
             bg=self.colors['card'],
-            fg=self.colors['text_secondary']
+            fg=self.colors['text_light']
         )
         contracts_info.pack(anchor=tk.W, pady=(1, 0))
         
@@ -1836,7 +1984,7 @@ class QuoTradingLauncher:
         # CONFIDENCE SLIDER - COMPACT
         # ========================================
         confidence_section = tk.Frame(content, bg=self.colors['card'])
-        confidence_section.pack(fill=tk.X, pady=(2, 1))
+        confidence_section.pack(fill=tk.X, pady=(0, 0))
         
         # Header with title
         conf_header = tk.Frame(confidence_section, bg=self.colors['card'])
@@ -1854,9 +2002,9 @@ class QuoTradingLauncher:
         tk.Label(
             conf_header,
             text="  •  Higher = Fewer trades, safer  •  Lower = More trades, riskier",
-            font=("Segoe UI", 7),
+            font=("Segoe UI", 7, "bold"),
             bg=self.colors['card'],
-            fg=self.colors['text_secondary']
+            fg=self.colors['text_light']
         ).pack(side=tk.LEFT, padx=(4, 0))
         
         # Current value display with trading style
@@ -1921,12 +2069,66 @@ class QuoTradingLauncher:
         summary_frame = tk.Frame(content, bg=self.colors['card'])
         summary_frame.pack(fill=tk.X, pady=(0, 1))
         
-        # Center container for launch button
-        launch_container = tk.Frame(summary_frame, bg=self.colors['card'])
-        launch_container.pack()
+        # Bottom row with Settings icon and Launch button
+        bottom_row = tk.Frame(summary_frame, bg=self.colors['card'])
+        bottom_row.pack(fill=tk.X)
         
+        # Settings icon (far left) with label
+        settings_container = tk.Frame(bottom_row, bg=self.colors['card'])
+        settings_container.pack(side=tk.LEFT, anchor=tk.W, padx=(5, 0))
+        
+        settings_btn = tk.Button(
+            settings_container,
+            text="⚙️",
+            command=self.show_settings_dialog,
+            font=("Segoe UI", 14),
+            bg=self.colors['card'],
+            fg=self.colors['text'],
+            cursor="hand2",
+            relief=tk.FLAT,
+            bd=0,
+            padx=8,
+            pady=2
+        )
+        settings_btn.pack()
+        
+        tk.Label(
+            settings_container,
+            text="Settings",
+            font=("Segoe UI", 7, "bold"),
+            bg=self.colors['card'],
+            fg=self.colors['text_light']
+        ).pack()
+        
+        # Launch button (center)
+        launch_container = tk.Frame(bottom_row, bg=self.colors['card'])
+        launch_container.pack(expand=True, padx=(0, 60))
         launch_btn = self.create_button(launch_container, "LAUNCH AI", self.start_bot, "next")
         launch_btn.pack(pady=2, ipady=3)
+    
+    def on_account_selected(self, event=None):
+        """Update account size field when user selects a different account from dropdown."""
+        selected_id = self.account_dropdown_var.get()
+        accounts = self.config.get("accounts", [])
+        
+        if not accounts or "Click" in selected_id:
+            return
+        
+        # Find account by ID
+        try:
+            selected_account = next((acc for acc in accounts if acc['id'] == selected_id), None)
+            
+            if selected_account:
+                # Update account size field with selected account's balance
+                balance = selected_account['balance']
+                self.account_entry.delete(0, tk.END)
+                self.account_entry.insert(0, str(int(balance)))
+                
+                # Update info label
+                info_text = f"✓ Balance: ${selected_account['balance']:,.2f} | Equity: ${selected_account['equity']:,.2f} | Type: {selected_account.get('type', 'Unknown')}"
+                self.account_info_label.config(text=info_text, fg=self.colors['success'])
+        except Exception as e:
+            print(f"[ERROR] Failed to update account info: {e}")
     
     def _update_account_size_from_fetched(self, balance: float):
         """Helper method to update account size field with fetched balance."""
@@ -1936,8 +2138,8 @@ class QuoTradingLauncher:
         self.save_config()
     
     def fetch_account_info(self):
-        """Fetch account information from the broker using actual API."""
-        print("\n[DEBUG] Fetch Account Info button clicked!")
+        """Sync accounts: refresh equity, positions, and open orders from broker API."""
+        print("\n[DEBUG] Sync Accounts button clicked!")
         
         broker = self.config.get("broker", "TopStep")
         token = self.config.get("broker_token", "")
@@ -1955,10 +2157,10 @@ class QuoTradingLauncher:
             )
             return
         
-        print(f"[DEBUG] Starting REAL API fetch for {broker}...")
+        print(f"[DEBUG] Starting account sync for {broker}...")
         
         # Show loading spinner
-        self.show_loading(f"Connecting to {broker} API...")
+        self.show_loading(f"Syncing accounts from {broker}...")
         
         def fetch_in_thread():
             print("[DEBUG] Inside fetch thread...")
@@ -1987,37 +2189,67 @@ class QuoTradingLauncher:
                     connected = ts_broker.connect()
                     
                     if connected:
-                        print("[DEBUG] Connected successfully! Getting account balance...")
-                        # Get actual account balance from TopStep
-                        current_equity = ts_broker.get_account_equity()
-                        print(f"[DEBUG] Equity retrieved: ${current_equity:,.2f}")
+                        print("[DEBUG] Connected successfully! Getting accounts...")
                         
-                        # Determine starting balance vs current equity
-                        # If this is first fetch, current equity IS the starting balance
-                        # If subsequent fetch, use stored starting balance
-                        stored_starting_balance = self.config.get("topstep_starting_balance")
-                        
-                        if stored_starting_balance:
-                            # Subsequent fetch - user has profits/losses
-                            starting_balance = stored_starting_balance
-                            equity = current_equity
-                            print(f"[DEBUG] Starting balance: ${starting_balance:,.2f}, Current equity: ${equity:,.2f}, P&L: ${equity - starting_balance:,.2f}")
-                        else:
-                            # First fetch - store this as starting balance
-                            starting_balance = current_equity
-                            equity = current_equity
-                            self.config["topstep_starting_balance"] = starting_balance
-                            self.save_config()
-                            print(f"[DEBUG] First fetch - stored starting balance: ${starting_balance:,.2f}")
-                        
-                        # Create account info from REAL data
-                        accounts = [{
-                            "id": "TOPSTEP_MAIN",
-                            "name": f"TopStep Account ({username})",
-                            "balance": starting_balance,  # Starting balance (what prop firm gave)
-                            "equity": equity,              # Current equity (balance + profits)
-                            "type": "prop_firm"
-                        }]
+                        # Get account info from SDK client property (same as login)
+                        try:
+                            account_info = ts_broker.sdk_client.account_info
+                            
+                            if account_info:
+                                # Extract real account details from TopStep
+                                # Use the account name (e.g., "50KTC-V2-398684-33989413") as the display ID
+                                account_name = getattr(account_info, 'name', f'TopStep Account')
+                                account_id = account_name  # Use name as ID for display
+                                internal_id = str(getattr(account_info, 'id', 'TOPSTEP_MAIN'))  # Keep numeric ID for storage
+                                current_balance = float(getattr(account_info, 'balance', 0))
+                                is_simulated = getattr(account_info, 'simulated', True)
+                                acc_type = 'prop_firm' if is_simulated else 'live'
+                                
+                                # Check if we have a stored starting balance for this account (use internal ID)
+                                stored_balances = self.config.get("topstep_starting_balances", {})
+                                if internal_id in stored_balances:
+                                    starting_balance = stored_balances[internal_id]
+                                    equity = current_balance
+                                else:
+                                    starting_balance = current_balance
+                                    equity = current_balance
+                                    # Store starting balance for this account
+                                    if "topstep_starting_balances" not in self.config:
+                                        self.config["topstep_starting_balances"] = {}
+                                    self.config["topstep_starting_balances"][internal_id] = starting_balance
+                                
+                                accounts = [{
+                                    "id": account_id,  # Display name
+                                    "name": account_name,
+                                    "balance": starting_balance,
+                                    "equity": equity,
+                                    "type": acc_type
+                                }]
+                                print(f"[DEBUG] Account: {account_name}, Balance: ${starting_balance:,.2f}, Equity: ${equity:,.2f}")
+                            else:
+                                raise Exception("No account info available")
+                        except Exception as e:
+                            # Fallback if account_info is not available
+                            print(f"[DEBUG] account_info failed ({str(e)}), using fallback")
+                            current_equity = ts_broker.get_account_equity()
+                            stored_starting_balance = self.config.get("topstep_starting_balance")
+                            
+                            if stored_starting_balance:
+                                starting_balance = stored_starting_balance
+                                equity = current_equity
+                            else:
+                                starting_balance = current_equity
+                                equity = current_equity
+                                self.config["topstep_starting_balance"] = starting_balance
+                                self.save_config()
+                            
+                            accounts = [{
+                                "id": "TOPSTEP_MAIN",
+                                "name": f"TopStep Account ({username})",
+                                "balance": starting_balance,
+                                "equity": equity,
+                                "type": "prop_firm"
+                            }]
                         
                         # Disconnect
                         ts_broker.disconnect()
@@ -2026,7 +2258,14 @@ class QuoTradingLauncher:
                         raise Exception("Failed to connect to TopStep API. Check your API token and username.")
                 
                 elif broker == "Tradovate":
-                    print("[DEBUG] Tradovate not yet supported...")
+                    print("[DEBUG] Connecting to Tradovate API...")
+                    # TODO: Implement Tradovate multi-account support when SDK is available
+                    # from broker_interface import TradovateBroker
+                    # tradovate_broker = TradovateBroker(api_token=token, username=username)
+                    # connected = tradovate_broker.connect()
+                    # if connected:
+                    #     account_list = tradovate_broker.list_accounts()
+                    #     ... process accounts similar to TopStep
                     raise Exception("Tradovate API integration coming soon. Please use TopStep for now.")
                 
                 else:
@@ -2074,14 +2313,25 @@ class QuoTradingLauncher:
                         fg=self.colors['success']
                     )
                     
+                    # Show success message with account count
+                    account_count = len(accounts)
+                    account_summary = f"Successfully synced {account_count} account{'s' if account_count > 1 else ''} from {broker}.\n\n"
+                    
+                    if account_count > 1:
+                        account_summary += "Accounts:\n"
+                        for acc in accounts:
+                            account_summary += f"• {acc['name']} - ${acc['equity']:,.2f}\n"
+                    else:
+                        account_summary += (
+                            f"Selected: {selected_acc['name']}\n"
+                            f"Balance: ${selected_acc['balance']:,.2f}\n"
+                            f"Equity: ${selected_acc['equity']:,.2f}\n"
+                            f"Type: {selected_acc.get('type', 'Unknown')}"
+                        )
+                    
                     messagebox.showinfo(
-                        "Account Info Fetched",
-                        f"Successfully retrieved account from {broker}.\n\n"
-                        f"Selected: {selected_acc['name']}\n"
-                        f"Balance: ${selected_acc['balance']:,.2f}\n"
-                        f"Equity: ${selected_acc['equity']:,.2f}\n"
-                        f"Type: {selected_acc.get('type', 'Unknown')}"
-                        + (mismatch_warning if mismatch_warning else "")
+                        "Accounts Synced",
+                        account_summary + (mismatch_warning if mismatch_warning else "")
                     )
                 
                 self.root.after(0, update_ui)
@@ -2378,7 +2628,10 @@ class QuoTradingLauncher:
         
         self.config["recovery_mode"] = self.recovery_mode_var.get()
         self.config["avoid_news_days"] = self.avoid_news_var.get()
-        self.config["alerts_enabled"] = self.alerts_enabled_var.get()
+        
+        # Auto-enable alerts if email is configured
+        self.config["alerts_enabled"] = bool(self.config.get("alert_email") and self.config.get("alert_email_password"))
+        
         self.save_config()
         
         # Create .env file
@@ -2460,6 +2713,563 @@ class QuoTradingLauncher:
                 f"Failed to launch bot:\n{str(e)}\n\n"
                 f"Make sure Python is installed and run.py exists."
             )
+    
+    def show_settings_dialog(self):
+        """Show comprehensive settings dialog with tabs."""
+        dialog = tk.Toplevel(self.root)
+        dialog.title("Settings")
+        dialog.geometry("600x700")
+        dialog.configure(bg=self.colors['background'])
+        dialog.resizable(False, False)
+        
+        # Center the dialog
+        dialog.transient(self.root)
+        dialog.grab_set()
+        
+        # Header
+        header_frame = tk.Frame(dialog, bg=self.colors['success_dark'], height=60)
+        header_frame.pack(fill=tk.X)
+        header_frame.pack_propagate(False)
+        
+        tk.Label(
+            header_frame,
+            text="⚙️ Settings",
+            font=("Segoe UI", 14, "bold"),
+            bg=self.colors['success_dark'],
+            fg='white'
+        ).pack(pady=15)
+        
+        # Tab container
+        tab_container = tk.Frame(dialog, bg=self.colors['background'])
+        tab_container.pack(fill=tk.BOTH, expand=True, padx=20, pady=20)
+        
+        # Tab buttons
+        tab_button_frame = tk.Frame(tab_container, bg=self.colors['background'])
+        tab_button_frame.pack(fill=tk.X, pady=(0, 10))
+        
+        # Tab content frames
+        theme_tab = tk.Frame(tab_container, bg=self.colors['card'])
+        alerts_tab = tk.Frame(tab_container, bg=self.colors['card'])
+        
+        def show_tab(tab_name):
+            """Switch between tabs."""
+            # Hide all tabs
+            theme_tab.pack_forget()
+            alerts_tab.pack_forget()
+            
+            # Update button colors
+            for btn in tab_button_frame.winfo_children():
+                btn.configure(bg=self.colors['card_elevated'], fg=self.colors['text'])
+            
+            # Show selected tab and highlight button
+            if tab_name == "theme":
+                theme_tab.pack(fill=tk.BOTH, expand=True)
+                theme_btn.configure(bg=self.colors['success_dark'], fg='white')
+            elif tab_name == "alerts":
+                alerts_tab.pack(fill=tk.BOTH, expand=True)
+                alerts_btn.configure(bg=self.colors['success_dark'], fg='white')
+        
+        # Tab buttons
+        theme_btn = tk.Button(
+            tab_button_frame,
+            text="🎨 Theme",
+            command=lambda: show_tab("theme"),
+            font=("Segoe UI", 9, "bold"),
+            bg=self.colors['success_dark'],
+            fg='white',
+            cursor="hand2",
+            relief=tk.FLAT,
+            padx=20,
+            pady=8
+        )
+        theme_btn.pack(side=tk.LEFT, padx=(0, 5))
+        
+        alerts_btn = tk.Button(
+            tab_button_frame,
+            text="🔔 Alerts",
+            command=lambda: show_tab("alerts"),
+            font=("Segoe UI", 9, "bold"),
+            bg=self.colors['card_elevated'],
+            fg=self.colors['text'],
+            cursor="hand2",
+            relief=tk.FLAT,
+            padx=20,
+            pady=8
+        )
+        alerts_btn.pack(side=tk.LEFT)
+        
+        # === THEME TAB CONTENT ===
+        self._build_theme_tab(theme_tab, dialog)
+        
+        # === ALERTS TAB CONTENT ===
+        self._build_alerts_tab(alerts_tab, dialog)
+        
+        # Show theme tab by default
+        show_tab("theme")
+        
+        # Close button
+        close_btn = tk.Button(
+            dialog,
+            text="Close",
+            command=dialog.destroy,
+            font=("Segoe UI", 9, "bold"),
+            bg=self.colors['card_elevated'],
+            fg=self.colors['text'],
+            cursor="hand2",
+            relief=tk.FLAT,
+            padx=30,
+            pady=10
+        )
+        close_btn.pack(pady=(0, 20))
+    
+    def _build_theme_tab(self, parent, dialog):
+        """Build theme settings tab content."""
+        tk.Label(
+            parent,
+            text="Choose Your Theme",
+            font=("Segoe UI", 12, "bold"),
+            bg=self.colors['card'],
+            fg=self.colors['text']
+        ).pack(pady=(20, 10))
+        
+        tk.Label(
+            parent,
+            text="Select a color scheme for the application",
+            font=("Segoe UI", 8),
+            bg=self.colors['card'],
+            fg=self.colors['text_secondary']
+        ).pack(pady=(0, 20))
+        
+        # Theme selection buttons
+        theme_buttons = tk.Frame(parent, bg=self.colors['card'])
+        theme_buttons.pack(pady=20)
+        
+        current_theme = self.config.get("theme", "light")
+        
+        def apply_theme(theme_name):
+            """Apply selected theme and reload UI immediately."""
+            self.config["theme"] = theme_name
+            self.save_config()
+            
+            # Update colors
+            if theme_name == "dark":
+                self.colors = self.dark_theme_colors.copy()
+            else:
+                self.colors = self.light_theme_colors.copy()
+            
+            # Close settings dialog
+            dialog.destroy()
+            
+            # Reload the current screen
+            current_screen = self.current_screen
+            
+            # Clear all widgets
+            for widget in self.root.winfo_children():
+                widget.destroy()
+            
+            # Reapply background
+            self.root.configure(bg=self.colors['background'])
+            
+            # Recreate the appropriate screen
+            if current_screen == 0:
+                self.setup_broker_screen()
+            elif current_screen == 1:
+                self.setup_trading_screen()
+            
+            # Show success message
+            messagebox.showinfo(
+                "Theme Applied",
+                f"{theme_name.title()} theme has been applied successfully!"
+            )
+        
+        # Light Theme Button
+        light_frame = tk.Frame(theme_buttons, bg='white', bd=2, relief=tk.RIDGE)
+        light_frame.pack(side=tk.LEFT, padx=10)
+        
+        light_preview = tk.Frame(light_frame, bg='#E0E0E0', width=150, height=100)
+        light_preview.pack(padx=10, pady=10)
+        light_preview.pack_propagate(False)
+        
+        tk.Label(
+            light_preview,
+            text="Light Theme",
+            font=("Segoe UI", 10, "bold"),
+            bg='#E0E0E0',
+            fg='#1F2937'
+        ).pack(expand=True)
+        
+        tk.Button(
+            light_frame,
+            text="✓ Select" if current_theme == "light" else "Select",
+            command=lambda: apply_theme("light"),
+            font=("Segoe UI", 8, "bold" if current_theme == "light" else "normal"),
+            bg='#0078D4' if current_theme == "light" else '#E0E0E0',
+            fg='white' if current_theme == "light" else '#1F2937',
+            cursor="hand2",
+            relief=tk.FLAT,
+            padx=15,
+            pady=5
+        ).pack(pady=(0, 10))
+        
+        # Dark Theme Button
+        dark_frame = tk.Frame(theme_buttons, bg='#1F2937', bd=2, relief=tk.RIDGE)
+        dark_frame.pack(side=tk.LEFT, padx=10)
+        
+        dark_preview = tk.Frame(dark_frame, bg='#1a1a2e', width=150, height=100)
+        dark_preview.pack(padx=10, pady=10)
+        dark_preview.pack_propagate(False)
+        
+        tk.Label(
+            dark_preview,
+            text="Dark Theme",
+            font=("Segoe UI", 10, "bold"),
+            bg='#1a1a2e',
+            fg='#E0E0E0'
+        ).pack(expand=True)
+        
+        tk.Button(
+            dark_frame,
+            text="✓ Select" if current_theme == "dark" else "Select",
+            command=lambda: apply_theme("dark"),
+            font=("Segoe UI", 8, "bold" if current_theme == "dark" else "normal"),
+            bg='#0078D4' if current_theme == "dark" else '#2D3748',
+            fg='white',
+            cursor="hand2",
+            relief=tk.FLAT,
+            padx=15,
+            pady=5
+        ).pack(pady=(0, 10))
+        
+        # Current theme indicator
+        tk.Label(
+            parent,
+            text=f"Current Theme: {current_theme.title()}",
+            font=("Segoe UI", 9),
+            bg=self.colors['card'],
+            fg=self.colors['text']
+        ).pack(pady=(30, 10))
+    
+    def _build_alerts_tab(self, parent, settings_dialog):
+        """Build alerts settings tab content."""
+        # Scrollable content
+        canvas = tk.Canvas(parent, bg=self.colors['card'], highlightthickness=0)
+        scrollbar = tk.Scrollbar(parent, orient="vertical", command=canvas.yview)
+        content = tk.Frame(canvas, bg=self.colors['card'])
+        
+        content.bind(
+            "<Configure>",
+            lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
+        )
+        
+        canvas.create_window((0, 0), window=content, anchor="nw")
+        canvas.configure(yscrollcommand=scrollbar.set)
+        
+        canvas.pack(side="left", fill="both", expand=True, padx=10, pady=10)
+        scrollbar.pack(side="right", fill="y")
+        
+        # Email Provider Section
+        tk.Label(
+            content,
+            text="📨 Email Provider:",
+            font=("Segoe UI", 9, "bold"),
+            bg=self.colors['card'],
+            fg=self.colors['text']
+        ).pack(anchor=tk.W, pady=(0, 5))
+        
+        provider_var = tk.StringVar(value=self.config.get("smtp_provider", "gmail"))
+        provider_frame = tk.Frame(content, bg=self.colors['card'])
+        provider_frame.pack(fill=tk.X, pady=(0, 10))
+        
+        tk.Label(
+            provider_frame,
+            text="Provider:",
+            font=("Segoe UI", 8),
+            bg=self.colors['card'],
+            fg=self.colors['text']
+        ).pack(side=tk.LEFT)
+        
+        provider_dropdown = ttk.Combobox(
+            provider_frame,
+            textvariable=provider_var,
+            values=["gmail", "outlook", "yahoo", "office365", "custom"],
+            font=("Segoe UI", 9),
+            state="readonly",
+            width=15
+        )
+        provider_dropdown.pack(side=tk.LEFT, padx=(5, 0))
+        
+        # Primary Email Section
+        tk.Label(
+            content,
+            text="✉️ Primary Email Account:",
+            font=("Segoe UI", 9, "bold"),
+            bg=self.colors['card'],
+            fg=self.colors['text']
+        ).pack(anchor=tk.W, pady=(10, 5))
+        
+        tk.Label(
+            content,
+            text="Your Email Address:",
+            font=("Segoe UI", 8),
+            bg=self.colors['card'],
+            fg=self.colors['text']
+        ).pack(anchor=tk.W)
+        
+        email_var = tk.StringVar(value=self.config.get("alert_email", ""))
+        email_entry = tk.Entry(
+            content,
+            textvariable=email_var,
+            font=("Segoe UI", 9),
+            bg='white',
+            fg=self.colors['text']
+        )
+        email_entry.pack(fill=tk.X, pady=(2, 10))
+        
+        tk.Label(
+            content,
+            text="Email Password / App Password:",
+            font=("Segoe UI", 8),
+            bg=self.colors['card'],
+            fg=self.colors['text']
+        ).pack(anchor=tk.W)
+        
+        email_pass_var = tk.StringVar(value=self.config.get("alert_email_password", ""))
+        email_pass_entry = tk.Entry(
+            content,
+            textvariable=email_pass_var,
+            font=("Segoe UI", 9),
+            bg='white',
+            fg=self.colors['text'],
+            show="•"
+        )
+        email_pass_entry.pack(fill=tk.X, pady=(2, 5))
+        
+        # Provider-specific instructions
+        instruction_text = tk.StringVar()
+        instruction_label = tk.Label(
+            content,
+            textvariable=instruction_text,
+            font=("Segoe UI", 7),
+            bg=self.colors['card'],
+            fg=self.colors['text_secondary'],
+            wraplength=480,
+            justify=tk.LEFT
+        )
+        instruction_label.pack(anchor=tk.W, pady=(0, 10))
+        
+        def update_instructions(*args):
+            provider = provider_var.get()
+            if provider == "gmail":
+                instruction_text.set("💡 Gmail: Google Account → Security → 2-Step Verification → App Passwords → Generate")
+            elif provider == "outlook":
+                instruction_text.set("💡 Outlook/Hotmail: Use your regular email password (enable 2FA if required)")
+            elif provider == "yahoo":
+                instruction_text.set("💡 Yahoo: Account Settings → Security → Generate App Password")
+            elif provider == "office365":
+                instruction_text.set("💡 Office 365: Use your regular email password")
+            elif provider == "custom":
+                instruction_text.set("💡 Custom: Enter your SMTP server details below")
+                custom_smtp_frame.pack(fill=tk.X, pady=(5, 10), after=instruction_label)
+                return
+            # Hide custom SMTP fields for non-custom providers
+            custom_smtp_frame.pack_forget()
+        
+        provider_var.trace("w", update_instructions)
+        
+        # Custom SMTP Settings (hidden by default)
+        custom_smtp_frame = tk.Frame(content, bg=self.colors['card'])
+        
+        tk.Label(
+            custom_smtp_frame,
+            text="SMTP Server:",
+            font=("Segoe UI", 8),
+            bg=self.colors['card'],
+            fg=self.colors['text']
+        ).pack(anchor=tk.W)
+        
+        smtp_server_var = tk.StringVar(value=self.config.get("smtp_server", ""))
+        smtp_server_entry = tk.Entry(
+            custom_smtp_frame,
+            textvariable=smtp_server_var,
+            font=("Segoe UI", 9),
+            bg='white',
+            fg=self.colors['text']
+        )
+        smtp_server_entry.pack(fill=tk.X, pady=(2, 5))
+        
+        port_frame = tk.Frame(custom_smtp_frame, bg=self.colors['card'])
+        port_frame.pack(fill=tk.X, pady=(0, 5))
+        
+        tk.Label(
+            port_frame,
+            text="Port:",
+            font=("Segoe UI", 8),
+            bg=self.colors['card'],
+            fg=self.colors['text']
+        ).pack(side=tk.LEFT)
+        
+        smtp_port_var = tk.StringVar(value=str(self.config.get("smtp_port", "587")))
+        smtp_port_entry = tk.Entry(
+            port_frame,
+            textvariable=smtp_port_var,
+            font=("Segoe UI", 9),
+            bg='white',
+            fg=self.colors['text'],
+            width=10
+        )
+        smtp_port_entry.pack(side=tk.LEFT, padx=(5, 20))
+        
+        smtp_tls_var = tk.BooleanVar(value=self.config.get("smtp_tls", True))
+        tk.Checkbutton(
+            port_frame,
+            text="Use TLS/STARTTLS",
+            variable=smtp_tls_var,
+            font=("Segoe UI", 8),
+            bg=self.colors['card'],
+            fg=self.colors['text'],
+            selectcolor='white'
+        ).pack(side=tk.LEFT)
+        
+        # Additional Email Recipients
+        tk.Label(
+            content,
+            text="👥 Additional Email Recipients (Optional):",
+            font=("Segoe UI", 9, "bold"),
+            bg=self.colors['card'],
+            fg=self.colors['text']
+        ).pack(anchor=tk.W, pady=(15, 5))
+        
+        tk.Label(
+            content,
+            text="Add extra email addresses to receive alerts (comma-separated):",
+            font=("Segoe UI", 7),
+            bg=self.colors['card'],
+            fg=self.colors['text_secondary']
+        ).pack(anchor=tk.W)
+        
+        additional_emails_var = tk.StringVar(
+            value=", ".join(self.config.get("additional_alert_emails", []))
+        )
+        additional_emails_entry = tk.Entry(
+            content,
+            textvariable=additional_emails_var,
+            font=("Segoe UI", 9),
+            bg='white',
+            fg=self.colors['text']
+        )
+        additional_emails_entry.pack(fill=tk.X, pady=(2, 5))
+        
+        tk.Label(
+            content,
+            text="💡 Example: partner@email.com, manager@company.com",
+            font=("Segoe UI", 7),
+            bg=self.colors['card'],
+            fg=self.colors['text_secondary']
+        ).pack(anchor=tk.W, pady=(0, 15))
+        
+        # SMS Section
+        tk.Label(
+            content,
+            text="📱 SMS Notifications (Optional - Free via Email-to-SMS):",
+            font=("Segoe UI", 9, "bold"),
+            bg=self.colors['card'],
+            fg=self.colors['text']
+        ).pack(anchor=tk.W, pady=(0, 5))
+        
+        tk.Label(
+            content,
+            text="Phone Number (10 digits, no spaces):",
+            font=("Segoe UI", 8),
+            bg=self.colors['card'],
+            fg=self.colors['text']
+        ).pack(anchor=tk.W)
+        
+        phone_var = tk.StringVar(value=self.config.get("alert_phone", ""))
+        phone_entry = tk.Entry(
+            content,
+            textvariable=phone_var,
+            font=("Segoe UI", 9),
+            bg='white',
+            fg=self.colors['text']
+        )
+        phone_entry.pack(fill=tk.X, pady=(2, 10))
+        
+        tk.Label(
+            content,
+            text="Carrier:",
+            font=("Segoe UI", 8),
+            bg=self.colors['card'],
+            fg=self.colors['text']
+        ).pack(anchor=tk.W)
+        
+        carrier_var = tk.StringVar(value=self.config.get("alert_carrier", "verizon"))
+        carrier_dropdown = ttk.Combobox(
+            content,
+            textvariable=carrier_var,
+            values=[
+                "verizon", "att", "t-mobile", "sprint",
+                "boost", "cricket", "metro-pcs", "us-cellular",
+                "virgin", "google-fi", "xfinity", "mint",
+                "republic", "ting",
+                "rogers", "bell", "telus"
+            ],
+            font=("Segoe UI", 9),
+            state="readonly"
+        )
+        carrier_dropdown.pack(fill=tk.X, pady=(2, 15))
+        
+        # Initialize instructions
+        update_instructions()
+        
+        # Save Button
+        save_btn = tk.Button(
+            content,
+            text="💾 Save Alert Settings",
+            command=lambda: self._save_alerts_settings(
+                settings_dialog,
+                provider_var, email_var, email_pass_var, additional_emails_var,
+                smtp_server_var, smtp_port_var, smtp_tls_var,
+                phone_var, carrier_var
+            ),
+            font=("Segoe UI", 9, "bold"),
+            bg=self.colors['success_dark'],
+            fg='white',
+            cursor="hand2",
+            relief=tk.FLAT,
+            padx=30,
+            pady=10
+        )
+        save_btn.pack(pady=(20, 0))
+    
+    def _save_alerts_settings(self, dialog, provider_var, email_var, email_pass_var,
+                             additional_emails_var, smtp_server_var, smtp_port_var,
+                             smtp_tls_var, phone_var, carrier_var):
+        """Save alert settings from the Alerts tab."""
+        # Parse additional emails
+        additional_emails = []
+        if additional_emails_var.get().strip():
+            additional_emails = [
+                email.strip() 
+                for email in additional_emails_var.get().split(",") 
+                if email.strip()
+            ]
+        
+        self.config["smtp_provider"] = provider_var.get()
+        self.config["alert_email"] = email_var.get()
+        self.config["alert_email_password"] = email_pass_var.get()
+        self.config["additional_alert_emails"] = additional_emails
+        self.config["smtp_server"] = smtp_server_var.get()
+        self.config["smtp_port"] = int(smtp_port_var.get()) if smtp_port_var.get().isdigit() else 587
+        self.config["smtp_tls"] = smtp_tls_var.get()
+        self.config["alert_phone"] = phone_var.get()
+        self.config["alert_carrier"] = carrier_var.get()
+        
+        # Auto-enable alerts if email is configured, disable if not
+        self.config["alerts_enabled"] = bool(email_var.get() and email_pass_var.get())
+        
+        self.save_config()
+        messagebox.showinfo("Alert Settings Saved", "Your alert settings have been saved successfully!")
+        dialog.destroy()
     
     def show_alerts_config_dialog(self):
         """Show dialog to configure email/SMS alert settings."""
@@ -2779,12 +3589,15 @@ class QuoTradingLauncher:
             self.config["smtp_tls"] = smtp_tls_var.get()
             self.config["alert_phone"] = phone_var.get()
             self.config["alert_carrier"] = carrier_var.get()
+            
+            # Auto-enable alerts if email is configured, disable if not
+            self.config["alerts_enabled"] = bool(email_var.get() and email_pass_var.get())
+            
             self.save_config()
             dialog.destroy()
         
         def cancel():
-            # User cancelled, disable alerts
-            self.alerts_enabled_var.set(False)
+            # User cancelled
             dialog.destroy()
         
         tk.Button(
