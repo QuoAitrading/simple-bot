@@ -240,10 +240,14 @@ echo "  2. Or configure GitHub deployment:"
 echo "     az webapp deployment source config --resource-group $RESOURCE_GROUP --name $APP_NAME \\"
 echo "       --repo-url https://github.com/Quotraders/simple-bot --branch main --manual-integration"
 echo ""
-echo "  3. Test your API:"
+echo "  3. Configure your bot to use this Azure deployment:"
+echo "     export QUOTRADING_API_URL=\"https://$APP_URL\""
+echo "     # Or add to .env file: QUOTRADING_API_URL=https://$APP_URL"
+echo ""
+echo "  4. Test your API:"
 echo "     curl https://$APP_URL/"
 echo ""
-echo "  4. View logs:"
+echo "  5. View logs:"
 echo "     az webapp log tail --resource-group $RESOURCE_GROUP --name $APP_NAME"
 echo ""
 print_warning "Important: Update Stripe webhook URL to: https://$APP_URL/api/v1/webhooks/stripe"
@@ -274,8 +278,11 @@ Environment Variables Set:
 - SCM_DO_BUILD_DURING_DEPLOYMENT
 - WEBSITES_PORT
 
-To update bot launcher, set:
-CLOUD_API_BASE_URL = "https://$APP_URL"
+To use this Azure deployment, set environment variable:
+export QUOTRADING_API_URL="https://$APP_URL"
+
+Or add to your .env file:
+QUOTRADING_API_URL=https://$APP_URL
 EOF
 
 print_info "Deployment information saved!"
