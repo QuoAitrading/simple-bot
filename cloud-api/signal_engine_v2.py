@@ -365,6 +365,193 @@ async def update_market_data(bar: Dict):
 
 
 # ============================================================================
+# ML/RL ENDPOINTS
+# ============================================================================
+
+# In-memory storage for trade experiences (will move to database later)
+signal_experiences = []
+exit_experiences = []
+
+@app.post("/api/ml/get_confidence")
+async def get_ml_confidence(request: Dict):
+    """
+    Get ML confidence score for a trade setup
+    
+    Request: {
+        symbol: str,
+        vwap: float,
+        vwap_std_dev: float,
+        rsi: float,
+        price: float,
+        volume: int,
+        signal: str  # 'LONG' or 'SHORT'
+    }
+    
+    Returns: {
+        ml_confidence: float,  # 0.0 to 1.0
+        action: str,  # 'LONG', 'SHORT', or 'NONE'
+        model_version: str
+    }
+    """
+    try:
+        symbol = request.get('symbol', 'ES')
+        vwap = request.get('vwap', 0.0)
+        vwap_std_dev = request.get('vwap_std_dev', 0.0)
+        rsi = request.get('rsi', 50.0)
+        price = request.get('price', 0.0)
+        signal = request.get('signal', 'NONE')
+        
+        # Simple ML confidence based on historical performance
+        # TODO: Replace with actual RL model inference
+        confidence = calculate_signal_confidence(
+            symbol=symbol,
+            vwap_distance=abs(price - vwap) / vwap if vwap > 0 else 0,
+            rsi=rsi,
+            signal=signal
+        )
+        
+        logger.info(f"ML Confidence Request: {symbol} {signal} @ {price}, RSI={rsi:.1f}, Confidence={confidence:.2%}")
+        
+        return {
+            "ml_confidence": confidence,
+            "action": signal if confidence >= 0.5 else "NONE",
+            "model_version": "v1.0-simple",
+            "timestamp": datetime.utcnow().isoformat()
+        }
+        
+    except Exception as e:
+        logger.error(f"Error calculating ML confidence: {e}")
+        # Return neutral confidence on error
+        return {
+            "ml_confidence": 0.5,
+            "action": "NONE",
+            "model_version": "v1.0-simple",
+            "error": str(e)
+        }
+
+
+def calculate_signal_confidence(symbol: str, vwap_distance: float, rsi: float, signal: str) -> float:
+    """
+    Calculate ML confidence based on historical patterns
+    
+    This is a simple heuristic model. Will be replaced with trained RL model.
+    """
+    confidence = 0.5  # Start neutral
+    
+    # RSI confidence (stronger signals at extremes)
+    if signal == "LONG":
+        if rsi < 30:
+            confidence += 0.25  # Very oversold
+        elif rsi < 35:
+            confidence += 0.15  # Oversold
+    elif signal == "SHORT":
+        if rsi > 70:
+            confidence += 0.25  # Very overbought
+        elif rsi > 65:
+            confidence += 0.15  # Overbought
+    
+    # VWAP distance confidence (closer to band = better)
+    if vwap_distance < 0.001:  # Very close to VWAP band
+        confidence += 0.15
+    elif vwap_distance < 0.002:
+        confidence += 0.10
+    
+    # Cap confidence at 0.95 (never 100% certain)
+    return min(confidence, 0.95)
+
+
+@app.post("/api/ml/save_trade")
+async def save_trade_experience(trade: Dict):
+    """
+    Save trade experience for RL model training
+    
+    Request: {
+        symbol: str,
+        side: str,  # 'LONG' or 'SHORT'
+        entry_price: float,
+        exit_price: float,
+        entry_time: str,  # ISO format
+        exit_time: str,   # ISO format
+        pnl: float,
+        entry_vwap: float,
+        entry_rsi: float,
+        exit_reason: str,
+        duration_seconds: int,
+        ml_confidence_used: float,
+        user_id: str  # Hashed for privacy
+    }
+    
+    Returns: {
+        saved: bool,
+        experience_id: str,
+        total_experiences: int
+    }
+    """
+    try:
+        # Validate required fields
+        required_fields = ['symbol', 'side', 'entry_price', 'exit_price', 'pnl']
+        for field in required_fields:
+            if field not in trade:
+                raise HTTPException(status_code=400, detail=f"Missing required field: {field}")
+        
+        # Add timestamp and ID
+        experience = {
+            **trade,
+            "saved_at": datetime.utcnow().isoformat(),
+            "experience_id": f"{trade['symbol']}_{datetime.utcnow().timestamp()}"
+        }
+        
+        # Store in memory (will move to database)
+        signal_experiences.append(experience)
+        
+        # Calculate win rate for logging
+        if len(signal_experiences) > 0:
+            wins = sum(1 for exp in signal_experiences if exp.get('pnl', 0) > 0)
+            win_rate = wins / len(signal_experiences)
+        else:
+            win_rate = 0.0
+        
+        logger.info(f"Trade Saved: {trade['symbol']} {trade['side']} P&L=${trade['pnl']:.2f} | "
+                   f"Total: {len(signal_experiences)} trades, Win Rate: {win_rate:.1%}")
+        
+        return {
+            "saved": True,
+            "experience_id": experience["experience_id"],
+            "total_experiences": len(signal_experiences),
+            "current_win_rate": win_rate
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error saving trade experience: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/ml/stats")
+async def get_ml_stats():
+    """Get ML model statistics"""
+    if len(signal_experiences) == 0:
+        return {
+            "total_trades": 0,
+            "win_rate": 0.0,
+            "avg_pnl": 0.0,
+            "total_pnl": 0.0
+        }
+    
+    wins = sum(1 for exp in signal_experiences if exp.get('pnl', 0) > 0)
+    total_pnl = sum(exp.get('pnl', 0) for exp in signal_experiences)
+    
+    return {
+        "total_trades": len(signal_experiences),
+        "win_rate": wins / len(signal_experiences),
+        "avg_pnl": total_pnl / len(signal_experiences),
+        "total_pnl": total_pnl,
+        "last_updated": datetime.utcnow().isoformat()
+    }
+
+
+# ============================================================================
 # STARTUP
 # ============================================================================
 
