@@ -33,27 +33,27 @@ class QuoTradingLauncher:
         self.root.geometry("650x600")
         self.root.resizable(False, False)
         
-        # Blue and White color scheme - Professional theme
+        # Windows-style Gray color scheme - Professional theme
         self.colors = {
-            'primary': '#FFFFFF',        # White background
-            'secondary': '#F0F4F8',      # Light gray/blue for secondary cards
-            'success': '#2563EB',        # Blue - primary accent
-            'success_dark': '#1E40AF',   # Darker blue for buttons/headers
-            'success_darker': '#1E3A8A', # Even darker blue for depth
+            'primary': '#E0E0E0',        # Medium gray background
+            'secondary': '#D0D0D0',      # Darker gray for secondary cards
+            'success': '#0078D4',        # Windows blue accent
+            'success_dark': '#005A9E',   # Darker Windows blue for buttons/headers
+            'success_darker': '#004578', # Even darker blue for depth
             'error': '#DC2626',          # Red for error messages
             'warning': '#F59E0B',        # Orange for warnings
-            'background': '#FFFFFF',     # White main background
-            'card': '#F8FAFC',           # Very light gray card background
-            'card_elevated': '#EFF6FF',  # Light blue tint for elevation
+            'background': '#E0E0E0',     # Medium gray main background
+            'card': '#ECECEC',           # Light gray card background
+            'card_elevated': '#D8D8D8',  # Medium gray for elevation
             'text': '#1F2937',           # Dark gray text (primary)
             'text_light': '#4B5563',     # Medium gray (secondary labels)
             'text_secondary': '#6B7280', # Light gray (tertiary/hints)
-            'border': '#2563EB',         # Blue border
-            'border_subtle': '#93C5FD',  # Light blue subtle border
+            'border': '#0078D4',         # Windows blue border
+            'border_subtle': '#BBBBBB',  # Gray subtle border
             'input_bg': '#FFFFFF',       # White for input fields
-            'input_focus': '#EFF6FF',    # Light blue tint on focus
-            'button_hover': '#3B82F6',   # Lighter blue for hover state
-            'shadow': '#E5E7EB'          # Light gray for shadow effect
+            'input_focus': '#E5F3FF',    # Light blue tint on focus
+            'button_hover': '#0078D4',   # Windows blue for hover state
+            'shadow': '#C0C0C0'          # Medium gray for shadow effect
         }
         
         # Default fallback symbol
@@ -64,6 +64,15 @@ class QuoTradingLauncher:
         
         # Prop firm maximum drawdown percentage (most common rule)
         self.PROP_FIRM_MAX_DRAWDOWN = 8.0  # 8% for most prop firms (some use 10%)
+        
+        # TopStep contract limits by account tier
+        # Official TopStep rules: https://www.topstepfx.com/rules
+        self.TOPSTEP_CONTRACT_LIMITS = {
+            50000: 5,    # $50k account = max 5 contracts
+            100000: 10,  # $100k account = max 10 contracts
+            150000: 15,  # $150k account = max 15 contracts
+            250000: 25   # $250k account = max 25 contracts
+        }
         
         # Cloud validation API URL
         self.VALIDATION_API_URL = "http://localhost:5000/api/validate"  # Update with your cloud server URL
@@ -1481,6 +1490,101 @@ class QuoTradingLauncher:
             )
             cb.grid(row=row, column=col, sticky=tk.W, padx=4, pady=0)
         
+        # ========================================
+        # TRADING MODES - Next to Symbols
+        # ========================================
+        modes_section = tk.Frame(content, bg=self.colors['card'])
+        modes_section.pack(fill=tk.X, pady=(6, 3))
+        
+        tk.Label(
+            modes_section,
+            text="Trading Modes:",
+            font=("Segoe UI", 8, "bold"),
+            bg=self.colors['card'],
+            fg=self.colors['text']
+        ).pack(anchor=tk.W, pady=(0, 2))
+        
+        modes_row = tk.Frame(modes_section, bg=self.colors['card'])
+        modes_row.pack(fill=tk.X)
+        
+        # Confidence Trading
+        conf_mode_frame = tk.Frame(modes_row, bg=self.colors['card'])
+        conf_mode_frame.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 5))
+        
+        self.confidence_trading_var = tk.BooleanVar(value=self.config.get("confidence_trading", False))
+        tk.Checkbutton(
+            conf_mode_frame,
+            text="⚖️ Confidence Trading",
+            variable=self.confidence_trading_var,
+            font=("Segoe UI", 7, "bold"),
+            bg=self.colors['card'],
+            fg=self.colors['text'],
+            selectcolor=self.colors['secondary'],
+            activebackground=self.colors['card'],
+            activeforeground=self.colors['success'],
+            cursor="hand2"
+        ).pack(anchor=tk.W)
+        
+        tk.Label(
+            conf_mode_frame,
+            text="Scales down near limits, STOPS at limit",
+            font=("Segoe UI", 6),
+            bg=self.colors['card'],
+            fg=self.colors['text_secondary']
+        ).pack(anchor=tk.W)
+        
+        # Shadow Mode
+        shadow_mode_frame = tk.Frame(modes_row, bg=self.colors['card'])
+        shadow_mode_frame.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 5))
+        
+        self.shadow_mode_var = tk.BooleanVar(value=self.config.get("shadow_mode", False))
+        tk.Checkbutton(
+            shadow_mode_frame,
+            text="👁️ Shadow Mode",
+            variable=self.shadow_mode_var,
+            font=("Segoe UI", 7, "bold"),
+            bg=self.colors['card'],
+            fg=self.colors['text'],
+            selectcolor=self.colors['secondary'],
+            activebackground=self.colors['card'],
+            activeforeground=self.colors['success'],
+            cursor="hand2"
+        ).pack(anchor=tk.W)
+        
+        tk.Label(
+            shadow_mode_frame,
+            text="Watch signals without executing",
+            font=("Segoe UI", 6),
+            bg=self.colors['card'],
+            fg=self.colors['text_secondary']
+        ).pack(anchor=tk.W)
+        
+        # Recovery Mode
+        recovery_mode_frame = tk.Frame(modes_row, bg=self.colors['card'])
+        recovery_mode_frame.pack(side=tk.LEFT, fill=tk.X, expand=True)
+        
+        self.recovery_mode_var = tk.BooleanVar(value=self.config.get("recovery_mode", False))
+        tk.Checkbutton(
+            recovery_mode_frame,
+            text="🔄 Recovery Mode",
+            variable=self.recovery_mode_var,
+            font=("Segoe UI", 7, "bold"),
+            bg=self.colors['card'],
+            fg=self.colors['text'],
+            selectcolor=self.colors['secondary'],
+            activebackground=self.colors['card'],
+            activeforeground=self.colors['success'],
+            cursor="hand2"
+        ).pack(anchor=tk.W)
+        
+        tk.Label(
+            recovery_mode_frame,
+            text="Scales down near limits, CONTINUES",
+            font=("Segoe UI", 6),
+            bg=self.colors['card'],
+            fg=self.colors['text_secondary']
+        ).pack(anchor=tk.W)
+        
         # Account Settings Row - COMPACT
         settings_row = tk.Frame(content, bg=self.colors['card'])
         settings_row.pack(fill=tk.X, pady=(0, 3))
@@ -1589,32 +1693,6 @@ class QuoTradingLauncher:
         )
         contracts_info.pack(anchor=tk.W, pady=(1, 0))
         
-        # Dynamic Contract Mode checkbox - RIGHT NEXT TO CONTRACTS
-        self.dynamic_contracts_var = tk.BooleanVar(value=self.config.get("dynamic_contracts", False))
-        dynamic_cb = tk.Checkbutton(
-            contracts_frame,
-            text="Dynamic Contract Mode",
-            variable=self.dynamic_contracts_var,
-            font=("Segoe UI", 7, "bold"),
-            bg=self.colors['card'],
-            fg=self.colors['text'],
-            selectcolor=self.colors['secondary'],
-            activebackground=self.colors['card'],
-            activeforeground=self.colors['success'],
-            cursor="hand2"
-        )
-        dynamic_cb.pack(anchor=tk.W, pady=(2, 0))
-        
-        # Info label for dynamic contract mode
-        dynamic_info = tk.Label(
-            contracts_frame,
-            text="Scales 1 to max based on confidence",
-            font=("Segoe UI", 6),
-            bg=self.colors['card'],
-            fg=self.colors['text_secondary']
-        )
-        dynamic_info.pack(anchor=tk.W, pady=(1, 0))
-        
         # Max Trades Per Day
         trades_frame = tk.Frame(advanced_row, bg=self.colors['card'])
         trades_frame.pack(side=tk.LEFT, fill=tk.X, expand=True)
@@ -1637,130 +1715,185 @@ class QuoTradingLauncher:
         )
         trades_spin.pack(fill=tk.X, ipady=2)
         
-        # AI/Confidence Settings Row - COMPACT
-        ai_row = tk.Frame(content, bg=self.colors['card'])
-        ai_row.pack(fill=tk.X, pady=(0, 3))
+        # ========================================
+        # CONFIDENCE SLIDER - PROFESSIONAL DESIGN
+        # ========================================
+        confidence_section = tk.Frame(content, bg=self.colors['card'])
+        confidence_section.pack(fill=tk.X, pady=(8, 3))
         
-        # Confidence Threshold
-        confidence_frame = tk.Frame(ai_row, bg=self.colors['card'])
-        confidence_frame.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 8))
+        # Header with title
+        conf_header = tk.Frame(confidence_section, bg=self.colors['card'])
+        conf_header.pack(fill=tk.X, pady=(0, 6))
         
+        # Title and description on same line
         tk.Label(
-            confidence_frame,
-            text="Confidence Threshold (%):",
-            font=("Segoe UI", 7, "bold"),
+            conf_header,
+            text="AI CONFIDENCE THRESHOLD",
+            font=("Segoe UI", 9, "bold"),
             bg=self.colors['card'],
             fg=self.colors['text']
-        ).pack(anchor=tk.W, pady=(0, 1))
+        ).pack(side=tk.LEFT)
         
+        tk.Label(
+            conf_header,
+            text="  •  Higher = Fewer trades, safer  •  Lower = More trades, riskier",
+            font=("Segoe UI", 7),
+            bg=self.colors['card'],
+            fg=self.colors['text_secondary']
+        ).pack(side=tk.LEFT, padx=(4, 0))
+        
+        # Current value display with trading style
         self.confidence_var = tk.DoubleVar(value=self.config.get("confidence_threshold", 65.0))
-        confidence_spin = ttk.Spinbox(
-            confidence_frame,
-            from_=0.0,
-            to=100.0,
-            increment=5.0,
-            textvariable=self.confidence_var,
+        
+        self.confidence_style_label = tk.Label(
+            conf_header,
+            text=self.get_trading_style(self.confidence_var.get()),
+            font=("Segoe UI", 7, "bold"),
+            bg=self.colors['card'],
+            fg=self.get_style_color(self.confidence_var.get())
+        )
+        self.confidence_style_label.pack(side=tk.RIGHT, padx=(0, 8))
+        
+        self.confidence_display = tk.Label(
+            conf_header,
+            text=f"{self.confidence_var.get():.0f}%",
+            font=("Segoe UI", 11, "bold"),
+            bg=self.colors['card'],
+            fg=self.get_style_color(self.confidence_var.get())
+        )
+        self.confidence_display.pack(side=tk.RIGHT)
+        
+        # Slider with threshold zones
+        slider_container = tk.Frame(confidence_section, bg=self.colors['card'])
+        slider_container.pack(fill=tk.X, padx=15, pady=(0, 6))
+        
+        # Create a frame to hold threshold bars and slider
+        threshold_frame = tk.Frame(slider_container, bg=self.colors['card'], height=30)
+        threshold_frame.pack(fill=tk.X)
+        threshold_frame.pack_propagate(False)
+        
+        # Create canvas for threshold zones (behind slider)
+        self.threshold_canvas = tk.Canvas(
+            threshold_frame,
+            height=8,
+            bg=self.colors['card'],
+            highlightthickness=0,
+            bd=0
+        )
+        self.threshold_canvas.place(relx=0, rely=0.5, relwidth=1, anchor='w')
+        
+        # Draw threshold zones with clean bars and separator lines
+        def draw_thresholds():
+            canvas_width = self.threshold_canvas.winfo_width()
+            if canvas_width <= 1:  # Not yet rendered
+                self.threshold_canvas.after(50, draw_thresholds)
+                return
+            
+            # Clear canvas
+            self.threshold_canvas.delete("all")
+            
+            # Calculate positions for 10-100 range
+            def value_to_x(value):
+                return ((value - 10) / 90) * canvas_width
+            
+            bar_height = 8
+            
+            # Single continuous bar with color zones
+            # Zone 1: 10-40% - AGGRESSIVE (Red)
+            x1 = value_to_x(10)
+            x2 = value_to_x(40)
+            self.threshold_canvas.create_rectangle(
+                x1, 0, x2, bar_height,
+                fill="#DC2626", outline="", width=0
+            )
+            
+            # Zone 2: 40-65% - MODERATE (Orange/Yellow)
+            x1 = value_to_x(40)
+            x2 = value_to_x(65)
+            self.threshold_canvas.create_rectangle(
+                x1, 0, x2, bar_height,
+                fill="#F59E0B", outline="", width=0
+            )
+            
+            # Zone 3: 65-85% - BALANCED (Green)
+            x1 = value_to_x(65)
+            x2 = value_to_x(85)
+            self.threshold_canvas.create_rectangle(
+                x1, 0, x2, bar_height,
+                fill="#10B981", outline="", width=0
+            )
+            
+            # Zone 4: 85-100% - CONSERVATIVE (Blue)
+            x1 = value_to_x(85)
+            x2 = value_to_x(100)
+            self.threshold_canvas.create_rectangle(
+                x1, 0, x2, bar_height,
+                fill="#3B82F6", outline="", width=0
+            )
+            
+            # Draw vertical separator lines at thresholds
+            separator_color = "#404040"
+            line_width = 2
+            
+            # Line at 40%
+            x = value_to_x(40)
+            self.threshold_canvas.create_line(x, 0, x, bar_height, fill=separator_color, width=line_width)
+            
+            # Line at 65%
+            x = value_to_x(65)
+            self.threshold_canvas.create_line(x, 0, x, bar_height, fill=separator_color, width=line_width)
+            
+            # Line at 85%
+            x = value_to_x(85)
+            self.threshold_canvas.create_line(x, 0, x, bar_height, fill=separator_color, width=line_width)
+        
+        # Delay drawing until canvas is rendered
+        self.threshold_canvas.after(100, draw_thresholds)
+        
+        # Place slider on top
+        self.confidence_slider = tk.Scale(
+            threshold_frame,
+            from_=10,
+            to=100,
+            resolution=5,
+            variable=self.confidence_var,
+            orient=tk.HORIZONTAL,
+            bg=self.colors['card'],
+            fg=self.colors['text'],
+            activebackground=self.get_style_color(self.confidence_var.get()),
+            troughcolor=self.colors['card'],
+            highlightthickness=0,
+            bd=0,
+            length=500,
+            showvalue=0,
+            sliderlength=30,
             width=12,
-            format="%.1f"
+            command=self.update_confidence_display
         )
-        confidence_spin.pack(fill=tk.X, ipady=2)
+        self.confidence_slider.place(relx=0, rely=0, relwidth=1, relheight=1)
         
-        # Info label for confidence threshold
-        confidence_info = tk.Label(
-            confidence_frame,
-            text="Minimum confidence - AI takes signals above this",
-            font=("Segoe UI", 6),
+        # Trade details below slider - with emojis and colored text
+        trade_details = tk.Frame(confidence_section, bg=self.colors['card'])
+        trade_details.pack(fill=tk.X, padx=15, pady=(4, 8))
+        
+        # Create frame for trade information
+        self.trade_info_frame = tk.Frame(trade_details, bg=self.colors['card'])
+        self.trade_info_frame.pack()
+        
+        # Initialize trade info display
+        self.update_trade_info(self.confidence_var.get())
+        
+        # Dynamic description
+        self.confidence_description = tk.Label(
+            confidence_section,
+            text=self.get_confidence_description(self.confidence_var.get()),
+            font=("Segoe UI", 7, "italic"),
             bg=self.colors['card'],
-            fg=self.colors['text_secondary']
+            fg=self.colors['text_secondary'],
+            wraplength=550,
+            justify=tk.CENTER
         )
-        confidence_info.pack(anchor=tk.W, pady=(1, 0))
-        
-        # Shadow Mode checkbox (keeping existing functionality)
-        shadow_frame = tk.Frame(ai_row, bg=self.colors['card'])
-        shadow_frame.pack(side=tk.LEFT, fill=tk.X, expand=True)
-        
-        self.shadow_mode_var = tk.BooleanVar(value=self.config.get("shadow_mode", False))
-        shadow_cb = tk.Checkbutton(
-            shadow_frame,
-            text="Shadow Mode",
-            variable=self.shadow_mode_var,
-            font=("Segoe UI", 7, "bold"),
-            bg=self.colors['card'],
-            fg=self.colors['text'],
-            selectcolor=self.colors['secondary'],
-            activebackground=self.colors['card'],
-            activeforeground=self.colors['success'],
-            cursor="hand2"
-        )
-        shadow_cb.pack(anchor=tk.W, pady=(0, 1))
-        
-        # Info label for shadow mode
-        shadow_info = tk.Label(
-            shadow_frame,
-            text="Bot provides signals - trade manually if desired",
-            font=("Segoe UI", 6),
-            bg=self.colors['card'],
-            fg=self.colors['text_secondary']
-        )
-        shadow_info.pack(anchor=tk.W)
-        
-        # Dynamic Confidence & Recovery Mode - SINGLE COMPACT ROW
-        modes_frame = tk.Frame(content, bg=self.colors['card'])
-        modes_frame.pack(fill=tk.X, pady=(0, 3))
-        
-        # Left: Dynamic Confidence
-        dynamic_conf_section = tk.Frame(modes_frame, bg=self.colors['card'])
-        dynamic_conf_section.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 5))
-        
-        self.dynamic_confidence_var = tk.BooleanVar(value=self.config.get("dynamic_confidence", False))
-        dynamic_conf_cb = tk.Checkbutton(
-            dynamic_conf_section,
-            text="Dynamic Confidence",
-            variable=self.dynamic_confidence_var,
-            font=("Segoe UI", 7, "bold"),
-            bg=self.colors['card'],
-            fg=self.colors['text'],
-            selectcolor=self.colors['secondary'],
-            activebackground=self.colors['card'],
-            activeforeground=self.colors['success'],
-            cursor="hand2"
-        )
-        dynamic_conf_cb.pack(anchor=tk.W)
-        
-        tk.Label(
-            dynamic_conf_section,
-            text="Auto-adjusts confidence based on performance",
-            font=("Segoe UI", 5),
-            bg=self.colors['card'],
-            fg=self.colors['text_secondary']
-        ).pack(anchor=tk.W)
-        
-        # Right: Recovery Mode
-        recovery_section = tk.Frame(modes_frame, bg=self.colors['card'])
-        recovery_section.pack(side=tk.LEFT, fill=tk.X, expand=True)
-        
-        self.recovery_mode_var = tk.BooleanVar(value=self.config.get("recovery_mode", False))
-        recovery_cb = tk.Checkbutton(
-            recovery_section,
-            text="Recovery Mode",
-            variable=self.recovery_mode_var,
-            font=("Segoe UI", 7, "bold"),
-            bg=self.colors['card'],
-            fg=self.colors['text'],
-            selectcolor=self.colors['secondary'],
-            activebackground=self.colors['card'],
-            activeforeground=self.colors['success'],
-            cursor="hand2"
-        )
-        recovery_cb.pack(anchor=tk.W)
-        
-        tk.Label(
-            recovery_section,
-            text="Scales confidence 75-90% when near daily limits",
-            font=("Segoe UI", 5),
-            bg=self.colors['card'],
-            fg=self.colors['text_secondary']
-        ).pack(anchor=tk.W)
+        self.confidence_description.pack(fill=tk.X, pady=(0, 2))
         
         # Summary display - COMPACT
         summary_frame = tk.Frame(content, bg=self.colors['card'])
@@ -1835,15 +1968,33 @@ class QuoTradingLauncher:
                     if connected:
                         print("[DEBUG] Connected successfully! Getting account balance...")
                         # Get actual account balance from TopStep
-                        balance = ts_broker.get_account_equity()
-                        print(f"[DEBUG] Balance retrieved: ${balance:,.2f}")
+                        current_equity = ts_broker.get_account_equity()
+                        print(f"[DEBUG] Equity retrieved: ${current_equity:,.2f}")
+                        
+                        # Determine starting balance vs current equity
+                        # If this is first fetch, current equity IS the starting balance
+                        # If subsequent fetch, use stored starting balance
+                        stored_starting_balance = self.config.get("topstep_starting_balance")
+                        
+                        if stored_starting_balance:
+                            # Subsequent fetch - user has profits/losses
+                            starting_balance = stored_starting_balance
+                            equity = current_equity
+                            print(f"[DEBUG] Starting balance: ${starting_balance:,.2f}, Current equity: ${equity:,.2f}, P&L: ${equity - starting_balance:,.2f}")
+                        else:
+                            # First fetch - store this as starting balance
+                            starting_balance = current_equity
+                            equity = current_equity
+                            self.config["topstep_starting_balance"] = starting_balance
+                            self.save_config()
+                            print(f"[DEBUG] First fetch - stored starting balance: ${starting_balance:,.2f}")
                         
                         # Create account info from REAL data
                         accounts = [{
                             "id": "TOPSTEP_MAIN",
                             "name": f"TopStep Account ({username})",
-                            "balance": balance,
-                            "equity": balance,
+                            "balance": starting_balance,  # Starting balance (what prop firm gave)
+                            "equity": equity,              # Current equity (balance + profits)
                             "type": "prop_firm"
                         }]
                         
@@ -1955,10 +2106,8 @@ class QuoTradingLauncher:
         # IMPORTANT: Prioritize fetched account data over user input
         # Check if account info has been fetched
         accounts = self.config.get("accounts", [])
-        fetched_balance = self.config.get("fetched_account_balance")
-        fetched_type = self.config.get("fetched_account_type", "live_broker")
         
-        if not accounts and not fetched_balance:
+        if not accounts:
             messagebox.showwarning(
                 "No Account Info",
                 "⚠️ IMPORTANT: Please fetch account information first using the 'Fetch Account Info' button.\n\n"
@@ -1970,17 +2119,26 @@ class QuoTradingLauncher:
             )
             return
         
-        # Use FETCHED data (most accurate) - prioritize over user input
-        if fetched_balance:
-            balance = fetched_balance
-            equity = fetched_balance  # Use balance as equity if not provided
-            account_type = fetched_type
-        else:
-            # Fallback to accounts data
+        # Use SELECTED account from dropdown (user can have multiple accounts)
+        selected_account_name = self.account_dropdown_var.get()
+        
+        # Find the matching account from fetched accounts list
+        selected_account = None
+        for acc in accounts:
+            acc_display_name = f"{acc['name']} - ${acc['balance']:,.2f}"
+            if acc_display_name == selected_account_name:
+                selected_account = acc
+                break
+        
+        # Fallback: If no match, use first account
+        if not selected_account:
             selected_account = accounts[0]
-            balance = selected_account.get("balance", 10000)
-            equity = selected_account.get("equity", balance)
-            account_type = selected_account.get("type", "live_broker")
+            print(f"[WARNING] Selected account '{selected_account_name}' not found, using first account")
+        
+        # Extract balance, equity, and type from SELECTED account
+        balance = selected_account.get("balance", 10000)       # Starting balance
+        equity = selected_account.get("equity", balance)       # Current equity (with profits)
+        account_type = selected_account.get("type", "live_broker")
         
         # Update account size with fetched data (overrides user input) using helper method
         self._update_account_size_from_fetched(balance)
@@ -2011,20 +2169,80 @@ class QuoTradingLauncher:
             
             daily_loss_limit = equity * daily_loss_pct
             
-            # Contracts: Strategic based on account size and drawdown
-            # Never max out contracts - leave room for error
-            if drawdown_pct < 2:  # Very safe
-                max_contracts = min(3, max(1, int(equity / 30000)))
-            elif drawdown_pct < 5:  # Moderately safe
-                max_contracts = min(2, max(1, int(equity / 40000)))
-            else:  # In drawdown - very conservative
-                max_contracts = 1  # Single contract only
+            # Contracts: Smart sizing based on DOLLAR BUFFER to failure
+            # CRITICAL: Failure threshold is based on INITIAL/STARTING BALANCE, not current equity
+            # Example: $50k starting account fails at $48k (96% of initial), even if equity is now $54k
+            # 
+            # Fresh $50k account: buffer = $50,000 - $48,000 = $2,000
+            # Same account at $54k equity: buffer = $54,000 - $48,000 = $6,000 (more room with profits!)
+            # Same account at $49k equity: buffer = $49,000 - $48,000 = $1,000 (danger!)
+            #
+            # IMPORTANT: Must account for:
+            # 1. Risk per contract (~$300 avg on ES: slippage + spread + volatility)
+            # 2. Trailing drawdown (profits can evaporate quickly)
+            # 3. Multiple losing trades (need buffer for at least 6 bad trades)
+            # 4. Daily loss limits (can't risk entire buffer in one day)
             
-            # Trades per day: Fewer trades = more selective
-            if distance_to_failure > 5:
-                max_trades = 12
-            else:
-                max_trades = 8  # Very selective when in drawdown
+            failure_threshold = balance * 0.96  # Prop firms fail at ~4% drawdown from STARTING balance
+            buffer_to_failure = equity - failure_threshold  # How far current equity is from failure
+            
+            # Risk per contract accounting for:
+            # - Average loss per contract: $250 (4-5 ticks on ES)
+            # - Slippage: $25 per contract
+            # - Spread costs: $25 per contract  
+            # - Volatility buffer: $50 (bad fills, gaps)
+            # Total conservative estimate: $350 per contract
+            risk_per_contract = 350
+            
+            # Safety factor: Want to survive at least 6 consecutive losing trades
+            # This accounts for bad days and protects trailing drawdown
+            safe_losing_trades = 6
+            
+            # Calculate max contracts based on buffer safety
+            # Example: $6k buffer / ($350 × 6 trades) = 2.85 → 2 contracts
+            max_safe_contracts = max(1, int(buffer_to_failure / (risk_per_contract * safe_losing_trades)))
+            
+            # Apply TopStep tier limits (can't exceed these even if math allows)
+            tier_limit = 5  # Default for < $50k
+            for tier_balance, limit in sorted(self.TOPSTEP_CONTRACT_LIMITS.items()):
+                if balance >= tier_balance * 0.9:
+                    tier_limit = limit
+            
+            # FINAL CONTRACT SIZING: Take minimum of calculated safe amount and tier limit
+            # This respects both mathematical safety AND broker rules
+            # Also accounts for trailing drawdown protection
+            
+            # Adjust for current drawdown severity (protects trailing profits)
+            if drawdown_pct < 2:  # Very safe (fresh account or profits) - use full calculated amount
+                base_contracts = min(max_safe_contracts, tier_limit)
+            elif drawdown_pct < 5:  # Moderately safe - reduce by 40% (trailing drawdown risk)
+                base_contracts = max(1, min(int(max_safe_contracts * 0.6), tier_limit))
+            else:  # In drawdown - very conservative
+                base_contracts = 1  # Single contract only
+            
+            # Additional safety: Don't let contracts exceed what daily loss limit can handle
+            # If daily loss limit is $1000 and risk is $350/contract, max 2 contracts for one bad day
+            # But allow multiple bad trades, so divide by 3 (assume 3 losing trades per day max)
+            max_daily_risk_contracts = max(1, int(daily_loss_limit / (risk_per_contract * 3)))
+            
+            # Final decision: Take minimum of all constraints
+            max_contracts = min(base_contracts, max_daily_risk_contracts, tier_limit)
+            
+            # Trades per day: Calculate based on contracts × trades interaction
+            # Total daily risk = max_contracts × max_trades × risk_per_contract
+            # Should not exceed daily loss limit
+            # Formula: max_trades = daily_loss_limit / (max_contracts × risk_per_contract)
+            
+            safe_max_trades = max(3, int(daily_loss_limit / (max_contracts * risk_per_contract)))
+            
+            # Cap based on distance to failure
+            if distance_to_failure > 5:  # Safe zone
+                max_trades = min(safe_max_trades, 12)  # Never more than 12
+            else:  # Near limits - be very selective
+                max_trades = min(safe_max_trades, 8)   # Never more than 8
+            
+            # Absolute minimum: 3 trades (need some opportunities)
+            max_trades = max(3, max_trades)
                 
         else:  # Live Broker - More flexible but still strategic
             # Daily loss limit: 2-4% based on account size
@@ -2125,9 +2343,18 @@ class QuoTradingLauncher:
         self.config["max_trades"] = self.trades_var.get()
         self.config["confidence_threshold"] = self.confidence_var.get()
         self.config["shadow_mode"] = self.shadow_mode_var.get()
-        self.config["dynamic_contracts"] = self.dynamic_contracts_var.get()
-        self.config["dynamic_confidence"] = self.dynamic_confidence_var.get()
+        self.config["confidence_trading"] = self.confidence_trading_var.get()
         self.config["selected_account"] = self.account_dropdown_var.get()
+        
+        # Save selected account ID for bot to use
+        selected_account_name = self.account_dropdown_var.get()
+        accounts = self.config.get("accounts", [])
+        for acc in accounts:
+            acc_display_name = f"{acc['name']} - ${acc['balance']:,.2f}"
+            if acc_display_name == selected_account_name:
+                self.config["selected_account_id"] = acc.get("id", "UNKNOWN")
+                break
+        
         self.config["recovery_mode"] = self.recovery_mode_var.get()
         self.save_config()
         
@@ -2151,17 +2378,13 @@ class QuoTradingLauncher:
         if self.shadow_mode_var.get():
             confirmation_text += f"\n✓ Shadow Mode: ON (paper trading - no real trades)\n"
         
-        if self.dynamic_contracts_var.get():
-            confirmation_text += f"✓ Dynamic Contracts: ENABLED\n"
-            confirmation_text += f"  → Auto-increases contracts with higher confidence\n"
-        
-        if self.dynamic_confidence_var.get():
-            confirmation_text += f"✓ Dynamic Confidence: ENABLED\n"
-            confirmation_text += f"  → Auto-adjusts threshold based on performance\n"
+        if self.confidence_trading_var.get():
+            confirmation_text += f"✓ Confidence Trading: ENABLED\n"
+            confirmation_text += f"  → Auto-adjusts contracts + confidence based on performance\n"
         
         if self.recovery_mode_var.get():
             confirmation_text += f"✓ Recovery Mode: ENABLED\n"
-            confirmation_text += f"  → Attempts recovery when approaching limits\n"
+            confirmation_text += f"  → Scales down when approaching daily limits\n"
         
         confirmation_text += f"\nThis will open a PowerShell terminal with live logs.\n"
         confirmation_text += f"Use the window's close button to stop the bot.\n\n"
@@ -2264,15 +2487,16 @@ BOT_DAILY_LOSS_LIMIT={self.loss_entry.get()}
 # AI/Confidence Settings
 BOT_CONFIDENCE_THRESHOLD={self.confidence_var.get()}
 # Bot only takes signals above this confidence threshold (user's minimum)
-BOT_DYNAMIC_CONTRACTS={'true' if self.dynamic_contracts_var.get() else 'false'}
-# Uses signal confidence to determine contract size dynamically (bot uses adaptive exits)
-BOT_DYNAMIC_CONFIDENCE={'true' if self.dynamic_confidence_var.get() else 'false'}
-# Auto-increases confidence threshold based on poor performance. Bot continues trading but becomes more selective. Stops only at daily loss limit.
+BOT_CONFIDENCE_TRADING={'true' if self.confidence_trading_var.get() else 'false'}
+# When approaching daily limit (80%+): SCALES DOWN (higher confidence thresholds + fewer contracts)
+# When limit HIT (100%): STOPS trading until daily reset at 6 PM ET
+# When moving away from limit: Returns to user's initial settings
 
 # Recovery Mode (All Account Types)
 BOT_RECOVERY_MODE={'true' if self.recovery_mode_var.get() else 'false'}
-# When true (ENABLED): Bot continues trading when approaching limits with auto-scaled confidence (75-90%) and dynamic risk reduction
-# When false (DISABLED): Bot stops making NEW trades (but stays running) at 80% of daily loss or max drawdown limits, resumes after daily reset
+# When approaching daily limit (80%+): SCALES DOWN (higher confidence thresholds + fewer contracts)
+# When limit HIT (100%): CONTINUES trading with scaled-down settings (does NOT stop)
+# When moving away from limit: Returns to user's initial settings
 
 # Trading Mode
 BOT_SHADOW_MODE={'true' if self.shadow_mode_var.get() else 'false'}
@@ -2280,6 +2504,8 @@ BOT_DRY_RUN={'true' if self.shadow_mode_var.get() else 'false'}
 
 # Account Selection
 SELECTED_ACCOUNT={self.config.get("selected_account", "Default Account")}
+SELECTED_ACCOUNT_ID={self.config.get("selected_account_id", "UNKNOWN")}
+# The bot will use this specific account ID when connecting to the broker
 
 # Environment
 BOT_ENVIRONMENT=production
@@ -2301,6 +2527,151 @@ BOT_LOG_LEVEL=INFO
             except:
                 pass
         return {}
+    
+    def _blend_colors(self, color1, color2, ratio):
+        """Blend two hex colors together.
+        
+        Args:
+            color1: First hex color (e.g., '#FF0000')
+            color2: Second hex color (e.g., '#00FF00')
+            ratio: Blend ratio from 0.0 (all color1) to 1.0 (all color2)
+        
+        Returns:
+            Blended hex color string
+        """
+        # Convert hex to RGB
+        r1, g1, b1 = int(color1[1:3], 16), int(color1[3:5], 16), int(color1[5:7], 16)
+        r2, g2, b2 = int(color2[1:3], 16), int(color2[3:5], 16), int(color2[5:7], 16)
+        
+        # Blend
+        r = int(r1 + (r2 - r1) * ratio)
+        g = int(g1 + (g2 - g1) * ratio)
+        b = int(b1 + (b2 - b1) * ratio)
+        
+        # Convert back to hex
+        return f"#{r:02x}{g:02x}{b:02x}"
+    
+    def get_trading_style(self, value):
+        """Get trading style name based on confidence value."""
+        if value <= 40:
+            return "⚡ VERY AGGRESSIVE"
+        elif value <= 60:
+            return "⚡ AGGRESSIVE"
+        elif value <= 75:
+            return "⚖️ BALANCED"
+        elif value <= 85:
+            return "🛡️ CONSERVATIVE"
+        else:
+            return "🛡️ VERY CONSERVATIVE"
+    
+    def get_style_color(self, value):
+        """Get color based on confidence value - matches threshold zones."""
+        if value <= 40:
+            return "#DC2626"  # Red - Aggressive zone
+        elif value <= 65:
+            return "#F59E0B"  # Orange - Moderate zone
+        elif value <= 85:
+            return "#10B981"  # Green - Balanced zone
+        else:
+            return "#3B82F6"  # Blue - Conservative zone
+    
+    def get_trade_info(self, value):
+        """Get trade activity information with color based on confidence value."""
+        if value <= 30:
+            return ("Maximum Trades", "Highest Activity", "Maximum Risk", "#DC2626")
+        elif value <= 40:
+            return ("Very High Trades", "Very Active", "High Risk", "#DC2626")
+        elif value <= 55:
+            return ("High Trade Volume", "Active Trading", "Elevated Risk", "#F59E0B")
+        elif value <= 65:
+            return ("Good Trade Volume", "Moderate Activity", "Balanced Risk", "#F59E0B")
+        elif value <= 75:
+            return ("Moderate Trades", "Selective", "Controlled Risk", "#10B981")
+        elif value <= 85:
+            return ("Fewer Trades", "Conservative", "Lower Risk", "#10B981")
+        else:
+            return ("Minimal Trades", "Very Conservative", "Lowest Risk", "#3B82F6")
+    
+    def update_trade_info(self, value):
+        """Update trade info labels with colored text."""
+        # Get trade info data
+        trades, activity, risk, color = self.get_trade_info(value)
+        
+        # Clear existing labels
+        for widget in self.trade_info_frame.winfo_children():
+            widget.destroy()
+        
+        # Create three colored labels with emojis and separators
+        labels_data = [
+            ("📊", trades),
+            ("⚡", activity),
+            ("⚠️", risk)
+        ]
+        
+        for i, (emoji, text) in enumerate(labels_data):
+            # Create label with emoji and text
+            label = tk.Label(
+                self.trade_info_frame,
+                text=f"{emoji} {text}",
+                font=("Segoe UI", 10, "bold"),
+                bg=self.colors['card'],
+                fg=color
+            )
+            label.pack(side=tk.LEFT, padx=10)
+            
+            # Add separator bullet between labels (but not after last one)
+            if i < len(labels_data) - 1:
+                separator = tk.Label(
+                    self.trade_info_frame,
+                    text="•",
+                    font=("Segoe UI", 10),
+                    bg=self.colors['card'],
+                    fg="#666666"
+                )
+                separator.pack(side=tk.LEFT, padx=6)
+    
+    def update_confidence_display(self, value):
+        """Update confidence display when slider moves."""
+        conf_value = float(value)
+        
+        # Update percentage display
+        self.confidence_display.config(text=f"{conf_value:.0f}%")
+        
+        # Update style label
+        style_text = self.get_trading_style(conf_value)
+        self.confidence_style_label.config(text=style_text)
+        
+        # Update colors to match threshold zone
+        color = self.get_style_color(conf_value)
+        self.confidence_display.config(fg=color)
+        self.confidence_style_label.config(fg=color)
+        
+        # Update slider thumb color to match zone
+        self.confidence_slider.config(activebackground=color)
+        # Also update the slider handle color
+        self.confidence_slider.config(troughcolor=self.colors['card'])
+        
+        # Update description
+        description = self.get_confidence_description(conf_value)
+        self.confidence_description.config(text=description)
+        
+        # Update trade info with colored text
+        self.update_trade_info(conf_value)
+    
+    def get_confidence_description(self, value):
+        """Get description based on confidence threshold value."""
+        if value <= 30:
+            return "⚡ Maximum Activity: Bot takes almost all signals - highest trade volume, maximum risk exposure"
+        elif value <= 50:
+            return "⚡ Very Aggressive: Actively seeks many trading opportunities - high trade volume, elevated risk"
+        elif value <= 65:
+            return "⚡ Aggressive: Takes quality signals frequently - good trade volume, moderate-high risk"
+        elif value <= 75:
+            return "⚖️ Balanced (Recommended): Selective with quality signals - moderate trades, balanced risk/reward"
+        elif value <= 85:
+            return "🛡️ Conservative: Only high-confidence signals - fewer trades, controlled risk"
+        else:
+            return "🛡️ Very Conservative: Only exceptional top-tier signals - minimal trades, lowest risk"
     
     def save_config(self):
         """Save current configuration.

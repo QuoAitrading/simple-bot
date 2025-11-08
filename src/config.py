@@ -627,6 +627,13 @@ def load_from_env() -> BotConfiguration:
             threshold = threshold / 100.0
         config.rl_confidence_threshold = threshold
     
+    # Dynamic Risk Management - combines contract sizing + confidence adjustments
+    if os.getenv("BOT_DYNAMIC_RISK"):
+        dynamic_risk_enabled = os.getenv("BOT_DYNAMIC_RISK").lower() in ("true", "1", "yes")
+        config.dynamic_confidence = dynamic_risk_enabled
+        config.dynamic_contracts = dynamic_risk_enabled
+    
+    # Legacy support for separate settings (overrides dynamic_risk if specified)
     if os.getenv("BOT_DYNAMIC_CONFIDENCE"):
         config.dynamic_confidence = os.getenv("BOT_DYNAMIC_CONFIDENCE").lower() in ("true", "1", "yes")
     
@@ -803,6 +810,11 @@ def load_config(environment: Optional[str] = None, backtest_mode: bool = False) 
         env_vars_set.add("account_size")
     if os.getenv("BOT_CONFIDENCE_THRESHOLD"):
         env_vars_set.add("rl_confidence_threshold")
+    # Dynamic Risk Management combines both features
+    if os.getenv("BOT_DYNAMIC_RISK"):
+        env_vars_set.add("dynamic_confidence")
+        env_vars_set.add("dynamic_contracts")
+    # Legacy support for separate settings
     if os.getenv("BOT_DYNAMIC_CONFIDENCE"):
         env_vars_set.add("dynamic_confidence")
     if os.getenv("BOT_DYNAMIC_CONTRACTS"):

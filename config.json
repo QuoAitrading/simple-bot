@@ -51,5 +51,6 @@
   "dynamic_contracts": false,
   "recovery_mode": false,
   "remember_credentials": true,
-  "dynamic_confidence": true
+  "dynamic_confidence": true,
+  "topstep_starting_balance": 50000.0
 }
