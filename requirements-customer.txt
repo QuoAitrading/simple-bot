@@ -1,0 +1,23 @@
+# Customer Bot Requirements (Local Execution Only)
+# ================================================
+# Minimal dependencies for trade execution
+# Signal generation happens on cloud (Azure)
+
+# HTTP Client
+aiohttp==3.9.1
+
+# Timezone handling
+pytz==2023.3
+
+# Notifications (if using Twilio/email)
+twilio==8.10.0
+
+# Logging and monitoring
+colorlog==6.8.0
+
+# Configuration
+python-dotenv==1.0.0
+
+# Note: No ML/RL libraries needed - signals come from cloud!
+# No numpy, pandas, or heavy dependencies
+# This keeps the customer bot lightweight and fast
