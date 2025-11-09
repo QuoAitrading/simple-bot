@@ -814,6 +814,72 @@ async def list_licenses():
     }
 
 # ============================================================================
+# EMERGENCY KILL SWITCH
+# ============================================================================
+
+# Global kill switch state
+kill_switch_state = {
+    "active": False,
+    "reason": "",
+    "activated_at": None,
+    "activated_by": "system"
+}
+
+@app.get("/api/kill_switch/status")
+async def get_kill_switch_status():
+    """
+    Bots check this endpoint every 30 seconds.
+    If kill switch is active, bots flatten positions and stop trading.
+    """
+    return {
+        "kill_switch_active": kill_switch_state["active"],
+        "trading_enabled": not kill_switch_state["active"],
+        "reason": kill_switch_state["reason"] if kill_switch_state["active"] else "Trading active",
+        "activated_at": kill_switch_state["activated_at"]
+    }
+
+@app.post("/api/admin/kill_switch")
+async def toggle_kill_switch(data: dict):
+    """
+    ADMIN ONLY: Emergency stop all customer bots.
+    
+    Use cases:
+    - Bug discovered in strategy
+    - Major market event (flash crash, news)
+    - Strategy needs revision
+    - Emergency maintenance
+    
+    Request body:
+    {
+        "active": true/false,
+        "reason": "Bug in stop loss logic - emergency halt",
+        "admin_key": "your_secret_admin_key"
+    }
+    """
+    # Simple admin authentication (in production, use proper auth)
+    admin_key = data.get("admin_key")
+    if admin_key != "QUOTRADING_ADMIN_2025":  # Change this to env variable!
+        raise HTTPException(status_code=403, detail="Invalid admin key")
+    
+    active = data.get("active", False)
+    reason = data.get("reason", "Emergency stop activated by admin")
+    
+    kill_switch_state["active"] = active
+    kill_switch_state["reason"] = reason
+    kill_switch_state["activated_at"] = datetime.utcnow().isoformat() if active else None
+    kill_switch_state["activated_by"] = "admin"
+    
+    status = "ACTIVATED" if active else "DEACTIVATED"
+    logger.warning(f"🚨 KILL SWITCH {status}: {reason}")
+    
+    return {
+        "kill_switch_active": active,
+        "reason": reason,
+        "message": f"Kill switch {status.lower()}. All bots will {'stop' if active else 'resume'} within 30 seconds.",
+        "activated_at": kill_switch_state["activated_at"]
+    }
+
+# ============================================================================
 # STRIPE WEBHOOK HANDLER
 # ============================================================================
 

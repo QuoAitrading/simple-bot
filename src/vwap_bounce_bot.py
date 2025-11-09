@@ -574,14 +574,143 @@ def initialize_broker() -> None:
         logger.debug(f"Failed to send startup alert: {e}")
 
 
+def check_cloud_kill_switch() -> None:
+    """
+    Check if cloud kill switch is active.
+    Called every 30 seconds as part of health check.
+    
+    KILL SWITCH BEHAVIOR:
+    1. ACTIVATE: Flatten positions → Disconnect broker (NO DATA) → Go idle
+    2. DEACTIVATE: Auto-reconnect broker → Resume trading
+    
+    This allows you to remotely pause ALL customer bots for:
+    - Scheduled maintenance
+    - Strategy updates
+    - Emergency situations
+    """
+    global broker
+    
+    try:
+        import requests
+        
+        cloud_api_url = CONFIG.get("cloud_api_url", "https://quotrading-signals.icymeadow-86b2969e.eastus.azurecontainerapps.io")
+        
+        response = requests.get(
+            f"{cloud_api_url}/api/kill_switch/status",
+            timeout=5
+        )
+        
+        if response.status_code == 200:
+            data = response.json()
+            kill_switch_active = data.get("kill_switch_active", False)
+            reason = data.get("reason", "Maintenance mode")
+            
+            # ===== ACTIVATE KILL SWITCH =====
+            if kill_switch_active and not bot_status.get("kill_switch_active", False):
+                logger.critical("=" * 80)
+                logger.critical("🛑 KILL SWITCH ACTIVATED - SHUTTING DOWN")
+                logger.critical("=" * 80)
+                logger.critical(f"  Reason: {reason}")
+                logger.critical(f"  Activated At: {data.get('activated_at', 'Unknown')}")
+                logger.critical("=" * 80)
+                
+                # Step 1: Flatten any active positions
+                for symbol in state.keys():
+                    if state[symbol]["position"]["active"]:
+                        logger.critical(f"  [KILL SWITCH] Flattening position in {symbol}...")
+                        try:
+                            current_price = state[symbol].get("last_price", 0)
+                            handle_exit_orders(
+                                symbol,
+                                state[symbol]["position"],
+                                current_price,
+                                "kill_switch_flatten"
+                            )
+                        except Exception as e:
+                            logger.error(f"  [KILL SWITCH] Failed to flatten {symbol}: {e}")
+                
+                # Step 2: DISCONNECT BROKER (stops all data)
+                try:
+                    if broker is not None and broker.connected:
+                        logger.critical("  [KILL SWITCH] Disconnecting from broker...")
+                        broker.disconnect()
+                        logger.critical("  [KILL SWITCH] ✅ Broker disconnected - NO DATA RUNNING")
+                except Exception as e:
+                    logger.error(f"  [KILL SWITCH] Error disconnecting: {e}")
+                
+                # Step 3: Disable trading
+                bot_status["trading_enabled"] = False
+                bot_status["kill_switch_active"] = True
+                
+                # Step 4: Alert customer
+                try:
+                    notifier = get_notifier()
+                    notifier.send_error_alert(
+                        error_message=f"🛑 KILL SWITCH: {reason}. All positions closed, broker disconnected. Bot will auto-resume when maintenance completes.",
+                        error_type="Kill Switch Activated"
+                    )
+                except Exception as e:
+                    logger.debug(f"Failed to send alert: {e}")
+                
+                logger.critical("  [KILL SWITCH] Bot is IDLE. Checking every 30s for resume signal...")
+                logger.critical("=" * 80)
+            
+            # ===== DEACTIVATE KILL SWITCH (AUTO-RECONNECT) =====
+            elif not kill_switch_active and bot_status.get("kill_switch_active", False):
+                logger.critical("=" * 80)
+                logger.critical("✅ KILL SWITCH OFF - AUTO-RECONNECTING")
+                logger.critical("=" * 80)
+                
+                # Step 1: RECONNECT TO BROKER
+                try:
+                    if broker is not None:
+                        logger.critical("  [RECONNECT] Connecting to broker...")
+                        success = broker.connect(max_retries=3)
+                        if success:
+                            logger.critical("  [RECONNECT] ✅ Broker connected - Data feed active")
+                        else:
+                            logger.error("  [RECONNECT] ❌ Connection failed - Will retry in 30s")
+                            return  # Don't resume trading yet
+                except Exception as e:
+                    logger.error(f"  [RECONNECT] Error: {e}")
+                    return
+                
+                # Step 2: Re-enable trading
+                bot_status["trading_enabled"] = True
+                bot_status["kill_switch_active"] = False
+                
+                # Step 3: Alert customer
+                try:
+                    notifier = get_notifier()
+                    notifier.send_error_alert(
+                        error_message="✅ Kill switch deactivated. Broker reconnected, trading resumed. Bot is back online.",
+                        error_type="Trading Resumed"
+                    )
+                except Exception as e:
+                    logger.debug(f"Failed to send alert: {e}")
+                
+                logger.critical("  [RECONNECT] ✅ Trading enabled. Bot fully operational.")
+                logger.critical("=" * 80)
+                
+    except Exception as e:
+        # Non-critical - if cloud unreachable, bot continues normally
+        logger.debug(f"Kill switch check skipped (cloud unreachable): {e}")
+
+
 def check_broker_connection() -> None:
     """
-    Periodic health check for broker connection.
+    Periodic health check for broker connection AND cloud kill switch.
     Verifies connection is alive and attempts reconnection if needed.
     Called every 30 seconds by timer manager.
     Only logs when there's an issue to avoid spam.
     """
     global broker
+    
+    # CRITICAL: Check cloud kill switch FIRST (before broker check)
+    try:
+        check_cloud_kill_switch()
+    except Exception as e:
+        logger.debug(f"Kill switch check failed (non-critical): {e}")
     
     if broker is None:
         logger.error("[HEALTH] Broker is None - cannot check connection")
