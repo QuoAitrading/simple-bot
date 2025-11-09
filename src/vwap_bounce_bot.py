@@ -3113,6 +3113,17 @@ def execute_entry(symbol: str, side: str, entry_price: float) -> None:
                 logger.error("[FAIL] Failed to place entry after retries - TRADE SKIPPED")
                 return
             
+            # CRITICAL: IMMEDIATELY save minimal position state to prevent loss on crash
+            # This creates a recovery checkpoint before any further processing
+            state[symbol]["position"]["active"] = True
+            state[symbol]["position"]["side"] = side
+            state[symbol]["position"]["quantity"] = contracts
+            state[symbol]["position"]["entry_price"] = actual_fill_price
+            state[symbol]["position"]["entry_time"] = entry_time
+            state[symbol]["position"]["order_id"] = order.get("order_id")
+            save_position_state(symbol)
+            logger.info(f"  [CHECKPOINT] Emergency position state saved (crash protection)")
+            
             logger.info(f"  [OK] Order placed successfully using {order_type_used} strategy")
             
         except Exception as e:
@@ -3120,11 +3131,33 @@ def execute_entry(symbol: str, side: str, entry_price: float) -> None:
             logger.info("Falling back to market order")
             order = place_market_order(symbol, order_side, contracts)
             actual_fill_price = entry_price
+            
+            # CRITICAL: Save emergency checkpoint for fallback path too
+            if order is not None:
+                state[symbol]["position"]["active"] = True
+                state[symbol]["position"]["side"] = side
+                state[symbol]["position"]["quantity"] = contracts
+                state[symbol]["position"]["entry_price"] = actual_fill_price
+                state[symbol]["position"]["entry_time"] = entry_time
+                state[symbol]["position"]["order_id"] = order.get("order_id")
+                save_position_state(symbol)
+                logger.info(f"  [CHECKPOINT] Emergency position state saved (fallback path)")
     else:
         # No bid/ask manager, use traditional market order
         logger.info("  Using market order (no bid/ask manager)")
         
         order = place_market_order(symbol, order_side, contracts)
+        
+        # CRITICAL: Save emergency checkpoint for no-manager path
+        if order is not None:
+            state[symbol]["position"]["active"] = True
+            state[symbol]["position"]["side"] = side
+            state[symbol]["position"]["quantity"] = contracts
+            state[symbol]["position"]["entry_price"] = entry_price
+            state[symbol]["position"]["entry_time"] = entry_time
+            state[symbol]["position"]["order_id"] = order.get("order_id")
+            save_position_state(symbol)
+            logger.info(f"  [CHECKPOINT] Emergency position state saved (no manager path)")
     
     if order is None:
         logger.error("Failed to place entry order")
