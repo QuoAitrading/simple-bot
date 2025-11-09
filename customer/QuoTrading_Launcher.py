@@ -26,6 +26,7 @@ import threading
 import time
 import requests  # For cloud API calls
 import platform  # For cross-platform mouse wheel support
+import psutil  # For process checking (stale lock detection)
 
 # ========================================
 # CONFIGURATION
@@ -418,7 +419,7 @@ class QuoTradingLauncher:
                     
                     # Get API URL from environment or use default
                     import os
-                    api_url = os.getenv("QUOTRADING_API_URL", "https://quotrading-api.onrender.com")
+                    api_url = os.getenv("QUOTRADING_API_URL", "https://quotrading-signals.icymeadow-86b2969e.eastus.azurecontainerapps.io")
                     
                     # Call cloud API to validate license
                     try:
@@ -1387,13 +1388,29 @@ class QuoTradingLauncher:
         news_avoid_frame = tk.Frame(modes_section, bg=self.colors['card'])
         news_avoid_frame.pack(fill=tk.X, pady=(0, 8))
         
-        self.avoid_news_var = tk.BooleanVar(value=self.config.get("avoid_news_days", False))
+        self.avoid_news_var = tk.BooleanVar(value=self.config.get("fomc_block_enabled", True))
+        self.fomc_gui_loading = True  # Flag to prevent popup during GUI initialization
+        
+        def on_news_toggle():
+            """Handle news avoidance toggle - show popup when enabling"""
+            # Skip popup if GUI is still loading
+            if self.fomc_gui_loading:
+                return
+            
+            if self.avoid_news_var.get():
+                # User just enabled news blocking - show popup
+                self.show_fomc_options_popup()
+            else:
+                # User disabled news blocking
+                self.config["fomc_block_enabled"] = False
+                self.config["fomc_force_close"] = False
+                self.save_config()
         
         tk.Checkbutton(
             news_avoid_frame,
             text="📰 Avoid High-Impact News Days",
             variable=self.avoid_news_var,
-            command=self.save_config,
+            command=on_news_toggle,
             font=("Segoe UI", 8, "bold"),
             bg=self.colors['card'],
             fg=self.colors['text'],
@@ -1406,45 +1423,6 @@ class QuoTradingLauncher:
         tk.Label(
             news_avoid_frame,
             text="Stops trading during major news events",
-            font=("Segoe UI", 7, "bold"),
-            bg=self.colors['card'],
-            fg=self.colors['text_light']
-        ).pack(anchor=tk.W, padx=(20, 0))
-        
-        # FOMC Block with popup for force close option
-        fomc_block_frame = tk.Frame(modes_section, bg=self.colors['card'])
-        fomc_block_frame.pack(fill=tk.X, pady=(8, 8))
-        
-        self.fomc_block_var = tk.BooleanVar(value=self.config.get("fomc_block_enabled", True))
-        
-        def on_fomc_toggle():
-            """Handle FOMC block toggle - show popup when enabling"""
-            if self.fomc_block_var.get():
-                # User just enabled FOMC blocking - show popup
-                self.show_fomc_options_popup()
-            else:
-                # User disabled FOMC blocking
-                self.config["fomc_block_enabled"] = False
-                self.config["fomc_force_close"] = False
-                self.save_config()
-        
-        tk.Checkbutton(
-            fomc_block_frame,
-            text="📅 Block FOMC/NFP/CPI Events",
-            variable=self.fomc_block_var,
-            command=on_fomc_toggle,
-            font=("Segoe UI", 8, "bold"),
-            bg=self.colors['card'],
-            fg=self.colors['text'],
-            selectcolor=self.colors['secondary'],
-            activebackground=self.colors['card'],
-            activeforeground=self.colors['success'],
-            cursor="hand2"
-        ).pack(anchor=tk.W)
-        
-        tk.Label(
-            fomc_block_frame,
-            text="Prevents new entries during high-impact economic events",
             font=("Segoe UI", 7, "bold"),
             bg=self.colors['card'],
             fg=self.colors['text_light']
@@ -1583,6 +1561,9 @@ class QuoTradingLauncher:
             bg=self.colors['card'],
             fg=self.colors['text_light']
         ).pack(anchor=tk.W, padx=(20, 0))
+        
+        # GUI initialization complete - allow FOMC popup to show on user clicks
+        self.root.after(100, lambda: setattr(self, 'fomc_gui_loading', False))
         
         # Account Settings Row - COMPACT
         settings_row = tk.Frame(content, bg=self.colors['card'])
@@ -2351,18 +2332,58 @@ class QuoTradingLauncher:
         self.config["confidence_trading"] = self.confidence_trading_var.get()
         self.config["selected_account"] = self.account_dropdown_var.get()
         
-        # Save selected account ID for bot to use
+        # Get selected account ID - use the actual account ID from accounts list
         selected_account_name = self.account_dropdown_var.get()
+        selected_account_id = None
         accounts = self.config.get("accounts", [])
+        
+        # Try to match by display name first
         for acc in accounts:
             acc_display_name = f"{acc['name']} - ${acc['balance']:,.2f}"
             if acc_display_name == selected_account_name:
-                self.config["selected_account_id"] = acc.get("id", "UNKNOWN")
+                selected_account_id = acc.get("id")
+                self.config["selected_account_id"] = selected_account_id
                 break
         
+        # If no match, try direct name match
+        if not selected_account_id:
+            for acc in accounts:
+                if acc['name'] == selected_account_name:
+                    selected_account_id = acc.get("id")
+                    self.config["selected_account_id"] = selected_account_id
+                    break
+        
+        # If still no match and we have accounts, use the first one
+        if not selected_account_id and accounts:
+            selected_account_id = accounts[0].get("id")
+            self.config["selected_account_id"] = selected_account_id
+            print(f"[WARNING] Could not match account '{selected_account_name}', using first account: {selected_account_id}")
+        
+        print(f"[DEBUG] Selected account: {selected_account_name}")
+        print(f"[DEBUG] Account ID: {selected_account_id}")
+        
+        # CHECK INSTANCE LOCK - Prevent duplicate trading on same account
+        if selected_account_id:
+            is_locked, lock_info = self.check_account_lock(selected_account_id)
+            if is_locked:
+                broker_username = lock_info.get("broker_username", "unknown")
+                created_at = lock_info.get("created_at", "unknown time")
+                messagebox.showerror(
+                    "Account Already Trading",
+                    f"❌ This account is already being traded!\n\n"
+                    f"Account: {selected_account_name}\n"
+                    f"Broker: {broker_username}\n"
+                    f"Started: {created_at}\n\n"
+                    f"You cannot run multiple bots on the same trading account.\n"
+                    f"This prevents duplicate orders and position conflicts.\n\n"
+                    f"To trade this account:\n"
+                    f"1. Stop the other bot instance first\n"
+                    f"2. Or select a different account"
+                )
+                return
+        
         self.config["recovery_mode"] = self.recovery_mode_var.get()
-        self.config["avoid_news_days"] = self.avoid_news_var.get()
-        # Note: fomc_block_enabled and fomc_force_close are saved in show_fomc_options_popup()
+        self.config["fomc_block_enabled"] = self.avoid_news_var.get()
         
         # Auto-enable alerts if email is configured
         self.config["alerts_enabled"] = bool(self.config.get("alert_email") and self.config.get("alert_email_password"))
@@ -2429,6 +2450,11 @@ class QuoTradingLauncher:
                 cwd=str(bot_dir)
             )
             
+            # CREATE ACCOUNT LOCK with bot's PowerShell PID
+            bot_pid = self.bot_process.pid
+            if selected_account_id:
+                self.create_account_lock(selected_account_id, bot_pid)
+            
             # Success message
             messagebox.showinfo(
                 "Bot Launched!",
@@ -2439,7 +2465,8 @@ class QuoTradingLauncher:
                 f"You can close this setup window now."
             )
             
-            # Close the GUI
+            # Close the GUI - DON'T remove lock (bot still running)
+            # Lock will be cleaned up by stale detection when bot process ends
             self.root.destroy()
             
         except Exception as e:
@@ -2453,8 +2480,8 @@ class QuoTradingLauncher:
         """Show popup asking user if they want to force close positions during FOMC events."""
         # Create custom dialog
         dialog = tk.Toplevel(self.root)
-        dialog.title("FOMC Event Options")
-        dialog.geometry("500x300")
+        dialog.title("News Event Options")
+        dialog.geometry("500x420")
         dialog.configure(bg=self.colors['background'])
         dialog.resizable(False, False)
         
@@ -2462,90 +2489,136 @@ class QuoTradingLauncher:
         dialog.transient(self.root)
         dialog.grab_set()
         
-        # Header
-        header_frame = tk.Frame(dialog, bg=self.colors['primary'], height=60)
+        # Header with gradient
+        header_frame = tk.Frame(dialog, bg=self.colors['success_dark'], height=70)
         header_frame.pack(fill=tk.X)
         header_frame.pack_propagate(False)
         
+        # Top accent line
+        tk.Frame(header_frame, bg=self.colors['success'], height=3).pack(fill=tk.X)
+        
         tk.Label(
             header_frame,
-            text="📅 FOMC Event Blocking Enabled",
-            font=("Segoe UI", 14, "bold"),
-            bg=self.colors['primary'],
+            text="📅 News Event Blocking",
+            font=("Segoe UI", 15, "bold"),
+            bg=self.colors['success_dark'],
             fg="white"
         ).pack(expand=True)
         
+        # Shadow line
+        tk.Frame(header_frame, bg=self.colors['shadow'], height=2).pack(side=tk.BOTTOM, fill=tk.X)
+        
         # Content
         content_frame = tk.Frame(dialog, bg=self.colors['background'])
-        content_frame.pack(fill=tk.BOTH, expand=True, padx=20, pady=20)
+        content_frame.pack(fill=tk.BOTH, expand=True, padx=20, pady=15)
         
         # Explanation
         tk.Label(
             content_frame,
-            text="During FOMC/NFP/CPI events, new entries will be blocked.\n\nWhat should happen to existing positions?",
-            font=("Segoe UI", 10),
+            text="New entries will be blocked during FOMC/NFP/CPI events.",
+            font=("Segoe UI", 10, "bold"),
             bg=self.colors['background'],
             fg=self.colors['text'],
-            justify=tk.LEFT,
-            wraplength=450
-        ).pack(pady=(0, 20))
+            justify=tk.CENTER
+        ).pack(pady=(0, 3))
+        
+        tk.Label(
+            content_frame,
+            text="What should happen to existing positions?",
+            font=("Segoe UI", 9),
+            bg=self.colors['background'],
+            fg=self.colors['text_secondary'],
+            justify=tk.CENTER
+        ).pack(pady=(0, 18))
         
         # Options
         option_var = tk.IntVar(value=0 if not self.config.get("fomc_force_close", False) else 1)
         
-        # Option 1: Keep positions
-        option1_frame = tk.Frame(content_frame, bg=self.colors['card'], relief=tk.RAISED, borderwidth=2)
+        # Option 1: Keep positions - CLEAN CARD
+        option1_frame = tk.Frame(content_frame, bg=self.colors['card'], relief=tk.FLAT, bd=0)
         option1_frame.pack(fill=tk.X, pady=(0, 10))
+        option1_frame.configure(highlightbackground=self.colors['success'], highlightthickness=2)
+        
+        # Radio button row
+        radio1_container = tk.Frame(option1_frame, bg=self.colors['card'])
+        radio1_container.pack(fill=tk.X, padx=12, pady=(10, 5))
         
         tk.Radiobutton(
-            option1_frame,
-            text="✅ Keep Positions Running (Recommended)",
+            radio1_container,
+            text="✅ Keep Positions Running",
             variable=option_var,
             value=0,
             font=("Segoe UI", 10, "bold"),
             bg=self.colors['card'],
-            fg=self.colors['success'],
+            fg=self.colors['text'],
             selectcolor=self.colors['secondary'],
             activebackground=self.colors['card'],
             cursor="hand2"
-        ).pack(anchor=tk.W, padx=10, pady=(10, 5))
+        ).pack(side=tk.LEFT)
         
         tk.Label(
+            radio1_container,
+            text="⭐ Recommended",
+            font=("Segoe UI", 8, "bold"),
+            bg=self.colors['success'],
+            fg="white",
+            padx=8,
+            pady=2
+        ).pack(side=tk.LEFT, padx=(10, 0))
+        
+        # Description
+        tk.Label(
             option1_frame,
-            text="Only blocks new entries. Existing positions continue with normal stops/targets.",
-            font=("Segoe UI", 8),
+            text="Only blocks new entries. Existing positions stay active with normal stop-loss and profit targets.",
+            font=("Segoe UI", 6),
             bg=self.colors['card'],
             fg=self.colors['text_light'],
-            wraplength=450,
+            wraplength=440,
             justify=tk.LEFT
-        ).pack(anchor=tk.W, padx=30, pady=(0, 10))
+        ).pack(anchor=tk.W, padx=35, pady=(0, 10))
         
-        # Option 2: Force close
-        option2_frame = tk.Frame(content_frame, bg=self.colors['card'], relief=tk.RAISED, borderwidth=2)
-        option2_frame.pack(fill=tk.X)
+        # Option 2: Force close - CLEAN CARD
+        option2_frame = tk.Frame(content_frame, bg=self.colors['card'], relief=tk.FLAT, bd=0)
+        option2_frame.pack(fill=tk.X, pady=(0, 0))
+        option2_frame.configure(highlightbackground=self.colors['border_subtle'], highlightthickness=2)
+        
+        # Radio button row
+        radio2_container = tk.Frame(option2_frame, bg=self.colors['card'])
+        radio2_container.pack(fill=tk.X, padx=12, pady=(10, 5))
         
         tk.Radiobutton(
-            option2_frame,
-            text="⚠️ Force Close All Positions (Conservative)",
+            radio2_container,
+            text="⚠️ Force Close All Positions",
             variable=option_var,
             value=1,
             font=("Segoe UI", 10, "bold"),
             bg=self.colors['card'],
-            fg=self.colors['warning'],
+            fg=self.colors['text'],
             selectcolor=self.colors['secondary'],
             activebackground=self.colors['card'],
             cursor="hand2"
-        ).pack(anchor=tk.W, padx=10, pady=(10, 5))
+        ).pack(side=tk.LEFT)
         
         tk.Label(
+            radio2_container,
+            text="Conservative",
+            font=("Segoe UI", 8, "bold"),
+            bg=self.colors['warning'],
+            fg="white",
+            padx=8,
+            pady=2
+        ).pack(side=tk.LEFT, padx=(10, 0))
+        
+        # Description
+        tk.Label(
             option2_frame,
-            text="Automatically closes all positions before events. Zero event exposure but may exit winning trades early.",
-            font=("Segoe UI", 8),
+            text="Automatically closes positions before events. Zero event exposure but may exit winning trades early.",
+            font=("Segoe UI", 6),
             bg=self.colors['card'],
             fg=self.colors['text_light'],
-            wraplength=450,
+            wraplength=440,
             justify=tk.LEFT
-        ).pack(anchor=tk.W, padx=30, pady=(0, 10))
+        ).pack(anchor=tk.W, padx=35, pady=(0, 10))
         
         # Buttons
         button_frame = tk.Frame(dialog, bg=self.colors['background'])
@@ -2558,38 +2631,70 @@ class QuoTradingLauncher:
             dialog.destroy()
         
         def on_cancel():
-            # User canceled, uncheck the FOMC box
-            self.fomc_block_var.set(False)
+            # User canceled, uncheck the news avoidance box
+            self.avoid_news_var.set(False)
             self.config["fomc_block_enabled"] = False
             self.config["fomc_force_close"] = False
             self.save_config()
             dialog.destroy()
         
-        tk.Button(
+        # Cancel button (left)
+        cancel_btn = tk.Button(
             button_frame,
-            text="Save",
+            text="Cancel",
+            command=on_cancel,
+            font=("Segoe UI", 10, "bold"),
+            bg=self.colors['card'],
+            fg=self.colors['text'],
+            activebackground=self.colors['card_elevated'],
+            activeforeground=self.colors['text'],
+            cursor="hand2",
+            relief=tk.FLAT,
+            bd=0,
+            padx=30,
+            pady=10
+        )
+        cancel_btn.pack(side=tk.LEFT)
+        
+        # Add hover effect to cancel button
+        def on_cancel_enter(e):
+            cancel_btn.config(bg=self.colors['card_elevated'])
+        def on_cancel_leave(e):
+            cancel_btn.config(bg=self.colors['card'])
+        cancel_btn.bind("<Enter>", on_cancel_enter)
+        cancel_btn.bind("<Leave>", on_cancel_leave)
+        
+        # Save button (right)
+        save_btn = tk.Button(
+            button_frame,
+            text="Save Settings",
             command=on_save,
             font=("Segoe UI", 10, "bold"),
             bg=self.colors['success'],
             fg="white",
+            activebackground=self.colors['success_dark'],
+            activeforeground="white",
             cursor="hand2",
             relief=tk.FLAT,
+            bd=0,
             padx=30,
             pady=10
-        ).pack(side=tk.RIGHT, padx=(10, 0))
+        )
+        save_btn.pack(side=tk.RIGHT)
         
-        tk.Button(
-            button_frame,
-            text="Cancel",
-            command=on_cancel,
-            font=("Segoe UI", 10),
-            bg=self.colors['card'],
-            fg=self.colors['text'],
-            cursor="hand2",
-            relief=tk.FLAT,
-            padx=30,
-            pady=10
-        ).pack(side=tk.RIGHT)
+        # Add hover effect to save button
+        def on_save_enter(e):
+            save_btn.config(bg=self.colors['success_dark'])
+        def on_save_leave(e):
+            save_btn.config(bg=self.colors['success'])
+        save_btn.bind("<Enter>", on_save_enter)
+        save_btn.bind("<Leave>", on_save_leave)
+        
+        # Center on parent
+        dialog.update_idletasks()
+        x = self.root.winfo_x() + (self.root.winfo_width() // 2) - (dialog.winfo_width() // 2)
+        y = self.root.winfo_y() + (self.root.winfo_height() // 2) - (dialog.winfo_height() // 2)
+        dialog.geometry(f"+{x}+{y}")
     
     def show_settings_dialog(self):
         """Show comprehensive settings dialog with tabs."""
@@ -3711,6 +3816,54 @@ BOT_LOG_LEVEL=INFO
         
         # Update trade info with colored text
         self.update_trade_info(conf_value)
+    
+    def check_account_lock(self, account_id):
+        """Check if an account is already being traded in another instance."""
+        locks_dir = Path("locks")
+        locks_dir.mkdir(exist_ok=True)
+        
+        lock_file = locks_dir / f"account_{account_id}.lock"
+        
+        if not lock_file.exists():
+            return False, None
+        
+        try:
+            with open(lock_file, 'r') as f:
+                lock_data = json.load(f)
+            
+            # Check if the process is still running (stale lock detection)
+            pid = lock_data.get("pid")
+            if pid and psutil.pid_exists(pid):
+                return True, lock_data
+            else:
+                # Stale lock - remove it
+                lock_file.unlink()
+                return False, None
+        except:
+            return False, None
+    
+    def create_account_lock(self, account_id, bot_pid):
+        """Create a lock file for an account being traded."""
+        locks_dir = Path("locks")
+        locks_dir.mkdir(exist_ok=True)
+        
+        lock_file = locks_dir / f"account_{account_id}.lock"
+        
+        lock_data = {
+            "account_id": account_id,
+            "pid": bot_pid,
+            "created_at": datetime.now().isoformat(),
+            "broker_username": self.config.get("topstep_username", "unknown")
+        }
+        
+        try:
+            with open(lock_file, 'w') as f:
+                json.dump(lock_data, f, indent=2)
+            print(f"[INFO] Created lock for account {account_id} (PID: {bot_pid})")
+            return True
+        except Exception as e:
+            print(f"[ERROR] Failed to create lock: {e}")
+            return False
     
     def save_config(self):
         """Save current configuration.

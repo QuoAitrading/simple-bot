@@ -5,10 +5,11 @@
   "broker_token": "0lqxI8Gt4JRDhbuP9wOoHmdxJE49fIQCxIU+mSbPqGs=",
   "broker_username": "alvarezjose4201@gmail.com",
   "symbols": [
-    "ES"
+    "ES",
+    "YM"
   ],
-  "account_size": "50000",
-  "max_contracts": 1,
+  "account_size": 50000.0,
+  "max_contracts": 3,
   "max_trades_per_day": 9999,
   "risk_per_trade": 0.012,
   "min_risk_reward": 2.0,
@@ -45,7 +46,7 @@
   "selected_account": "50KTC-V2-398684-33989413",
   "fetched_account_balance": 50000.0,
   "fetched_account_type": "prop_firm",
-  "max_trades": 3,
+  "max_trades": 10,
   "confidence_threshold": 70.0,
   "shadow_mode": false,
   "volume_spike_multiplier": 1.5,
@@ -68,13 +69,13 @@
   "alert_phone": "",
   "alert_carrier": "verizon",
   "theme": "dark",
-  "selected_account_id": "TOPSTEP_MAIN",
+  "selected_account_id": "50KTC-V2-398684-33989413",
   "avoid_news_days": false,
   "alerts_enabled": false,
   "topstep_starting_balances": {
     "13897180": 50000.0
   },
-  "fomc_block_enabled": true,
+  "fomc_block_enabled": false,
   "fomc_force_close": false,
   "cloud_api_url": "https://quotrading-signals.icymeadow-86b2969e.eastus.azurecontainerapps.io"
 }

@@ -150,13 +150,12 @@ This creates a standalone executable in `customer/dist/QuoTrading_Launcher.exe`
 
 ## ☁️ Cloud Deployment
 
-The QuoTrading Cloud API can be deployed to multiple cloud platforms:
-
-### Deploy to Render
-See [cloud-api/DEPLOYMENT.md](cloud-api/DEPLOYMENT.md) for Render deployment guide.
+The QuoTrading Cloud API is deployed on Azure Container Apps:
 
 ### Deploy to Azure
-See [cloud-api/AZURE_DEPLOYMENT.md](cloud-api/AZURE_DEPLOYMENT.md) for Azure CLI deployment guide.
+See [cloud-api/DEPLOYMENT.md](cloud-api/DEPLOYMENT.md) for Azure Container Apps deployment guide.
+
+**Production URL:** `https://quotrading-signals.icymeadow-86b2969e.eastus.azurecontainerapps.io`
 
 **Quick Azure Deployment:**
 ```bash

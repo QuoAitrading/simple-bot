@@ -149,6 +149,7 @@ logs/
 /tmp/
 bot.pid
 /backups/
+/locks/
 
 # Customer builds
 customer/dist/
