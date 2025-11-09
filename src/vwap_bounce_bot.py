@@ -34,6 +34,7 @@ For Multi-User Subscriptions:
 """
 
 import os
+import sys
 import logging
 from datetime import datetime, timedelta
 from datetime import time as datetime_time  # Alias to avoid conflict with time.time()
@@ -376,13 +377,54 @@ def initialize_broker() -> None:
     """
     Initialize the broker interface using configuration.
     Uses TopStep broker with error recovery and circuit breaker.
-    SHADOW MODE: Simulates full trading with live data (no account login, tracks positions/P&L locally).
+    SHADOW MODE: Shows trading signals without executing (manual trading mode).
     """
     global broker, recovery_manager
     
-    # In shadow mode, simulate trading with live data
+    # ===== LICENSE VALIDATION =====
+    # Check if user has valid license before connecting to broker
+    license_key = os.getenv("QUOTRADING_LICENSE_KEY")
+    
+    # Skip validation if admin/dev mode
+    admin_key = os.getenv("QUOTRADING_API_KEY")
+    if admin_key:
+        logger.info("✅ Admin mode detected - skipping license check")
+    elif license_key:
+        logger.info("🔐 Validating license...")
+        try:
+            import requests
+            api_url = os.getenv("QUOTRADING_API_URL", "https://quotrading-signals.icymeadow-86b2969e.eastus.azurecontainerapps.io")
+            response = requests.post(
+                f"{api_url}/api/license/validate",
+                json={"license_key": license_key},
+                timeout=10
+            )
+            
+            if response.status_code == 200:
+                data = response.json()
+                if data.get("valid"):
+                    logger.info(f"✅ License validated - Welcome {data.get('customer_name', 'Trader')}!")
+                else:
+                    logger.error("❌ INVALID LICENSE - Bot will not start")
+                    logger.error(f"Reason: {data.get('message', 'Unknown error')}")
+                    sys.exit(1)
+            else:
+                logger.error(f"❌ License validation failed - HTTP {response.status_code}")
+                logger.error("Please contact support@quotrading.com")
+                sys.exit(1)
+        except Exception as e:
+            logger.error(f"❌ License validation error: {e}")
+            logger.error("Cannot start bot without valid license")
+            sys.exit(1)
+    else:
+        logger.error("❌ NO LICENSE KEY FOUND")
+        logger.error("Please set QUOTRADING_LICENSE_KEY in your .env file")
+        logger.error("Contact support@quotrading.com to purchase a license")
+        sys.exit(1)
+    
+    # In shadow mode, show signals only (no execution)
     if CONFIG.get("shadow_mode", False):
-        logger.info("🌙 SHADOW MODE - Simulating trades with live data (no account login)")
+        logger.info("📊 SIGNAL-ONLY MODE - Shows signals without executing trades")
     
     logger.info("Initializing broker interface...")
     
@@ -513,13 +555,12 @@ def place_market_order(symbol: str, side: str, quantity: int) -> Optional[Dict[s
     Returns:
         Order object or None if failed
     """
-    logger.info(f"{'[DRY RUN] ' if CONFIG['dry_run'] else ''}Market Order: {side} {quantity} {symbol}")
+    logger.info(f"Market Order: {side} {quantity} {symbol}")
     
-    # In backtest or dry-run mode, return simulated order
-    if CONFIG["dry_run"] or _bot_config.backtest_mode or CONFIG.get("shadow_mode", False):
-        mode_label = "SHADOW" if CONFIG.get("shadow_mode", False) else "BACKTEST"
+    # In backtest mode, return simulated order
+    if _bot_config.backtest_mode:
         return {
-            "order_id": f"{mode_label}_{datetime.now().timestamp()}",
+            "order_id": f"BACKTEST_{datetime.now().timestamp()}",
             "symbol": symbol,
             "side": side,
             "quantity": quantity,
@@ -597,13 +638,12 @@ def place_stop_order(symbol: str, side: str, quantity: int, stop_price: float) -
     Returns:
         Order object or None if failed
     """
-    shadow_or_dry = CONFIG.get("shadow_mode", False) or CONFIG["dry_run"]
-    logger.info(f"{'[SHADOW MODE] ' if CONFIG.get('shadow_mode', False) else '[DRY RUN] ' if CONFIG['dry_run'] else ''}Stop Order: {side} {quantity} {symbol} @ {stop_price}")
+    shadow_mode = CONFIG.get("shadow_mode", False)
+    logger.info(f"{'[SHADOW MODE] ' if shadow_mode else ''}Stop Order: {side} {quantity} {symbol} @ {stop_price}")
     
-    if shadow_or_dry:
-        mode_label = "SHADOW" if CONFIG.get("shadow_mode", False) else "DRY_RUN"
+    if shadow_mode:
         return {
-            "order_id": f"{mode_label}_STOP_{datetime.now().timestamp()}",
+            "order_id": f"SHADOW_STOP_{datetime.now().timestamp()}",
             "symbol": symbol,
             "side": side,
             "quantity": quantity,
@@ -654,13 +694,12 @@ def place_limit_order(symbol: str, side: str, quantity: int, limit_price: float)
     Returns:
         Order object or None if failed
     """
-    shadow_or_dry = CONFIG.get("shadow_mode", False) or CONFIG["dry_run"]
-    logger.info(f"{'[SHADOW MODE] ' if CONFIG.get('shadow_mode', False) else '[DRY RUN] ' if CONFIG['dry_run'] else ''}Limit Order: {side} {quantity} {symbol} @ {limit_price}")
+    shadow_mode = CONFIG.get("shadow_mode", False)
+    logger.info(f"{'[SHADOW MODE] ' if shadow_mode else ''}Limit Order: {side} {quantity} {symbol} @ {limit_price}")
     
-    if shadow_or_dry:
-        mode_label = "SHADOW" if CONFIG.get("shadow_mode", False) else "DRY_RUN"
+    if shadow_mode:
         return {
-            "order_id": f"{mode_label}_LIMIT_{datetime.now().timestamp()}",
+            "order_id": f"SHADOW_LIMIT_{datetime.now().timestamp()}",
             "symbol": symbol,
             "side": side,
             "quantity": quantity,
@@ -708,12 +747,11 @@ def cancel_order(symbol: str, order_id: str) -> bool:
     Returns:
         True if cancelled successfully, False otherwise
     """
-    shadow_or_dry = CONFIG.get("shadow_mode", False) or CONFIG["dry_run"]
-    mode_label = "[SHADOW MODE] " if CONFIG.get("shadow_mode", False) else "[DRY RUN] " if CONFIG["dry_run"] else ""
-    logger.info(f"{mode_label}Cancelling Order: {order_id} for {symbol}")
+    shadow_mode = CONFIG.get("shadow_mode", False)
+    logger.info(f"{'[SHADOW MODE] ' if shadow_mode else ''}Cancelling Order: {order_id} for {symbol}")
     
-    if shadow_or_dry:
-        logger.info(f"{mode_label}Order {order_id} cancelled (simulated)")
+    if shadow_mode:
+        logger.info(f"[SHADOW MODE] Order {order_id} cancelled (simulated)")
         return True
     
     if broker is None:
@@ -747,8 +785,8 @@ def get_position_quantity(symbol: str) -> int:
     Returns:
         Current position quantity (positive for long, negative for short, 0 for flat)
     """
-    if CONFIG["dry_run"]:
-        # In dry run mode, use our tracked position
+    # Shadow mode uses tracked position
+    if CONFIG.get("shadow_mode", False):
         if state.get(symbol) and state[symbol]["position"]["active"]:
             qty = state[symbol]["position"]["quantity"]
             side = state[symbol]["position"]["side"]
@@ -799,11 +837,7 @@ def subscribe_market_data(symbol: str, callback: Callable[[str, float, int, int]
         symbol: Instrument symbol
         callback: Function to call with tick data (symbol, price, volume, timestamp)
     """
-    logger.info(f"{'[DRY RUN] ' if CONFIG['dry_run'] else ''}Subscribing to market data: {symbol}")
-    
-    if CONFIG["dry_run"]:
-        logger.info(f"Dry run mode - skipping real broker subscription for {symbol}")
-        return
+    logger.info(f"Subscribing to market data: {symbol}")
     
     if broker is None:
         logger.error("Broker not initialized")
@@ -835,9 +869,6 @@ def fetch_historical_bars(symbol: str, timeframe: int, count: int) -> List[Dict[
     """
     logger.info(f"Fetching {count} historical {timeframe}min bars for {symbol}")
     
-    if CONFIG["dry_run"]:
-        logger.info("Dry run mode - returning empty bars")
-        return []
     
     if broker is None:
         logger.error("Broker not initialized")
@@ -2082,50 +2113,49 @@ def check_for_signals(symbol: str) -> None:
     # Check for long signal
     if check_long_signal_conditions(symbol, prev_bar, current_bar):
         # REINFORCEMENT LEARNING - Get confidence from cloud API (shared learning pool)
-        if CONFIG.get("rl_enabled", True):
-            # Capture market state
-            rl_state = capture_rl_state(symbol, "long", current_bar["close"])
-            
-            # Ask cloud RL API for decision (or local RL as fallback)
-            take_signal, confidence, reason = get_ml_confidence(rl_state, "long")
-            
-            # Check if in recovery mode and need higher confidence
-            if take_signal and bot_status.get("recovery_confidence_threshold"):
-                recovery_threshold = bot_status["recovery_confidence_threshold"]
-                if confidence < recovery_threshold:
-                    logger.info(f" RECOVERY MODE REJECTED LONG signal: confidence {confidence:.1%} below recovery threshold {recovery_threshold:.1%}")
-                    logger.info(f"   Bot is in recovery mode - only taking high-confidence signals")
-                    state[symbol]["last_rejected_signal"] = {
-                        "time": get_current_time(),
-                        "state": rl_state,
-                        "side": "long",
-                        "confidence": confidence,
-                        "reason": f"Recovery mode: {confidence:.1%} < {recovery_threshold:.1%}"
-                    }
-                    return
-            
-            if not take_signal:
-                logger.info(f" RL REJECTED LONG signal: {reason} (confidence: {confidence:.1%})")
-                logger.info(f"   RSI: {rl_state['rsi']:.1f}, VWAP dist: {rl_state['vwap_distance']:.2f}, "
-                          f"Vol ratio: {rl_state['volume_ratio']:.2f}x")
-                # Store the rejected signal state for potential future learning
+        # Capture market state
+        rl_state = capture_rl_state(symbol, "long", current_bar["close"])
+        
+        # Ask cloud RL API for decision (or local RL as fallback)
+        take_signal, confidence, reason = get_ml_confidence(rl_state, "long")
+        
+        # Check if in recovery mode and need higher confidence
+        if take_signal and bot_status.get("recovery_confidence_threshold"):
+            recovery_threshold = bot_status["recovery_confidence_threshold"]
+            if confidence < recovery_threshold:
+                logger.info(f" RECOVERY MODE REJECTED LONG signal: confidence {confidence:.1%} below recovery threshold {recovery_threshold:.1%}")
+                logger.info(f"   Bot is in recovery mode - only taking high-confidence signals")
                 state[symbol]["last_rejected_signal"] = {
                     "time": get_current_time(),
                     "state": rl_state,
                     "side": "long",
                     "confidence": confidence,
-                    "reason": reason
+                    "reason": f"Recovery mode: {confidence:.1%} < {recovery_threshold:.1%}"
                 }
                 return
-            
-            # RL approved - adjust position size based on confidence
-            logger.info(f" RL APPROVED LONG signal: {reason} (confidence: {confidence:.1%})")
+        
+        if not take_signal:
+            logger.info(f" RL REJECTED LONG signal: {reason} (confidence: {confidence:.1%})")
             logger.info(f"   RSI: {rl_state['rsi']:.1f}, VWAP dist: {rl_state['vwap_distance']:.2f}, "
-                      f"Vol ratio: {rl_state['volume_ratio']:.2f}x, Streak: {rl_state['streak']:+d}")
-            
-            # Store the state for outcome recording after trade
-            state[symbol]["entry_rl_state"] = rl_state
-            state[symbol]["entry_rl_confidence"] = confidence
+                      f"Vol ratio: {rl_state['volume_ratio']:.2f}x")
+            # Store the rejected signal state for potential future learning
+            state[symbol]["last_rejected_signal"] = {
+                "time": get_current_time(),
+                "state": rl_state,
+                "side": "long",
+                "confidence": confidence,
+                "reason": reason
+            }
+            return
+        
+        # RL approved - adjust position size based on confidence
+        logger.info(f" RL APPROVED LONG signal: {reason} (confidence: {confidence:.1%})")
+        logger.info(f"   RSI: {rl_state['rsi']:.1f}, VWAP dist: {rl_state['vwap_distance']:.2f}, "
+                  f"Vol ratio: {rl_state['volume_ratio']:.2f}x, Streak: {rl_state['streak']:+d}")
+        
+        # Store the state for outcome recording after trade
+        state[symbol]["entry_rl_state"] = rl_state
+        state[symbol]["entry_rl_confidence"] = confidence
         
         execute_entry(symbol, "long", current_bar["close"])
         return
@@ -2133,50 +2163,49 @@ def check_for_signals(symbol: str) -> None:
     # Check for short signal
     if check_short_signal_conditions(symbol, prev_bar, current_bar):
         # REINFORCEMENT LEARNING - Get confidence from cloud API (shared learning pool)
-        if CONFIG.get("rl_enabled", True):
-            # Capture market state
-            rl_state = capture_rl_state(symbol, "short", current_bar["close"])
-            
-            # Ask cloud RL API for decision (or local RL as fallback)
-            take_signal, confidence, reason = get_ml_confidence(rl_state, "short")
-            
-            # Check if in recovery mode and need higher confidence
-            if take_signal and bot_status.get("recovery_confidence_threshold"):
-                recovery_threshold = bot_status["recovery_confidence_threshold"]
-                if confidence < recovery_threshold:
-                    logger.info(f" RECOVERY MODE REJECTED SHORT signal: confidence {confidence:.1%} below recovery threshold {recovery_threshold:.1%}")
-                    logger.info(f"   Bot is in recovery mode - only taking high-confidence signals")
-                    state[symbol]["last_rejected_signal"] = {
-                        "time": get_current_time(),
-                        "state": rl_state,
-                        "side": "short",
-                        "confidence": confidence,
-                        "reason": f"Recovery mode: {confidence:.1%} < {recovery_threshold:.1%}"
-                    }
-                    return
-            
-            if not take_signal:
-                logger.info(f" RL REJECTED SHORT signal: {reason} (confidence: {confidence:.1%})")
-                logger.info(f"   RSI: {rl_state['rsi']:.1f}, VWAP dist: {rl_state['vwap_distance']:.2f}, "
-                          f"Vol ratio: {rl_state['volume_ratio']:.2f}x")
-                # Store the rejected signal state for potential future learning
+        # Capture market state
+        rl_state = capture_rl_state(symbol, "short", current_bar["close"])
+        
+        # Ask cloud RL API for decision (or local RL as fallback)
+        take_signal, confidence, reason = get_ml_confidence(rl_state, "short")
+        
+        # Check if in recovery mode and need higher confidence
+        if take_signal and bot_status.get("recovery_confidence_threshold"):
+            recovery_threshold = bot_status["recovery_confidence_threshold"]
+            if confidence < recovery_threshold:
+                logger.info(f" RECOVERY MODE REJECTED SHORT signal: confidence {confidence:.1%} below recovery threshold {recovery_threshold:.1%}")
+                logger.info(f"   Bot is in recovery mode - only taking high-confidence signals")
                 state[symbol]["last_rejected_signal"] = {
                     "time": get_current_time(),
                     "state": rl_state,
                     "side": "short",
                     "confidence": confidence,
-                    "reason": reason
+                    "reason": f"Recovery mode: {confidence:.1%} < {recovery_threshold:.1%}"
                 }
                 return
-            
-            # RL approved - adjust position size based on confidence
-            logger.info(f" RL APPROVED SHORT signal: {reason} (confidence: {confidence:.1%})")
+        
+        if not take_signal:
+            logger.info(f" RL REJECTED SHORT signal: {reason} (confidence: {confidence:.1%})")
             logger.info(f"   RSI: {rl_state['rsi']:.1f}, VWAP dist: {rl_state['vwap_distance']:.2f}, "
-                      f"Vol ratio: {rl_state['volume_ratio']:.2f}x, Streak: {rl_state['streak']:+d}")
-            
-            # Store the state for outcome recording after trade
-            state[symbol]["entry_rl_state"] = rl_state
-            state[symbol]["entry_rl_confidence"] = confidence
+                      f"Vol ratio: {rl_state['volume_ratio']:.2f}x")
+            # Store the rejected signal state for potential future learning
+            state[symbol]["last_rejected_signal"] = {
+                "time": get_current_time(),
+                "state": rl_state,
+                "side": "short",
+                "confidence": confidence,
+                "reason": reason
+            }
+            return
+        
+        # RL approved - adjust position size based on confidence
+        logger.info(f" RL APPROVED SHORT signal: {reason} (confidence: {confidence:.1%})")
+        logger.info(f"   RSI: {rl_state['rsi']:.1f}, VWAP dist: {rl_state['vwap_distance']:.2f}, "
+                  f"Vol ratio: {rl_state['volume_ratio']:.2f}x, Streak: {rl_state['streak']:+d}")
+        
+        # Store the state for outcome recording after trade
+        state[symbol]["entry_rl_state"] = rl_state
+        state[symbol]["entry_rl_confidence"] = confidence
         
         execute_entry(symbol, "short", current_bar["close"])
         return
@@ -2289,7 +2318,7 @@ def calculate_position_size(symbol: str, side: str, entry_price: float, rl_confi
     # Check if dynamic contracts feature is enabled (GUI setting)
     dynamic_contracts_enabled = CONFIG.get("dynamic_contracts", False)
     
-    if rl_confidence is not None and CONFIG.get("rl_enabled", True) and dynamic_contracts_enabled:
+    if rl_confidence is not None and dynamic_contracts_enabled:
         global rl_brain
         if rl_brain is not None:
             size_multiplier = rl_brain.get_position_size_multiplier(rl_confidence)
@@ -2782,9 +2811,6 @@ def is_market_moving_too_fast(symbol: str) -> Tuple[bool, str]:
     Returns:
         Tuple of (too_fast, reason)
     """
-    if not CONFIG.get("fast_market_skip_enabled", True):
-        return False, "Fast market detection disabled"
-    
     if bid_ask_manager is None:
         return False, "No bid/ask data available"
     
@@ -2835,16 +2861,53 @@ def execute_entry(symbol: str, side: str, entry_price: float) -> None:
         side: 'long' or 'short'
         entry_price: Approximate entry price (mid or last)
     """
-    # ===== SHADOW MODE: Log that we're simulating this trade =====
+    # ===== SHADOW MODE: Signal-only (manual trading mode) =====
     if CONFIG.get("shadow_mode", False):
         logger.info(SEPARATOR_LINE)
-        logger.info(f"🌙 SHADOW MODE TRADE - {side.upper()}")
+        logger.info(f"📊 SIGNAL ALERT - MANUAL TRADE OPPORTUNITY")
         logger.info(f"  Symbol: {symbol}")
+        logger.info(f"  Direction: {side.upper()}")
         logger.info(f"  Entry Price: ${entry_price:.2f}")
         logger.info(f"  Time: {get_current_time().strftime('%Y-%m-%d %H:%M:%S %Z')}")
-        logger.info(f"  Mode: Simulating trade (live data, no account)")
+        logger.info(f"  VWAP: ${state[symbol]['vwap']:.2f}")
+        
+        # Show suggested stop and target
+        vwap_bands = state[symbol]["vwap_bands"]
+        tick_size = CONFIG["tick_size"]
+        max_stop_ticks = 11
+        
+        if side == "long":
+            suggested_stop = entry_price - (max_stop_ticks * tick_size)
+            suggested_target = vwap_bands["upper_3"]
+            logger.info(f"  Suggested Stop: ${suggested_stop:.2f} ({max_stop_ticks} ticks)")
+            logger.info(f"  Suggested Target: ${suggested_target:.2f} (Upper Band 3)")
+        else:
+            suggested_stop = entry_price + (max_stop_ticks * tick_size)
+            suggested_target = vwap_bands["lower_3"]
+            logger.info(f"  Suggested Stop: ${suggested_stop:.2f} ({max_stop_ticks} ticks)")
+            logger.info(f"  Suggested Target: ${suggested_target:.2f} (Lower Band 3)")
+        
+        logger.info(f"")
+        logger.info(f"  🎯 SHADOW MODE: Signal shown - No automatic execution")
+        logger.info(f"  📱 Trade manually if you agree with this signal")
         logger.info(SEPARATOR_LINE)
-        # Continue with full trading logic but orders will be simulated (not sent to broker)
+        
+        # Send notification if enabled
+        try:
+            notifier = get_notifier()
+            notifier.send_trade_alert(
+                symbol=symbol,
+                side=side,
+                entry_price=entry_price,
+                stop_price=suggested_stop,
+                target_price=suggested_target,
+                mode="SIGNAL_ONLY"
+            )
+        except Exception as e:
+            logger.debug(f"Notification send failed: {e}")
+        
+        # EXIT - Don't execute the trade, just return
+        return
     
     # ===== CRITICAL FIX #1: Position State Validation =====
     # Prevent double positioning if signal fires while already in trade
@@ -3474,10 +3537,6 @@ def check_breakeven_protection(symbol: str, current_price: float) -> None:
     """
     global adaptive_manager
     
-    # Only process if breakeven is enabled in config
-    if not CONFIG.get("breakeven_enabled", True):
-        return
-    
     position = state[symbol]["position"]
     
     # Step 1 - Check eligibility: Only process positions that haven't activated breakeven yet
@@ -3491,9 +3550,8 @@ def check_breakeven_protection(symbol: str, current_price: float) -> None:
     # ========================================================================
     # ADAPTIVE EXIT MANAGEMENT - Calculate dynamic thresholds
     # ========================================================================
-    adaptive_enabled = CONFIG.get("adaptive_exits_enabled", True)
     
-    if adaptive_enabled and adaptive_manager is not None:
+    if adaptive_manager is not None:
         try:
             from adaptive_exits import get_adaptive_exit_params
             
@@ -3595,10 +3653,6 @@ def check_trailing_stop(symbol: str, current_price: float) -> None:
     """
     global adaptive_manager
     
-    # Only process if trailing stop is enabled in config
-    if not CONFIG.get("trailing_stop_enabled", True):
-        return
-    
     position = state[symbol]["position"]
     
     # Step 1 - Check eligibility: Position must have breakeven active
@@ -3612,7 +3666,7 @@ def check_trailing_stop(symbol: str, current_price: float) -> None:
     # ========================================================================
     # ADAPTIVE EXIT MANAGEMENT - Calculate dynamic trailing parameters
     # ========================================================================
-    if CONFIG.get("adaptive_exits_enabled", True) and adaptive_manager is not None:
+    if adaptive_manager is not None:
         try:
             from adaptive_exits import get_adaptive_exit_params
             
@@ -3763,10 +3817,6 @@ def check_time_decay_tightening(symbol: str, current_time: datetime) -> None:
         symbol: Instrument symbol
         current_time: Current datetime
     """
-    # Only process if time-decay is enabled in config
-    if not CONFIG.get("time_decay_enabled", True):
-        return
-    
     position = state[symbol]["position"]
     
     # Only process active positions
@@ -3910,10 +3960,6 @@ def check_partial_exits(symbol: str, current_price: float) -> None:
         symbol: Instrument symbol
         current_price: Current market price
     """
-    # Only process if partial exits are enabled in config
-    if not CONFIG.get("partial_exits_enabled", True):
-        return
-    
     position = state[symbol]["position"]
     
     # Only process active positions
@@ -4690,7 +4736,7 @@ def execute_exit(symbol: str, exit_price: float, reason: str) -> None:
         logger.debug(f"Failed to send exit alert: {e}")
     
     # ADAPTIVE EXIT MANAGEMENT - Record trade result for streak tracking
-    if CONFIG.get("adaptive_exits_enabled", True) and adaptive_manager is not None:
+    if adaptive_manager is not None:
         try:
             adaptive_manager.record_trade_result(pnl)
             logger.info(f" STREAK TRACKING: Recorded P&L ${pnl:+.2f} (Recent: {len(adaptive_manager.recent_trades)} trades)")
@@ -4698,51 +4744,49 @@ def execute_exit(symbol: str, exit_price: float, reason: str) -> None:
             logger.debug(f"Streak tracking update skipped: {e}")
     
     # REINFORCEMENT LEARNING - Record outcome to cloud API (shared learning pool)
-    if CONFIG.get("rl_enabled", True):
-        try:
-            # Check if we have the entry state stored
-            if "entry_rl_state" in state[symbol]:
-                entry_state = state[symbol]["entry_rl_state"]
-                entry_side = state[symbol]["position"]["side"]  # Get the trade side
-                
-                # Calculate trade duration in minutes
-                entry_time = position.get("entry_time")
-                duration_minutes = 0
-                if entry_time:
-                    duration = exit_time - entry_time
-                    duration_minutes = duration.total_seconds() / 60
-                
-                # Record the outcome to cloud API for shared learning
-                save_trade_experience(
-                    rl_state=entry_state,
-                    side=entry_side,
-                    pnl=pnl,
-                    duration_minutes=duration_minutes,
-                    execution_data={
-                        # Execution quality metrics for RL learning
-                        "order_type_used": position.get("order_type_used", "unknown"),
-                        "entry_slippage_ticks": abs(position.get("actual_entry_price", 0) - position.get("original_entry_price", 0)) / CONFIG.get("tick_size", 0.25) if position.get("actual_entry_price") and position.get("original_entry_price") else 0,
-                        "partial_fill": position.get("quantity", 0) < position.get("original_quantity", 0),
-                        "fill_ratio": position.get("quantity", 0) / position.get("original_quantity", 1) if position.get("original_quantity") else 1.0,
-                        "exit_reason": reason,
-                        "held_full_duration": reason in ["target_hit", "stop_hit"]
-                    }
-                )
-                
-                logger.info(f" [CLOUD RL] Recorded outcome ${pnl:+.2f} in {duration_minutes:.1f}min to shared learning pool")
-                
-                # Clean up state
-                del state[symbol]["entry_rl_state"]
-                if "entry_rl_confidence" in state[symbol]:
-                    del state[symbol]["entry_rl_confidence"]
+    try:
+        # Check if we have the entry state stored
+        if "entry_rl_state" in state[symbol]:
+            entry_state = state[symbol]["entry_rl_state"]
+            entry_side = state[symbol]["position"]["side"]  # Get the trade side
             
-        except Exception as e:
-            logger.debug(f"RL outcome recording failed: {e}")
+            # Calculate trade duration in minutes
+            entry_time = position.get("entry_time")
+            duration_minutes = 0
+            if entry_time:
+                duration = exit_time - entry_time
+                duration_minutes = duration.total_seconds() / 60
+            
+            # Record the outcome to cloud API for shared learning
+            save_trade_experience(
+                rl_state=entry_state,
+                side=entry_side,
+                pnl=pnl,
+                duration_minutes=duration_minutes,
+                execution_data={
+                    # Execution quality metrics for RL learning
+                    "order_type_used": position.get("order_type_used", "unknown"),
+                    "entry_slippage_ticks": abs(position.get("actual_entry_price", 0) - position.get("original_entry_price", 0)) / CONFIG.get("tick_size", 0.25) if position.get("actual_entry_price") and position.get("original_entry_price") else 0,
+                    "partial_fill": position.get("quantity", 0) < position.get("original_quantity", 0),
+                    "fill_ratio": position.get("quantity", 0) / position.get("original_quantity", 1) if position.get("original_quantity") else 1.0,
+                    "exit_reason": reason,
+                    "held_full_duration": reason in ["target_hit", "stop_hit"]
+                }
+            )
+            
+            logger.info(f" [CLOUD RL] Recorded outcome ${pnl:+.2f} in {duration_minutes:.1f}min to shared learning pool")
+            
+            # Clean up state
+            del state[symbol]["entry_rl_state"]
+            if "entry_rl_confidence" in state[symbol]:
+                del state[symbol]["entry_rl_confidence"]
+        
+    except Exception as e:
+        logger.debug(f"RL outcome recording failed: {e}")
     
     # ADAPTIVE EXIT LEARNING - Record exit parameters and outcome
-    if CONFIG.get("adaptive_exits_enabled", True):
-        try:
-            if adaptive_manager is not None and hasattr(adaptive_manager, 'record_exit_outcome'):
+    try:
+        if adaptive_manager is not None and hasattr(adaptive_manager, 'record_exit_outcome'):
                 # Get exit parameters that were used
                 if "exit_params_used" in position:
                     exit_params = position["exit_params_used"]
@@ -5220,16 +5264,8 @@ def check_daily_loss_limit(symbol: str) -> Tuple[bool, Optional[str]]:
 
 def check_approaching_failure(symbol: str) -> Tuple[bool, Optional[str], Optional[float]]:
     """
-    Check if bot is approaching failure thresholds.
-    Used for Recovery Mode - ONLY checks daily loss limit.
-    
-    Note: User is responsible for tracking max drawdown themselves.
-    Recommended max drawdown limits (for reference):
-    - TopStep: 4% from starting balance
-    - Apex: 4% trailing (from peak)
-    - Live accounts: User preference (typically 2-5%)
-    
-    Bot only enforces daily loss limit for recovery mode decisions.
+    Check if bot is approaching daily loss limit.
+    Used for Recovery Mode and Confidence Trading.
     
     Args:
         symbol: Instrument symbol
@@ -5240,7 +5276,6 @@ def check_approaching_failure(symbol: str) -> Tuple[bool, Optional[str], Optiona
         - reason: Description of what limit is being approached
         - severity_level: 0.0-1.0 indicating how close to failure (0.8 = at 80%, 1.0 = at 100%)
     """
-    # Only check daily loss limit - user tracks max drawdown themselves
     daily_loss_limit = CONFIG.get("daily_loss_limit", 1000.0)
     if daily_loss_limit > 0 and state[symbol]["daily_pnl"] <= -daily_loss_limit * RECOVERY_APPROACHING_THRESHOLD:
         daily_loss_severity = abs(state[symbol]["daily_pnl"]) / daily_loss_limit
@@ -6276,10 +6311,8 @@ def main(symbol_override: str = None) -> None:
     
     # Display operating mode
     if CONFIG.get('shadow_mode', False):
-        logger.info(f"[{trading_symbol}] Mode: 🌙 SHADOW MODE (Simulated Trading)")
-        logger.info(f"[{trading_symbol}] ⚠️  Shadow mode: Full bot logic with live data, simulated positions/P&L (no account)")
-    elif CONFIG['dry_run']:
-        logger.info(f"[{trading_symbol}] Mode: DRY RUN (Paper Trading)")
+        logger.info(f"[{trading_symbol}] Mode: 📊 SIGNAL-ONLY MODE (Manual Trading)")
+        logger.info(f"[{trading_symbol}] ⚠️  Signal mode: Shows trading signals without executing trades")
     else:
         logger.info(f"[{trading_symbol}] Mode: LIVE TRADING")
     
@@ -6478,10 +6511,6 @@ def handle_position_reconciliation_event(data: Dict[str, Any]) -> None:
     symbol = CONFIG["instrument"]
     
     if symbol not in state:
-        return
-    
-    # Skip if in dry run mode (no broker to reconcile with)
-    if CONFIG.get("dry_run", False):
         return
     
     try:

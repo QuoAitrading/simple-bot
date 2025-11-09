@@ -157,9 +157,7 @@ class BotConfiguration:
         Automatically configure all risk limits based on account balance.
         Called when bot connects or when balance changes significantly.
         
-        Supports BOTH TopStep accounts and personal trading accounts:
-        - TopStep: Enforces 2% daily loss, 4% max DD (mandatory rules)
-        - Personal: Uses custom daily_loss_percent and max_drawdown_percent
+        Uses daily_loss_percent to calculate daily loss limit.
         
         NOTE: max_contracts and max_trades_per_day are USER CONFIGURABLE and NOT changed here.
         
@@ -238,45 +236,7 @@ class BotConfiguration:
             "risk_reward_ratio": self.risk_reward_ratio,
         }
     
-    def validate_topstep_compliance(self, account_balance: float, logger=None) -> bool:
-        """
-        Validate that current risk limits comply with TopStep rules.
-        
-        Args:
-            account_balance: Current account balance
-            logger: Optional logger for validation messages
-            
-        Returns:
-            True if compliant, False if violations detected
-        """
-        violations = []
-        
-        # Only validate if broker is TopStep
-        if self.broker.lower() not in ["topstep", "topstepx"]:
-            if logger:
-                logger.info(f"[INFO] Broker '{self.broker}' - skipping TopStep-specific compliance checks")
-            return True
-        
-        # TopStep-specific checks
-        # Check daily loss limit (must be 2% of balance for TopStep)
-        expected_daily_loss = self.get_daily_loss_limit(account_balance)
-        if abs(self.daily_loss_limit - expected_daily_loss) > 1.0:  # $1 tolerance
-            violations.append(
-                f"Daily loss limit mismatch: Expected ${expected_daily_loss:,.2f}, "
-                f"Got ${self.daily_loss_limit:,.2f}"
-            )
-        
-        if violations:
-            if logger:
-                logger.error("[WARNING] TOPSTEP COMPLIANCE VIOLATIONS DETECTED:")
-                for violation in violations:
-                    logger.error(f"  - {violation}")
-                logger.error("Auto-reconfiguring to fix violations...")
-            return False
-        
-        if logger:
-            logger.info("[SUCCESS] All TopStep compliance rules validated successfully")
-        return True
+    # Removed: validate_topstep_compliance() - broker-specific logic not needed
     
     # ATR-Based Dynamic Risk Management - ITERATION 3 (PROVEN WINNER!)
     use_atr_stops: bool = False  # ATR stops disabled - using proven 11-tick fixed stops
@@ -289,8 +249,7 @@ class BotConfiguration:
     tick_value: float = 12.50  # ES full contract: $12.50 per tick
     
     # Operational Parameters
-    dry_run: bool = False
-    shadow_mode: bool = False  # Shadow mode - simulates full trading with live data (no account login, tracks positions/P&L locally)
+    shadow_mode: bool = False  # Signal-only mode - shows trading signals without executing trades (manual trading)
     log_file: str = "logs/vwap_bounce_bot.log"
     max_bars_storage: int = 200
     
@@ -334,17 +293,6 @@ class BotConfiguration:
     breakeven_enabled: bool = True  # ENABLED - Adaptive system will adjust dynamically
     breakeven_profit_threshold_ticks: int = 9  # Iteration 3 - proven optimal
     breakeven_stop_offset_ticks: int = 1  # Baseline (adaptive adjusts)
-    
-    # Trailing Stop - ITERATION 3 (PROVEN WINNER!)
-    trailing_stop_enabled: bool = True  # ENABLED - Adaptive system will adjust
-    trailing_stop_distance_ticks: int = 10  # Iteration 3 - proven optimal
-    trailing_stop_min_profit_ticks: int = 16  # Iteration 3 - proven optimal
-    
-    # Time-Decay Tightening
-    time_decay_enabled: bool = True  # ENABLED - Tightens stops over time
-    time_decay_50_percent_tightening: float = 0.10  # 10% tighter at 50% of max hold time
-    time_decay_75_percent_tightening: float = 0.20  # 20% tighter at 75%
-    time_decay_90_percent_tightening: float = 0.30  # 30% tighter at 90%
     
     # Partial Exits (baseline - adaptive system adjusts R-multiples)
     partial_exits_enabled: bool = True  # ENABLED - Scale out at targets
@@ -502,7 +450,6 @@ class BotConfiguration:
             "flatten_buffer_ticks": self.flatten_buffer_ticks,
             "tick_size": self.tick_size,
             "tick_value": self.tick_value,
-            "dry_run": self.dry_run,
             "shadow_mode": self.shadow_mode,
             "log_file": self.log_file,
             "max_bars_storage": self.max_bars_storage,
@@ -515,13 +462,6 @@ class BotConfiguration:
             "breakeven_enabled": self.breakeven_enabled,
             "breakeven_profit_threshold_ticks": self.breakeven_profit_threshold_ticks,
             "breakeven_stop_offset_ticks": self.breakeven_stop_offset_ticks,
-            "trailing_stop_enabled": self.trailing_stop_enabled,
-            "trailing_stop_distance_ticks": self.trailing_stop_distance_ticks,
-            "trailing_stop_min_profit_ticks": self.trailing_stop_min_profit_ticks,
-            "time_decay_enabled": self.time_decay_enabled,
-            "time_decay_50_percent_tightening": self.time_decay_50_percent_tightening,
-            "time_decay_75_percent_tightening": self.time_decay_75_percent_tightening,
-            "time_decay_90_percent_tightening": self.time_decay_90_percent_tightening,
             "partial_exits_enabled": self.partial_exits_enabled,
             "partial_exit_1_percentage": self.partial_exit_1_percentage,
             "partial_exit_1_r_multiple": self.partial_exit_1_r_multiple,
@@ -646,9 +586,6 @@ def load_from_env() -> BotConfiguration:
     if os.getenv("BOT_TICK_VALUE"):
         config.tick_value = float(os.getenv("BOT_TICK_VALUE"))
     
-    if os.getenv("BOT_DRY_RUN"):
-        config.dry_run = os.getenv("BOT_DRY_RUN").lower() in ("true", "1", "yes")
-    
     if os.getenv("BOT_SHADOW_MODE"):
         config.shadow_mode = os.getenv("BOT_SHADOW_MODE").lower() in ("true", "1", "yes")
     
@@ -686,7 +623,6 @@ def get_development_config() -> BotConfiguration:
     """Development environment configuration."""
     config = BotConfiguration()
     config.environment = "development"
-    config.dry_run = True
     
     # Load additional config from JSON file if it exists
     config_file = os.path.join(os.path.dirname(os.path.dirname(__file__)), "config.json")
@@ -707,7 +643,6 @@ def get_staging_config() -> BotConfiguration:
     """Staging environment configuration."""
     config = BotConfiguration()
     config.environment = "staging"
-    config.dry_run = True
     
     # Load additional config from JSON file if it exists
     config_file = os.path.join(os.path.dirname(os.path.dirname(__file__)), "config.json")
@@ -728,7 +663,6 @@ def get_production_config() -> BotConfiguration:
     """Production environment configuration."""
     config = BotConfiguration()
     config.environment = "production"
-    config.dry_run = False
     
     # Load additional config from JSON file if it exists
     config_file = os.path.join(os.path.dirname(os.path.dirname(__file__)), "config.json")
@@ -868,7 +802,6 @@ def log_config(config: BotConfiguration, logger) -> None:
     # Only show broker info in live mode
     if not config.backtest_mode:
         logger.info(f"Broker: {config.broker}")
-        logger.info(f"Dry Run: {config.dry_run}")
     
     logger.info(f"Instrument: {config.instrument}")
     logger.info(f"Timezone: {config.timezone}")

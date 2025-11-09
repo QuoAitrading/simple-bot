@@ -3344,8 +3344,10 @@ class QuoTradingLauncher:
 # Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
 # DO NOT EDIT MANUALLY - Use the launcher to change settings
 
-# QuoTrading Account
+# QuoTrading License (Required - contact support@quotrading.com to purchase)
+QUOTRADING_LICENSE_KEY={self.config.get("quotrading_api_key", "")}
 QUOTRADING_API_KEY={self.config.get("quotrading_api_key", "")}
+QUOTRADING_API_URL=https://quotrading-signals.icymeadow-86b2969e.eastus.azurecontainerapps.io
 ACCOUNT_SIZE={self.config.get("account_size", 50000)}
 
 # Broker Configuration
@@ -3375,9 +3377,8 @@ BOT_RECOVERY_MODE={'true' if self.recovery_mode_var.get() else 'false'}
 # When limit HIT (100%): CONTINUES trading with scaled-down settings (does NOT stop)
 # When moving away from limit: Returns to user's initial settings
 
-# Trading Mode
+# Trading Mode (Signal-Only Mode for manual trading)
 BOT_SHADOW_MODE={'true' if self.shadow_mode_var.get() else 'false'}
-BOT_DRY_RUN={'true' if self.shadow_mode_var.get() else 'false'}
 
 # Account Selection
 SELECTED_ACCOUNT={self.config.get("selected_account", "Default Account")}
