@@ -301,23 +301,27 @@ async def get_ml_confidence_async(rl_state: Dict[str, Any], side: str) -> Tuple[
                         if attempt < max_retries - 1:
                             await asyncio.sleep(0.5 * (attempt + 1))  # 0.5s, 1s, 1.5s backoff
                             continue
-                        return True, 0.5, "Cloud API error, conservative mode"
+                        logger.error("Cloud API failed after all retries - REJECTING TRADE for safety")
+                        return False, 0.0, "Cloud API error - rejecting trade for safety"
                         
         except asyncio.TimeoutError:
             logger.warning(f"Cloud ML API timeout (attempt {attempt + 1}/{max_retries})")
             if attempt < max_retries - 1:
                 await asyncio.sleep(0.5 * (attempt + 1))
                 continue
-            return True, 0.5, "API timeout after retries, conservative mode"
+            logger.error("Cloud API timeout after all retries - REJECTING TRADE for safety")
+            return False, 0.0, "API timeout - rejecting trade for safety"
         except Exception as e:
             logger.warning(f"Cloud ML API error: {e} (attempt {attempt + 1}/{max_retries})")
             if attempt < max_retries - 1:
                 await asyncio.sleep(0.5 * (attempt + 1))
                 continue
-            return True, 0.5, f"API error after retries: {e}"
+            logger.error(f"Cloud API error after all retries - REJECTING TRADE for safety: {e}")
+            return False, 0.0, f"API error - rejecting trade for safety"
     
     # Should never reach here, but just in case
-    return True, 0.5, "Unknown error after retries"
+    logger.error("Unknown error in RL API call - REJECTING TRADE for safety")
+    return False, 0.0, "Unknown error - rejecting trade for safety"
 
 
 def get_ml_confidence(rl_state: Dict[str, Any], side: str) -> Tuple[bool, float, str]:
@@ -1978,7 +1982,7 @@ def update_rsi(symbol: str) -> None:
         symbol: Instrument symbol
     """
     bars = state[symbol]["bars_15min"]
-    rsi_period = CONFIG.get("rsi_period", 14)
+    rsi_period = CONFIG.get("rsi_period", 10)  # Iteration 3 - fast RSI
     
     if len(bars) < rsi_period + 1:
         logger.debug(f"Not enough bars for RSI: {len(bars)}/{rsi_period + 1}")
@@ -2181,10 +2185,10 @@ def calculate_vwap(symbol: str) -> None:
     std_dev = variance ** 0.5
     state[symbol]["vwap_std_dev"] = std_dev
     
-    # Calculate bands using configured standard deviation multipliers
-    band_1_mult = CONFIG.get("vwap_std_dev_1", 1.5)
-    band_2_mult = CONFIG.get("vwap_std_dev_2", 2.0)
-    band_3_mult = CONFIG.get("vwap_std_dev_3", 3.5)
+    # Calculate bands using ITERATION 3 standard deviation multipliers
+    band_1_mult = CONFIG.get("vwap_std_dev_1", 2.5)  # Iteration 3
+    band_2_mult = CONFIG.get("vwap_std_dev_2", 2.1)  # Iteration 3 - Entry zone
+    band_3_mult = CONFIG.get("vwap_std_dev_3", 3.7)  # Iteration 3 - Exit/stop zone
     state[symbol]["vwap_bands"]["upper_1"] = vwap + (std_dev * band_1_mult)
     state[symbol]["vwap_bands"]["upper_2"] = vwap + (std_dev * band_2_mult)
     state[symbol]["vwap_bands"]["upper_3"] = vwap + (std_dev * band_3_mult)
@@ -2319,10 +2323,10 @@ def validate_signal_requirements(symbol: str, bar_time: datetime) -> Tuple[bool,
             return False, "Trend not established"
         # Neutral trend is OK - will trade both directions
     
-    # Check RSI (optional - for extreme overbought/oversold confirmation)
+    # Check RSI (ITERATION 3 - selective entry thresholds)
     use_rsi_filter = CONFIG.get("use_rsi_filter", True)
-    rsi_oversold = CONFIG.get("rsi_oversold", 20.0)
-    rsi_overbought = CONFIG.get("rsi_overbought", 80.0)
+    rsi_oversold = CONFIG.get("rsi_oversold", 35.0)  # Iteration 3
+    rsi_overbought = CONFIG.get("rsi_overbought", 65.0)  # Iteration 3
     
     if use_rsi_filter:
         rsi = state[symbol]["rsi"]
@@ -2417,9 +2421,9 @@ def check_long_signal_conditions(symbol: str, prev_bar: Dict[str, Any],
             return False
         logger.debug(f"Price below VWAP: {current_bar['close']:.2f} < {vwap:.2f} ")
     
-    # FILTER 2: RSI - extreme oversold
+    # FILTER 2: RSI - extreme oversold (ITERATION 3)
     use_rsi = CONFIG.get("use_rsi_filter", True)
-    rsi_oversold = CONFIG.get("rsi_oversold", 25.0)
+    rsi_oversold = CONFIG.get("rsi_oversold", 35.0)  # Iteration 3 - selective entry
     if use_rsi:
         rsi = state[symbol]["rsi"]
         if rsi is not None:
@@ -2486,9 +2490,9 @@ def check_short_signal_conditions(symbol: str, prev_bar: Dict[str, Any],
             return False
         logger.debug(f"Price above VWAP: {current_bar['close']:.2f} > {vwap:.2f} ")
     
-    # FILTER 2: RSI - extreme overbought
+    # FILTER 2: RSI - extreme overbought (ITERATION 3)
     use_rsi = CONFIG.get("use_rsi_filter", True)
-    rsi_overbought = CONFIG.get("rsi_overbought", 75.0)
+    rsi_overbought = CONFIG.get("rsi_overbought", 65.0)  # Iteration 3 - selective entry
     if use_rsi:
         rsi = state[symbol]["rsi"]
         if rsi is not None:
@@ -2769,9 +2773,9 @@ def calculate_position_size(symbol: str, side: str, entry_price: float, rl_confi
         atr = calculate_atr(symbol, CONFIG.get("atr_period", 14))
         
         if atr > 0:
-            # Use ATR multipliers from config
-            stop_multiplier = CONFIG.get("stop_loss_atr_multiplier", 2.7)
-            target_multiplier = CONFIG.get("profit_target_atr_multiplier", 4.7)
+            # Use ATR multipliers from ITERATION 3
+            stop_multiplier = CONFIG.get("stop_loss_atr_multiplier", 3.6)  # Iteration 3
+            target_multiplier = CONFIG.get("profit_target_atr_multiplier", 4.75)  # Iteration 3
             
             if side == "long":
                 stop_price = entry_price - (atr * stop_multiplier)

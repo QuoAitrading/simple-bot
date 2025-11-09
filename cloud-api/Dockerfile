@@ -15,9 +15,12 @@ COPY cloud-api/signal_engine_v2.py .
 COPY cloud-api/database.py .
 COPY cloud-api/redis_manager.py .
 
+# Copy admin dashboard
+COPY admin-dashboard/ ./admin-dashboard/
+
 # Copy Kevin's proven RL experiences (178K signals + 121K exits)
-COPY data/signal_experience.json .
-COPY data/exit_experience.json .
+COPY ../data/signal_experience.json .
+COPY ../data/exit_experience.json .
 
 # Expose port
 EXPOSE 8000

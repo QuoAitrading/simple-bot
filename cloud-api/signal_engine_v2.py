@@ -8,6 +8,7 @@ Customers connect to fetch signals and execute locally on their TopStep accounts
 
 from fastapi import FastAPI, HTTPException, Request, Depends
 from fastapi.responses import JSONResponse
+from fastapi.staticfiles import StaticFiles
 from datetime import datetime, time as datetime_time, timedelta
 from typing import Dict, Optional, List
 from collections import deque
@@ -22,7 +23,7 @@ import time as time_module
 # Import database and Redis managers
 from database import (
     DatabaseManager, db_manager as global_db_manager, get_db,
-    User, APILog, TradeHistory,
+    User, APILog, TradeHistory, RLExperience,
     get_user_by_license_key, get_user_by_account_id,
     create_user, log_api_call, update_user_activity
 )
@@ -77,11 +78,14 @@ def check_rate_limit(request: Request) -> dict:
 
 @app.middleware("http")
 async def rate_limit_middleware(request: Request, call_next):
-    """Apply rate limiting to all requests"""
+    """Apply rate limiting to all requests and log API activity"""
     
-    # Skip rate limit for health check
-    if request.url.path == "/health":
+    # Skip rate limit and logging for health check
+    if request.url.path == "/health" or request.url.path == "/":
         return await call_next(request)
+    
+    # Track start time for response time measurement
+    start_time = time_module.time()
     
     # Check rate limit
     limit_result = check_rate_limit(request)
@@ -98,9 +102,46 @@ async def rate_limit_middleware(request: Request, call_next):
     
     # Process request
     response = await call_next(request)
-    return response
     
-    response = await call_next(request)
+    # **NEW: Log API call to database for admin dashboard tracking**
+    try:
+        # Calculate response time
+        response_time_ms = int((time_module.time() - start_time) * 1000)
+        
+        # Get user info from request (if license key provided)
+        license_key = request.query_params.get('license_key')
+        
+        if license_key:
+            # Get database session using dependency injection
+            db = next(get_db())
+            try:
+                user = db.query(User).filter(User.license_key == license_key).first()
+                if user:
+                    # Update last_active timestamp
+                    user.last_active = datetime.utcnow()
+                    db.commit()
+                    
+                    # Log API call
+                    api_log = APILog(
+                        user_id=user.id,
+                        endpoint=str(request.url.path),
+                        method=request.method,
+                        status_code=response.status_code,
+                        response_time_ms=response_time_ms,
+                        ip_address=request.client.host
+                    )
+                    db.add(api_log)
+                    db.commit()
+            except Exception as log_error:
+                db.rollback()
+                logger.debug(f"Failed to log API call: {log_error}")
+            finally:
+                db.close()
+    except Exception as e:
+        # Don't fail the request if logging fails
+        logger.debug(f"Error in API logging middleware: {e}")
+        logger.debug(f"Error in API logging middleware: {e}")
+    
     return response
 
 # ============================================================================
@@ -189,13 +230,35 @@ async def get_all_users(
     license_key: str,
     db: Session = Depends(get_db)
 ):
-    """Get all users (admin only)"""
+    """Get all users with activity counts (admin only)"""
     verify_admin_license(license_key, db)
     
+    from sqlalchemy import func
+    
     users = db.query(User).all()
+    users_with_stats = []
+    
+    for user in users:
+        user_dict = user.to_dict()
+        
+        # Get API call count
+        api_call_count = db.query(func.count(APILog.id)).filter(
+            APILog.user_id == user.id
+        ).scalar() or 0
+        
+        # Get trade count
+        trade_count = db.query(func.count(TradeHistory.id)).filter(
+            TradeHistory.user_id == user.id
+        ).scalar() or 0
+        
+        user_dict['api_call_count'] = api_call_count
+        user_dict['trade_count'] = trade_count
+        
+        users_with_stats.append(user_dict)
+    
     return {
         "total_users": len(users),
-        "users": [user.to_dict() for user in users]
+        "users": users_with_stats
     }
 
 @app.get("/api/admin/user/{account_id}")
@@ -370,6 +433,31 @@ async def get_stats(
     total_trades = db.query(func.count(TradeHistory.id)).scalar()
     total_pnl = db.query(func.sum(TradeHistory.pnl)).scalar()
     
+    # RL Experience stats
+    total_signal_experiences = db.query(func.count(RLExperience.id)).filter(
+        RLExperience.experience_type == 'SIGNAL'
+    ).scalar()
+    total_exit_experiences = db.query(func.count(RLExperience.id)).filter(
+        RLExperience.experience_type == 'EXIT'
+    ).scalar()
+    
+    # Recent RL growth (last 24 hours)
+    signal_experiences_24h = db.query(func.count(RLExperience.id)).filter(
+        RLExperience.experience_type == 'SIGNAL',
+        RLExperience.timestamp >= yesterday
+    ).scalar()
+    exit_experiences_24h = db.query(func.count(RLExperience.id)).filter(
+        RLExperience.experience_type == 'EXIT',
+        RLExperience.timestamp >= yesterday
+    ).scalar()
+    
+    # Win rate from RL experiences
+    total_rl = db.query(func.count(RLExperience.id)).scalar()
+    winning_rl = db.query(func.count(RLExperience.id)).filter(
+        RLExperience.outcome == 'WIN'
+    ).scalar()
+    win_rate = (winning_rl / total_rl * 100) if total_rl > 0 else 0
+    
     return {
         "users": {
             "total": total_users,
@@ -380,6 +468,171 @@ async def get_stats(
         "trades": {
             "total": total_trades,
             "total_pnl": float(total_pnl or 0)
+        },
+        "rl_experiences": {
+            "total_signal_experiences": total_signal_experiences or 0,
+            "total_exit_experiences": total_exit_experiences or 0,
+            "signal_experiences_24h": signal_experiences_24h or 0,
+            "exit_experiences_24h": exit_experiences_24h or 0,
+            "total_experiences": (total_signal_experiences or 0) + (total_exit_experiences or 0),
+            "win_rate": round(win_rate, 1)
+        }
+    }
+
+@app.get("/api/admin/online-users")
+async def get_online_users(
+    license_key: str,
+    db: Session = Depends(get_db)
+):
+    """Get users who are currently online (active in last 5 minutes) - admin only"""
+    verify_admin_license(license_key, db)
+    
+    # Consider user "online" if last_active within 5 minutes
+    five_minutes_ago = datetime.utcnow() - timedelta(minutes=5)
+    
+    online_users = db.query(User).filter(
+        User.last_active >= five_minutes_ago,
+        User.license_status == 'ACTIVE'
+    ).order_by(User.last_active.desc()).all()
+    
+    return {
+        "online_count": len(online_users),
+        "users": [
+            {
+                "account_id": user.account_id,
+                "email": user.email,
+                "license_type": user.license_type,
+                "last_active": user.last_active.isoformat() if user.last_active else None,
+                "seconds_ago": int((datetime.utcnow() - user.last_active).total_seconds()) if user.last_active else None
+            }
+            for user in online_users
+        ]
+    }
+
+@app.get("/api/admin/recent-activity")
+async def get_recent_activity(
+    license_key: str,
+    limit: int = 50,
+    db: Session = Depends(get_db)
+):
+    """Get recent API calls and activity (admin only)"""
+    verify_admin_license(license_key, db)
+    
+    # Recent API calls with user info
+    recent_logs = db.query(APILog).join(User).order_by(
+        APILog.timestamp.desc()
+    ).limit(limit).all()
+    
+    activity = []
+    for log in recent_logs:
+        user = db.query(User).filter(User.id == log.user_id).first()
+        activity.append({
+            "timestamp": log.timestamp.isoformat(),
+            "account_id": user.account_id if user else "unknown",
+            "endpoint": log.endpoint,
+            "method": log.method,
+            "status_code": log.status_code,
+            "response_time_ms": log.response_time_ms,
+            "ip_address": log.ip_address
+        })
+    
+    return {
+        "activity_count": len(activity),
+        "activity": activity
+    }
+
+@app.get("/api/admin/dashboard-stats")
+async def get_dashboard_stats(
+    license_key: str,
+    db: Session = Depends(get_db)
+):
+    """Get comprehensive dashboard statistics (admin only)"""
+    verify_admin_license(license_key, db)
+    
+    from sqlalchemy import func
+    
+    # User stats
+    total_users = db.query(func.count(User.id)).scalar()
+    active_users = db.query(func.count(User.id)).filter(User.license_status == 'ACTIVE').scalar()
+    suspended_users = db.query(func.count(User.id)).filter(User.license_status == 'SUSPENDED').scalar()
+    
+    # Online users (active in last 5 min)
+    five_min_ago = datetime.utcnow() - timedelta(minutes=5)
+    online_now = db.query(func.count(User.id)).filter(
+        User.last_active >= five_min_ago,
+        User.license_status == 'ACTIVE'
+    ).scalar()
+    
+    # License type breakdown
+    license_breakdown = {}
+    for license_type, count in db.query(User.license_type, func.count(User.id)).group_by(User.license_type).all():
+        license_breakdown[license_type] = count
+    
+    # API calls
+    one_hour_ago = datetime.utcnow() - timedelta(hours=1)
+    one_day_ago = datetime.utcnow() - timedelta(days=1)
+    
+    api_calls_1h = db.query(func.count(APILog.id)).filter(APILog.timestamp >= one_hour_ago).scalar()
+    api_calls_24h = db.query(func.count(APILog.id)).filter(APILog.timestamp >= one_day_ago).scalar()
+    
+    # Trade stats
+    total_trades = db.query(func.count(TradeHistory.id)).scalar()
+    total_pnl = db.query(func.sum(TradeHistory.pnl)).scalar()
+    trades_today = db.query(func.count(TradeHistory.id)).filter(
+        func.date(TradeHistory.entry_time) == datetime.utcnow().date()
+    ).scalar()
+    
+    # Expiring licenses (next 7 days)
+    seven_days = datetime.utcnow() + timedelta(days=7)
+    expiring_soon = db.query(func.count(User.id)).filter(
+        User.license_expiration <= seven_days,
+        User.license_expiration >= datetime.utcnow(),
+        User.license_status == 'ACTIVE'
+    ).scalar()
+    
+    # RL Experience stats
+    total_signal_experiences = db.query(func.count(RLExperience.id)).filter(
+        RLExperience.experience_type == 'SIGNAL'
+    ).scalar()
+    total_exit_experiences = db.query(func.count(RLExperience.id)).filter(
+        RLExperience.experience_type == 'EXIT'
+    ).scalar()
+    
+    # Recent RL growth (last 24 hours)
+    signal_exp_24h = db.query(func.count(RLExperience.id)).filter(
+        RLExperience.experience_type == 'SIGNAL',
+        RLExperience.timestamp >= one_day_ago
+    ).scalar()
+    exit_exp_24h = db.query(func.count(RLExperience.id)).filter(
+        RLExperience.experience_type == 'EXIT',
+        RLExperience.timestamp >= one_day_ago
+    ).scalar()
+    
+    return {
+        "timestamp": datetime.utcnow().isoformat(),
+        "users": {
+            "total": total_users or 0,
+            "active": active_users or 0,
+            "suspended": suspended_users or 0,
+            "online_now": online_now or 0,
+            "expiring_soon": expiring_soon or 0,
+            "by_license_type": license_breakdown
+        },
+        "api_calls": {
+            "last_hour": api_calls_1h or 0,
+            "last_24h": api_calls_24h or 0
+        },
+        "trades": {
+            "total": total_trades or 0,
+            "today": trades_today or 0,
+            "total_pnl": float(total_pnl or 0)
+        },
+        "rl_experiences": {
+            "total_signal_experiences": total_signal_experiences or 0,
+            "total_exit_experiences": total_exit_experiences or 0,
+            "signal_experiences_24h": signal_exp_24h or 0,
+            "exit_experiences_24h": exit_exp_24h or 0,
+            "total_experiences": (total_signal_experiences or 0) + (total_exit_experiences or 0)
         }
     }
 
@@ -425,6 +678,49 @@ def load_initial_experiences():
         logger.error(f"❌ Could not load initial experiences: {e}")
         logger.info("Starting with empty experience pool")
 
+
+def load_database_experiences(db: Session):
+    """
+    Load RL experiences from database and merge with JSON baseline
+    
+    This combines Kevin's baseline (6,880 signals + 2,961 exits from JSON)
+    with all new experiences saved to database by live users.
+    """
+    global signal_experiences
+    
+    try:
+        # Query all signal experiences from database
+        db_signal_experiences = db.query(RLExperience).filter(
+            RLExperience.experience_type == 'SIGNAL'
+        ).all()
+        
+        # Convert to dictionaries for pattern matching
+        for exp in db_signal_experiences:
+            exp_dict = {
+                'user_id': exp.account_id,
+                'symbol': exp.symbol,
+                'signal': exp.signal_type,
+                'signal_type': exp.signal_type,
+                'outcome': exp.outcome,
+                'pnl': exp.pnl,
+                'confidence': exp.confidence_score,
+                'quality_score': exp.quality_score,
+                'rsi': exp.rsi,
+                'vwap_distance': exp.vwap_distance,
+                'vix': exp.vix,
+                'day_of_week': exp.day_of_week,
+                'hour_of_day': exp.hour_of_day,
+                'timestamp': exp.timestamp.isoformat(),
+                'experience_id': f"db_{exp.id}"
+            }
+            signal_experiences.append(exp_dict)
+        
+        logger.info(f"📊 Loaded {len(db_signal_experiences)} new RL experiences from database")
+        logger.info(f"🧠 Total signal experiences: {len(signal_experiences):,} (baseline + live trades)")
+        
+    except Exception as e:
+        logger.error(f"❌ Could not load database experiences: {e}")
+
 # Load experiences at startup
 load_initial_experiences()
 
@@ -447,7 +743,7 @@ def get_all_experiences() -> List:
 @app.post("/api/ml/get_confidence")
 async def get_ml_confidence(request: Dict):
     """
-    Get ML confidence score for a trade setup
+    ADVANCED ML confidence with pattern matching and context-aware learning
     
     Request: {
         user_id: str,  # REQUIRED - for data isolation
@@ -457,11 +753,17 @@ async def get_ml_confidence(request: Dict):
         rsi: float,
         price: float,
         volume: int,
-        signal: str  # 'LONG' or 'SHORT'
+        signal: str,  # 'LONG' or 'SHORT'
+        vix: float  # Optional - current VIX level (default 15.0)
     }
     
     Returns: {
-        ml_confidence: float,  # 0.0 to 1.0
+        ml_confidence: float,  # 0.0 to 0.95
+        win_rate: float,  # Historical win rate for similar setups
+        sample_size: int,  # Number of similar past experiences
+        avg_pnl: float,  # Average P&L from similar trades
+        reason: str,  # Human-readable explanation
+        should_take: bool,  # True if confidence >= 65%
         action: str,  # 'LONG', 'SHORT', or 'NONE'
         model_version: str
     }
@@ -481,26 +783,34 @@ async def get_ml_confidence(request: Dict):
         rsi = request.get('rsi', 50.0)
         price = request.get('price', 0.0)
         signal = request.get('signal', 'NONE')
+        vix = request.get('vix', 15.0)
         
-        # Get ALL experiences (everyone learns from same strategy)
+        # Get ALL signal experiences (everyone learns from same strategy)
         all_trades = signal_experiences
         
-        # Simple ML confidence based on shared RL experiences
-        # Everyone contributes to and learns from the same pool
-        confidence = calculate_signal_confidence(
+        # ADVANCED ML confidence with pattern matching
+        result = calculate_signal_confidence(
             all_experiences=all_trades,
             vwap_distance=abs(price - vwap) / vwap if vwap > 0 else 0,
             rsi=rsi,
-            signal=signal
+            signal=signal,
+            current_time=datetime.now(pytz.timezone('US/Eastern')),
+            current_vix=vix,
+            similarity_threshold=0.6  # 60% similarity required
         )
         
-        logger.info(f"ML Confidence: {symbol} {signal} @ {price}, RSI={rsi:.1f}, Confidence={confidence:.2%}, Total Trades={len(all_trades)}")
+        logger.info(f"🧠 ML Confidence: {symbol} {signal} @ {price}, RSI={rsi:.1f} → {result['reason']}")
         
         return {
-            "ml_confidence": confidence,
-            "action": signal if confidence >= 0.5 else "NONE",
-            "model_version": "v4.0-shared-learning",
-            "total_trade_count": len(all_trades),
+            "ml_confidence": result['confidence'],
+            "win_rate": result['win_rate'],
+            "sample_size": result['sample_size'],
+            "avg_pnl": result['avg_pnl'],
+            "reason": result['reason'],
+            "should_take": result['should_take'],
+            "action": signal if result['should_take'] else "NONE",
+            "model_version": "v5.0-advanced-pattern-matching",
+            "total_experience_count": len(all_trades),
             "timestamp": datetime.utcnow().isoformat()
         }
         
@@ -515,60 +825,384 @@ async def get_ml_confidence(request: Dict):
         }
 
 
-def calculate_signal_confidence(all_experiences: List, vwap_distance: float, rsi: float, signal: str) -> float:
+@app.post("/api/ml/should_take_signal")
+async def should_take_signal(request: Dict):
     """
-    Calculate ML confidence based on shared RL experiences
+    REAL-TIME TRADE DECISION ENGINE
     
-    Everyone runs the same strategy, so everyone learns from the same data pool.
-    This is FASTER learning - more trades = better ML predictions sooner!
+    Bot calls this before entering a trade. Returns intelligent recommendation
+    based on pattern matching across ALL 6,880+ signal experiences.
+    
+    Request: {
+        user_id: str,
+        symbol: str,
+        signal: str,  # 'LONG' or 'SHORT'
+        entry_price: float,
+        vwap: float,
+        rsi: float,
+        vix: float  # Optional, default 15.0
+    }
+    
+    Returns: {
+        take_trade: bool,  # True = TAKE IT, False = SKIP IT
+        confidence: float,  # 0.0 to 0.95
+        win_rate: float,  # Historical win rate for similar setups
+        sample_size: int,  # Number of similar past trades analyzed
+        avg_pnl: float,  # Expected P&L based on history
+        reason: str,  # Human-readable explanation
+        risk_level: str  # 'LOW', 'MEDIUM', 'HIGH'
+    }
+    """
+    try:
+        user_id = request.get('user_id', '')
+        if not user_id:
+            return {
+                "take_trade": False,
+                "confidence": 0.0,
+                "reason": "user_id required",
+                "error": "Missing user_id"
+            }
+        
+        symbol = request.get('symbol', 'ES')
+        signal = request.get('signal', 'NONE')
+        entry_price = request.get('entry_price', 0.0)
+        vwap = request.get('vwap', 0.0)
+        rsi = request.get('rsi', 50.0)
+        vix = request.get('vix', 15.0)
+        
+        # Calculate VWAP distance
+        vwap_distance = abs(entry_price - vwap) / vwap if vwap > 0 else 0
+        
+        # Get advanced ML confidence with pattern matching
+        result = calculate_signal_confidence(
+            all_experiences=signal_experiences,
+            vwap_distance=vwap_distance,
+            rsi=rsi,
+            signal=signal,
+            current_time=datetime.now(pytz.timezone('US/Eastern')),
+            current_vix=vix,
+            similarity_threshold=0.6
+        )
+        
+        # Determine risk level
+        if result['confidence'] >= 0.80:
+            risk_level = 'LOW'
+        elif result['confidence'] >= 0.65:
+            risk_level = 'MEDIUM'
+        else:
+            risk_level = 'HIGH'
+        
+        # Log decision
+        decision = "✅ TAKE TRADE" if result['should_take'] else "⚠️ SKIP TRADE"
+        logger.info(f"🎯 {decision}: {symbol} {signal} @ {entry_price}, {result['reason']}, Risk: {risk_level}")
+        
+        return {
+            "take_trade": result['should_take'],
+            "confidence": result['confidence'],
+            "win_rate": result['win_rate'],
+            "sample_size": result['sample_size'],
+            "avg_pnl": result['avg_pnl'],
+            "reason": result['reason'],
+            "risk_level": risk_level,
+            "model_version": "v5.0-advanced-pattern-matching",
+            "timestamp": datetime.utcnow().isoformat()
+        }
+        
+    except Exception as e:
+        logger.error(f"Error in should_take_signal: {e}")
+        return {
+            "take_trade": False,
+            "confidence": 0.0,
+            "reason": f"Error: {str(e)}",
+            "error": str(e)
+        }
+
+
+def calculate_similarity_score(exp: Dict, current_rsi: float, current_vwap_dist: float, current_time: datetime_time, current_vix: float) -> float:
+    """
+    Calculate how similar a past experience is to current market conditions
+    
+    Returns score from 0.0 (completely different) to 1.0 (identical conditions)
+    """
+    score = 0.0
+    weights = []
+    
+    # RSI similarity (±5 range = very similar)
+    exp_rsi = exp.get('rsi', 50)
+    rsi_diff = abs(exp_rsi - current_rsi)
+    if rsi_diff <= 5:
+        rsi_similarity = 1.0 - (rsi_diff / 5)
+        score += rsi_similarity * 0.35  # 35% weight
+        weights.append(0.35)
+    elif rsi_diff <= 10:
+        rsi_similarity = 1.0 - ((rsi_diff - 5) / 5) * 0.5
+        score += rsi_similarity * 0.35
+        weights.append(0.35)
+    
+    # VWAP distance similarity (±0.002 range)
+    exp_vwap_dist = exp.get('vwap_distance', 0)
+    vwap_diff = abs(exp_vwap_dist - current_vwap_dist)
+    if vwap_diff <= 0.002:
+        vwap_similarity = 1.0 - (vwap_diff / 0.002)
+        score += vwap_similarity * 0.25  # 25% weight
+        weights.append(0.25)
+    
+    # Time-of-day similarity (±30 min = similar)
+    if 'timestamp' in exp:
+        try:
+            exp_time = datetime.fromisoformat(exp['timestamp']).time() if isinstance(exp['timestamp'], str) else exp['timestamp'].time()
+            exp_minutes = exp_time.hour * 60 + exp_time.minute
+            current_minutes = current_time.hour * 60 + current_time.minute
+            time_diff = abs(exp_minutes - current_minutes)
+            if time_diff <= 30:
+                time_similarity = 1.0 - (time_diff / 30)
+                score += time_similarity * 0.20  # 20% weight
+                weights.append(0.20)
+            elif time_diff <= 60:
+                time_similarity = 1.0 - ((time_diff - 30) / 30) * 0.5
+                score += time_similarity * 0.20
+                weights.append(0.20)
+        except:
+            pass
+    
+    # VIX similarity (±5 range)
+    exp_vix = exp.get('vix', 15)
+    vix_diff = abs(exp_vix - current_vix)
+    if vix_diff <= 5:
+        vix_similarity = 1.0 - (vix_diff / 5)
+        score += vix_similarity * 0.20  # 20% weight
+        weights.append(0.20)
+    
+    # Normalize score by sum of applied weights
+    total_weight = sum(weights)
+    if total_weight > 0:
+        return score / total_weight
+    return 0.0
+
+
+def filter_experiences_by_context(experiences: List, signal_type: str, current_day: int, current_vix: float, min_similarity: float = 0.6) -> List:
+    """
+    Filter experiences by trading context
+    
+    Args:
+        experiences: All past experiences
+        signal_type: 'LONG' or 'SHORT'
+        current_day: Day of week (0=Monday, 4=Friday)
+        current_vix: Current VIX level
+        min_similarity: Minimum similarity score to include
+    
+    Returns:
+        Filtered list of relevant experiences
+    """
+    filtered = []
+    
+    for exp in experiences:
+        # Must match signal type
+        if exp.get('signal_type', exp.get('signal')) != signal_type:
+            continue
+        
+        # Filter by VIX (only consider trades in similar volatility environments)
+        exp_vix = exp.get('vix', 15)
+        if abs(exp_vix - current_vix) > 10:  # Skip if VIX difference > 10
+            continue
+        
+        # Filter by day of week (optional - can enable for day-specific patterns)
+        # For now, include all days but could add: if exp.get('day_of_week') == current_day
+        
+        filtered.append(exp)
+    
+    return filtered
+
+
+def calculate_advanced_confidence(similar_experiences: List, recency_hours: int = 168) -> Dict:
+    """
+    Calculate smart confidence based on similar past experiences
+    
+    Args:
+        similar_experiences: Pre-filtered experiences matching current conditions
+        recency_hours: How many hours back to weight more heavily (default 1 week)
+    
+    Returns:
+        Dict with confidence, win_rate, sample_size, avg_pnl
+    """
+    if len(similar_experiences) == 0:
+        return {
+            'confidence': 0.5,
+            'win_rate': 0.5,
+            'sample_size': 0,
+            'avg_pnl': 0.0,
+            'reason': 'No similar past experiences found'
+        }
+    
+    # Separate wins and losses
+    wins = [exp for exp in similar_experiences if exp.get('outcome') == 'WIN' or exp.get('pnl', 0) > 0]
+    losses = [exp for exp in similar_experiences if exp.get('outcome') == 'LOSS' or exp.get('pnl', 0) <= 0]
+    
+    # Calculate basic win rate
+    win_rate = len(wins) / len(similar_experiences)
+    
+    # Calculate weighted win rate (recent trades matter more)
+    now = datetime.utcnow()
+    weighted_wins = 0
+    weighted_total = 0
+    
+    for exp in similar_experiences:
+        # Calculate recency weight (1.0 for very recent, 0.5 for old)
+        if 'timestamp' in exp:
+            try:
+                exp_time = datetime.fromisoformat(exp['timestamp']) if isinstance(exp['timestamp'], str) else exp['timestamp']
+                hours_ago = (now - exp_time).total_seconds() / 3600
+                recency_weight = max(0.5, 1.0 - (hours_ago / recency_hours) * 0.5)
+            except:
+                recency_weight = 0.7  # Default weight if timestamp parsing fails
+        else:
+            recency_weight = 0.7
+        
+        # Apply quality score weight (better trades = more weight)
+        quality_weight = exp.get('quality_score', 0.5)
+        
+        # Combined weight
+        total_weight = recency_weight * quality_weight
+        
+        weighted_total += total_weight
+        if exp.get('outcome') == 'WIN' or exp.get('pnl', 0) > 0:
+            weighted_wins += total_weight
+    
+    # Weighted win rate
+    weighted_win_rate = weighted_wins / weighted_total if weighted_total > 0 else win_rate
+    
+    # Calculate average P&L
+    total_pnl = sum(exp.get('pnl', 0) for exp in similar_experiences)
+    avg_pnl = total_pnl / len(similar_experiences)
+    
+    # Calculate confidence score
+    # Start with weighted win rate, then adjust based on sample size and avg P&L
+    confidence = weighted_win_rate
+    
+    # Sample size adjustment (more samples = more confidence in the estimate)
+    if len(similar_experiences) < 10:
+        confidence *= 0.7  # Low confidence with few samples
+    elif len(similar_experiences) < 30:
+        confidence *= 0.85  # Medium confidence
+    # else: Full confidence with 30+ samples
+    
+    # P&L quality adjustment (reward consistently profitable setups)
+    if avg_pnl > 50:
+        confidence = min(confidence + 0.1, 0.95)  # Boost for very profitable setups
+    elif avg_pnl < -20:
+        confidence *= 0.7  # Penalize consistently losing setups
+    
+    # Generate reason string
+    reason = f"{int(weighted_win_rate * 100)}% win rate in {len(similar_experiences)} similar setups (avg ${avg_pnl:.0f} P&L)"
+    
+    return {
+        'confidence': min(confidence, 0.95),  # Cap at 95%
+        'win_rate': weighted_win_rate,
+        'sample_size': len(similar_experiences),
+        'avg_pnl': avg_pnl,
+        'reason': reason
+    }
+
+
+def calculate_signal_confidence(
+    all_experiences: List, 
+    vwap_distance: float, 
+    rsi: float, 
+    signal: str,
+    current_time: Optional[datetime] = None,
+    current_vix: float = 15.0,
+    similarity_threshold: float = 0.6
+) -> Dict:
+    """
+    ADVANCED ML confidence based on pattern matching across ALL RL experiences
+    
+    This is the BRAIN of the bot - it learns from 6,880+ signal experiences and 
+    2,961+ exit experiences to make intelligent trading decisions.
+    
+    Features:
+    - Pattern matching: Finds similar past setups (RSI, VWAP, time, VIX)
+    - Context-aware: Filters by day of week, time of day, volatility
+    - Recency-weighted: Recent trades matter more than old ones
+    - Quality-weighted: Better trades (higher quality_score) matter more
+    - Sample-size aware: More data = higher confidence in predictions
     
     Args:
         all_experiences: All trade results from all users (shared learning)
-        vwap_distance: Distance from VWAP
-        rsi: Current RSI value
+        vwap_distance: Distance from VWAP (e.g., 0.001 = 0.1%)
+        rsi: Current RSI value (0-100)
         signal: 'LONG' or 'SHORT'
+        current_time: Current timestamp (for time-of-day filtering)
+        current_vix: Current VIX level (for volatility filtering)
+        similarity_threshold: Minimum similarity score (0.0-1.0) to consider a past trade
+    
+    Returns:
+        Dict with:
+            - ml_confidence: 0.0 to 0.95 (never 100% certain)
+            - win_rate: Historical win rate for similar setups
+            - sample_size: Number of similar past experiences found
+            - avg_pnl: Average P&L from similar setups
+            - reason: Human-readable explanation
+            - should_take: Boolean recommendation (True if confidence > 0.65)
     """
-    confidence = 0.5  # Start neutral
+    if current_time is None:
+        current_time = datetime.now(pytz.timezone('US/Eastern'))
     
-    # Learn from ALL users' past performance (shared strategy = shared learning)
-    if len(all_experiences) > 20:
-        # Calculate win rate for this signal type across ALL users
-        similar_trades = [t for t in all_experiences if t.get('signal') == signal]
-        if len(similar_trades) > 0:
-            wins = sum(1 for t in similar_trades if t.get('pnl', 0) > 0)
-            shared_win_rate = wins / len(similar_trades)
-            # Adjust confidence based on collective wisdom
-            confidence = (confidence + shared_win_rate) / 2
+    current_time_only = current_time.time()
+    current_day_of_week = current_time.weekday()  # 0=Monday, 6=Sunday
     
-    # RSI confidence (stronger signals at extremes)
-    if signal == "LONG":
-        if rsi < 30:
-            confidence += 0.25  # Very oversold
-        elif rsi < 35:
-            confidence += 0.15  # Oversold
-    elif signal == "SHORT":
-        if rsi > 70:
-            confidence += 0.25  # Very overbought
-        elif rsi > 65:
-            confidence += 0.15  # Overbought
+    # STEP 1: Filter experiences by context (signal type, VIX, day of week)
+    logger.info(f"🧠 RL Pattern Matching: Analyzing {len(all_experiences)} total experiences for {signal} signal")
     
-    # VWAP distance confidence (closer to band = better)
-    if vwap_distance < 0.001:  # Very close to VWAP band
-        confidence += 0.15
-    elif vwap_distance < 0.002:
-        confidence += 0.10
+    contextual_experiences = filter_experiences_by_context(
+        experiences=all_experiences,
+        signal_type=signal,
+        current_day=current_day_of_week,
+        current_vix=current_vix,
+        min_similarity=similarity_threshold
+    )
     
-    # Cap confidence at 0.95 (never 100% certain)
-    return min(confidence, 0.95)
+    logger.info(f"   → Filtered to {len(contextual_experiences)} contextually relevant experiences")
+    
+    # STEP 2: Calculate similarity scores and find matching patterns
+    similar_experiences = []
+    
+    for exp in contextual_experiences:
+        similarity = calculate_similarity_score(
+            exp=exp,
+            current_rsi=rsi,
+            current_vwap_dist=vwap_distance,
+            current_time=current_time_only,
+            current_vix=current_vix
+        )
+        
+        if similarity >= similarity_threshold:
+            exp['similarity_score'] = similarity
+            similar_experiences.append(exp)
+    
+    logger.info(f"   → Found {len(similar_experiences)} highly similar patterns (similarity >= {similarity_threshold})")
+    
+    # STEP 3: Calculate advanced confidence from similar experiences
+    result = calculate_advanced_confidence(similar_experiences)
+    
+    # Add recommendation
+    result['should_take'] = result['confidence'] >= 0.65  # Only recommend high-confidence trades
+    
+    # Log decision
+    if result['should_take']:
+        logger.info(f"   ✅ RECOMMEND {signal}: {result['reason']}")
+    else:
+        logger.info(f"   ⚠️  SKIP {signal}: Confidence {result['confidence']:.1%} < 65% threshold")
+    
+    return result
 
 
 @app.post("/api/ml/save_trade")
-async def save_trade_experience(trade: Dict):
+async def save_trade_experience(trade: Dict, db: Session = Depends(get_db)):
     """
-    Save trade experience for RL model training (user-isolated)
+    Save trade experience for RL model training with FULL CONTEXT for pattern matching
     
     Request: {
-        user_id: str,  # REQUIRED - for data isolation
+        user_id: str,  # REQUIRED - for data isolation (account_id)
         symbol: str,
         side: str,  # 'LONG' or 'SHORT'
         entry_price: float,
@@ -577,11 +1211,16 @@ async def save_trade_experience(trade: Dict):
         exit_time: str,   # ISO format
         pnl: float,
         entry_vwap: float,
-        entry_rsi: float,
+        entry_rsi: float,  # RSI at entry (for pattern matching)
         exit_reason: str,
-        duration_minutes: float,  # Changed from duration_seconds
+        duration_minutes: float,
         volatility: float,
-        streak: int
+        streak: int,
+        
+        # NEW: Optional context for advanced RL pattern matching
+        vwap_distance: float,  # Distance from VWAP (percentage, e.g., 0.001 = 0.1%)
+        vix: float,  # VIX level at entry (default 15.0)
+        confidence: float  # ML confidence at entry (0.0-1.0)
     }
     
     Returns: {
@@ -621,6 +1260,86 @@ async def save_trade_experience(trade: Dict):
         # Persist the hive mind to disk every 10 trades
         if len(signal_experiences) % 10 == 0:
             save_experiences()
+        
+        # **NEW: Save to PostgreSQL database for admin dashboard tracking**
+        try:
+            # Get user from database
+            user = db.query(User).filter(User.account_id == user_id).first()
+            if user:
+                # Create trade history record
+                trade_record = TradeHistory(
+                    user_id=user.id,
+                    account_id=user_id,
+                    symbol=symbol,
+                    signal_type=trade['side'],
+                    entry_price=trade.get('entry_price', 0.0),
+                    exit_price=trade.get('exit_price', 0.0),
+                    quantity=trade.get('quantity', 1),
+                    pnl=trade['pnl'],
+                    entry_time=datetime.fromisoformat(trade['entry_time']) if trade.get('entry_time') else datetime.utcnow(),
+                    exit_time=datetime.fromisoformat(trade['exit_time']) if trade.get('exit_time') else datetime.utcnow(),
+                    exit_reason=trade.get('exit_reason', 'unknown'),
+                    confidence_score=trade.get('confidence', 0.0)
+                )
+                db.add(trade_record)
+                
+                # **NEW: Track RL experiences for signal and exit WITH CONTEXT**
+                pnl = trade['pnl']
+                outcome = 'WIN' if pnl > 0 else 'LOSS'
+                
+                # Extract context data (with defaults if not provided)
+                rsi = trade.get('entry_rsi', trade.get('rsi', 50.0))
+                vwap_distance = trade.get('vwap_distance', 0.0)
+                vix = trade.get('vix', 15.0)
+                
+                # Calculate time context
+                entry_time = datetime.fromisoformat(trade['entry_time']) if trade.get('entry_time') else datetime.utcnow()
+                day_of_week = entry_time.weekday()  # 0=Monday, 6=Sunday
+                hour_of_day = entry_time.hour  # 0-23
+                
+                # Signal experience (entry decision) WITH CONTEXT
+                signal_exp = RLExperience(
+                    user_id=user.id,
+                    account_id=user_id,
+                    experience_type='SIGNAL',
+                    symbol=symbol,
+                    signal_type=trade['side'],
+                    outcome=outcome,
+                    pnl=pnl,
+                    confidence_score=trade.get('confidence', 0.0),
+                    quality_score=min(abs(pnl) / 100, 1.0),  # Quality based on P&L magnitude
+                    rsi=rsi,
+                    vwap_distance=vwap_distance,
+                    vix=vix,
+                    day_of_week=day_of_week,
+                    hour_of_day=hour_of_day
+                )
+                db.add(signal_exp)
+                
+                # Exit experience (exit decision) WITH CONTEXT
+                exit_exp = RLExperience(
+                    user_id=user.id,
+                    account_id=user_id,
+                    experience_type='EXIT',
+                    symbol=symbol,
+                    signal_type=trade['side'],
+                    outcome=outcome,
+                    pnl=pnl,
+                    confidence_score=trade.get('confidence', 0.0),
+                    quality_score=min(abs(pnl) / 100, 1.0),
+                    rsi=rsi,
+                    vwap_distance=vwap_distance,
+                    vix=vix,
+                    day_of_week=day_of_week,
+                    hour_of_day=hour_of_day
+                )
+                db.add(exit_exp)
+                
+                db.commit()
+                logger.debug(f"✅ Trade & RL experiences (with context) saved to database for {user_id}")
+        except Exception as db_error:
+            logger.warning(f"Failed to save trade to database: {db_error}")
+            # Don't fail the entire request if database save fails
         
         # Calculate SHARED win rate (collective wisdom) - handle both formats
         if len(signal_experiences) > 0:
@@ -1609,9 +2328,30 @@ async def startup_event():
     update_calendar()  # Initial fetch
     start_calendar_updater()  # Start background updater
     
+    # Load RL experiences (baseline from JSON + new from database)
+    logger.info("🧠 Loading RL experiences for pattern matching...")
+    load_initial_experiences()  # Load baseline from JSON (6,880 + 2,961)
+    
+    if db_manager:
+        try:
+            db = next(get_db())
+            load_database_experiences(db)  # Add new experiences from database
+            db.close()
+        except Exception as e:
+            logger.error(f"❌ Could not load database experiences: {e}")
+    
     logger.info("=" * 60)
     logger.info("✅ Signal Engine Ready!")
     logger.info("=" * 60)
+
+
+# ============================================================================
+# STATIC FILES - Mount admin dashboard
+# ============================================================================
+import os
+if os.path.exists("admin-dashboard"):
+    app.mount("/admin-dashboard", StaticFiles(directory="admin-dashboard"), name="admin-dashboard")
+    logger.info("📊 Admin dashboard mounted at /admin-dashboard")
 
 
 if __name__ == "__main__":

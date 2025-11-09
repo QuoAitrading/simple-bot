@@ -127,6 +127,57 @@ class TradeHistory(Base):
         }
 
 
+class RLExperience(Base):
+    """Track RL/ML experiences for signal and exit learning with full context"""
+    __tablename__ = 'rl_experiences'
+    
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(Integer, ForeignKey('users.id'), nullable=False, index=True)
+    account_id = Column(String(100), nullable=False, index=True)
+    experience_type = Column(String(20), nullable=False)  # SIGNAL, EXIT
+    symbol = Column(String(20), nullable=False)
+    signal_type = Column(String(10), nullable=False)  # LONG, SHORT
+    outcome = Column(String(10), nullable=False)  # WIN, LOSS
+    pnl = Column(Float, nullable=True)
+    confidence_score = Column(Float, nullable=True)
+    quality_score = Column(Float, nullable=True)  # 0-1, how valuable this experience is
+    
+    # NEW: Context for advanced pattern matching
+    rsi = Column(Float, nullable=True)  # RSI at entry
+    vwap_distance = Column(Float, nullable=True)  # Distance from VWAP (percentage)
+    vix = Column(Float, nullable=True)  # VIX level at entry
+    day_of_week = Column(Integer, nullable=True)  # 0=Monday, 6=Sunday
+    hour_of_day = Column(Integer, nullable=True)  # 0-23, Eastern Time
+    
+    timestamp = Column(DateTime, default=datetime.utcnow, index=True)
+    
+    # Relationship
+    user = relationship("User", backref="rl_experiences")
+    
+    def __repr__(self):
+        return f"<RLExperience {self.experience_type} {self.symbol} - {self.outcome}>"
+    
+    def to_dict(self):
+        """Convert to dictionary for API responses"""
+        return {
+            'id': self.id,
+            'account_id': self.account_id,
+            'experience_type': self.experience_type,
+            'symbol': self.symbol,
+            'signal_type': self.signal_type,
+            'outcome': self.outcome,
+            'pnl': self.pnl,
+            'confidence_score': self.confidence_score,
+            'quality_score': self.quality_score,
+            'rsi': self.rsi,
+            'vwap_distance': self.vwap_distance,
+            'vix': self.vix,
+            'day_of_week': self.day_of_week,
+            'hour_of_day': self.hour_of_day,
+            'timestamp': self.timestamp.isoformat()
+        }
+
+
 # Database Connection Manager
 class DatabaseManager:
     """Manages database connections and sessions"""
