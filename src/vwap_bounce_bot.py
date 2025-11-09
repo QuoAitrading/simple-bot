@@ -821,6 +821,60 @@ def check_broker_connection() -> None:
     except Exception as e:
         logger.debug(f"Time service check failed (non-critical): {e}")
     
+    # AUTO-IDLE: Disconnect broker during maintenance (no data needed)
+    current_time = get_current_time()
+    trading_state = get_trading_state(current_time)
+    
+    if trading_state == "closed" and not bot_status.get("maintenance_idle", False):
+        halt_reason = bot_status.get("halt_reason", "")
+        
+        # Only go idle during maintenance, not weekend
+        if "maintenance" in halt_reason.lower() or (current_time.weekday() < 5 and current_time.time() >= datetime_time(17, 0) and current_time.time() < datetime_time(18, 0)):
+            logger.critical(SEPARATOR_LINE)
+            logger.critical("🔧 MAINTENANCE WINDOW - GOING IDLE")
+            logger.critical(f"Time: {current_time.strftime('%H:%M:%S %Z')}")
+            logger.critical("  Disconnecting broker to save resources during maintenance")
+            logger.critical("  Will auto-reconnect at 6:00 PM ET when market reopens")
+            logger.critical(SEPARATOR_LINE)
+            
+            # Disconnect broker (stops all data feeds)
+            try:
+                if broker is not None and broker.connected:
+                    broker.disconnect()
+                    logger.critical("  ✅ Broker disconnected - Bot is IDLE")
+            except Exception as e:
+                logger.error(f"  ❌ Error disconnecting: {e}")
+            
+            bot_status["maintenance_idle"] = True
+            bot_status["trading_enabled"] = False
+            logger.critical("  Bot will check every 30s for market reopen...")
+            return  # Skip broker health check since we just disconnected
+    
+    # AUTO-RECONNECT: Reconnect broker when market reopens at 6 PM
+    elif trading_state == "entry_window" and bot_status.get("maintenance_idle", False):
+        logger.critical(SEPARATOR_LINE)
+        logger.critical("✅ MARKET REOPENED - AUTO-RECONNECTING")
+        logger.critical(f"Time: {current_time.strftime('%H:%M:%S %Z')}")
+        logger.critical(SEPARATOR_LINE)
+        
+        # Reconnect to broker
+        try:
+            if broker is not None:
+                logger.critical("  [RECONNECT] Connecting to broker...")
+                success = broker.connect(max_retries=3)
+                if success:
+                    logger.critical("  [RECONNECT] ✅ Broker connected - Data feed active")
+                    bot_status["maintenance_idle"] = False
+                    bot_status["trading_enabled"] = True
+                    logger.critical("  [RECONNECT] ✅ Trading enabled. Bot fully operational.")
+                else:
+                    logger.error("  [RECONNECT] ❌ Connection failed - Will retry in 30s")
+        except Exception as e:
+            logger.error(f"  [RECONNECT] Error: {e}")
+        
+        logger.critical(SEPARATOR_LINE)
+        return  # Skip normal health check since we just reconnected
+    
     if broker is None:
         logger.error("[HEALTH] Broker is None - cannot check connection")
         return
