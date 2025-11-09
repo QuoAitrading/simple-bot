@@ -1155,21 +1155,22 @@ def update_calendar():
 
 def get_next_update_time() -> datetime:
     """
-    Calculate next update time: 5 PM ET, Sunday-Friday
+    Calculate next update time: 1st of every month at 5 PM ET
     """
     et_tz = pytz.timezone("America/New_York")
     now_et = datetime.now(et_tz)
     
-    # Target time: 5 PM ET
-    target_time = now_et.replace(hour=17, minute=0, second=0, microsecond=0)
-    
-    # If past 5 PM today, schedule for tomorrow
-    if now_et >= target_time:
-        target_time += timedelta(days=1)
-    
-    # Skip Saturday (day 5)
-    while target_time.weekday() == 5:  # Saturday
-        target_time += timedelta(days=1)
+    # Target: 1st of next month at 5 PM ET
+    if now_et.day == 1 and now_et.hour < 17:
+        # It's the 1st and before 5 PM - update today at 5 PM
+        target_time = now_et.replace(hour=17, minute=0, second=0, microsecond=0)
+    else:
+        # Schedule for 1st of next month at 5 PM
+        if now_et.month == 12:
+            next_month = now_et.replace(year=now_et.year + 1, month=1, day=1, hour=17, minute=0, second=0, microsecond=0)
+        else:
+            next_month = now_et.replace(month=now_et.month + 1, day=1, hour=17, minute=0, second=0, microsecond=0)
+        target_time = next_month
     
     return target_time
 
@@ -1204,7 +1205,7 @@ def start_calendar_updater():
     
     thread = threading.Thread(target=run_loop, daemon=True)
     thread.start()
-    logger.info("📅 Calendar updater started (5 PM ET, Sunday-Friday)")
+    logger.info("📅 Calendar updater started (1st of month at 5 PM ET)")
 
 @app.get("/api/calendar/events")
 async def get_calendar_events(days: int = 7):
