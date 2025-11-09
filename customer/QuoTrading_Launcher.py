@@ -1411,21 +1411,22 @@ class QuoTradingLauncher:
             fg=self.colors['text_light']
         ).pack(anchor=tk.W, padx=(20, 0))
         
-        # FOMC Block (NEW)
+        # FOMC Block with popup for force close option
         fomc_block_frame = tk.Frame(modes_section, bg=self.colors['card'])
-        fomc_block_frame.pack(fill=tk.X, pady=(8, 0))
+        fomc_block_frame.pack(fill=tk.X, pady=(8, 8))
         
         self.fomc_block_var = tk.BooleanVar(value=self.config.get("fomc_block_enabled", True))
         
         def on_fomc_toggle():
-            """Handle FOMC block toggle - show force close option"""
+            """Handle FOMC block toggle - show popup when enabling"""
             if self.fomc_block_var.get():
-                # FOMC blocking enabled - show force close option
-                force_close_frame.pack(fill=tk.X, pady=(4, 8))
+                # User just enabled FOMC blocking - show popup
+                self.show_fomc_options_popup()
             else:
-                # FOMC blocking disabled - hide force close option
-                force_close_frame.pack_forget()
-            self.save_config()
+                # User disabled FOMC blocking
+                self.config["fomc_block_enabled"] = False
+                self.config["fomc_force_close"] = False
+                self.save_config()
         
         tk.Checkbutton(
             fomc_block_frame,
@@ -1448,39 +1449,6 @@ class QuoTradingLauncher:
             bg=self.colors['card'],
             fg=self.colors['text_light']
         ).pack(anchor=tk.W, padx=(20, 0))
-        
-        # FOMC Force Close (sub-option, only shown when FOMC blocking enabled)
-        force_close_frame = tk.Frame(modes_section, bg=self.colors['card'])
-        
-        self.fomc_force_close_var = tk.BooleanVar(value=self.config.get("fomc_force_close", False))
-        
-        tk.Checkbutton(
-            force_close_frame,
-            text="⚠️ Force Close Positions During Events",
-            variable=self.fomc_force_close_var,
-            command=self.save_config,
-            font=("Segoe UI", 8),
-            bg=self.colors['card'],
-            fg=self.colors['warning'],
-            selectcolor=self.colors['secondary'],
-            activebackground=self.colors['card'],
-            activeforeground=self.colors['warning'],
-            cursor="hand2"
-        ).pack(anchor=tk.W, padx=(20, 0))
-        
-        tk.Label(
-            force_close_frame,
-            text="⚠️ Exits all positions before events (conservative)",
-            font=("Segoe UI", 7, "bold"),
-            bg=self.colors['card'],
-            fg=self.colors['text_light']
-        ).pack(anchor=tk.W, padx=(40, 0))
-        
-        # Initially show/hide force close based on FOMC block setting
-        if self.fomc_block_var.get():
-            force_close_frame.pack(fill=tk.X, pady=(4, 8))
-        else:
-            force_close_frame.pack_forget()
         
         # Confidence Trading
         conf_mode_frame = tk.Frame(modes_section, bg=self.colors['card'])
@@ -2394,8 +2362,7 @@ class QuoTradingLauncher:
         
         self.config["recovery_mode"] = self.recovery_mode_var.get()
         self.config["avoid_news_days"] = self.avoid_news_var.get()
-        self.config["fomc_block_enabled"] = self.fomc_block_var.get()
-        self.config["fomc_force_close"] = self.fomc_force_close_var.get()
+        # Note: fomc_block_enabled and fomc_force_close are saved in show_fomc_options_popup()
         
         # Auto-enable alerts if email is configured
         self.config["alerts_enabled"] = bool(self.config.get("alert_email") and self.config.get("alert_email_password"))
@@ -2481,6 +2448,148 @@ class QuoTradingLauncher:
                 f"Failed to launch bot:\n{str(e)}\n\n"
                 f"Make sure Python is installed and src/vwap_bounce_bot.py exists."
             )
+    
+    def show_fomc_options_popup(self):
+        """Show popup asking user if they want to force close positions during FOMC events."""
+        # Create custom dialog
+        dialog = tk.Toplevel(self.root)
+        dialog.title("FOMC Event Options")
+        dialog.geometry("500x300")
+        dialog.configure(bg=self.colors['background'])
+        dialog.resizable(False, False)
+        
+        # Center the dialog
+        dialog.transient(self.root)
+        dialog.grab_set()
+        
+        # Header
+        header_frame = tk.Frame(dialog, bg=self.colors['primary'], height=60)
+        header_frame.pack(fill=tk.X)
+        header_frame.pack_propagate(False)
+        
+        tk.Label(
+            header_frame,
+            text="📅 FOMC Event Blocking Enabled",
+            font=("Segoe UI", 14, "bold"),
+            bg=self.colors['primary'],
+            fg="white"
+        ).pack(expand=True)
+        
+        # Content
+        content_frame = tk.Frame(dialog, bg=self.colors['background'])
+        content_frame.pack(fill=tk.BOTH, expand=True, padx=20, pady=20)
+        
+        # Explanation
+        tk.Label(
+            content_frame,
+            text="During FOMC/NFP/CPI events, new entries will be blocked.\n\nWhat should happen to existing positions?",
+            font=("Segoe UI", 10),
+            bg=self.colors['background'],
+            fg=self.colors['text'],
+            justify=tk.LEFT,
+            wraplength=450
+        ).pack(pady=(0, 20))
+        
+        # Options
+        option_var = tk.IntVar(value=0 if not self.config.get("fomc_force_close", False) else 1)
+        
+        # Option 1: Keep positions
+        option1_frame = tk.Frame(content_frame, bg=self.colors['card'], relief=tk.RAISED, borderwidth=2)
+        option1_frame.pack(fill=tk.X, pady=(0, 10))
+        
+        tk.Radiobutton(
+            option1_frame,
+            text="✅ Keep Positions Running (Recommended)",
+            variable=option_var,
+            value=0,
+            font=("Segoe UI", 10, "bold"),
+            bg=self.colors['card'],
+            fg=self.colors['success'],
+            selectcolor=self.colors['secondary'],
+            activebackground=self.colors['card'],
+            cursor="hand2"
+        ).pack(anchor=tk.W, padx=10, pady=(10, 5))
+        
+        tk.Label(
+            option1_frame,
+            text="Only blocks new entries. Existing positions continue with normal stops/targets.",
+            font=("Segoe UI", 8),
+            bg=self.colors['card'],
+            fg=self.colors['text_light'],
+            wraplength=450,
+            justify=tk.LEFT
+        ).pack(anchor=tk.W, padx=30, pady=(0, 10))
+        
+        # Option 2: Force close
+        option2_frame = tk.Frame(content_frame, bg=self.colors['card'], relief=tk.RAISED, borderwidth=2)
+        option2_frame.pack(fill=tk.X)
+        
+        tk.Radiobutton(
+            option2_frame,
+            text="⚠️ Force Close All Positions (Conservative)",
+            variable=option_var,
+            value=1,
+            font=("Segoe UI", 10, "bold"),
+            bg=self.colors['card'],
+            fg=self.colors['warning'],
+            selectcolor=self.colors['secondary'],
+            activebackground=self.colors['card'],
+            cursor="hand2"
+        ).pack(anchor=tk.W, padx=10, pady=(10, 5))
+        
+        tk.Label(
+            option2_frame,
+            text="Automatically closes all positions before events. Zero event exposure but may exit winning trades early.",
+            font=("Segoe UI", 8),
+            bg=self.colors['card'],
+            fg=self.colors['text_light'],
+            wraplength=450,
+            justify=tk.LEFT
+        ).pack(anchor=tk.W, padx=30, pady=(0, 10))
+        
+        # Buttons
+        button_frame = tk.Frame(dialog, bg=self.colors['background'])
+        button_frame.pack(fill=tk.X, padx=20, pady=(10, 20))
+        
+        def on_save():
+            self.config["fomc_block_enabled"] = True
+            self.config["fomc_force_close"] = bool(option_var.get())
+            self.save_config()
+            dialog.destroy()
+        
+        def on_cancel():
+            # User canceled, uncheck the FOMC box
+            self.fomc_block_var.set(False)
+            self.config["fomc_block_enabled"] = False
+            self.config["fomc_force_close"] = False
+            self.save_config()
+            dialog.destroy()
+        
+        tk.Button(
+            button_frame,
+            text="Save",
+            command=on_save,
+            font=("Segoe UI", 10, "bold"),
+            bg=self.colors['success'],
+            fg="white",
+            cursor="hand2",
+            relief=tk.FLAT,
+            padx=30,
+            pady=10
+        ).pack(side=tk.RIGHT, padx=(10, 0))
+        
+        tk.Button(
+            button_frame,
+            text="Cancel",
+            command=on_cancel,
+            font=("Segoe UI", 10),
+            bg=self.colors['card'],
+            fg=self.colors['text'],
+            cursor="hand2",
+            relief=tk.FLAT,
+            padx=30,
+            pady=10
+        ).pack(side=tk.RIGHT)
     
     def show_settings_dialog(self):
         """Show comprehensive settings dialog with tabs."""
