@@ -1282,37 +1282,68 @@ def get_market_hours_status(now_et: datetime) -> str:
     """
     Determine current market status
     
-    Returns: pre_market, market_open, after_hours, futures_open, weekend_closed
+    Futures hours (ES/NQ):
+    - Sunday 6:00 PM - Friday 5:00 PM ET (weekly)
+    - Daily maintenance: Mon-Thu 5:00-6:00 PM, Fri-Sun 5:00 PM - Sun 6:00 PM
+    
+    Returns: pre_market, market_open, after_hours, futures_open, maintenance, weekend_closed
     """
-    weekday = now_et.weekday()
+    weekday = now_et.weekday()  # Monday=0, Sunday=6
     current_time = now_et.time()
     
-    # Weekend (Saturday = 5, Sunday = 6)
-    if weekday == 5:  # Saturday
+    # Saturday - Weekend closed
+    if weekday == 5:
         return "weekend_closed"
-    elif weekday == 6:  # Sunday
-        # Futures open at 6 PM ET on Sunday
+    
+    # Sunday
+    elif weekday == 6:
         if current_time >= datetime_time(18, 0):
+            # Sunday 6 PM onwards - futures open
             return "futures_open"
         else:
+            # Before Sunday 6 PM - weekend closed
             return "weekend_closed"
     
-    # Weekdays (Monday-Friday)
-    if current_time < datetime_time(9, 30):
-        # Before 9:30 AM
-        if current_time >= datetime_time(6, 0):
-            return "pre_market"
+    # Monday-Thursday
+    elif weekday <= 3:  # Monday(0) to Thursday(3)
+        if datetime_time(17, 0) <= current_time < datetime_time(18, 0):
+            # 5:00-6:00 PM - Daily maintenance
+            return "maintenance"
+        elif current_time < datetime_time(9, 30):
+            # Before 9:30 AM - Pre-market/futures
+            if current_time >= datetime_time(4, 0):
+                return "pre_market"
+            else:
+                return "futures_open"
+        elif datetime_time(9, 30) <= current_time < datetime_time(16, 0):
+            # 9:30 AM - 4:00 PM - Market open
+            return "market_open"
+        elif datetime_time(16, 0) <= current_time < datetime_time(17, 0):
+            # 4:00-5:00 PM - After hours
+            return "after_hours"
         else:
+            # After 6:00 PM - Futures open
             return "futures_open"
-    elif datetime_time(9, 30) <= current_time < datetime_time(16, 0):
-        # 9:30 AM - 4:00 PM
-        return "market_open"
-    elif datetime_time(16, 0) <= current_time < datetime_time(18, 0):
-        # 4:00 PM - 6:00 PM
-        return "after_hours"
-    else:
-        # After 6:00 PM
-        return "futures_open"
+    
+    # Friday
+    elif weekday == 4:
+        if current_time >= datetime_time(17, 0):
+            # Friday 5 PM onwards - Weekend maintenance
+            return "weekend_closed"
+        elif current_time < datetime_time(9, 30):
+            # Before 9:30 AM
+            if current_time >= datetime_time(4, 0):
+                return "pre_market"
+            else:
+                return "futures_open"
+        elif datetime_time(9, 30) <= current_time < datetime_time(16, 0):
+            # 9:30 AM - 4:00 PM - Market open
+            return "market_open"
+        elif datetime_time(16, 0) <= current_time < datetime_time(17, 0):
+            # 4:00-5:00 PM - After hours (approaching weekend)
+            return "after_hours"
+    
+    return "unknown"
 
 def get_trading_session(now_et: datetime) -> str:
     """
