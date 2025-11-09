@@ -11,7 +11,7 @@ from datetime import datetime
 BASE_URL = "https://quotrading-signals.icymeadow-86b2969e.eastus.azurecontainerapps.io"
 
 # Store admin license key (will be set after first run)
-ADMIN_LICENSE_KEY = "QT-XXXX-XXXX-XXXX-XXXX"  # Replace with your actual admin key
+ADMIN_LICENSE_KEY = "QT-0149-EA27-38BB-C7A0"  # Replace with your actual admin key
 
 def test_health():
     """Test 1: Health check"""
@@ -224,8 +224,9 @@ def test_calendar_endpoints():
         data = response.json()
         
         if response.status_code == 200:
-            print(f"Today's Events: {data['events_count']}")
-            print(f"Trading Recommended: {data['trading_recommended']}")
+            print(f"Date: {data.get('date', 'N/A')}")
+            print(f"Events Count: {data.get('count', 0)}")
+            print(f"Trading Recommended: {data.get('trading_recommended', True)}")
             print("✅ Calendar endpoint working")
             return True
         else:
