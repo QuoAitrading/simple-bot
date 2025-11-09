@@ -64,13 +64,8 @@ except ImportError:
     BrokerInterface = None
 
 # Load configuration from environment and config module
-# Check if in backtest mode via environment variable
-_backtest_mode = os.getenv("BOT_BACKTEST_MODE", "false").lower() == "true"
-_bot_config = load_config(backtest_mode=_backtest_mode)
-
-# Only validate if not importing for live mode (live mode will validate after loading .env)
-if _backtest_mode or os.getenv("BROKER_API_TOKEN"):
-    _bot_config.validate()  # Validate configuration at startup
+_bot_config = load_config()
+_bot_config.validate()  # Validate configuration at startup
 
 # Convert BotConfiguration to dictionary for backward compatibility with existing code
 CONFIG: Dict[str, Any] = _bot_config.to_dict()
@@ -142,8 +137,6 @@ state: Dict[str, Any] = {}
 
 # Backtest mode: Track current simulation time (for backtesting)
 # When None, uses real datetime.now(). When set, uses this timestamp.
-backtest_current_time: Optional[datetime] = None
-
 # Global tracking for safety mechanisms (Phase 12)
 bot_status: Dict[str, Any] = {
     "trading_enabled": True,
@@ -512,15 +505,15 @@ def get_account_equity() -> float:
     """
     Fetch current account equity from broker.
     Returns account equity/balance with error handling.
-    In backtest mode or shadow mode, returns simulated capital (no account login).
+    In shadow mode, returns simulated capital (no account login).
     In live mode, returns actual account balance from broker.
     """
-    # Backtest mode, shadow mode, or no broker - return simulated capital
-    if _bot_config.backtest_mode or CONFIG.get("shadow_mode", False) or broker is None:
+    # Shadow mode or no broker - return simulated capital
+    if CONFIG.get("shadow_mode", False) or broker is None:
         # Use starting_equity from bot_status if available
         if bot_status.get("starting_equity") is not None:
             return bot_status["starting_equity"]
-        # Default starting capital for backtest/shadow mode
+        # Default starting capital for shadow mode
         return 50000.0
     
     # Live mode - get actual balance from broker account
@@ -556,18 +549,6 @@ def place_market_order(symbol: str, side: str, quantity: int) -> Optional[Dict[s
         Order object or None if failed
     """
     logger.info(f"Market Order: {side} {quantity} {symbol}")
-    
-    # In backtest mode, return simulated order
-    if _bot_config.backtest_mode:
-        return {
-            "order_id": f"BACKTEST_{datetime.now().timestamp()}",
-            "symbol": symbol,
-            "side": side,
-            "quantity": quantity,
-            "type": "MARKET",
-            "status": "FILLED",
-            "dry_run": True
-        }
     
     if broker is None:
         logger.error("Broker not initialized")
@@ -907,7 +888,7 @@ def initialize_state(symbol: str) -> None:
     """
     # CRITICAL FIX: Reload config to get latest values (fixes subprocess caching issue)
     global _bot_config, CONFIG
-    _bot_config = load_config(backtest_mode=_backtest_mode)
+    _bot_config = load_config()
     _bot_config.validate()
     CONFIG = _bot_config.to_dict()
     
@@ -1194,11 +1175,6 @@ def on_tick(symbol: str, price: float, volume: int, timestamp_ms: int) -> None:
         volume: Tick volume
         timestamp_ms: Timestamp in milliseconds
     """
-    # Update backtest current time from tick timestamp
-    global backtest_current_time
-    if _bot_config.backtest_mode:
-        backtest_current_time = datetime.fromtimestamp(timestamp_ms / 1000, tz=pytz.timezone(CONFIG["timezone"]))
-    
     # Post tick data to event loop for processing
     if event_loop:
         event_loop.post_event(
@@ -1289,13 +1265,13 @@ def update_1min_bar(symbol: str, price: float, volume: int, dt: datetime) -> Non
         
         # CRITICAL FOR LIVE TRADING: Check exits on EVERY TICK (intrabar)
         # Don't wait for bar close - exit immediately if stop/target hit
-        if not _bot_config.backtest_mode and state[symbol]["position"]["active"]:
+        if state[symbol]["position"]["active"]:
             check_exit_conditions(symbol)
 
 
 def inject_complete_bar(symbol: str, bar: Dict[str, Any]) -> None:
     """
-    Inject a complete OHLCV bar directly (for backtesting with historical bars).
+    Inject a complete OHLCV bar directly (historical data replay).
     This preserves accurate high/low ranges for ATR calculation.
     
     Args:
@@ -2661,7 +2637,7 @@ def place_entry_order_with_retry(symbol: str, side: str, contracts: int,
                     # ===== Gap #2: Queue Monitoring for Passive Orders =====
                     queue_monitoring_enabled = CONFIG.get("queue_monitoring_enabled", True)
                     
-                    if queue_monitoring_enabled and bid_ask_manager is not None and not _bot_config.backtest_mode:
+                    if queue_monitoring_enabled and bid_ask_manager is not None:
                         # Use queue monitor for live trading
                         logger.info(f"  [QUEUE] Monitoring queue position...")
                         
@@ -3036,18 +3012,6 @@ def execute_entry(symbol: str, side: str, entry_price: float) -> None:
         # No bid/ask manager, use traditional market order
         logger.info("  Using market order (no bid/ask manager)")
         
-        # PRODUCTION: Apply slippage in backtest mode
-        tick_size = CONFIG["tick_size"]
-        slippage_ticks = CONFIG.get("slippage_ticks", 0.0)
-        
-        if _bot_config.backtest_mode and slippage_ticks > 0:
-            if side == "long":
-                actual_fill_price = entry_price + (slippage_ticks * tick_size)
-            else:
-                actual_fill_price = entry_price - (slippage_ticks * tick_size)
-            actual_fill_price = round_to_tick(actual_fill_price)
-            logger.info(f"  Slippage: {slippage_ticks} ticks")
-        
         order = place_market_order(symbol, order_side, contracts)
     
     if order is None:
@@ -3056,23 +3020,22 @@ def execute_entry(symbol: str, side: str, entry_price: float) -> None:
     
     # ===== CRITICAL FIX #7: Entry Fill Validation (Live Trading) =====
     # Validate actual entry fill price vs expected (critical for live trading)
-    if not _bot_config.backtest_mode:
-        # In live trading, get actual fill price from broker
-        try:
-            actual_fill_from_broker = get_last_fill_price(symbol)
-            if actual_fill_from_broker and actual_fill_from_broker != actual_fill_price:
-                # Calculate entry slippage
-                tick_size = CONFIG["tick_size"]
-                tick_value = CONFIG["tick_value"]
-                entry_slippage = abs(actual_fill_from_broker - actual_fill_price)
-                entry_slippage_ticks = entry_slippage / tick_size
-                entry_slippage_cost = entry_slippage_ticks * tick_value * contracts
-                
-                # Get alert threshold from config
-                entry_slippage_alert_threshold = CONFIG.get("entry_slippage_alert_ticks", 2)
-                
-                if entry_slippage_ticks > entry_slippage_alert_threshold:
-                    # HIGH ENTRY SLIPPAGE DETECTED
+    # In live trading, get actual fill price from broker
+    try:
+        actual_fill_from_broker = get_last_fill_price(symbol)
+        if actual_fill_from_broker and actual_fill_from_broker != actual_fill_price:
+            # Calculate entry slippage
+            tick_size = CONFIG["tick_size"]
+            tick_value = CONFIG["tick_value"]
+            entry_slippage = abs(actual_fill_from_broker - actual_fill_price)
+            entry_slippage_ticks = entry_slippage / tick_size
+            entry_slippage_cost = entry_slippage_ticks * tick_value * contracts
+            
+            # Get alert threshold from config
+            entry_slippage_alert_threshold = CONFIG.get("entry_slippage_alert_ticks", 2)
+            
+            if entry_slippage_ticks > entry_slippage_alert_threshold:
+                # HIGH ENTRY SLIPPAGE DETECTED
                     logger.warning("=" * 80)
                     logger.warning("[WARN] CRITICAL: HIGH ENTRY SLIPPAGE DETECTED!")
                     logger.warning("=" * 80)
@@ -4406,20 +4369,7 @@ def calculate_pnl(position: Dict[str, Any], exit_price: float) -> Tuple[float, f
     tick_size = CONFIG["tick_size"]
     tick_value = CONFIG["tick_value"]
     
-    # Apply exit slippage in backtest mode
-    slippage_ticks = CONFIG.get("slippage_ticks", 0.0)
     actual_exit_price = exit_price
-    
-    if _bot_config.backtest_mode and slippage_ticks > 0:
-        # Exit slippage works AGAINST you
-        if position["side"] == "long":
-            # Selling - you get filled lower
-            actual_exit_price = exit_price - (slippage_ticks * tick_size)
-        else:  # short
-            # Buying to cover - you get filled higher
-            actual_exit_price = exit_price + (slippage_ticks * tick_size)
-        
-        actual_exit_price = round_to_tick(actual_exit_price)
     
     # ===== CRITICAL FIX #6: Exit Slippage Tracking and Alerts =====
     # Track slippage impact separately for critical exits (stops)
@@ -4472,18 +4422,6 @@ def calculate_pnl(position: Dict[str, Any], exit_price: float) -> Tuple[float, f
     # Deduct commissions
     commission = CONFIG.get("commission_per_contract", 0.0) * contracts
     net_pnl = gross_pnl - commission
-    
-    # Track costs globally in backtest mode
-    if _bot_config.backtest_mode:
-        slippage_cost = slippage_ticks * tick_value * contracts * 2  # Entry + Exit
-        bot_status["total_slippage_cost"] += slippage_cost
-        bot_status["total_commission"] += commission
-        
-        # Log costs breakdown
-        if slippage_ticks > 0 or commission > 0:
-            total_costs = slippage_cost + commission
-            logger.debug(f"  Trading costs: Slippage ${slippage_cost:.2f} + Commission ${commission:.2f} = ${total_costs:.2f}")
-            logger.debug(f"  Gross P&L: ${gross_pnl:.2f}  Net P&L: ${net_pnl:.2f}")
     
     return ticks, net_pnl
 
@@ -5841,24 +5779,6 @@ def log_session_summary(symbol: str) -> None:
     
     # Format P&L summary
     format_pnl_summary(stats)
-    
-    # PRODUCTION: Show trading costs breakdown
-    if _bot_config.backtest_mode:
-        total_slippage = bot_status["total_slippage_cost"]
-        total_commission = bot_status["total_commission"]
-        total_costs = total_slippage + total_commission
-        
-        if total_costs > 0:
-            logger.info(SEPARATOR_LINE)
-            logger.info("TRADING COSTS (Backtest)")
-            logger.info(f"Total Slippage: ${total_slippage:.2f}")
-            logger.info(f"Total Commission: ${total_commission:.2f}")
-            logger.info(f"Total Costs: ${total_costs:.2f}")
-            logger.info(f"Cost per Trade: ${total_costs / max(1, len(stats['trades'])):.2f}")
-            
-            if stats["total_pnl"] > 0:
-                cost_percentage = (total_costs / stats["total_pnl"]) * 100
-                logger.info(f"Costs as % of Gross P&L: {cost_percentage:.1f}%")
     
     # Format risk metrics (flatten mode analysis)
     format_risk_metrics()
