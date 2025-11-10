@@ -36,12 +36,14 @@ class Dashboard:
             "version": "v2.0",
             "server_status": "✓",
             "server_latency": "45ms",
+            "server_latency_ms": 45,
             "account_balance": config.get("account_size", 50000),
             "max_contracts": config.get("max_contracts", 3),
             "daily_loss_limit": config.get("daily_loss_limit", 1000),
             "confidence_threshold": config.get("confidence_threshold", 65),
             "recovery_mode": config.get("recovery_mode", False),
             "confidence_trading": config.get("confidence_trading", False),
+            "critical_errors": [],  # Track critical errors for display
         }
         
         # Platform detection
@@ -88,7 +90,10 @@ class Dashboard:
             "position_qty": 0,
             "position_side": None,
             "pnl_today": 0.0,
+            "pnl_percent": 0.0,
             "last_signal": "--",
+            "last_signal_time": "",
+            "last_signal_confidence": "",
             "status": "Starting..."
         }
     
@@ -111,6 +116,26 @@ class Dashboard:
             data: Dictionary of data to update (partial updates supported)
         """
         self.bot_data.update(data)
+    
+    def add_critical_error(self, error_message: str):
+        """
+        Add a critical error to be displayed.
+        
+        Args:
+            error_message: The error message to display
+        """
+        timestamp = datetime.now().strftime("%H:%M:%S")
+        error_entry = f"{timestamp} - {error_message}"
+        
+        # Keep only last 3 critical errors
+        if len(self.bot_data["critical_errors"]) >= 3:
+            self.bot_data["critical_errors"].pop(0)
+        
+        self.bot_data["critical_errors"].append(error_entry)
+    
+    def clear_critical_errors(self):
+        """Clear all critical errors from display."""
+        self.bot_data["critical_errors"] = []
     
     def _format_symbol_name(self, symbol: str) -> str:
         """
@@ -144,8 +169,18 @@ class Dashboard:
         """Render the header section."""
         lines = []
         lines.append("=" * 60)
+        
+        # Determine server status icon based on latency
+        latency_ms = self.bot_data.get('server_latency_ms', 999)
+        if latency_ms < 100:
+            server_icon = "✓"
+        elif latency_ms < 200:
+            server_icon = "⚠"
+        else:
+            server_icon = "✗"
+        
         lines.append(f"QuoTrading AI Bot {self.bot_data['version']} | "
-                    f"Server: {self.bot_data['server_status']} {self.bot_data['server_latency']} | "
+                    f"Server: {server_icon} {self.bot_data['server_latency']} | "
                     f"Account: ${self.bot_data['account_balance']:,.0f}")
         lines.append("=" * 60)
         return lines
@@ -203,12 +238,24 @@ class Dashboard:
         # Market condition
         lines.append(f"Condition: {data['condition']}")
         
-        # Position and P&L
+        # Position and P&L - show percentage if we have it
         pnl_sign = "+" if data['pnl_today'] > 0 else ""
-        lines.append(f"Position: {data['position']} | P&L Today: ${pnl_sign}{data['pnl_today']:.2f}")
+        pnl_str = f"${pnl_sign}{data['pnl_today']:.2f}"
         
-        # Last signal
-        lines.append(f"Last Signal: {data['last_signal']}")
+        # Add percentage if available
+        if data.get('pnl_percent', 0) != 0:
+            pnl_percent_sign = "+" if data['pnl_percent'] > 0 else ""
+            pnl_str += f" ({pnl_percent_sign}{data['pnl_percent']:.2f}%)"
+        
+        lines.append(f"Position: {data['position']} | P&L Today: {pnl_str}")
+        
+        # Last signal - show with time and confidence if available
+        signal_line = f"Last Signal: {data['last_signal']}"
+        if data.get('last_signal_time'):
+            signal_line = f"Last Signal: {data['last_signal_time']} {data['last_signal']}"
+        if data.get('last_signal_confidence'):
+            signal_line += f" (Confidence: {data['last_signal_confidence']})"
+        lines.append(signal_line)
         
         # Status
         lines.append(f"Status: {data['status']}")
@@ -235,6 +282,14 @@ class Dashboard:
         # Symbols (only show selected symbols)
         for symbol in self.symbols:
             lines.extend(self._render_symbol(symbol))
+        
+        # Critical errors (if any)
+        if self.bot_data.get("critical_errors"):
+            lines.append("")
+            lines.append("🚨 CRITICAL ERRORS:")
+            for error in self.bot_data["critical_errors"]:
+                lines.append(f"  {error}")
+            lines.append("=" * 60)
         
         return "\n".join(lines)
     
