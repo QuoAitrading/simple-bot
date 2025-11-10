@@ -1447,7 +1447,11 @@ def initialize_state(symbol: str) -> None:
         },
         
         # Volume history
-        "volume_history": deque(maxlen=CONFIG["max_bars_storage"])
+        "volume_history": deque(maxlen=CONFIG["max_bars_storage"]),
+        
+        # Bot status tracking
+        "bot_status_message": "Monitoring...",
+        "skip_reason": "",  # Why bot is not trading (for dashboard display)
     }
     
     logger.info(f"State initialized for {symbol}")
@@ -2640,11 +2644,26 @@ def check_for_signals(symbol: str) -> None:
     is_safe, reason = check_safety_conditions(symbol)
     if not is_safe:
         logger.info(f"[SIGNAL CHECK] Safety check failed: {reason}")
+        # Store reason for dashboard display
+        state[symbol]["skip_reason"] = reason
+        if dashboard:
+            dashboard.update_symbol_data(symbol, {
+                "skip_reason": reason,
+                "status": "Waiting - " + reason
+            })
+            dashboard.display()
         return
     
     # Get the latest bar
     if len(state[symbol]["bars_1min"]) == 0:
         logger.info(f"[SIGNAL CHECK] No 1-min bars yet")
+        state[symbol]["skip_reason"] = "No bars yet"
+        if dashboard:
+            dashboard.update_symbol_data(symbol, {
+                "skip_reason": "Building bars...",
+                "status": "Initializing..."
+            })
+            dashboard.display()
         return
     
     latest_bar = state[symbol]["bars_1min"][-1]
@@ -2654,7 +2673,18 @@ def check_for_signals(symbol: str) -> None:
     is_valid, reason = validate_signal_requirements(symbol, bar_time)
     if not is_valid:
         logger.info(f"[SIGNAL CHECK] Validation failed: {reason} at {bar_time}")
+        # Store reason for dashboard display
+        state[symbol]["skip_reason"] = reason
+        if dashboard:
+            dashboard.update_symbol_data(symbol, {
+                "skip_reason": reason,
+                "status": "Waiting - " + reason
+            })
+            dashboard.display()
         return
+    
+    # Clear skip reason - we're actively looking for signals
+    state[symbol]["skip_reason"] = ""
     
     # Get bars for signal check
     prev_bar = state[symbol]["bars_1min"][-2]
@@ -7371,6 +7401,9 @@ def update_dashboard_for_symbol(symbol: str) -> None:
             else:
                 status = f"In trade - P&L: ${pnl_sign}{current_pnl:.2f}"
     
+    # Get skip reason if available
+    skip_reason = symbol_state.get("skip_reason", "")
+    
     # Combine all data
     update_data = {
         "market_status": market_status,
@@ -7380,6 +7413,7 @@ def update_dashboard_for_symbol(symbol: str) -> None:
         "last_signal_confidence": last_signal_confidence,
         "last_signal_approved": last_signal_approved,
         "last_rejected_signal": last_rejected_signal,
+        "skip_reason": skip_reason,
         "status": status,
         **quote_data,
         **position_data,

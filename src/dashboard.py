@@ -97,6 +97,7 @@ class Dashboard:
             "last_signal_confidence": "",
             "last_signal_approved": None,  # True=approved, False=rejected, None=no signal
             "last_rejected_signal": "",  # Last rejected signal info
+            "skip_reason": "",  # Why bot is not trading (e.g., "Market closed", "Waiting for pullback", etc.)
             "status": "Starting..."
         }
     
@@ -283,6 +284,10 @@ class Dashboard:
         # Show last rejected signal if there is one
         if data.get('last_rejected_signal'):
             lines.append(f"Last Rejected: {data['last_rejected_signal']}")
+        
+        # Show skip/wait reason if bot is not actively trading
+        if data.get('skip_reason') and data.get('position') == "FLAT":
+            lines.append(f"Reason: {data['skip_reason']}")
         
         # Status
         lines.append(f"Status: {data['status']}")
