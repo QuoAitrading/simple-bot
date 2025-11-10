@@ -44,6 +44,7 @@ class Dashboard:
             "recovery_mode": config.get("recovery_mode", False),
             "confidence_trading": config.get("confidence_trading", False),
             "critical_errors": [],  # Track critical errors for display
+            "contract_adjustment": None,  # Track contract adjustments (confidence/recovery mode)
         }
         
         # Platform detection
@@ -209,6 +210,19 @@ class Dashboard:
         
         return lines
     
+    def _render_contract_adjustment(self) -> List[str]:
+        """Render contract adjustment notification if active."""
+        lines = []
+        
+        if self.bot_data.get("contract_adjustment"):
+            adj = self.bot_data["contract_adjustment"]
+            lines.append("")
+            lines.append("⚙️  CONTRACT ADJUSTMENT ACTIVE:")
+            lines.append(f"  {adj}")
+            lines.append("")
+        
+        return lines
+    
     def _render_symbol(self, symbol: str) -> List[str]:
         """
         Render the display section for a single symbol.
@@ -291,6 +305,9 @@ class Dashboard:
         
         # Settings
         lines.extend(self._render_settings())
+        
+        # Contract adjustment notification (if active)
+        lines.extend(self._render_contract_adjustment())
         
         # Symbols (only show selected symbols)
         for symbol in self.symbols:

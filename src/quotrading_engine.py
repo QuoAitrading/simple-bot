@@ -2977,6 +2977,12 @@ def calculate_position_size(symbol: str, side: str, entry_price: float, rl_confi
             confidence_level = "VERY HIGH"
             
         logger.info(f"[DYNAMIC CONTRACTS] {confidence_level} confidence ({rl_confidence:.1%}) × Max {user_max_contracts} = {rl_scaled_max} contracts (capped at {contracts} by risk)")
+        
+        # Update dashboard with confidence-based adjustment
+        if dashboard:
+            adjustment_msg = f"Confidence {confidence_level} ({int(rl_confidence*100)}%) → {contracts} contracts (from max {user_max_contracts})"
+            dashboard.update_bot_data({"contract_adjustment": adjustment_msg})
+            dashboard.display()
     else:
         # No RL confidence or dynamic contracts disabled - use fixed max
         contracts = min(contracts, user_max_contracts)
@@ -3017,8 +3023,20 @@ def calculate_position_size(symbol: str, side: str, entry_price: float, rl_confi
         if contracts != original_contracts:
             if recovery_multiplier < 1.0:
                 logger.warning(f"[RECOVERY MODE] Position size adjusted: {original_contracts} → {contracts} contracts (severity: {severity*100:.0f}%, multiplier: {recovery_multiplier*100:.0f}%)")
+                
+                # Update dashboard with recovery mode adjustment
+                if dashboard:
+                    adjustment_msg = f"RECOVERY MODE: {original_contracts} → {contracts} contracts (severity {int(severity*100)}%, reduced to {int(recovery_multiplier*100)}%)"
+                    dashboard.update_bot_data({"contract_adjustment": adjustment_msg})
+                    dashboard.display()
             else:
                 logger.info(f"[RECOVERY MODE] Position size restored: {original_contracts} → {contracts} contracts (severity: {severity*100:.0f}%, safe zone)")
+                
+                # Update dashboard - recovery mode restored
+                if dashboard:
+                    adjustment_msg = f"RECOVERY MODE CLEARED: Restored to {contracts} contracts (severity {int(severity*100)}%, safe zone)"
+                    dashboard.update_bot_data({"contract_adjustment": adjustment_msg})
+                    dashboard.display()
     
     if contracts == 0:
         logger.warning(f"Position size too small: risk=${risk_per_contract:.2f}, allowance=${risk_dollars:.2f}")
@@ -7328,8 +7346,30 @@ def update_dashboard_for_symbol(symbol: str) -> None:
                 rej_reason = rejected.get("reason", "")
                 last_rejected_signal = f"{rej_time_str} {rej_side} (Conf: {rej_conf_str}) - {rej_reason}"
     
-    # Get current status
+    # Get current status - update with live P&L if in trade
     status = symbol_state.get("bot_status_message", "Monitoring...")
+    
+    # If in trade, enhance status with current P&L
+    if symbol_state["position"]["active"]:
+        pos = symbol_state["position"]
+        entry_price = pos.get("entry_price", current_price)
+        
+        # Calculate current P&L
+        if entry_price > 0:
+            if pos["side"] == "long":
+                pnl_ticks = (current_price - entry_price) / CONFIG["tick_size"]
+            else:
+                pnl_ticks = (entry_price - current_price) / CONFIG["tick_size"]
+            
+            current_pnl = pnl_ticks * CONFIG["tick_value"] * pos["quantity"]
+            pnl_sign = "+" if current_pnl > 0 else ""
+            
+            # Show target price if available
+            target = pos.get("target_price")
+            if target:
+                status = f"In trade - P&L: ${pnl_sign}{current_pnl:.2f} | Target: ${target:.2f}"
+            else:
+                status = f"In trade - P&L: ${pnl_sign}{current_pnl:.2f}"
     
     # Combine all data
     update_data = {
