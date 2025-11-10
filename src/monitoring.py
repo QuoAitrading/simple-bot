@@ -122,41 +122,8 @@ def setup_logging(config: Dict[str, Any]) -> logging.Logger:
     
     logger.addHandler(console_handler)
     
-    # File handler with JSON format and rotation
-    log_dir = config.get('log_directory', './logs')
-    os.makedirs(log_dir, exist_ok=True)
-    
-    # Add account ID to log filename for multi-user support
-    account_id = os.getenv('SELECTED_ACCOUNT_ID', 'default')
-    log_file = os.path.join(log_dir, f'vwap_bot_{account_id}.log')
-    file_handler = logging.handlers.TimedRotatingFileHandler(
-        log_file,
-        when='midnight',
-        interval=1,
-        backupCount=30,  # Keep 30 days of logs
-        encoding='utf-8'
-    )
-    file_handler.setLevel(logging.DEBUG)
-    file_handler.setFormatter(StructuredFormatter())
-    file_handler.addFilter(sensitive_filter)
-    
-    logger.addHandler(file_handler)
-    
-    # Performance log handler (separate file for performance metrics)
-    # Also add account ID to performance log for isolation
-    perf_log_file = os.path.join(log_dir, f'performance_{account_id}.log')
-    perf_handler = logging.handlers.TimedRotatingFileHandler(
-        perf_log_file,
-        when='midnight',
-        interval=1,
-        backupCount=30
-    )
-    perf_handler.setLevel(logging.INFO)
-    perf_handler.setFormatter(StructuredFormatter())
-    
-    # Create performance logger
-    perf_logger = logging.getLogger('vwap_bot.performance')
-    perf_logger.addHandler(perf_handler)
+    # No file logging for customers - console output only
+    # All trade data is saved to cloud API for admin dashboard
     
     return logger
 

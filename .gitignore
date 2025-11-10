@@ -132,15 +132,19 @@ vwap_bounce_bot.log
 *.log
 logs/
 
-# Bot specific - Runtime data
+# Bot specific - Runtime data (gitignored)
 /data/bot_state.json
 /data/bot_state_*.json
 /data/bot_state.json.backup
 /data/bot_state_*.json.backup
 /data/*.json.backup
-/data/signal_experience.json
-/data/exit_experience.json
-# /data/historical_data/  # Commented out to allow CSV files to be committed
+
+# Keep RL training data (needed for Docker build)
+!/data/signal_experience.json
+!/data/exit_experience.json
+
+# Keep historical data for backtesting
+!/data/historical_data/
 
 # Bot specific - Old locations (to be removed - files created in wrong location)
 /historical_data/
@@ -157,13 +161,13 @@ bot.pid
 
 # Build output
 /build/
-customer/dist/
-customer/build/
-customer/*.exe
+launcher/dist/
+launcher/build/
+launcher/*.exe
 
-# Customer config (contains credentials)
-customer/config.json
+# Launcher config (contains credentials)
+launcher/config.json
 
 # Keep example/template files
 !data/.gitkeep
-!customer/.gitkeep
+!launcher/.gitkeep

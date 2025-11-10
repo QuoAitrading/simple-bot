@@ -250,7 +250,6 @@ class BotConfiguration:
     
     # Operational Parameters
     shadow_mode: bool = False  # Signal-only mode - shows trading signals without executing trades (manual trading)
-    log_file: str = "logs/vwap_bounce_bot.log"
     max_bars_storage: int = 200
     
     # Bid/Ask Trading Strategy Parameters
@@ -451,7 +450,6 @@ class BotConfiguration:
             "tick_size": self.tick_size,
             "tick_value": self.tick_value,
             "shadow_mode": self.shadow_mode,
-            "log_file": self.log_file,
             "max_bars_storage": self.max_bars_storage,
             # Adaptive Exit Management
             "adaptive_exits_enabled": self.adaptive_exits_enabled,
