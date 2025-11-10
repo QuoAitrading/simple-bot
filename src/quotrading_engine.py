@@ -108,6 +108,7 @@ from error_recovery import ErrorRecoveryManager, ErrorType as RecoveryErrorType
 from bid_ask_manager import BidAskManager, BidAskQuote
 from notifications import get_notifier
 from signal_confidence import SignalConfidenceRL
+from dashboard import get_dashboard, Dashboard
 
 # Conditionally import broker (only needed for live trading, not backtesting)
 try:
@@ -143,12 +144,10 @@ try:
         CONFIG["slippage_ticks"] = SYMBOL_SPEC.typical_slippage_ticks
         _bot_config.slippage_ticks = SYMBOL_SPEC.typical_slippage_ticks
     
-    print(f"✓ Symbol specs loaded: {SYMBOL_SPEC.name} ({SYMBOL_SPEC.symbol})")
-    print(f"  Tick Value: ${SYMBOL_SPEC.tick_value:.2f} | Tick Size: ${SYMBOL_SPEC.tick_size}")
-    print(f"  Slippage: {SYMBOL_SPEC.typical_slippage_ticks} ticks")
+    # Symbol specs loaded - dashboard will show this information
 except Exception as e:
     # Symbol specs not available - will use defaults from config
-    print(f"Symbol specs not loaded (using defaults): {e}")
+    pass  # Symbol specs not loaded - will use defaults
     pass
 
 # String constants
@@ -186,6 +185,9 @@ bid_ask_manager: Optional[BidAskManager] = None
 # Global adaptive exit manager (for streak tracking persistence)
 adaptive_manager: Optional[Any] = None
 
+# Global dashboard display
+dashboard: Optional[Dashboard] = None
+
 # State management dictionary
 state: Dict[str, Any] = {}
 
@@ -214,12 +216,14 @@ bot_status: Dict[str, Any] = {
 
 
 def setup_logging() -> logging.Logger:
-    """Configure logging for the bot - Console only (no log files for customers)"""
+    """Configure logging for the bot - Dashboard only display (logs suppressed except CRITICAL)"""
+    # Create a null handler to suppress all logs except CRITICAL errors
+    # Dashboard is the primary display - only show critical system errors in logs
     logging.basicConfig(
-        level=logging.INFO,
-        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+        level=logging.CRITICAL,  # Only show CRITICAL errors - dashboard handles everything else
+        format='%(asctime)s - %(levelname)s - %(message)s',
         handlers=[
-            logging.StreamHandler()  # Console output only - customers don't need log files
+            logging.StreamHandler()  # Console output only for critical errors
         ]
     )
     return logging.getLogger(__name__)
@@ -715,15 +719,32 @@ def check_azure_time_service() -> str:
     Returns:
         Trading state: 'entry_window', 'flatten_mode', 'closed', or 'event_block'
     """
+    global dashboard
+    
     try:
         import requests
+        import time
         
         cloud_api_url = CONFIG.get("cloud_api_url", "https://quotrading-signals.icymeadow-86b2969e.eastus.azurecontainerapps.io")
         
+        # Measure latency
+        start_time = time.time()
         response = requests.get(
             f"{cloud_api_url}/api/time/simple",
             timeout=5
         )
+        latency_ms = int((time.time() - start_time) * 1000)
+        
+        # Update dashboard with server latency
+        if dashboard:
+            latency_str = f"{latency_ms}ms"
+            if latency_ms >= 200:
+                latency_str += " (high latency)"
+            
+            dashboard.update_bot_data({
+                "server_latency": latency_str,
+                "server_latency_ms": latency_ms
+            })
         
         if response.status_code == 200:
             data = response.json()
@@ -753,6 +774,14 @@ def check_azure_time_service() -> str:
                             logger.warning("  Will auto-resume when event window closes")
                             logger.warning("=" * 80)
                             bot_status["event_block_active"] = True
+                            
+                            # Update dashboard with FOMC block
+                            if dashboard:
+                                dashboard.update_bot_data({
+                                    "fomc_active": True,
+                                    "fomc_message": halt_reason
+                                })
+                                dashboard.display()
                     else:
                         logger.info(f"[TIME SERVICE] Economic event active but FOMC blocking disabled: {halt_reason}")
                         state = "entry_window"  # User disabled event blocking
@@ -767,6 +796,14 @@ def check_azure_time_service() -> str:
                     logger.info("✅ ECONOMIC EVENT ENDED - Trading resumed")
                     logger.info("=" * 80)
                     bot_status["event_block_active"] = False
+                    
+                    # Clear FOMC notification from dashboard
+                    if dashboard:
+                        dashboard.update_bot_data({
+                            "fomc_active": False,
+                            "fomc_message": ""
+                        })
+                        dashboard.display()
                 
                 # Trading allowed - check if we're approaching maintenance (flatten mode)
                 # Azure doesn't send flatten mode, so we check local time
@@ -795,12 +832,28 @@ def check_azure_time_service() -> str:
             # Azure unreachable - clear cached state to trigger fallback
             logger.debug(f"Time service returned {response.status_code}, using local time")
             bot_status["azure_trading_state"] = None
+            
+            # Update dashboard to show server error
+            if dashboard:
+                dashboard.update_bot_data({
+                    "server_latency": "ERROR",
+                    "server_latency_ms": 999
+                })
+            
             return None  # Signal to use local get_trading_state()
             
     except Exception as e:
         # Non-critical - if cloud unreachable, fall back to local time
         logger.debug(f"Time service check skipped (cloud unreachable): {e}")
         bot_status["azure_trading_state"] = None
+        
+        # Update dashboard to show server error
+        if dashboard:
+            dashboard.update_bot_data({
+                "server_latency": "OFFLINE",
+                "server_latency_ms": 999
+            })
+        
         return None  # Signal to use local get_trading_state()
 
 
@@ -1410,7 +1463,11 @@ def initialize_state(symbol: str) -> None:
         },
         
         # Volume history
-        "volume_history": deque(maxlen=CONFIG["max_bars_storage"])
+        "volume_history": deque(maxlen=CONFIG["max_bars_storage"]),
+        
+        # Bot status tracking
+        "bot_status_message": "Monitoring...",
+        "skip_reason": "",  # Why bot is not trading (for dashboard display)
     }
     
     logger.info(f"State initialized for {symbol}")
@@ -2603,11 +2660,26 @@ def check_for_signals(symbol: str) -> None:
     is_safe, reason = check_safety_conditions(symbol)
     if not is_safe:
         logger.info(f"[SIGNAL CHECK] Safety check failed: {reason}")
+        # Store reason for dashboard display
+        state[symbol]["skip_reason"] = reason
+        if dashboard:
+            dashboard.update_symbol_data(symbol, {
+                "skip_reason": reason,
+                "status": "Waiting - " + reason
+            })
+            dashboard.display()
         return
     
     # Get the latest bar
     if len(state[symbol]["bars_1min"]) == 0:
         logger.info(f"[SIGNAL CHECK] No 1-min bars yet")
+        state[symbol]["skip_reason"] = "No bars yet"
+        if dashboard:
+            dashboard.update_symbol_data(symbol, {
+                "skip_reason": "Building bars...",
+                "status": "Initializing..."
+            })
+            dashboard.display()
         return
     
     latest_bar = state[symbol]["bars_1min"][-1]
@@ -2617,7 +2689,18 @@ def check_for_signals(symbol: str) -> None:
     is_valid, reason = validate_signal_requirements(symbol, bar_time)
     if not is_valid:
         logger.info(f"[SIGNAL CHECK] Validation failed: {reason} at {bar_time}")
+        # Store reason for dashboard display
+        state[symbol]["skip_reason"] = reason
+        if dashboard:
+            dashboard.update_symbol_data(symbol, {
+                "skip_reason": reason,
+                "status": "Waiting - " + reason
+            })
+            dashboard.display()
         return
+    
+    # Clear skip reason - we're actively looking for signals
+    state[symbol]["skip_reason"] = ""
     
     # Get bars for signal check
     prev_bar = state[symbol]["bars_1min"][-2]
@@ -2644,7 +2727,7 @@ def check_for_signals(symbol: str) -> None:
         if take_signal and bot_status.get("recovery_confidence_threshold"):
             recovery_threshold = bot_status["recovery_confidence_threshold"]
             if confidence < recovery_threshold:
-                logger.info(f" RECOVERY MODE REJECTED LONG signal: confidence {confidence:.1%} below recovery threshold {recovery_threshold:.1%}")
+                logger.info(f"❌ RECOVERY MODE REJECTED LONG signal: confidence {confidence:.1%} below recovery threshold {recovery_threshold:.1%}")
                 logger.info(f"   Bot is in recovery mode - only taking high-confidence signals")
                 state[symbol]["last_rejected_signal"] = {
                     "time": get_current_time(),
@@ -2653,10 +2736,21 @@ def check_for_signals(symbol: str) -> None:
                     "confidence": confidence,
                     "reason": f"Recovery mode: {confidence:.1%} < {recovery_threshold:.1%}"
                 }
+                
+                # Update dashboard to show rejected signal
+                if dashboard:
+                    sig_time = get_current_time().strftime("%H:%M")
+                    conf_str = f"{int(confidence * 100)}%"
+                    dashboard.update_symbol_data(symbol, {
+                        "last_rejected_signal": f"{sig_time} LONG @ ${current_bar['close']:.2f} (Recovery: {conf_str} < {int(recovery_threshold * 100)}%)",
+                        "status": "Recovery mode - rejected"
+                    })
+                    dashboard.display()
+                
                 return
         
         if not take_signal:
-            logger.info(f" RL REJECTED LONG signal: {reason} (confidence: {confidence:.1%})")
+            logger.info(f"❌ RL REJECTED LONG signal: {reason} (confidence: {confidence:.1%})")
             logger.info(f"   RSI: {rl_state['rsi']:.1f}, VWAP dist: {rl_state['vwap_distance']:.2f}, "
                       f"Vol ratio: {rl_state['volume_ratio']:.2f}x")
             # Store the rejected signal state for potential future learning
@@ -2667,16 +2761,39 @@ def check_for_signals(symbol: str) -> None:
                 "confidence": confidence,
                 "reason": reason
             }
+            
+            # Update dashboard to show rejected signal
+            if dashboard:
+                sig_time = get_current_time().strftime("%H:%M")
+                conf_str = f"{int(confidence * 100)}%"
+                dashboard.update_symbol_data(symbol, {
+                    "last_rejected_signal": f"{sig_time} LONG @ ${current_bar['close']:.2f} (Conf: {conf_str})",
+                    "status": "Signal rejected - low confidence"
+                })
+                dashboard.display()
+            
             return
         
         # RL approved - adjust position size based on confidence
-        logger.info(f" RL APPROVED LONG signal: {reason} (confidence: {confidence:.1%})")
+        logger.info(f"✅ RL APPROVED LONG signal: {reason} (confidence: {confidence:.1%})")
         logger.info(f"   RSI: {rl_state['rsi']:.1f}, VWAP dist: {rl_state['vwap_distance']:.2f}, "
                   f"Vol ratio: {rl_state['volume_ratio']:.2f}x, Streak: {rl_state['streak']:+d}")
         
         # Store the state for outcome recording after trade
         state[symbol]["entry_rl_state"] = rl_state
         state[symbol]["entry_rl_confidence"] = confidence
+        
+        # Store signal info for dashboard display
+        state[symbol]["last_signal_type"] = f"LONG @ ${current_bar['close']:.2f}"
+        state[symbol]["last_signal_timestamp"] = get_current_time().timestamp()
+        state[symbol]["last_signal_confidence"] = confidence
+        state[symbol]["last_signal_approved"] = True  # Mark as approved
+        state[symbol]["bot_status_message"] = "Signal detected!"
+        
+        # Update dashboard immediately
+        if dashboard:
+            update_dashboard_for_symbol(symbol)
+            dashboard.display()
         
         execute_entry(symbol, "long", current_bar["close"])
         return
@@ -2694,7 +2811,7 @@ def check_for_signals(symbol: str) -> None:
         if take_signal and bot_status.get("recovery_confidence_threshold"):
             recovery_threshold = bot_status["recovery_confidence_threshold"]
             if confidence < recovery_threshold:
-                logger.info(f" RECOVERY MODE REJECTED SHORT signal: confidence {confidence:.1%} below recovery threshold {recovery_threshold:.1%}")
+                logger.info(f"❌ RECOVERY MODE REJECTED SHORT signal: confidence {confidence:.1%} below recovery threshold {recovery_threshold:.1%}")
                 logger.info(f"   Bot is in recovery mode - only taking high-confidence signals")
                 state[symbol]["last_rejected_signal"] = {
                     "time": get_current_time(),
@@ -2703,10 +2820,21 @@ def check_for_signals(symbol: str) -> None:
                     "confidence": confidence,
                     "reason": f"Recovery mode: {confidence:.1%} < {recovery_threshold:.1%}"
                 }
+                
+                # Update dashboard to show rejected signal
+                if dashboard:
+                    sig_time = get_current_time().strftime("%H:%M")
+                    conf_str = f"{int(confidence * 100)}%"
+                    dashboard.update_symbol_data(symbol, {
+                        "last_rejected_signal": f"{sig_time} SHORT @ ${current_bar['close']:.2f} (Recovery: {conf_str} < {int(recovery_threshold * 100)}%)",
+                        "status": "Recovery mode - rejected"
+                    })
+                    dashboard.display()
+                
                 return
         
         if not take_signal:
-            logger.info(f" RL REJECTED SHORT signal: {reason} (confidence: {confidence:.1%})")
+            logger.info(f"❌ RL REJECTED SHORT signal: {reason} (confidence: {confidence:.1%})")
             logger.info(f"   RSI: {rl_state['rsi']:.1f}, VWAP dist: {rl_state['vwap_distance']:.2f}, "
                       f"Vol ratio: {rl_state['volume_ratio']:.2f}x")
             # Store the rejected signal state for potential future learning
@@ -2717,16 +2845,39 @@ def check_for_signals(symbol: str) -> None:
                 "confidence": confidence,
                 "reason": reason
             }
+            
+            # Update dashboard to show rejected signal
+            if dashboard:
+                sig_time = get_current_time().strftime("%H:%M")
+                conf_str = f"{int(confidence * 100)}%"
+                dashboard.update_symbol_data(symbol, {
+                    "last_rejected_signal": f"{sig_time} SHORT @ ${current_bar['close']:.2f} (Conf: {conf_str})",
+                    "status": "Signal rejected - low confidence"
+                })
+                dashboard.display()
+            
             return
         
         # RL approved - adjust position size based on confidence
-        logger.info(f" RL APPROVED SHORT signal: {reason} (confidence: {confidence:.1%})")
+        logger.info(f"✅ RL APPROVED SHORT signal: {reason} (confidence: {confidence:.1%})")
         logger.info(f"   RSI: {rl_state['rsi']:.1f}, VWAP dist: {rl_state['vwap_distance']:.2f}, "
                   f"Vol ratio: {rl_state['volume_ratio']:.2f}x, Streak: {rl_state['streak']:+d}")
         
         # Store the state for outcome recording after trade
         state[symbol]["entry_rl_state"] = rl_state
         state[symbol]["entry_rl_confidence"] = confidence
+        
+        # Store signal info for dashboard display
+        state[symbol]["last_signal_type"] = f"SHORT @ ${current_bar['close']:.2f}"
+        state[symbol]["last_signal_timestamp"] = get_current_time().timestamp()
+        state[symbol]["last_signal_confidence"] = confidence
+        state[symbol]["last_signal_approved"] = True  # Mark as approved
+        state[symbol]["bot_status_message"] = "Signal detected!"
+        
+        # Update dashboard immediately
+        if dashboard:
+            update_dashboard_for_symbol(symbol)
+            dashboard.display()
         
         execute_entry(symbol, "short", current_bar["close"])
         return
@@ -2872,6 +3023,12 @@ def calculate_position_size(symbol: str, side: str, entry_price: float, rl_confi
             confidence_level = "VERY HIGH"
             
         logger.info(f"[DYNAMIC CONTRACTS] {confidence_level} confidence ({rl_confidence:.1%}) × Max {user_max_contracts} = {rl_scaled_max} contracts (capped at {contracts} by risk)")
+        
+        # Update dashboard with confidence-based adjustment
+        if dashboard:
+            adjustment_msg = f"Confidence {confidence_level} ({int(rl_confidence*100)}%) → {contracts} contracts (from max {user_max_contracts})"
+            dashboard.update_bot_data({"contract_adjustment": adjustment_msg})
+            dashboard.display()
     else:
         # No RL confidence or dynamic contracts disabled - use fixed max
         contracts = min(contracts, user_max_contracts)
@@ -2912,8 +3069,20 @@ def calculate_position_size(symbol: str, side: str, entry_price: float, rl_confi
         if contracts != original_contracts:
             if recovery_multiplier < 1.0:
                 logger.warning(f"[RECOVERY MODE] Position size adjusted: {original_contracts} → {contracts} contracts (severity: {severity*100:.0f}%, multiplier: {recovery_multiplier*100:.0f}%)")
+                
+                # Update dashboard with recovery mode adjustment
+                if dashboard:
+                    adjustment_msg = f"RECOVERY MODE: {original_contracts} → {contracts} contracts (severity {int(severity*100)}%, reduced to {int(recovery_multiplier*100)}%)"
+                    dashboard.update_bot_data({"contract_adjustment": adjustment_msg})
+                    dashboard.display()
             else:
                 logger.info(f"[RECOVERY MODE] Position size restored: {original_contracts} → {contracts} contracts (severity: {severity*100:.0f}%, safe zone)")
+                
+                # Update dashboard - recovery mode restored
+                if dashboard:
+                    adjustment_msg = f"RECOVERY MODE CLEARED: Restored to {contracts} contracts (severity {int(severity*100)}%, safe zone)"
+                    dashboard.update_bot_data({"contract_adjustment": adjustment_msg})
+                    dashboard.display()
     
     if contracts == 0:
         logger.warning(f"Position size too small: risk=${risk_per_contract:.2f}, allowance=${risk_dollars:.2f}")
@@ -3666,6 +3835,19 @@ def execute_entry(symbol: str, side: str, entry_price: float) -> None:
     save_position_state(symbol)
     logger.info("  ✓ Position state saved to disk")
     
+    # Update state status message
+    state[symbol]["bot_status_message"] = "In trade..."
+    
+    # Update dashboard with new position
+    if dashboard:
+        dashboard.update_symbol_data(symbol, {
+            "position": f"{side.upper()} {contracts} @ ${actual_fill_price:.2f}",
+            "position_qty": contracts,
+            "position_side": side,
+            "status": f"In trade - Target: ${target_price:.2f}"
+        })
+        dashboard.display()
+    
     # ===== CRITICAL FIX #2: Stop Loss Execution Validation =====
     # Verify stop order accepted by broker - critical for capital protection
     stop_side = "SELL" if side == "long" else "BUY"
@@ -3704,6 +3886,9 @@ def execute_entry(symbol: str, side: str, entry_price: float) -> None:
             save_position_state(symbol)
             logger.error("  ✓ Position state cleared and saved to disk")
         else:
+            critical_msg = f"EMERGENCY CLOSE FAILED - Manual intervention needed for {symbol}"
+            log_critical_error(critical_msg)
+            
             logger.error(f"  [FAIL] EMERGENCY CLOSE ALSO FAILED - MANUAL INTERVENTION REQUIRED!")
             logger.error(f"  Symbol: {symbol}, Side: {side}, Contracts: {contracts}")
             
@@ -5499,6 +5684,29 @@ def execute_exit(symbol: str, exit_price: float, reason: str) -> None:
     # CRITICAL: IMMEDIATELY save state to disk - position is now FLAT
     save_position_state(symbol)
     logger.info("  ✓ Position state saved to disk (FLAT)")
+    
+    # Update state status
+    state[symbol]["bot_status_message"] = "Monitoring..."
+    
+    # Store exit signal info for dashboard
+    exit_pnl = state[symbol].get("daily_pnl", 0.0)
+    pnl_sign = "+" if exit_pnl >= 0 else ""
+    state[symbol]["last_signal_type"] = f"EXIT @ ${exit_price:.2f} ({pnl_sign}${pnl:.2f})"
+    state[symbol]["last_signal_timestamp"] = get_current_time().timestamp()
+    
+    # Update dashboard to show flat position
+    if dashboard:
+        dashboard.update_symbol_data(symbol, {
+            "position": "FLAT",
+            "position_qty": 0,
+            "position_side": None,
+            "status": "Monitoring..."
+        })
+        # Update P&L
+        dashboard.update_symbol_data(symbol, {
+            "pnl_today": state[symbol].get("daily_pnl", 0.0)
+        })
+        dashboard.display()
 
 
 def calculate_aggressive_price(base_price: float, order_side: str, attempt: int) -> float:
@@ -6190,8 +6398,10 @@ def check_no_overnight_positions(symbol: str) -> None:
     
     # Critical: If it's past 5 PM and we still have a position, this is a SERIOUS ERROR
     if current_time.time() >= CONFIG["shutdown_time"]:
+        critical_msg = f"POSITION PAST 5 PM ET - Emergency close required for {symbol}"
+        log_critical_error(critical_msg)
+        
         logger.critical("=" * 70)
-        logger.critical("CRITICAL ERROR: POSITION DETECTED PAST 5 PM ET")
         logger.critical("OVERNIGHT POSITION RISK - IMMEDIATE EMERGENCY CLOSE REQUIRED")
         logger.critical("=" * 70)
         logger.critical(f"Position: {state[symbol]['position']['side']} "
@@ -6833,45 +7043,69 @@ def main(symbol_override: str = None) -> None:
         symbol_override: Optional symbol to trade (overrides CONFIG["instrument"])
                         Used for multi-symbol bot instances
     """
-    global event_loop, timer_manager, bid_ask_manager
+    global event_loop, timer_manager, bid_ask_manager, dashboard
     
-    # Use symbol override if provided (for multi-symbol support)
-    trading_symbol = symbol_override if symbol_override else CONFIG["instrument"]
+    # Get list of trading symbols (multi-symbol support)
+    if "instruments" in CONFIG and CONFIG["instruments"]:
+        trading_symbols = CONFIG["instruments"]
+    else:
+        trading_symbol = symbol_override if symbol_override else CONFIG["instrument"]
+        trading_symbols = [trading_symbol]
     
+    # Initialize dashboard FIRST (before any logging)
+    dashboard = get_dashboard(trading_symbols, CONFIG)
+    dashboard.start()  # This clears screen and initializes dashboard display
+    
+    # Update dashboard with initial bot data
+    initial_account = CONFIG.get("account_size", 50000)
+    dashboard.update_bot_data({
+        "account_balance": initial_account,
+        "max_contracts": CONFIG.get("max_contracts", 3),
+        "daily_loss_limit": CONFIG.get("daily_loss_limit", 1000),
+        "confidence_threshold": CONFIG.get("confidence_threshold", 65),
+        "recovery_mode": CONFIG.get("recovery_mode", False),
+        "confidence_trading": CONFIG.get("confidence_trading", False),
+    })
+    
+    # Initial display
+    dashboard.display()
+    
+    # Dashboard is now active - all status shown via dashboard only
     logger.info(SEPARATOR_LINE)
-    logger.info(f"QuoTrading AI Bot Starting [{trading_symbol}]")
-    logger.info(SEPARATOR_LINE)
+    
+    # Use first symbol as primary
+    primary_symbol = trading_symbols[0]
     
     # Log symbol specifications if loaded
     if SYMBOL_SPEC:
-        logger.info(f"[{trading_symbol}] Symbol: {SYMBOL_SPEC.name} ({SYMBOL_SPEC.symbol})")
-        logger.info(f"[{trading_symbol}]   Tick Value: ${SYMBOL_SPEC.tick_value:.2f} | Tick Size: ${SYMBOL_SPEC.tick_size}")
-        logger.info(f"[{trading_symbol}]   Slippage: {SYMBOL_SPEC.typical_slippage_ticks} ticks | Volatility: {SYMBOL_SPEC.volatility_factor}x")
-        logger.info(f"[{trading_symbol}]   Trading Hours: {SYMBOL_SPEC.session_start} - {SYMBOL_SPEC.session_end} ET")
+        logger.info(f"[{primary_symbol}] Symbol: {SYMBOL_SPEC.name} ({SYMBOL_SPEC.symbol})")
+        logger.info(f"[{primary_symbol}]   Tick Value: ${SYMBOL_SPEC.tick_value:.2f} | Tick Size: ${SYMBOL_SPEC.tick_size}")
+        logger.info(f"[{primary_symbol}]   Slippage: {SYMBOL_SPEC.typical_slippage_ticks} ticks | Volatility: {SYMBOL_SPEC.volatility_factor}x")
+        logger.info(f"[{primary_symbol}]   Trading Hours: {SYMBOL_SPEC.session_start} - {SYMBOL_SPEC.session_end} ET")
     
     # Display operating mode
     if CONFIG.get('shadow_mode', False):
-        logger.info(f"[{trading_symbol}] Mode: 📊 SIGNAL-ONLY MODE (Manual Trading)")
-        logger.info(f"[{trading_symbol}] ⚠️  Signal mode: Shows trading signals without executing trades")
+        logger.info(f"[{primary_symbol}] Mode: 📊 SIGNAL-ONLY MODE (Manual Trading)")
+        logger.info(f"[{primary_symbol}] ⚠️  Signal mode: Shows trading signals without executing trades")
     else:
-        logger.info(f"[{trading_symbol}] Mode: LIVE TRADING")
+        logger.info(f"[{primary_symbol}] Mode: LIVE TRADING")
     
-    logger.info(f"[{trading_symbol}] Instrument: {trading_symbol}")
-    logger.info(f"[{trading_symbol}] Entry Window: {CONFIG['entry_start_time']} - {CONFIG['entry_end_time']} ET")
-    logger.info(f"[{trading_symbol}] Flatten Mode: {CONFIG['flatten_time']} ET")
-    logger.info(f"[{trading_symbol}] Force Close: {CONFIG['forced_flatten_time']} ET")
-    logger.info(f"[{trading_symbol}] Shutdown: {CONFIG['shutdown_time']} ET")
-    logger.info(f"[{trading_symbol}] Max Contracts: {CONFIG['max_contracts']}")
-    logger.info(f"[{trading_symbol}] Max Trades/Day: {CONFIG['max_trades_per_day']}")
-    logger.info(f"[{trading_symbol}] Risk Per Trade: {CONFIG['risk_per_trade'] * 100:.1f}%")
-    logger.info(f"[{trading_symbol}] Daily Loss Limit: ${CONFIG['daily_loss_limit']}")
+    logger.info(f"[{primary_symbol}] Instruments: {', '.join(trading_symbols)}")
+    logger.info(f"[{primary_symbol}] Entry Window: {CONFIG['entry_start_time']} - {CONFIG['entry_end_time']} ET")
+    logger.info(f"[{primary_symbol}] Flatten Mode: {CONFIG['flatten_time']} ET")
+    logger.info(f"[{primary_symbol}] Force Close: {CONFIG['forced_flatten_time']} ET")
+    logger.info(f"[{primary_symbol}] Shutdown: {CONFIG['shutdown_time']} ET")
+    logger.info(f"[{primary_symbol}] Max Contracts: {CONFIG['max_contracts']}")
+    logger.info(f"[{primary_symbol}] Max Trades/Day: {CONFIG['max_trades_per_day']}")
+    logger.info(f"[{primary_symbol}] Risk Per Trade: {CONFIG['risk_per_trade'] * 100:.1f}%")
+    logger.info(f"[{primary_symbol}] Daily Loss Limit: ${CONFIG['daily_loss_limit']}")
     logger.info(SEPARATOR_LINE)
     
     # Phase Fifteen: Validate timezone configuration
     validate_timezone_configuration()
     
     # Initialize bid/ask manager
-    logger.info(f"[{trading_symbol}] Initializing bid/ask manager...")
+    logger.info(f"[{primary_symbol}] Initializing bid/ask manager...")
     bid_ask_manager = BidAskManager(CONFIG)
     
     # Initialize broker (replaces initialize_sdk)
@@ -6879,25 +7113,41 @@ def main(symbol_override: str = None) -> None:
     
     # Phase 12: Record starting equity for drawdown monitoring
     bot_status["starting_equity"] = get_account_equity()
-    logger.info(f"[{trading_symbol}] Starting Equity: ${bot_status['starting_equity']:.2f}")
+    logger.info(f"[{primary_symbol}] Starting Equity: ${bot_status['starting_equity']:.2f}")
     
-    # Initialize state for instrument (use override symbol if provided)
-    initialize_state(trading_symbol)
+    # Update dashboard with actual account balance
+    dashboard.update_bot_data({"account_balance": bot_status["starting_equity"]})
+    dashboard.display()
     
-    # CRITICAL: Try to restore position state from disk if bot was restarted
-    logger.info(f"[{trading_symbol}] Checking for saved position state...")
-    position_restored = load_position_state(trading_symbol)
-    if position_restored:
-        logger.warning(f"[{trading_symbol}] ⚠️  BOT RESTARTED WITH ACTIVE POSITION - Managing existing trade")
-    else:
-        logger.info(f"[{trading_symbol}] No active position to restore - starting fresh")
+    # Initialize state for all trading symbols
+    for symbol in trading_symbols:
+        initialize_state(symbol)
+        
+        # CRITICAL: Try to restore position state from disk if bot was restarted
+        logger.info(f"[{symbol}] Checking for saved position state...")
+        position_restored = load_position_state(symbol)
+        if position_restored:
+            logger.warning(f"[{symbol}] ⚠️  BOT RESTARTED WITH ACTIVE POSITION - Managing existing trade")
+            # Update dashboard with restored position
+            pos = state[symbol]["position"]
+            if pos["active"]:
+                dashboard.update_symbol_data(symbol, {
+                    "position": f"{pos['side'].upper()} {pos['quantity']}",
+                    "status": "Restored position"
+                })
+        else:
+            logger.info(f"[{symbol}] No active position to restore - starting fresh")
+            dashboard.update_symbol_data(symbol, {
+                "status": "Initializing..."
+            })
+        dashboard.display()
     
     # Skip historical bars fetching in live mode - not needed for real-time trading
     # The bot will build bars from live tick data
-    logger.info(f"[{trading_symbol}] Skipping historical bars fetch - will build bars from live data")
+    logger.info(f"[{primary_symbol}] Skipping historical bars fetch - will build bars from live data")
     
     # Initialize event loop
-    logger.info(f"[{trading_symbol}] Initializing event loop...")
+    logger.info(f"[{primary_symbol}] Initializing event loop...")
     event_loop = EventLoop(bot_status, CONFIG)
     
     # Register event handlers
@@ -6917,17 +7167,21 @@ def main(symbol_override: str = None) -> None:
     timer_manager = TimerManager(event_loop, CONFIG, tz)
     timer_manager.start()
     
-    # Subscribe to market data (trades) - use trading_symbol
-    subscribe_market_data(trading_symbol, on_tick)
-    
-    # Subscribe to bid/ask quotes if broker supports it
-    if broker is not None and hasattr(broker, 'subscribe_quotes'):
-        logger.info(f"[{trading_symbol}] Subscribing to bid/ask quotes...")
-        try:
-            broker.subscribe_quotes(symbol, on_quote)
-        except Exception as e:
-            logger.warning(f"Failed to subscribe to quotes: {e}")
-            logger.warning("Continuing without bid/ask quote data")
+    # Subscribe to market data for all symbols
+    for symbol in trading_symbols:
+        subscribe_market_data(symbol, on_tick)
+        
+        # Subscribe to bid/ask quotes if broker supports it
+        if broker is not None and hasattr(broker, 'subscribe_quotes'):
+            logger.info(f"[{symbol}] Subscribing to bid/ask quotes...")
+            try:
+                broker.subscribe_quotes(symbol, on_quote)
+                dashboard.update_symbol_data(symbol, {"status": "Subscribed to quotes"})
+            except Exception as e:
+                logger.warning(f"Failed to subscribe to quotes for {symbol}: {e}")
+                logger.warning("Continuing without bid/ask quote data")
+                dashboard.update_symbol_data(symbol, {"status": "Quote subscription failed"})
+        dashboard.display()
     
     # RL and Adaptive Exits are CLOUD-ONLY - no local RL components
     # Users get confidence from cloud, contribute to cloud hive mind
@@ -6940,6 +7194,11 @@ def main(symbol_override: str = None) -> None:
     logger.info("Press Ctrl+C for graceful shutdown")
     logger.info(SEPARATOR_LINE)
     
+    # Final dashboard update before entering event loop
+    for symbol in trading_symbols:
+        dashboard.update_symbol_data(symbol, {"status": "Monitoring..."})
+    dashboard.display()
+    
     # Run event loop (blocks until shutdown signal)
     try:
         event_loop.run()
@@ -6948,8 +7207,235 @@ def main(symbol_override: str = None) -> None:
     finally:
         logger.info("Event loop stopped")
         
+        # Cleanup dashboard
+        if dashboard:
+            dashboard.stop()
+        
         # Metrics are already logged by event loop's _log_metrics()
         # No need to call get_metrics() here
+
+
+# ============================================================================
+# DASHBOARD UPDATE HELPERS
+# ============================================================================
+
+def log_critical_error(error_message: str):
+    """
+    Log a critical error to both logger and dashboard.
+    Only critical errors should use this to avoid dashboard spam.
+    
+    Args:
+        error_message: The critical error message
+    """
+    global dashboard
+    
+    # Always log to logger
+    logger.error(f"🚨 CRITICAL: {error_message}")
+    
+    # Also display on dashboard
+    if dashboard:
+        dashboard.add_critical_error(error_message)
+        dashboard.display()
+
+
+def update_dashboard_for_symbol(symbol: str) -> None:
+    """
+    Update dashboard display for a specific symbol with current market data.
+    
+    Args:
+        symbol: Symbol to update
+    """
+    global dashboard
+    
+    if dashboard is None or symbol not in state:
+        return
+    
+    symbol_state = state[symbol]
+    
+    # Get current market data
+    current_price = symbol_state.get("last_price", 0.0)
+    
+    # Get bid/ask if available
+    quote_data = {}
+    if bid_ask_manager:
+        quote = bid_ask_manager.get_current_quote(symbol)
+        if quote:
+            spread = quote.ask_price - quote.bid_price
+            quote_data = {
+                "bid": quote.bid_price,
+                "bid_size": quote.bid_size,
+                "ask": quote.ask_price,
+                "ask_size": quote.ask_size,
+                "spread": spread,
+            }
+            
+            # Determine market condition based on spread
+            if spread <= 0.50:
+                condition = "NORMAL - Tight spread, good liquidity"
+            elif spread <= 1.00:
+                condition = "NORMAL - Good liquidity"
+            elif spread <= 2.00:
+                condition = "NORMAL - Acceptable spread"
+            elif spread <= 5.00:
+                condition = "CAUTION - Wider spread"
+            else:
+                condition = "VOLATILE - Wide spreads detected"
+            quote_data["condition"] = condition
+    
+    # Get position data with P&L percentage
+    position_data = {}
+    pnl_percent = 0.0
+    if symbol_state["position"]["active"]:
+        pos = symbol_state["position"]
+        position_data = {
+            "position": f"{pos['side'].upper()} {pos['quantity']} @ ${pos['entry_price']:.2f}",
+            "position_qty": pos["quantity"],
+            "position_side": pos["side"],
+        }
+        
+        # Calculate P&L percentage
+        entry_price = pos.get("entry_price", current_price)
+        if entry_price > 0:
+            if pos["side"] == "long":
+                pnl_ticks = (current_price - entry_price) / CONFIG["tick_size"]
+            else:
+                pnl_ticks = (entry_price - current_price) / CONFIG["tick_size"]
+            
+            pnl_value = pnl_ticks * CONFIG["tick_value"] * pos["quantity"]
+            pnl_percent = (pnl_value / (entry_price * pos["quantity"])) * 100
+    else:
+        position_data = {
+            "position": "FLAT",
+            "position_qty": 0,
+            "position_side": None,
+        }
+    
+    # Get P&L
+    pnl_data = {
+        "pnl_today": symbol_state.get("daily_pnl", 0.0),
+        "pnl_percent": pnl_percent
+    }
+    
+    # Get market status from Azure or local time
+    current_time = get_current_time()
+    trading_state = get_trading_state(current_time)
+    
+    market_status = "OPEN" if trading_state == "entry_window" else "CLOSED"
+    if trading_state == "flatten_mode":
+        market_status = "FLATTEN"
+    
+    # Calculate maintenance countdown from Azure time if available
+    maintenance_time = "-- h --m"
+    if bot_status.get("azure_time"):
+        try:
+            from datetime import datetime as dt_class
+            et_time = dt_class.fromisoformat(bot_status["azure_time"].replace('Z', '+00:00'))
+            
+            # Next maintenance at 5 PM ET (17:00)
+            if et_time.hour < 17:
+                # Before 5 PM today
+                next_maint = et_time.replace(hour=17, minute=0, second=0, microsecond=0)
+            elif et_time.hour == 17:
+                # In maintenance now
+                maintenance_time = "NOW"
+                next_maint = None
+            else:
+                # After 6 PM, next maintenance tomorrow
+                next_day = et_time + timedelta(days=1)
+                next_maint = next_day.replace(hour=17, minute=0, second=0, microsecond=0)
+            
+            if next_maint and maintenance_time != "NOW":
+                time_diff = next_maint - et_time
+                hours = int(time_diff.total_seconds() // 3600)
+                minutes = int((time_diff.total_seconds() % 3600) // 60)
+                maintenance_time = f"{hours}h {minutes}m"
+        except Exception as e:
+            # Fallback to dashboard calculation
+            maintenance_time = dashboard.calculate_maintenance_time() if dashboard else "-- h --m"
+    else:
+        # Use dashboard's local calculation
+        maintenance_time = dashboard.calculate_maintenance_time() if dashboard else "-- h --m"
+    
+    # Get last signal info with time, confidence, and approval status
+    last_signal = symbol_state.get("last_signal_type", "--")
+    last_signal_time = ""
+    last_signal_confidence = ""
+    last_signal_approved = symbol_state.get("last_signal_approved", None)
+    
+    if "last_signal_timestamp" in symbol_state and symbol_state["last_signal_timestamp"]:
+        try:
+            sig_time = datetime.fromtimestamp(symbol_state["last_signal_timestamp"])
+            last_signal_time = sig_time.strftime("%H:%M")
+        except:
+            pass
+    
+    if "last_signal_confidence" in symbol_state and symbol_state["last_signal_confidence"]:
+        conf_val = symbol_state["last_signal_confidence"]
+        if isinstance(conf_val, float):
+            last_signal_confidence = f"{int(conf_val * 100)}%"
+    
+    # Get last rejected signal info
+    last_rejected_signal = ""
+    if "last_rejected_signal" in symbol_state and symbol_state["last_rejected_signal"]:
+        rejected = symbol_state["last_rejected_signal"]
+        if isinstance(rejected, dict):
+            # Format the rejected signal for display
+            rej_time = rejected.get("time")
+            if rej_time:
+                rej_time_str = rej_time.strftime("%H:%M")
+                rej_side = rejected.get("side", "").upper()
+                rej_conf = rejected.get("confidence", 0)
+                rej_conf_str = f"{int(rej_conf * 100)}%"
+                # Get price from state (approximate)
+                rej_reason = rejected.get("reason", "")
+                last_rejected_signal = f"{rej_time_str} {rej_side} (Conf: {rej_conf_str}) - {rej_reason}"
+    
+    # Get current status - update with live P&L if in trade
+    status = symbol_state.get("bot_status_message", "Monitoring...")
+    
+    # If in trade, enhance status with current P&L
+    if symbol_state["position"]["active"]:
+        pos = symbol_state["position"]
+        entry_price = pos.get("entry_price", current_price)
+        
+        # Calculate current P&L
+        if entry_price > 0:
+            if pos["side"] == "long":
+                pnl_ticks = (current_price - entry_price) / CONFIG["tick_size"]
+            else:
+                pnl_ticks = (entry_price - current_price) / CONFIG["tick_size"]
+            
+            current_pnl = pnl_ticks * CONFIG["tick_value"] * pos["quantity"]
+            pnl_sign = "+" if current_pnl > 0 else ""
+            
+            # Show target price if available
+            target = pos.get("target_price")
+            if target:
+                status = f"In trade - P&L: ${pnl_sign}{current_pnl:.2f} | Target: ${target:.2f}"
+            else:
+                status = f"In trade - P&L: ${pnl_sign}{current_pnl:.2f}"
+    
+    # Get skip reason if available
+    skip_reason = symbol_state.get("skip_reason", "")
+    
+    # Combine all data
+    update_data = {
+        "market_status": market_status,
+        "maintenance_in": maintenance_time,
+        "last_signal": last_signal,
+        "last_signal_time": last_signal_time,
+        "last_signal_confidence": last_signal_confidence,
+        "last_signal_approved": last_signal_approved,
+        "last_rejected_signal": last_rejected_signal,
+        "skip_reason": skip_reason,
+        "status": status,
+        **quote_data,
+        **position_data,
+        **pnl_data,
+    }
+    
+    # Update dashboard
+    dashboard.update_symbol_data(symbol, update_data)
 
 
 # ============================================================================
@@ -6980,8 +7466,15 @@ def handle_tick_event(event) -> None:
     state[symbol]["total_ticks_received"] += 1
     total_ticks = state[symbol]["total_ticks_received"]
     
-    # Log tick data periodically (every 1000 ticks to avoid spam)
-    if total_ticks % 1000 == 0:
+    # Update dashboard every 50 ticks (about every 1 second in active market)
+    # More frequent updates for real-time monitoring
+    if total_ticks % 50 == 0:
+        update_dashboard_for_symbol(symbol)
+        if dashboard:
+            dashboard.display()
+    
+    # Suppress normal logging - only log every 5000 ticks to reduce spam
+    if total_ticks % 5000 == 0:
         # Get current bid/ask from bid_ask_manager if available
         bid_ask_info = ""
         if bid_ask_manager is not None:
@@ -6989,7 +7482,10 @@ def handle_tick_event(event) -> None:
             if quote:
                 spread = quote.ask_price - quote.bid_price
                 bid_ask_info = f" | Bid: ${quote.bid_price:.2f} x {quote.bid_size} | Ask: ${quote.ask_price:.2f} x {quote.ask_size} | Spread: ${spread:.2f}"
-        logger.info(f"[TICK] {symbol} @ ${price:.2f} | Vol: {volume} | Total ticks: {total_ticks}{bid_ask_info}")
+        logger.debug(f"[TICK] {symbol} @ ${price:.2f} | Vol: {volume} | Total ticks: {total_ticks}{bid_ask_info}")
+    
+    # Store last price in state
+    state[symbol]["last_price"] = price
     
     # Create tick object
     tick = {
@@ -7148,6 +7644,14 @@ def cleanup_on_shutdown() -> None:
     """Cleanup tasks on shutdown"""
     logger.info("Running cleanup tasks...")
     
+    # Stop dashboard display
+    if dashboard:
+        try:
+            dashboard.stop()
+            logger.info("Dashboard stopped")
+        except Exception as e:
+            logger.error(f"Error stopping dashboard: {e}")
+    
     # Send bot shutdown alert
     try:
         notifier = get_notifier()
@@ -7182,10 +7686,10 @@ def cleanup_on_shutdown() -> None:
         except Exception as e:
             logger.error(f"Error stopping timer manager: {e}")
     
-    # Log session summary
-    symbol = CONFIG["instrument"]
-    if symbol in state:
-        log_session_summary(symbol)
+    # Suppress session summary - keep dashboard visible
+    # symbol = CONFIG["instrument"]
+    # if symbol in state:
+    #     log_session_summary(symbol)
     
     logger.info("Cleanup complete")
 
