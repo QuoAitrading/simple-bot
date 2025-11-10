@@ -27,10 +27,10 @@ class TopStepWebSocketStreamer:
         self.connection = None
         self.is_connected = False
         
-        # Callbacks
-        self.on_quote_callback: Optional[Callable] = None
-        self.on_trade_callback: Optional[Callable] = None
-        self.on_depth_callback: Optional[Callable] = None
+        # Callbacks - dict keyed by contract ID for multiple symbol support
+        self.quote_callbacks: Dict[str, Callable] = {}
+        self.trade_callbacks: Dict[str, Callable] = {}
+        self.depth_callbacks: Dict[str, Callable] = {}
         
         # Stats
         self.quotes_received = 0
@@ -163,29 +163,42 @@ class TopStepWebSocketStreamer:
             logger.info(f"[QUOTE DEBUG] Quote #{self.quotes_received} data type: {type(data)}")
             logger.info(f"[QUOTE DEBUG] Quote data: {data}")
         
-        if self.on_quote_callback:
-            try:
-                # Pass data as-is (should be a list like ["CON.F.US.CLE.Z25", {quote_dict}])
-                self.on_quote_callback(data)
-            except Exception as e:
-                logger.error(f"[WEBSOCKET ERROR] Exception in quote callback: {e}")
-                import traceback
-                traceback.print_exc()
-        else:
-            logger.warning("[WEBSOCKET] No callback set - quote data ignored!")
+        # Extract contract ID from quote data to find the right callback
+        try:
+            if isinstance(data, list) and len(data) >= 2:
+                contract_id = data[0]  # First element is contract ID like "CON.F.US.MES.Z25"
+                
+                # Find matching callback for this contract ID
+                if contract_id in self.quote_callbacks:
+                    self.quote_callbacks[contract_id](data)
+                else:
+                    logger.warning(f"[WEBSOCKET] No callback for contract {contract_id}")
+            else:
+                logger.warning(f"[WEBSOCKET] Invalid quote data format: {data}")
+        except Exception as e:
+            logger.error(f"[WEBSOCKET ERROR] Exception in quote handler: {e}")
+            import traceback
+            traceback.print_exc()
     
     def _on_trade(self, *args):
         """Handle incoming trade data - SignalR passes arguments as separate params"""
         self.trades_received += 1
         self.last_message_time = time.time()
-        if self.on_trade_callback:
-            try:
-                # Log first trade to see structure
-                if self.trades_received == 1:
-                    logger.info(f"[DATA] First trade - args: {args}")
-                self.on_trade_callback(args)
-            except Exception as e:
-                logger.error(f"Error in trade callback: {e}")
+        
+        # Extract contract ID from trade data to find the right callback
+        try:
+            if args and len(args) > 0 and isinstance(args[0], list) and len(args[0]) >= 2:
+                contract_id = args[0][0]  # First element is contract ID
+                
+                # Find matching callback for this contract ID
+                if contract_id in self.trade_callbacks:
+                    self.trade_callbacks[contract_id](args)
+                else:
+                    logger.warning(f"[WEBSOCKET] No callback for contract {contract_id}")
+            else:
+                logger.warning(f"[WEBSOCKET] Invalid trade data format: {args}")
+        except Exception as e:
+            logger.error(f"Error in trade callback: {e}")
     
     def _on_depth(self, *args):
         """Handle incoming market depth data - SignalR passes arguments as separate params"""
@@ -199,7 +212,8 @@ class TopStepWebSocketStreamer:
     
     def subscribe_quotes(self, symbol: str, callback: Callable):
         """Subscribe to real-time quotes using contract ID"""
-        self.on_quote_callback = callback
+        # Store callback by contract ID to support multiple symbols
+        self.quote_callbacks[symbol] = callback
         
         try:
             # TopStep uses contract IDs, not symbols
@@ -216,7 +230,8 @@ class TopStepWebSocketStreamer:
     
     def subscribe_trades(self, symbol: str, callback: Callable):
         """Subscribe to real-time trades using contract ID"""
-        self.on_trade_callback = callback
+        # Store callback by contract ID to support multiple symbols
+        self.trade_callbacks[symbol] = callback
         
         try:
             # TopStep uses contract IDs, not symbols

@@ -241,16 +241,16 @@ bot_status: Dict[str, Any] = {
 
 def setup_logging() -> logging.Logger:
     """Configure logging for the bot - Dashboard only display (logs suppressed except CRITICAL)"""
-    # TEMPORARILY set to INFO to debug subscription issue
+    # Suppress ALL logs - only show dashboard
     logging.basicConfig(
-        level=logging.INFO,  # DEBUG subscription issue
+        level=logging.CRITICAL,  # Only critical errors
         format='%(asctime)s - %(levelname)s - %(message)s',
         handlers=[
             logging.StreamHandler()  # Console output
         ]
     )
     
-    # ONLY suppress project_x_py SDK logs - they spam JSON
+    # Suppress all module logs
     logging.getLogger("project_x_py").setLevel(logging.CRITICAL)
     logging.getLogger("project_x_py").propagate = False
     

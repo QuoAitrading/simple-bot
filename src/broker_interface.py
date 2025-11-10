@@ -342,8 +342,17 @@ class TopStepBroker(BrokerInterface):
             # Quarterly contracts (Mar, Jun, Sep, Dec) for equity index futures
             quarterly_months = {3: 'H', 6: 'M', 9: 'U', 12: 'Z'}
             
-            # Determine front month for quarterly contracts (MES, ES, NQ, etc.)
-            if symbol in ['MES', 'ES', 'NQ', 'RTY', 'YM']:
+            # Determine front month for quarterly contracts (equity index futures)
+            # Quarterly symbols (Mar, Jun, Sep, Dec only): All E-mini and Micro E-mini indices
+            quarterly_symbols = [
+                'ES', 'MES',      # S&P 500
+                'NQ', 'MNQ',      # Nasdaq-100
+                'YM', 'MYM',      # Dow Jones
+                'RTY', 'M2K',     # Russell 2000
+                'EMD',            # S&P MidCap
+            ]
+            
+            if symbol in quarterly_symbols:
                 # Find next quarterly month
                 for month in [3, 6, 9, 12]:
                     if month >= current_month:
@@ -386,10 +395,6 @@ class TopStepBroker(BrokerInterface):
                 account_info = asyncio.run(account_info)
             
             if account_info:
-                # Debug: Log what we got
-                logger.info(f"[ACCOUNT DEBUG] Type: {type(account_info)}")
-                logger.info(f"[ACCOUNT DEBUG] Attributes: {[x for x in dir(account_info) if not x.startswith('_')][:10]}")
-                
                 # Try different fields that might contain the balance
                 balance = None
                 
@@ -398,7 +403,6 @@ class TopStepBroker(BrokerInterface):
                     if hasattr(account_info, field):
                         val = getattr(account_info, field)
                         if val is not None and val != 0:
-                            logger.info(f"[ACCOUNT DEBUG] Found {field}: {val}")
                             balance = float(val)
                             break
                 
@@ -407,18 +411,14 @@ class TopStepBroker(BrokerInterface):
                     for field in ['cash_balance', 'balance', 'equity', 'available_funds']:
                         val = account_info.get(field)
                         if val is not None and val != 0:
-                            logger.info(f"[ACCOUNT DEBUG] Found dict[{field}]: {val}")
                             balance = float(val)
                             break
                 
                 if balance:
-                    logger.info(f"✅ Account equity: ${balance:,.2f}")
                     return balance
                 else:
-                    logger.warning("[ACCOUNT DEBUG] No balance field found, using config fallback")
                     return 0.0
             else:
-                logger.warning("[ACCOUNT DEBUG] account_info is None/empty")
                 return 0.0
         except Exception as e:
             logger.warning(f"Could not fetch account equity: {e}")

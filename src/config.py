@@ -18,11 +18,11 @@ try:
     env_path = Path(__file__).parent.parent / '.env'
     if env_path.exists():
         load_dotenv(env_path)
-        print(f"✓ Loaded configuration from {env_path}")
+        print(f"[OK] Loaded configuration from {env_path}")
     else:
-        print(f"⚠ No .env file found at {env_path}")
+        print(f"[WARN] No .env file found at {env_path}")
 except ImportError:
-    print("⚠ python-dotenv not installed, using system environment variables only")
+    print("[WARN] python-dotenv not installed, using system environment variables only")
 
 
 @dataclass
@@ -423,6 +423,7 @@ class BotConfiguration:
         return {
             "broker": self.broker,
             "instrument": self.instrument,
+            "instruments": self.instruments,  # Multi-symbol support
             "timezone": self.timezone,
             "risk_per_trade": self.risk_per_trade,
             "max_contracts": self.max_contracts,
@@ -642,6 +643,10 @@ def get_development_config() -> BotConfiguration:
         import json
         with open(config_file, 'r') as f:
             json_config = json.load(f)
+            # Map "symbols" to "instruments" for multi-symbol support
+            if "symbols" in json_config and json_config["symbols"]:
+                config.instruments = json_config["symbols"]
+                config.instrument = config.instruments[0]  # First symbol is primary
             # Update config with JSON values
             for key, value in json_config.items():
                 if hasattr(config, key):
@@ -662,6 +667,10 @@ def get_staging_config() -> BotConfiguration:
         import json
         with open(config_file, 'r') as f:
             json_config = json.load(f)
+            # Map "symbols" to "instruments" for multi-symbol support
+            if "symbols" in json_config and json_config["symbols"]:
+                config.instruments = json_config["symbols"]
+                config.instrument = config.instruments[0]  # First symbol is primary
             # Update config with JSON values
             for key, value in json_config.items():
                 if hasattr(config, key):
@@ -682,6 +691,10 @@ def get_production_config() -> BotConfiguration:
         import json
         with open(config_file, 'r') as f:
             json_config = json.load(f)
+            # Map "symbols" to "instruments" for multi-symbol support
+            if "symbols" in json_config and json_config["symbols"]:
+                config.instruments = json_config["symbols"]
+                config.instrument = config.instruments[0]  # First symbol is primary
             # Update config with JSON values
             for key, value in json_config.items():
                 if hasattr(config, key):

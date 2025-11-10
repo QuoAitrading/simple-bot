@@ -2435,8 +2435,12 @@ class QuoTradingLauncher:
             # Get the AI directory (parent of launcher folder)
             bot_dir = Path(__file__).parent.parent.absolute()
             
-            # Get Python executable path
-            python_exe = sys.executable
+            # Get Python executable path - use venv if available
+            venv_python = bot_dir / ".venv" / "Scripts" / "python.exe"
+            if venv_python.exists():
+                python_exe = str(venv_python)
+            else:
+                python_exe = sys.executable
             bot_script = bot_dir / "src" / "quotrading_engine.py"
             
             if platform.system() == "Windows":
@@ -2445,7 +2449,7 @@ class QuoTradingLauncher:
                     "powershell.exe",
                     "-NoExit",  # Keep window open
                     "-Command",
-                    f"cd '{bot_dir}'; python src/quotrading_engine.py"
+                    f"& '{python_exe}' '{bot_script}'"
                 ]
                 self.bot_process = subprocess.Popen(
                     ps_command,

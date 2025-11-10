@@ -47,6 +47,8 @@ class Dashboard:
             "contract_adjustment": None,  # Track contract adjustments (confidence/recovery mode)
             "fomc_active": False,  # FOMC/economic event block active
             "fomc_message": "",  # FOMC block message
+            "maintenance_countdown": "-- h --m",  # Initialize maintenance countdown
+            "topstep_connected": True,  # Initialize TopStep connection status
         }
         
         # Platform detection
@@ -88,7 +90,9 @@ class Dashboard:
             "ask": 0.0,
             "ask_size": 0,
             "spread": 0.0,
+            "current_volume": 0,
             "condition": "Initializing...",
+            "bars_1min_count": 0,  # Total bars counter
             "position": "FLAT",
             "position_qty": 0,
             "position_side": None,
@@ -174,9 +178,13 @@ class Dashboard:
     def _render_header(self) -> List[str]:
         """Render the header section."""
         lines = []
-        lines.append("=" * 60)
+        lines.append("=" * 80)
         
-        # Determine server status icon based on latency
+        # TopStep connection status
+        topstep_connected = self.bot_data.get('topstep_connected', True)
+        topstep_status = "✓ Connected" if topstep_connected else "✗ Disconnected"
+        
+        # Server status icon based on latency
         latency_ms = self.bot_data.get('server_latency_ms', 999)
         if latency_ms < 100:
             server_icon = "✓"
@@ -185,10 +193,16 @@ class Dashboard:
         else:
             server_icon = "✗"
         
-        lines.append(f"QuoTrading AI Bot {self.bot_data['version']} | "
+        # Maintenance countdown (passed from quotrading_engine)
+        maintenance = self.bot_data.get('maintenance_countdown', '-- h --m')
+        
+        # Build top status line with bot name
+        lines.append(f"QuoTrading AI Bot {self.bot_data['version']}")
+        lines.append(f"TopStep: {topstep_status} | "
                     f"Server: {server_icon} {self.bot_data['server_latency']} | "
+                    f"Maintenance: {maintenance} | "
                     f"Account: ${self.bot_data['account_balance']:,.0f}")
-        lines.append("=" * 60)
+        lines.append("=" * 80)
         return lines
     
     def _render_settings(self) -> List[str]:
@@ -240,6 +254,23 @@ class Dashboard:
         
         return lines
     
+    def _create_progress_bar(self, percent: int, width: int = 20) -> str:
+        """
+        Create a text progress bar.
+        
+        Args:
+            percent: Percentage complete (0-100)
+            width: Width of progress bar in characters
+            
+        Returns:
+            Progress bar string like [=====>     ] 50%
+        """
+        filled = int((percent / 100) * width)
+        empty = width - filled
+        bar = "=" * filled + ">" if filled < width else "=" * width
+        bar = bar + " " * empty
+        return f"[{bar}] {percent}%"
+    
     def _render_symbol(self, symbol: str) -> List[str]:
         """
         Render the display section for a single symbol.
@@ -259,17 +290,21 @@ class Dashboard:
         lines.append(f"{symbol} | {self._format_symbol_name(symbol)}")
         lines.append("=" * 60)
         
-        # Market status line
-        lines.append(f"Market: {data['market_status']} | Maintenance in: {data['maintenance_in']}")
+        # Market status
+        lines.append(f"Market: {data['market_status']}")
         
-        # Bid/Ask line
+        # Bid/Ask/Volume line
         bid_str = f"${data['bid']:.2f} x {data['bid_size']}"
         ask_str = f"${data['ask']:.2f} x {data['ask_size']}"
-        spread_str = f"${data['spread']:.2f}"
-        lines.append(f"Bid: {bid_str} | Ask: {ask_str} | Spread: {spread_str}")
+        volume_str = f"{data.get('current_volume', 0):,}"
+        lines.append(f"Bid: {bid_str} | Ask: {ask_str} | Vol: {volume_str}")
         
-        # Market condition
-        lines.append(f"Condition: {data['condition']}")
+        # Spread and condition
+        spread_str = f"${data['spread']:.2f}"
+        lines.append(f"Spread: {spread_str} | Condition: {data['condition']}")
+        
+        # Bars completed (total count, not stored count)
+        lines.append(f"Bars: {data.get('bars_1min_count', 0)}")
         
         # Position and P&L - show percentage if we have it
         pnl_sign = "+" if data['pnl_today'] > 0 else ""
@@ -348,8 +383,8 @@ class Dashboard:
         return "\n".join(lines)
     
     def display(self):
-        """Display the dashboard (move cursor to home and print)."""
-        self._move_cursor_home()
+        """Display the dashboard (clear screen and print)."""
+        self._clear_screen()
         content = self.render()
         sys.stdout.write(content)
         sys.stdout.flush()
@@ -368,33 +403,52 @@ class Dashboard:
             sys.stdout.write("\033[?25h")
             sys.stdout.flush()
     
-    def calculate_maintenance_time(self) -> str:
+    def calculate_maintenance_time(self, server_time: str = None) -> str:
         """
         Calculate time until next maintenance window.
+        Maintenance is 5:00 PM - 6:00 PM ET daily.
+        
+        Args:
+            server_time: ISO format server time string from Azure (e.g., "2025-11-10T06:49:24.798158Z")
         
         Returns:
             Formatted string like "4h 23m"
         """
-        now = datetime.now()
-        current_time = now.time()
+        import pytz
+        from datetime import datetime, timedelta
         
-        # Determine next maintenance based on current time
+        # Get current time in ET - use server time if available
+        et_tz = pytz.timezone('US/Eastern')
+        
+        if server_time:
+            try:
+                # Parse ISO format server time and convert to ET
+                utc_time = datetime.fromisoformat(server_time.replace('Z', '+00:00'))
+                now_et = utc_time.astimezone(et_tz)
+            except:
+                # Fallback to local time if parsing fails
+                now_et = datetime.now(et_tz)
+        else:
+            now_et = datetime.now(et_tz)
+        
+        current_hour = now_et.hour
+        
         # Maintenance is 5:00 PM - 6:00 PM ET daily
         maintenance_hour = 17  # 5 PM
         
         # If before 5 PM today, next maintenance is today at 5 PM
-        if current_time.hour < maintenance_hour:
-            next_maintenance = now.replace(hour=maintenance_hour, minute=0, second=0, microsecond=0)
+        if current_hour < maintenance_hour:
+            next_maintenance = now_et.replace(hour=maintenance_hour, minute=0, second=0, microsecond=0)
         # If between 5 PM and 6 PM, we're in maintenance (show as "NOW")
-        elif current_time.hour == maintenance_hour:
+        elif current_hour == maintenance_hour:
             return "NOW"
         # If after 6 PM, next maintenance is tomorrow at 5 PM
         else:
-            tomorrow = now + timedelta(days=1)
+            tomorrow = now_et + timedelta(days=1)
             next_maintenance = tomorrow.replace(hour=maintenance_hour, minute=0, second=0, microsecond=0)
         
         # Calculate time difference
-        time_diff = next_maintenance - now
+        time_diff = next_maintenance - now_et
         hours = int(time_diff.total_seconds() // 3600)
         minutes = int((time_diff.total_seconds() % 3600) // 60)
         
