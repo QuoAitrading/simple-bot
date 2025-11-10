@@ -108,6 +108,7 @@ from error_recovery import ErrorRecoveryManager, ErrorType as RecoveryErrorType
 from bid_ask_manager import BidAskManager, BidAskQuote
 from notifications import get_notifier
 from signal_confidence import SignalConfidenceRL
+from dashboard import get_dashboard, Dashboard
 
 # Conditionally import broker (only needed for live trading, not backtesting)
 try:
@@ -185,6 +186,9 @@ bid_ask_manager: Optional[BidAskManager] = None
 
 # Global adaptive exit manager (for streak tracking persistence)
 adaptive_manager: Optional[Any] = None
+
+# Global dashboard display
+dashboard: Optional[Dashboard] = None
 
 # State management dictionary
 state: Dict[str, Any] = {}
@@ -6833,45 +6837,71 @@ def main(symbol_override: str = None) -> None:
         symbol_override: Optional symbol to trade (overrides CONFIG["instrument"])
                         Used for multi-symbol bot instances
     """
-    global event_loop, timer_manager, bid_ask_manager
+    global event_loop, timer_manager, bid_ask_manager, dashboard
     
-    # Use symbol override if provided (for multi-symbol support)
-    trading_symbol = symbol_override if symbol_override else CONFIG["instrument"]
+    # Get list of trading symbols (multi-symbol support)
+    if "instruments" in CONFIG and CONFIG["instruments"]:
+        trading_symbols = CONFIG["instruments"]
+    else:
+        trading_symbol = symbol_override if symbol_override else CONFIG["instrument"]
+        trading_symbols = [trading_symbol]
+    
+    # Initialize dashboard FIRST (before any logging)
+    logger.info("Initializing dashboard display...")
+    dashboard = get_dashboard(trading_symbols, CONFIG)
+    dashboard.start()
+    
+    # Update dashboard with initial bot data
+    initial_account = CONFIG.get("account_size", 50000)
+    dashboard.update_bot_data({
+        "account_balance": initial_account,
+        "max_contracts": CONFIG.get("max_contracts", 3),
+        "daily_loss_limit": CONFIG.get("daily_loss_limit", 1000),
+        "confidence_threshold": CONFIG.get("confidence_threshold", 65),
+        "recovery_mode": CONFIG.get("recovery_mode", False),
+        "confidence_trading": CONFIG.get("confidence_trading", False),
+    })
+    
+    # Initial display
+    dashboard.display()
     
     logger.info(SEPARATOR_LINE)
-    logger.info(f"QuoTrading AI Bot Starting [{trading_symbol}]")
+    logger.info(f"QuoTrading AI Bot Starting {trading_symbols}")
     logger.info(SEPARATOR_LINE)
+    
+    # Use first symbol as primary
+    primary_symbol = trading_symbols[0]
     
     # Log symbol specifications if loaded
     if SYMBOL_SPEC:
-        logger.info(f"[{trading_symbol}] Symbol: {SYMBOL_SPEC.name} ({SYMBOL_SPEC.symbol})")
-        logger.info(f"[{trading_symbol}]   Tick Value: ${SYMBOL_SPEC.tick_value:.2f} | Tick Size: ${SYMBOL_SPEC.tick_size}")
-        logger.info(f"[{trading_symbol}]   Slippage: {SYMBOL_SPEC.typical_slippage_ticks} ticks | Volatility: {SYMBOL_SPEC.volatility_factor}x")
-        logger.info(f"[{trading_symbol}]   Trading Hours: {SYMBOL_SPEC.session_start} - {SYMBOL_SPEC.session_end} ET")
+        logger.info(f"[{primary_symbol}] Symbol: {SYMBOL_SPEC.name} ({SYMBOL_SPEC.symbol})")
+        logger.info(f"[{primary_symbol}]   Tick Value: ${SYMBOL_SPEC.tick_value:.2f} | Tick Size: ${SYMBOL_SPEC.tick_size}")
+        logger.info(f"[{primary_symbol}]   Slippage: {SYMBOL_SPEC.typical_slippage_ticks} ticks | Volatility: {SYMBOL_SPEC.volatility_factor}x")
+        logger.info(f"[{primary_symbol}]   Trading Hours: {SYMBOL_SPEC.session_start} - {SYMBOL_SPEC.session_end} ET")
     
     # Display operating mode
     if CONFIG.get('shadow_mode', False):
-        logger.info(f"[{trading_symbol}] Mode: 📊 SIGNAL-ONLY MODE (Manual Trading)")
-        logger.info(f"[{trading_symbol}] ⚠️  Signal mode: Shows trading signals without executing trades")
+        logger.info(f"[{primary_symbol}] Mode: 📊 SIGNAL-ONLY MODE (Manual Trading)")
+        logger.info(f"[{primary_symbol}] ⚠️  Signal mode: Shows trading signals without executing trades")
     else:
-        logger.info(f"[{trading_symbol}] Mode: LIVE TRADING")
+        logger.info(f"[{primary_symbol}] Mode: LIVE TRADING")
     
-    logger.info(f"[{trading_symbol}] Instrument: {trading_symbol}")
-    logger.info(f"[{trading_symbol}] Entry Window: {CONFIG['entry_start_time']} - {CONFIG['entry_end_time']} ET")
-    logger.info(f"[{trading_symbol}] Flatten Mode: {CONFIG['flatten_time']} ET")
-    logger.info(f"[{trading_symbol}] Force Close: {CONFIG['forced_flatten_time']} ET")
-    logger.info(f"[{trading_symbol}] Shutdown: {CONFIG['shutdown_time']} ET")
-    logger.info(f"[{trading_symbol}] Max Contracts: {CONFIG['max_contracts']}")
-    logger.info(f"[{trading_symbol}] Max Trades/Day: {CONFIG['max_trades_per_day']}")
-    logger.info(f"[{trading_symbol}] Risk Per Trade: {CONFIG['risk_per_trade'] * 100:.1f}%")
-    logger.info(f"[{trading_symbol}] Daily Loss Limit: ${CONFIG['daily_loss_limit']}")
+    logger.info(f"[{primary_symbol}] Instruments: {', '.join(trading_symbols)}")
+    logger.info(f"[{primary_symbol}] Entry Window: {CONFIG['entry_start_time']} - {CONFIG['entry_end_time']} ET")
+    logger.info(f"[{primary_symbol}] Flatten Mode: {CONFIG['flatten_time']} ET")
+    logger.info(f"[{primary_symbol}] Force Close: {CONFIG['forced_flatten_time']} ET")
+    logger.info(f"[{primary_symbol}] Shutdown: {CONFIG['shutdown_time']} ET")
+    logger.info(f"[{primary_symbol}] Max Contracts: {CONFIG['max_contracts']}")
+    logger.info(f"[{primary_symbol}] Max Trades/Day: {CONFIG['max_trades_per_day']}")
+    logger.info(f"[{primary_symbol}] Risk Per Trade: {CONFIG['risk_per_trade'] * 100:.1f}%")
+    logger.info(f"[{primary_symbol}] Daily Loss Limit: ${CONFIG['daily_loss_limit']}")
     logger.info(SEPARATOR_LINE)
     
     # Phase Fifteen: Validate timezone configuration
     validate_timezone_configuration()
     
     # Initialize bid/ask manager
-    logger.info(f"[{trading_symbol}] Initializing bid/ask manager...")
+    logger.info(f"[{primary_symbol}] Initializing bid/ask manager...")
     bid_ask_manager = BidAskManager(CONFIG)
     
     # Initialize broker (replaces initialize_sdk)
@@ -6879,25 +6909,41 @@ def main(symbol_override: str = None) -> None:
     
     # Phase 12: Record starting equity for drawdown monitoring
     bot_status["starting_equity"] = get_account_equity()
-    logger.info(f"[{trading_symbol}] Starting Equity: ${bot_status['starting_equity']:.2f}")
+    logger.info(f"[{primary_symbol}] Starting Equity: ${bot_status['starting_equity']:.2f}")
     
-    # Initialize state for instrument (use override symbol if provided)
-    initialize_state(trading_symbol)
+    # Update dashboard with actual account balance
+    dashboard.update_bot_data({"account_balance": bot_status["starting_equity"]})
+    dashboard.display()
     
-    # CRITICAL: Try to restore position state from disk if bot was restarted
-    logger.info(f"[{trading_symbol}] Checking for saved position state...")
-    position_restored = load_position_state(trading_symbol)
-    if position_restored:
-        logger.warning(f"[{trading_symbol}] ⚠️  BOT RESTARTED WITH ACTIVE POSITION - Managing existing trade")
-    else:
-        logger.info(f"[{trading_symbol}] No active position to restore - starting fresh")
+    # Initialize state for all trading symbols
+    for symbol in trading_symbols:
+        initialize_state(symbol)
+        
+        # CRITICAL: Try to restore position state from disk if bot was restarted
+        logger.info(f"[{symbol}] Checking for saved position state...")
+        position_restored = load_position_state(symbol)
+        if position_restored:
+            logger.warning(f"[{symbol}] ⚠️  BOT RESTARTED WITH ACTIVE POSITION - Managing existing trade")
+            # Update dashboard with restored position
+            pos = state[symbol]["position"]
+            if pos["active"]:
+                dashboard.update_symbol_data(symbol, {
+                    "position": f"{pos['side'].upper()} {pos['quantity']}",
+                    "status": "Restored position"
+                })
+        else:
+            logger.info(f"[{symbol}] No active position to restore - starting fresh")
+            dashboard.update_symbol_data(symbol, {
+                "status": "Initializing..."
+            })
+        dashboard.display()
     
     # Skip historical bars fetching in live mode - not needed for real-time trading
     # The bot will build bars from live tick data
-    logger.info(f"[{trading_symbol}] Skipping historical bars fetch - will build bars from live data")
+    logger.info(f"[{primary_symbol}] Skipping historical bars fetch - will build bars from live data")
     
     # Initialize event loop
-    logger.info(f"[{trading_symbol}] Initializing event loop...")
+    logger.info(f"[{primary_symbol}] Initializing event loop...")
     event_loop = EventLoop(bot_status, CONFIG)
     
     # Register event handlers
@@ -6917,17 +6963,21 @@ def main(symbol_override: str = None) -> None:
     timer_manager = TimerManager(event_loop, CONFIG, tz)
     timer_manager.start()
     
-    # Subscribe to market data (trades) - use trading_symbol
-    subscribe_market_data(trading_symbol, on_tick)
-    
-    # Subscribe to bid/ask quotes if broker supports it
-    if broker is not None and hasattr(broker, 'subscribe_quotes'):
-        logger.info(f"[{trading_symbol}] Subscribing to bid/ask quotes...")
-        try:
-            broker.subscribe_quotes(symbol, on_quote)
-        except Exception as e:
-            logger.warning(f"Failed to subscribe to quotes: {e}")
-            logger.warning("Continuing without bid/ask quote data")
+    # Subscribe to market data for all symbols
+    for symbol in trading_symbols:
+        subscribe_market_data(symbol, on_tick)
+        
+        # Subscribe to bid/ask quotes if broker supports it
+        if broker is not None and hasattr(broker, 'subscribe_quotes'):
+            logger.info(f"[{symbol}] Subscribing to bid/ask quotes...")
+            try:
+                broker.subscribe_quotes(symbol, on_quote)
+                dashboard.update_symbol_data(symbol, {"status": "Subscribed to quotes"})
+            except Exception as e:
+                logger.warning(f"Failed to subscribe to quotes for {symbol}: {e}")
+                logger.warning("Continuing without bid/ask quote data")
+                dashboard.update_symbol_data(symbol, {"status": "Quote subscription failed"})
+        dashboard.display()
     
     # RL and Adaptive Exits are CLOUD-ONLY - no local RL components
     # Users get confidence from cloud, contribute to cloud hive mind
@@ -6940,6 +6990,11 @@ def main(symbol_override: str = None) -> None:
     logger.info("Press Ctrl+C for graceful shutdown")
     logger.info(SEPARATOR_LINE)
     
+    # Final dashboard update before entering event loop
+    for symbol in trading_symbols:
+        dashboard.update_symbol_data(symbol, {"status": "Monitoring..."})
+    dashboard.display()
+    
     # Run event loop (blocks until shutdown signal)
     try:
         event_loop.run()
@@ -6948,8 +7003,111 @@ def main(symbol_override: str = None) -> None:
     finally:
         logger.info("Event loop stopped")
         
+        # Cleanup dashboard
+        if dashboard:
+            dashboard.stop()
+        
         # Metrics are already logged by event loop's _log_metrics()
         # No need to call get_metrics() here
+
+
+# ============================================================================
+# DASHBOARD UPDATE HELPERS
+# ============================================================================
+
+def update_dashboard_for_symbol(symbol: str) -> None:
+    """
+    Update dashboard display for a specific symbol with current market data.
+    
+    Args:
+        symbol: Symbol to update
+    """
+    global dashboard
+    
+    if dashboard is None or symbol not in state:
+        return
+    
+    symbol_state = state[symbol]
+    
+    # Get current market data
+    current_price = symbol_state.get("last_price", 0.0)
+    
+    # Get bid/ask if available
+    quote_data = {}
+    if bid_ask_manager:
+        quote = bid_ask_manager.get_current_quote(symbol)
+        if quote:
+            spread = quote.ask_price - quote.bid_price
+            quote_data = {
+                "bid": quote.bid_price,
+                "bid_size": quote.bid_size,
+                "ask": quote.ask_price,
+                "ask_size": quote.ask_size,
+                "spread": spread,
+            }
+            
+            # Determine market condition based on spread
+            if spread <= 0.50:
+                condition = "NORMAL - Tight spread, good liquidity"
+            elif spread <= 1.00:
+                condition = "NORMAL - Good liquidity"
+            elif spread <= 2.00:
+                condition = "CAUTION - Wider spread"
+            else:
+                condition = "WARNING - Wide spread, low liquidity"
+            quote_data["condition"] = condition
+    
+    # Get position data
+    position_data = {}
+    if symbol_state["position"]["active"]:
+        pos = symbol_state["position"]
+        position_data = {
+            "position": f"{pos['side'].upper()} {pos['quantity']}",
+            "position_qty": pos["quantity"],
+            "position_side": pos["side"],
+        }
+    else:
+        position_data = {
+            "position": "FLAT",
+            "position_qty": 0,
+            "position_side": None,
+        }
+    
+    # Get P&L
+    pnl_data = {
+        "pnl_today": symbol_state.get("daily_pnl", 0.0)
+    }
+    
+    # Get market status
+    current_time = get_current_time()
+    trading_state = get_trading_state(current_time)
+    
+    market_status = "OPEN" if trading_state == "entry_window" else "CLOSED"
+    if trading_state == "flatten_mode":
+        market_status = "FLATTEN"
+    
+    # Calculate maintenance countdown
+    maintenance_time = dashboard.calculate_maintenance_time() if dashboard else "-- h --m"
+    
+    # Get last signal info
+    last_signal = symbol_state.get("last_signal_type", "--")
+    
+    # Get current status
+    status = symbol_state.get("bot_status_message", "Monitoring...")
+    
+    # Combine all data
+    update_data = {
+        "market_status": market_status,
+        "maintenance_in": maintenance_time,
+        "last_signal": last_signal,
+        "status": status,
+        **quote_data,
+        **position_data,
+        **pnl_data,
+    }
+    
+    # Update dashboard
+    dashboard.update_symbol_data(symbol, update_data)
 
 
 # ============================================================================
@@ -6980,6 +7138,12 @@ def handle_tick_event(event) -> None:
     state[symbol]["total_ticks_received"] += 1
     total_ticks = state[symbol]["total_ticks_received"]
     
+    # Update dashboard every 100 ticks (about every 1-2 seconds in active market)
+    if total_ticks % 100 == 0:
+        update_dashboard_for_symbol(symbol)
+        if dashboard:
+            dashboard.display()
+    
     # Log tick data periodically (every 1000 ticks to avoid spam)
     if total_ticks % 1000 == 0:
         # Get current bid/ask from bid_ask_manager if available
@@ -6990,6 +7154,9 @@ def handle_tick_event(event) -> None:
                 spread = quote.ask_price - quote.bid_price
                 bid_ask_info = f" | Bid: ${quote.bid_price:.2f} x {quote.bid_size} | Ask: ${quote.ask_price:.2f} x {quote.ask_size} | Spread: ${spread:.2f}"
         logger.info(f"[TICK] {symbol} @ ${price:.2f} | Vol: {volume} | Total ticks: {total_ticks}{bid_ask_info}")
+    
+    # Store last price in state
+    state[symbol]["last_price"] = price
     
     # Create tick object
     tick = {
