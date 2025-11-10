@@ -94,6 +94,8 @@ class Dashboard:
             "last_signal": "--",
             "last_signal_time": "",
             "last_signal_confidence": "",
+            "last_signal_approved": None,  # True=approved, False=rejected, None=no signal
+            "last_rejected_signal": "",  # Last rejected signal info
             "status": "Starting..."
         }
     
@@ -249,13 +251,24 @@ class Dashboard:
         
         lines.append(f"Position: {data['position']} | P&L Today: {pnl_str}")
         
-        # Last signal - show with time and confidence if available
+        # Last signal - show with time, confidence, and approval status
         signal_line = f"Last Signal: {data['last_signal']}"
         if data.get('last_signal_time'):
             signal_line = f"Last Signal: {data['last_signal_time']} {data['last_signal']}"
         if data.get('last_signal_confidence'):
             signal_line += f" (Confidence: {data['last_signal_confidence']})"
+        
+        # Add approval status indicator
+        if data.get('last_signal_approved') is True:
+            signal_line += " ✅ APPROVED"
+        elif data.get('last_signal_approved') is False:
+            signal_line += " ❌ REJECTED"
+        
         lines.append(signal_line)
+        
+        # Show last rejected signal if there is one
+        if data.get('last_rejected_signal'):
+            lines.append(f"Last Rejected: {data['last_rejected_signal']}")
         
         # Status
         lines.append(f"Status: {data['status']}")

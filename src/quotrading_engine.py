@@ -2681,7 +2681,7 @@ def check_for_signals(symbol: str) -> None:
         if take_signal and bot_status.get("recovery_confidence_threshold"):
             recovery_threshold = bot_status["recovery_confidence_threshold"]
             if confidence < recovery_threshold:
-                logger.info(f" RECOVERY MODE REJECTED LONG signal: confidence {confidence:.1%} below recovery threshold {recovery_threshold:.1%}")
+                logger.info(f"❌ RECOVERY MODE REJECTED LONG signal: confidence {confidence:.1%} below recovery threshold {recovery_threshold:.1%}")
                 logger.info(f"   Bot is in recovery mode - only taking high-confidence signals")
                 state[symbol]["last_rejected_signal"] = {
                     "time": get_current_time(),
@@ -2690,10 +2690,21 @@ def check_for_signals(symbol: str) -> None:
                     "confidence": confidence,
                     "reason": f"Recovery mode: {confidence:.1%} < {recovery_threshold:.1%}"
                 }
+                
+                # Update dashboard to show rejected signal
+                if dashboard:
+                    sig_time = get_current_time().strftime("%H:%M")
+                    conf_str = f"{int(confidence * 100)}%"
+                    dashboard.update_symbol_data(symbol, {
+                        "last_rejected_signal": f"{sig_time} LONG @ ${current_bar['close']:.2f} (Recovery: {conf_str} < {int(recovery_threshold * 100)}%)",
+                        "status": "Recovery mode - rejected"
+                    })
+                    dashboard.display()
+                
                 return
         
         if not take_signal:
-            logger.info(f" RL REJECTED LONG signal: {reason} (confidence: {confidence:.1%})")
+            logger.info(f"❌ RL REJECTED LONG signal: {reason} (confidence: {confidence:.1%})")
             logger.info(f"   RSI: {rl_state['rsi']:.1f}, VWAP dist: {rl_state['vwap_distance']:.2f}, "
                       f"Vol ratio: {rl_state['volume_ratio']:.2f}x")
             # Store the rejected signal state for potential future learning
@@ -2704,6 +2715,17 @@ def check_for_signals(symbol: str) -> None:
                 "confidence": confidence,
                 "reason": reason
             }
+            
+            # Update dashboard to show rejected signal
+            if dashboard:
+                sig_time = get_current_time().strftime("%H:%M")
+                conf_str = f"{int(confidence * 100)}%"
+                dashboard.update_symbol_data(symbol, {
+                    "last_rejected_signal": f"{sig_time} LONG @ ${current_bar['close']:.2f} (Conf: {conf_str})",
+                    "status": "Signal rejected - low confidence"
+                })
+                dashboard.display()
+            
             return
         
         # RL approved - adjust position size based on confidence
@@ -2719,6 +2741,7 @@ def check_for_signals(symbol: str) -> None:
         state[symbol]["last_signal_type"] = f"LONG @ ${current_bar['close']:.2f}"
         state[symbol]["last_signal_timestamp"] = get_current_time().timestamp()
         state[symbol]["last_signal_confidence"] = confidence
+        state[symbol]["last_signal_approved"] = True  # Mark as approved
         state[symbol]["bot_status_message"] = "Signal detected!"
         
         # Update dashboard immediately
@@ -2742,7 +2765,7 @@ def check_for_signals(symbol: str) -> None:
         if take_signal and bot_status.get("recovery_confidence_threshold"):
             recovery_threshold = bot_status["recovery_confidence_threshold"]
             if confidence < recovery_threshold:
-                logger.info(f" RECOVERY MODE REJECTED SHORT signal: confidence {confidence:.1%} below recovery threshold {recovery_threshold:.1%}")
+                logger.info(f"❌ RECOVERY MODE REJECTED SHORT signal: confidence {confidence:.1%} below recovery threshold {recovery_threshold:.1%}")
                 logger.info(f"   Bot is in recovery mode - only taking high-confidence signals")
                 state[symbol]["last_rejected_signal"] = {
                     "time": get_current_time(),
@@ -2751,10 +2774,21 @@ def check_for_signals(symbol: str) -> None:
                     "confidence": confidence,
                     "reason": f"Recovery mode: {confidence:.1%} < {recovery_threshold:.1%}"
                 }
+                
+                # Update dashboard to show rejected signal
+                if dashboard:
+                    sig_time = get_current_time().strftime("%H:%M")
+                    conf_str = f"{int(confidence * 100)}%"
+                    dashboard.update_symbol_data(symbol, {
+                        "last_rejected_signal": f"{sig_time} SHORT @ ${current_bar['close']:.2f} (Recovery: {conf_str} < {int(recovery_threshold * 100)}%)",
+                        "status": "Recovery mode - rejected"
+                    })
+                    dashboard.display()
+                
                 return
         
         if not take_signal:
-            logger.info(f" RL REJECTED SHORT signal: {reason} (confidence: {confidence:.1%})")
+            logger.info(f"❌ RL REJECTED SHORT signal: {reason} (confidence: {confidence:.1%})")
             logger.info(f"   RSI: {rl_state['rsi']:.1f}, VWAP dist: {rl_state['vwap_distance']:.2f}, "
                       f"Vol ratio: {rl_state['volume_ratio']:.2f}x")
             # Store the rejected signal state for potential future learning
@@ -2765,6 +2799,17 @@ def check_for_signals(symbol: str) -> None:
                 "confidence": confidence,
                 "reason": reason
             }
+            
+            # Update dashboard to show rejected signal
+            if dashboard:
+                sig_time = get_current_time().strftime("%H:%M")
+                conf_str = f"{int(confidence * 100)}%"
+                dashboard.update_symbol_data(symbol, {
+                    "last_rejected_signal": f"{sig_time} SHORT @ ${current_bar['close']:.2f} (Conf: {conf_str})",
+                    "status": "Signal rejected - low confidence"
+                })
+                dashboard.display()
+            
             return
         
         # RL approved - adjust position size based on confidence
@@ -2780,6 +2825,7 @@ def check_for_signals(symbol: str) -> None:
         state[symbol]["last_signal_type"] = f"SHORT @ ${current_bar['close']:.2f}"
         state[symbol]["last_signal_timestamp"] = get_current_time().timestamp()
         state[symbol]["last_signal_confidence"] = confidence
+        state[symbol]["last_signal_approved"] = True  # Mark as approved
         state[symbol]["bot_status_message"] = "Signal detected!"
         
         # Update dashboard immediately
@@ -7248,10 +7294,11 @@ def update_dashboard_for_symbol(symbol: str) -> None:
         # Use dashboard's local calculation
         maintenance_time = dashboard.calculate_maintenance_time() if dashboard else "-- h --m"
     
-    # Get last signal info with time and confidence
+    # Get last signal info with time, confidence, and approval status
     last_signal = symbol_state.get("last_signal_type", "--")
     last_signal_time = ""
     last_signal_confidence = ""
+    last_signal_approved = symbol_state.get("last_signal_approved", None)
     
     if "last_signal_timestamp" in symbol_state and symbol_state["last_signal_timestamp"]:
         try:
@@ -7265,6 +7312,22 @@ def update_dashboard_for_symbol(symbol: str) -> None:
         if isinstance(conf_val, float):
             last_signal_confidence = f"{int(conf_val * 100)}%"
     
+    # Get last rejected signal info
+    last_rejected_signal = ""
+    if "last_rejected_signal" in symbol_state and symbol_state["last_rejected_signal"]:
+        rejected = symbol_state["last_rejected_signal"]
+        if isinstance(rejected, dict):
+            # Format the rejected signal for display
+            rej_time = rejected.get("time")
+            if rej_time:
+                rej_time_str = rej_time.strftime("%H:%M")
+                rej_side = rejected.get("side", "").upper()
+                rej_conf = rejected.get("confidence", 0)
+                rej_conf_str = f"{int(rej_conf * 100)}%"
+                # Get price from state (approximate)
+                rej_reason = rejected.get("reason", "")
+                last_rejected_signal = f"{rej_time_str} {rej_side} (Conf: {rej_conf_str}) - {rej_reason}"
+    
     # Get current status
     status = symbol_state.get("bot_status_message", "Monitoring...")
     
@@ -7275,6 +7338,8 @@ def update_dashboard_for_symbol(symbol: str) -> None:
         "last_signal": last_signal,
         "last_signal_time": last_signal_time,
         "last_signal_confidence": last_signal_confidence,
+        "last_signal_approved": last_signal_approved,
+        "last_rejected_signal": last_rejected_signal,
         "status": status,
         **quote_data,
         **position_data,
