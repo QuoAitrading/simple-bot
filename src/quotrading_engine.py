@@ -118,6 +118,24 @@ except ImportError:
     create_broker = None
     BrokerInterface = None
 
+# ===== CRITICAL: SUPPRESS PROJECT_X_PY LOGGING IMMEDIATELY =====
+# The TopStep SDK (project_x_py) uses structured JSON logging that corrupts dashboard
+# Must suppress BEFORE any broker/SDK operations to prevent log spam
+logging.getLogger("project_x_py").setLevel(logging.CRITICAL)
+logging.getLogger("project_x_py").propagate = False
+for handler in logging.getLogger("project_x_py").handlers[:]:
+    logging.getLogger("project_x_py").removeHandler(handler)
+
+# Suppress all sub-loggers
+for logger_name in ["statistics", "statistics.bounded_statistics", "statistics.bounded_statistics.bounded_stats",
+                     "order_manager", "order_manager.core", "position_manager", "position_manager.core",
+                     "trading_suite", "data_manager", "websocket"]:
+    full_name = f"project_x_py.{logger_name}"
+    logging.getLogger(full_name).setLevel(logging.CRITICAL)
+    logging.getLogger(full_name).propagate = False
+    for handler in logging.getLogger(full_name).handlers[:]:
+        logging.getLogger(full_name).removeHandler(handler)
+
 # Load configuration from environment and config module
 _bot_config = load_config()
 _bot_config.validate()  # Validate configuration at startup
@@ -188,11 +206,17 @@ adaptive_manager: Optional[Any] = None
 # Global dashboard display
 dashboard: Optional[Dashboard] = None
 
+# Dashboard refresh throttle - prevent constant flickering
+# Use list for mutable reference in closures
+last_dashboard_refresh = [0.0]
+
 # State management dictionary
 state: Dict[str, Any] = {}
 
 # Backtest mode: Track current simulation time (for backtesting)
 # When None, uses real datetime.now(). When set, uses this timestamp.
+backtest_current_time: Optional[datetime] = None
+
 # Global tracking for safety mechanisms (Phase 12)
 bot_status: Dict[str, Any] = {
     "trading_enabled": True,
@@ -217,15 +241,19 @@ bot_status: Dict[str, Any] = {
 
 def setup_logging() -> logging.Logger:
     """Configure logging for the bot - Dashboard only display (logs suppressed except CRITICAL)"""
-    # Create a null handler to suppress all logs except CRITICAL errors
-    # Dashboard is the primary display - only show critical system errors in logs
+    # TEMPORARILY set to INFO to debug subscription issue
     logging.basicConfig(
-        level=logging.CRITICAL,  # Only show CRITICAL errors - dashboard handles everything else
+        level=logging.INFO,  # DEBUG subscription issue
         format='%(asctime)s - %(levelname)s - %(message)s',
         handlers=[
-            logging.StreamHandler()  # Console output only for critical errors
+            logging.StreamHandler()  # Console output
         ]
     )
+    
+    # ONLY suppress project_x_py SDK logs - they spam JSON
+    logging.getLogger("project_x_py").setLevel(logging.CRITICAL)
+    logging.getLogger("project_x_py").propagate = False
+    
     return logging.getLogger(__name__)
 
 
@@ -559,16 +587,60 @@ def initialize_broker() -> None:
     
     # Create broker using configuration
     # In shadow mode, broker streams data but doesn't execute actual orders
-    broker = create_broker(_bot_config.api_token, _bot_config.username, CONFIG["instrument"])
+    broker = create_broker(_bot_config.api_token, _bot_config.username)
+    
+    # CRITICAL: Suppress project_x_py logging immediately after broker creation
+    # The TopStep SDK uses structured JSON logging that corrupts dashboard display
+    import logging as log_module
+    log_module.getLogger("project_x_py").setLevel(log_module.CRITICAL)
+    log_module.getLogger("project_x_py.statistics").setLevel(log_module.CRITICAL)
+    log_module.getLogger("project_x_py.statistics.bounded_statistics").setLevel(log_module.CRITICAL)
+    log_module.getLogger("project_x_py.order_manager").setLevel(log_module.CRITICAL)
+    log_module.getLogger("project_x_py.position_manager").setLevel(log_module.CRITICAL)
+    log_module.getLogger("project_x_py.trading_suite").setLevel(log_module.CRITICAL)
     
     # Connect to broker (initial connection doesn't use circuit breaker)
-    logger.info("Connecting to broker...")
+    logger.info("=" * 80)
+    logger.info("🔌 CONNECTING TO TOPSTEP...")
+    logger.info("=" * 80)
     if not broker.connect():
+        logger.critical("❌ FAILED TO CONNECT TO TOPSTEP")
         logger.error("Failed to connect to broker")
         return False
         raise RuntimeError("Broker connection failed")
     
+    logger.info("=" * 80)
+    logger.info("✅ TOPSTEP CONNECTION SUCCESSFUL")
+    logger.info("=" * 80)
     logger.info("Broker connected successfully")
+    
+    # Get account balance - retry up to 3 times
+    equity = 0.0
+    for attempt in range(3):
+        try:
+            equity = broker.get_account_equity()
+            if equity > 0:
+                logger.info(f"💰 Account Balance: ${equity:,.2f}")
+                logger.info("=" * 80)
+                bot_status["starting_equity"] = equity
+                bot_status["account_balance"] = equity
+                break
+            else:
+                logger.warning(f"Account balance returned {equity}, retrying... (attempt {attempt + 1}/3)")
+                time_module.sleep(1)
+        except Exception as e:
+            logger.warning(f"Could not fetch account balance (attempt {attempt + 1}/3): {e}")
+            if attempt < 2:
+                time_module.sleep(1)
+    
+    # If equity fetch failed, use config value as fallback
+    if equity == 0:
+        config_balance = CONFIG.get("fetched_account_balance") or CONFIG.get("topstep_starting_balance") or 50000.0
+        logger.warning(f"⚠️  Using fallback balance from config: ${config_balance:,.2f}")
+        bot_status["starting_equity"] = config_balance
+        bot_status["account_balance"] = config_balance
+        equity = config_balance
+    
     
     # Send bot startup alert
     try:
@@ -903,6 +975,7 @@ def check_broker_connection() -> None:
             
             bot_status["maintenance_idle"] = True
             bot_status["trading_enabled"] = False
+            logger.critical(f"  [DEBUG] Set trading_enabled=False due to maintenance window")
             logger.critical("  Bot will check every 30s for market reopen...")
             return  # Skip broker health check since we just disconnected
     
@@ -1370,8 +1443,9 @@ def initialize_state(symbol: str) -> None:
         # Tick data storage
         "ticks": deque(maxlen=CONFIG.get("max_tick_storage", 10000)),
         
-        # Bar storage
-        "bars_1min": deque(maxlen=CONFIG.get("max_bars_storage", 200)),
+        # Bar counters (no storage, just count)
+        "bars_1min_count": 0,  # Total bars created since start
+        "bars_1min": deque(maxlen=200),  # Keep last 200 for VWAP calculations
         "bars_15min": deque(maxlen=100),
         
         # Current incomplete bars
@@ -1502,6 +1576,50 @@ def on_quote(symbol: str, bid_price: float, ask_price: float, bid_size: int,
             last_price=last_price,
             timestamp=timestamp_ms
         )
+        
+        # Update dashboard with live bid/ask prices
+        if dashboard is not None:
+            spread = ask_price - bid_price
+            
+            # Determine market condition based on spread
+            if spread <= 0.50:
+                condition = "NORMAL - Tight spread, good liquidity"
+            elif spread <= 1.00:
+                condition = "NORMAL - Good liquidity"
+            elif spread <= 2.00:
+                condition = "NORMAL - Acceptable spread"
+            elif spread <= 5.00:
+                condition = "CAUTION - Wider spread"
+            else:
+                condition = "VOLATILE - Wide spreads detected"
+            
+            # Calculate bars and current volume if symbol initialized
+            bars_count = 0
+            current_volume = 0
+            if symbol in state:
+                bars_count = state[symbol].get("bars_1min_count", 0)
+                # Get current bar volume
+                current_bar = state[symbol].get("current_1min_bar")
+                if current_bar:
+                    current_volume = current_bar.get("volume", 0)
+            
+            dashboard.update_symbol_data(symbol, {
+                'bid': bid_price,
+                'ask': ask_price,
+                'bid_size': bid_size,
+                'ask_size': ask_size,
+                'spread': spread,
+                'market_status': 'LIVE',
+                'condition': condition,
+                'bars_1min_count': bars_count,
+                'current_volume': current_volume
+            })
+            
+            # Throttled refresh - max 2x per second to prevent flickering
+            current_time = time_module.time()
+            if current_time - last_dashboard_refresh[0] >= 0.5:  # 500ms throttle
+                dashboard.display()
+                last_dashboard_refresh[0] = current_time
     
     # Also process as tick data to build bars
     # Use last_price and estimated volume of 1 (quote updates don't have volume)
@@ -1702,12 +1820,19 @@ def update_1min_bar(symbol: str, price: float, volume: int, dt: datetime) -> Non
     
     current_bar = state[symbol]["current_1min_bar"]
     
+    # DEBUG: Log when we detect a minute change
+    if current_bar is not None and current_bar["timestamp"] != minute_boundary:
+        logger.info(f"[BAR_DEBUG] Minute changed: {current_bar['timestamp'].strftime('%H:%M:%S')} -> {minute_boundary.strftime('%H:%M:%S')}")
+    
     if current_bar is None or current_bar["timestamp"] != minute_boundary:
         # Finalize previous bar if exists
         if current_bar is not None:
+            # ONLY increment when closing a bar (minute boundary changed)
             state[symbol]["bars_1min"].append(current_bar)
-            bar_count = len(state[symbol]["bars_1min"])
-            logger.info(f"[BAR COMPLETED] 1min bar closed | Price: ${current_bar['close']:.2f} | Vol: {current_bar['volume']} | Total bars: {bar_count}")
+            state[symbol]["bars_1min_count"] += 1  # Increment total bar counter
+            bar_count = state[symbol]["bars_1min_count"]
+            # Log at INFO level to avoid spamming the dashboard
+            logger.info(f"[BAR CLOSED] Bar #{bar_count} | Time: {current_bar['timestamp'].strftime('%H:%M')} | Price: ${current_bar['close']:.2f} | Vol: {current_bar['volume']}")
             
             # Calculate VWAP after new bar is added
             calculate_vwap(symbol)
@@ -7111,12 +7236,47 @@ def main(symbol_override: str = None) -> None:
     # Initialize broker (replaces initialize_sdk)
     initialize_broker()
     
-    # Phase 12: Record starting equity for drawdown monitoring
-    bot_status["starting_equity"] = get_account_equity()
-    logger.info(f"[{primary_symbol}] Starting Equity: ${bot_status['starting_equity']:.2f}")
+    # Initialize Azure time service for maintenance countdown
+    try:
+        check_azure_time_service()
+    except Exception as e:
+        logger.warning(f"Could not fetch Azure time on startup: {e}")
+        # Use local time as fallback
+        et_tz = pytz.timezone('US/Eastern')
+        local_et = datetime.now(et_tz).isoformat()
+        bot_status["azure_time"] = local_et
+        logger.info(f"Using local ET time as fallback: {local_et}")
     
-    # Update dashboard with actual account balance
-    dashboard.update_bot_data({"account_balance": bot_status["starting_equity"]})
+    # Phase 12: Record starting equity for drawdown monitoring
+    # Use the equity already fetched during broker initialization
+    if bot_status.get("starting_equity", 0) == 0:
+        # If not set yet, try to fetch it now
+        equity = get_account_equity()
+        bot_status["starting_equity"] = equity if equity is not None else 0.0
+    
+    starting_equity = bot_status.get("starting_equity", 0.0) or 0.0
+    logger.info(f"[{primary_symbol}] Starting Equity: ${starting_equity:.2f}")
+    
+    # Calculate initial maintenance countdown - always calculate, even if Azure fails
+    maintenance_countdown = "-- h --m"
+    if bot_status.get("azure_time"):
+        try:
+            maintenance_countdown = dashboard.calculate_maintenance_time(bot_status["azure_time"])
+            logger.info(f"Maintenance countdown: {maintenance_countdown}")
+        except Exception as e:
+            logger.warning(f"Could not calculate maintenance time: {e}")
+            # Fallback to simple local calculation
+            maintenance_countdown = dashboard.calculate_maintenance_time(None)
+    else:
+        # Use local time
+        maintenance_countdown = dashboard.calculate_maintenance_time(None)
+        logger.info(f"Maintenance countdown (local): {maintenance_countdown}")
+    
+    # Update dashboard with actual account balance and maintenance
+    dashboard.update_bot_data({
+        "account_balance": starting_equity,
+        "maintenance_countdown": maintenance_countdown
+    })
     dashboard.display()
     
     # Initialize state for all trading symbols
@@ -7173,14 +7333,24 @@ def main(symbol_override: str = None) -> None:
         
         # Subscribe to bid/ask quotes if broker supports it
         if broker is not None and hasattr(broker, 'subscribe_quotes'):
+            logger.info("=" * 80)
             logger.info(f"[{symbol}] Subscribing to bid/ask quotes...")
+            logger.info(f"Broker type: {type(broker)}")
+            logger.info(f"Has subscribe_quotes: {hasattr(broker, 'subscribe_quotes')}")
+            logger.info("=" * 80)
             try:
                 broker.subscribe_quotes(symbol, on_quote)
+                logger.info(f"[{symbol}] ✅ Successfully called broker.subscribe_quotes()")
                 dashboard.update_symbol_data(symbol, {"status": "Subscribed to quotes"})
             except Exception as e:
-                logger.warning(f"Failed to subscribe to quotes for {symbol}: {e}")
+                logger.error(f"❌ Failed to subscribe to quotes for {symbol}: {e}")
                 logger.warning("Continuing without bid/ask quote data")
+                import traceback
+                traceback.print_exc()
                 dashboard.update_symbol_data(symbol, {"status": "Quote subscription failed"})
+        else:
+            logger.warning(f"[{symbol}] Broker does NOT support quote subscriptions")
+            logger.warning(f"broker={broker}, has_subscribe_quotes={hasattr(broker, 'subscribe_quotes') if broker else False}")
         dashboard.display()
     
     # RL and Adaptive Exits are CLOUD-ONLY - no local RL components
@@ -7201,11 +7371,29 @@ def main(symbol_override: str = None) -> None:
     
     # Run event loop (blocks until shutdown signal)
     try:
+        logger.critical("=" * 80)
+        logger.critical("STARTING EVENT LOOP - Bot should now run continuously")
+        logger.critical("=" * 80)
         event_loop.run()
+        logger.critical("=" * 80)
+        logger.critical("EVENT LOOP EXITED (this should only happen on Ctrl+C or error)")
+        logger.critical("=" * 80)
     except KeyboardInterrupt:
-        logger.info("Keyboard interrupt received")
+        logger.critical("\n" + "=" * 80)
+        logger.critical("🛑 SHUTDOWN REQUESTED (Ctrl+C)")
+        logger.critical("=" * 80)
+    except Exception as e:
+        logger.critical("\n" + "=" * 80)
+        logger.critical(f"❌ EVENT LOOP CRASHED: {e}")
+        logger.critical("=" * 80)
+        import traceback
+        traceback.print_exc()
     finally:
         logger.info("Event loop stopped")
+        
+        # Generate session summary for primary symbol
+        if CONFIG.get("instrument") and CONFIG["instrument"] in state:
+            print_session_summary(CONFIG["instrument"])
         
         # Cleanup dashboard
         if dashboard:
@@ -7324,37 +7512,11 @@ def update_dashboard_for_symbol(symbol: str) -> None:
     if trading_state == "flatten_mode":
         market_status = "FLATTEN"
     
-    # Calculate maintenance countdown from Azure time if available
+    # Calculate maintenance countdown from Azure server time
     maintenance_time = "-- h --m"
-    if bot_status.get("azure_time"):
-        try:
-            from datetime import datetime as dt_class
-            et_time = dt_class.fromisoformat(bot_status["azure_time"].replace('Z', '+00:00'))
-            
-            # Next maintenance at 5 PM ET (17:00)
-            if et_time.hour < 17:
-                # Before 5 PM today
-                next_maint = et_time.replace(hour=17, minute=0, second=0, microsecond=0)
-            elif et_time.hour == 17:
-                # In maintenance now
-                maintenance_time = "NOW"
-                next_maint = None
-            else:
-                # After 6 PM, next maintenance tomorrow
-                next_day = et_time + timedelta(days=1)
-                next_maint = next_day.replace(hour=17, minute=0, second=0, microsecond=0)
-            
-            if next_maint and maintenance_time != "NOW":
-                time_diff = next_maint - et_time
-                hours = int(time_diff.total_seconds() // 3600)
-                minutes = int((time_diff.total_seconds() % 3600) // 60)
-                maintenance_time = f"{hours}h {minutes}m"
-        except Exception as e:
-            # Fallback to dashboard calculation
-            maintenance_time = dashboard.calculate_maintenance_time() if dashboard else "-- h --m"
-    else:
-        # Use dashboard's local calculation
-        maintenance_time = dashboard.calculate_maintenance_time() if dashboard else "-- h --m"
+    if dashboard:
+        server_time = bot_status.get("azure_time")
+        maintenance_time = dashboard.calculate_maintenance_time(server_time)
     
     # Get last signal info with time, confidence, and approval status
     last_signal = symbol_state.get("last_signal_type", "--")
@@ -7436,6 +7598,20 @@ def update_dashboard_for_symbol(symbol: str) -> None:
     
     # Update dashboard
     dashboard.update_symbol_data(symbol, update_data)
+    
+    # Also update bot-level data with maintenance and TopStep status
+    # Check broker connection status properly
+    topstep_status = False
+    if broker is not None:
+        if hasattr(broker, 'is_connected'):
+            topstep_status = broker.is_connected()
+        elif hasattr(broker, 'connected'):
+            topstep_status = broker.connected
+    
+    dashboard.update_bot_data({
+        "maintenance_countdown": maintenance_time,
+        "topstep_connected": topstep_status
+    })
 
 
 # ============================================================================
@@ -7473,8 +7649,8 @@ def handle_tick_event(event) -> None:
         if dashboard:
             dashboard.display()
     
-    # Suppress normal logging - only log every 5000 ticks to reduce spam
-    if total_ticks % 5000 == 0:
+    # Suppress normal logging - only log every 1000 ticks to reduce spam
+    if total_ticks % 1000 == 0:
         # Get current bid/ask from bid_ask_manager if available
         bid_ask_info = ""
         if bid_ask_manager is not None:
@@ -7482,7 +7658,7 @@ def handle_tick_event(event) -> None:
             if quote:
                 spread = quote.ask_price - quote.bid_price
                 bid_ask_info = f" | Bid: ${quote.bid_price:.2f} x {quote.bid_size} | Ask: ${quote.ask_price:.2f} x {quote.ask_size} | Spread: ${spread:.2f}"
-        logger.debug(f"[TICK] {symbol} @ ${price:.2f} | Vol: {volume} | Total ticks: {total_ticks}{bid_ask_info}")
+        logger.critical(f"[TICK] {symbol} @ ${price:.2f} | Vol: {volume} | Total ticks: {total_ticks}{bid_ask_info}")
     
     # Store last price in state
     state[symbol]["last_price"] = price
@@ -7640,6 +7816,90 @@ def handle_shutdown_event(data: Dict[str, Any]) -> None:
     bot_status["trading_enabled"] = False
 
 
+def print_session_summary(symbol: str) -> None:
+    """Print detailed session summary on exit"""
+    print("\n" + "=" * 80)
+    print("SESSION SUMMARY - QuoTrading AI Bot")
+    print("=" * 80)
+    
+    # Session duration
+    if bot_status.get("session_start_time"):
+        start_time = bot_status["session_start_time"]
+        end_time = datetime.now()
+        duration = end_time - start_time
+        hours = int(duration.total_seconds() // 3600)
+        minutes = int((duration.total_seconds() % 3600) // 60)
+        print(f"Session Duration: {hours}h {minutes}m")
+        print(f"Started: {start_time.strftime('%Y-%m-%d %H:%M:%S')}")
+        print(f"Ended: {end_time.strftime('%Y-%m-%d %H:%M:%S')}")
+    
+    print("\n" + "-" * 80)
+    print(f"SYMBOL: {symbol}")
+    print("-" * 80)
+    
+    # Trading statistics
+    symbol_state = state[symbol]
+    bars_count = symbol_state.get("bars_1min_count", 0)
+    ticks_received = symbol_state.get("total_ticks_received", 0)
+    
+    print(f"Bars Processed: {bars_count} (1-minute bars)")
+    print(f"Ticks Received: {ticks_received:,}")
+    
+    # P&L Summary
+    pnl_today = symbol_state.get("pnl_today", 0.0)
+    starting_equity = bot_status.get("starting_equity", 0.0) or 0.0
+    current_equity = get_account_equity()
+    current_equity = current_equity if current_equity is not None else 0.0
+    
+    print(f"\nStarting Equity: ${starting_equity:,.2f}")
+    print(f"Ending Equity: ${current_equity:,.2f}")
+    print(f"P&L Today: ${pnl_today:+,.2f}")
+    
+    if starting_equity > 0:
+        pnl_percent = (pnl_today / starting_equity) * 100
+        print(f"Return: {pnl_percent:+.2f}%")
+    
+    # Position info
+    position = symbol_state["position"]
+    if position.get("active"):
+        print(f"\n⚠️  WARNING: Active position still open!")
+        print(f"   Side: {position['side'].upper()}")
+        print(f"   Quantity: {position['quantity']}")
+        print(f"   Entry: ${position.get('entry_price', 0):.2f}")
+    else:
+        print(f"\n✓ No open positions")
+    
+    # Signal statistics
+    signals_generated = symbol_state.get("signals_generated", 0)
+    signals_approved = symbol_state.get("signals_approved", 0)
+    signals_rejected = symbol_state.get("signals_rejected", 0)
+    
+    if signals_generated > 0:
+        print(f"\nSignals Generated: {signals_generated}")
+        print(f"  Approved: {signals_approved}")
+        print(f"  Rejected: {signals_rejected}")
+        if signals_generated > 0:
+            approval_rate = (signals_approved / signals_generated) * 100
+            print(f"  Approval Rate: {approval_rate:.1f}%")
+    
+    # Trade statistics
+    trades_count = symbol_state.get("trades_today", 0)
+    winning_trades = symbol_state.get("winning_trades", 0)
+    losing_trades = symbol_state.get("losing_trades", 0)
+    
+    if trades_count > 0:
+        print(f"\nTrades Executed: {trades_count}")
+        print(f"  Wins: {winning_trades}")
+        print(f"  Losses: {losing_trades}")
+        if trades_count > 0:
+            win_rate = (winning_trades / trades_count) * 100
+            print(f"  Win Rate: {win_rate:.1f}%")
+    
+    print("\n" + "=" * 80)
+    print("Thank you for using QuoTrading AI Bot!")
+    print("=" * 80 + "\n")
+
+
 def cleanup_on_shutdown() -> None:
     """Cleanup tasks on shutdown"""
     logger.info("Running cleanup tasks...")
@@ -7686,10 +7946,10 @@ def cleanup_on_shutdown() -> None:
         except Exception as e:
             logger.error(f"Error stopping timer manager: {e}")
     
-    # Suppress session summary - keep dashboard visible
-    # symbol = CONFIG["instrument"]
-    # if symbol in state:
-    #     log_session_summary(symbol)
+    # Print session summary
+    symbol = CONFIG["instrument"]
+    if symbol in state:
+        print_session_summary(symbol)
     
     logger.info("Cleanup complete")
 

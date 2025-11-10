@@ -8,25 +8,40 @@ from typing import Dict, Any, Optional, Callable, List
 from datetime import datetime
 import logging
 import time
-import asyncio
 
 # Import TopStep SDK (Project-X)
 try:
     from project_x_py import ProjectX, ProjectXConfig, TradingSuite, TradingSuiteConfig
     from project_x_py import OrderSide, OrderType
-    from project_x_py.realtime.core import ProjectXRealtimeClient
     TOPSTEP_SDK_AVAILABLE = True
 except ImportError:
     TOPSTEP_SDK_AVAILABLE = False
     logging.warning("TopStep SDK (project-x-py) not installed - broker operations will not work")
 
-# Import TopStep WebSocket streamer
+# Import WebSocket streamer for real-time market data
 try:
     from topstep_websocket import TopStepWebSocketStreamer
-    TOPSTEP_WEBSOCKET_AVAILABLE = True
+    WEBSOCKET_AVAILABLE = True
 except ImportError:
-    TOPSTEP_WEBSOCKET_AVAILABLE = False
-    logging.warning("TopStep WebSocket module not found - live streaming will not work")
+    WEBSOCKET_AVAILABLE = False
+    logging.warning("TopStepWebSocketStreamer not available - market data will not work")
+
+logger = logging.getLogger(__name__)
+
+from abc import ABC, abstractmethod
+from typing import Dict, Any, Optional, Callable, List
+from datetime import datetime
+import logging
+import time
+
+# Import TopStep SDK (Project-X)
+try:
+    from project_x_py import ProjectX, ProjectXConfig, TradingSuite, TradingSuiteConfig
+    from project_x_py import OrderSide, OrderType
+    TOPSTEP_SDK_AVAILABLE = True
+except ImportError:
+    TOPSTEP_SDK_AVAILABLE = False
+    logging.warning("TopStep SDK (project-x-py) not installed - broker operations will not work")
 
 
 logger = logging.getLogger(__name__)
@@ -179,7 +194,7 @@ class TopStepBroker(BrokerInterface):
     Wraps TopStep API calls with error handling and retry logic.
     """
     
-    def __init__(self, api_token: str, username: str = None, max_retries: int = 3, timeout: int = 30, instrument: str = "ES"):
+    def __init__(self, api_token: str, username: str = None, max_retries: int = 3, timeout: int = 30):
         """
         Initialize TopStep broker.
         
@@ -188,13 +203,11 @@ class TopStepBroker(BrokerInterface):
             username: TopStep username/email (required for SDK v3.5+)
             max_retries: Maximum number of retry attempts
             timeout: Request timeout in seconds
-            instrument: Trading instrument symbol (default: ES)
         """
         self.api_token = api_token
         self.username = username
         self.max_retries = max_retries
         self.timeout = timeout
-        self.instrument = instrument  # Store for TradingSuiteConfig
         self.connected = False
         self.circuit_breaker_open = False
         self.failure_count = 0
@@ -204,219 +217,88 @@ class TopStepBroker(BrokerInterface):
         self.sdk_client: Optional[ProjectX] = None
         self.trading_suite: Optional[TradingSuite] = None
         
-        # WebSocket streamer for live data
-        self.websocket_streamer: Optional[TopStepWebSocketStreamer] = None
-        self._contract_id_cache: Dict[str, str] = {}  # symbol -> contract_id mapping (populated during connection)
-        
-        # Dynamic balance tracking for auto-reconfiguration
-        self._last_configured_balance: float = 0.0
-        self._balance_change_threshold: float = 0.05  # Reconfigure if balance changes by 5%
-        self.config: Optional[Any] = None  # Store reference to config for dynamic updates
+        # WebSocket streamer for real-time market data
+        self.websocket: Optional[TopStepWebSocketStreamer] = None
         
         if not TOPSTEP_SDK_AVAILABLE:
             logger.error("TopStep SDK (project-x-py) not installed!")
             logger.error("Install with: pip install project-x-py")
             raise RuntimeError("TopStep SDK not available")
     
-    def connect(self, max_retries: int = None) -> bool:
-        """
-        Connect to TopStep SDK with retry logic.
-        
-        Args:
-            max_retries: Override default max retries (default: 3)
-        
-        Returns:
-            True if connected, False if all retries failed
-        """
+    def connect(self) -> bool:
+        """Connect to TopStep SDK."""
         import asyncio
         
         if self.circuit_breaker_open:
             logger.error("Circuit breaker is open - cannot connect")
             return False
         
-        # Use the async version wrapped in asyncio.run
-        retries = max_retries if max_retries is not None else self.max_retries
-        return asyncio.run(self.connect_async(retries))
-    
-    async def connect_async(self, max_retries: int = 3) -> bool:
-        """
-        Connect to TopStep SDK asynchronously with exponential backoff retry.
-        
-        Args:
-            max_retries: Maximum retry attempts
-        
-        Returns:
-            True if connected, False if all retries failed
-        """
-        if self.circuit_breaker_open:
-            logger.error("Circuit breaker is open - cannot connect")
-            return False
-        
-        for attempt in range(max_retries):
-            try:
-                if attempt > 0:
-                    # Exponential backoff: 2^attempt seconds (2s, 4s, 8s)
-                    wait_time = min(2 ** attempt, 30)  # Max 30 seconds
-                    logger.info(f"Retry attempt {attempt + 1}/{max_retries} in {wait_time}s...")
-                    await asyncio.sleep(wait_time)
+        try:
+            logger.info("Connecting to TopStep SDK (Project-X)...")
+            
+            # Initialize SDK client with username and API key
+            self.sdk_client = ProjectX(
+                username=self.username or "",
+                api_key=self.api_token,
+                config=ProjectXConfig()
+            )
+            
+            # Authenticate first (async method needs await)
+            logger.info("Authenticating with TopStep...")
+            asyncio.run(self.sdk_client.authenticate())
+            
+            # Trading suite is optional - only needed for live trading, not historical data
+            self.trading_suite = None
+            
+            # Test connection by getting account info
+            account = self.sdk_client.get_account_info()
+            if account:
+                account_id = getattr(account, 'account_id', getattr(account, 'id', 'N/A'))
+                logger.info(f"Connected to TopStep - Account: {account_id}")
+                self.connected = True
+                self.failure_count = 0
                 
-                logger.info(f"Connecting to TopStep SDK... (attempt {attempt + 1}/{max_retries})")
-                
-                # Initialize SDK client with username and API key
-                self.sdk_client = ProjectX(
-                    username=self.username or "",
-                    api_key=self.api_token,
-                    config=ProjectXConfig()
-                )
-                
-                # Authenticate first (async method)
-                logger.info("Authenticating with TopStep...")
-                try:
-                    await self.sdk_client.authenticate()
-                    logger.info("[SUCCESS] Authentication successful!")
-                    # Give SDK a moment to establish session
-                    await asyncio.sleep(0.5)
-                except Exception as auth_error:
-                    logger.error(f"Authentication error: {auth_error}")
-                    if attempt == max_retries - 1:
-                        # Last attempt failed
-                        logger.error(f"[FAILED] Authentication failed after {max_retries} attempts")
-                        self._record_failure()
-                        return False
-                    else:
-                        # Will retry
-                        logger.warning("Authentication failed, will retry...")
-                        continue
-                
-                # Test connection by getting account info first
-                try:
-                    account = self.sdk_client.get_account_info()
-                    logger.info(f"Account info retrieved: {account}")
-                except Exception as account_error:
-                    logger.error(f"Failed to get account info: {account_error}")
-                    if attempt == max_retries - 1:
-                        logger.error(f"[FAILED] Account query failed after {max_retries} attempts")
-                        self._record_failure()
-                        return False
-                    else:
-                        logger.warning("Account query failed, will retry...")
-                        continue
-                
-                # Initialize WebSocket streamer first (needed for TradingSuite)
-                try:
-                    session_token = self.sdk_client.get_session_token()
-                    if session_token:
-                        logger.info("Initializing WebSocket streamer...")
-                        self.websocket_streamer = TopStepWebSocketStreamer(session_token)
-                        if self.websocket_streamer.connect():
-                            logger.info("[SUCCESS] WebSocket streamer initialized and connected")
-                        else:
-                            logger.warning("WebSocket connection failed - will use REST API polling")
-                    else:
-                        logger.warning("No session token available - WebSocket disabled")
-                except Exception as ws_error:
-                    logger.warning(f"WebSocket initialization failed: {ws_error} - will use REST API")
-                    self.websocket_streamer = None
-                
-                # Initialize trading suite for order placement (requires realtime_client)
-                try:
-                    # TradingSuite needs the SDK's realtime client for live order updates
-                    # Get JWT token and account info to initialize realtime client
-                    jwt_token = self.sdk_client.get_session_token()
-                    account_info = self.sdk_client.get_account_info()
-                    account_id = str(getattr(account_info, 'id', getattr(account_info, 'account_id', '')))
-                    
-                    if jwt_token and account_id:
-                        # Initialize ProjectX realtime client
-                        realtime_client = ProjectXRealtimeClient(
-                            jwt_token=jwt_token,
-                            account_id=account_id
-                        )
-                        
-                        # Now initialize TradingSuite with the realtime client
-                        self.trading_suite = TradingSuite(
-                            client=self.sdk_client,
-                            realtime_client=realtime_client,
-                            config=TradingSuiteConfig(instrument=self.instrument)
-                        )
-                        logger.info(f"Trading suite initialized for {self.instrument}")
-                    else:
-                        logger.warning("Missing JWT token or account ID - order placement disabled")
-                        self.trading_suite = None
-                except Exception as ts_error:
-                    logger.warning(f"Trading suite initialization failed: {ts_error}")
-                    self.trading_suite = None
-                
-                # Connection successful! Setup account info
-                if account:
-                    account_id = getattr(account, 'account_id', getattr(account, 'id', 'N/A'))
-                    account_balance = float(getattr(account, 'balance', getattr(account, 'equity', 0)))
-                    
-                    logger.info(f"Connected to TopStep - Account: {account_id}")
-                    logger.info(f"Account Balance: ${account_balance:,.2f}")
-                    
-                    # AUTO-CONFIGURE: Set risk limits based on account size
-                    # This makes the bot work on ANY TopStep account automatically!
-                    from config import BotConfiguration
-                    config = BotConfiguration()
-                    config.auto_configure_for_account(account_balance, logger)
-                    
-                    # Store config and balance for dynamic reconfiguration
-                    self.config = config
-                    self._last_configured_balance = account_balance
-                    
-                    # CRITICAL: Cache contract IDs while event loop is still active
-                    # This MUST happen here before asyncio.run() completes and closes the loop
+                # Initialize WebSocket for real-time market data
+                if WEBSOCKET_AVAILABLE:
                     try:
-                        instruments = await self.sdk_client.search_instruments(query=self.instrument)
-                        if instruments and len(instruments) > 0:
-                            # Use first match for caching (attribute is 'id' not 'contract_id')
-                            first_contract = getattr(instruments[0], 'id', None)
-                            if first_contract:
-                                self._contract_id_cache[self.instrument] = first_contract
-                                logger.info(f"Cached contract ID: {self.instrument} -> {first_contract}")
-                            else:
-                                logger.warning(f"No contract ID found for {self.instrument}")
+                        logger.info("Initializing WebSocket for real-time market data...")
+                        session_token = self.sdk_client.get_session_token()
+                        self.websocket = TopStepWebSocketStreamer(session_token)
+                        if self.websocket.connect():
+                            logger.info("✅ WebSocket connected - ready for real-time quotes")
                         else:
-                            logger.warning(f"No instruments found for {self.instrument}")
-                    except Exception as cache_err:
-                        logger.error(f"Failed to cache contract ID: {cache_err}")
-                    
-                    # SUCCESS! Connection established
-                    self.connected = True
-                    self.failure_count = 0
-                    logger.info(f"[SUCCESS] TopStep connection established on attempt {attempt + 1}")
-                    return True
-                else:
-                    logger.error("Account info was None")
-                    if attempt == max_retries - 1:
-                        logger.error(f"[FAILED] Connection failed after {max_retries} attempts")
-                        self._record_failure()
-                        return False
-                    else:
-                        logger.warning("Will retry connection...")
-                        continue
+                            logger.warning("⚠️ WebSocket connection failed - market data may not work")
+                    except Exception as ws_error:
+                        logger.error(f"WebSocket initialization error: {ws_error}")
+                        logger.warning("Continuing without WebSocket - market data may not work")
                 
-            except Exception as e:
-                logger.error(f"Connection attempt {attempt + 1} failed: {e}")
-                if attempt == max_retries - 1:
-                    # Last attempt - fail permanently
-                    logger.error(f"[FAILED] All {max_retries} connection attempts failed")
-                    self._record_failure()
-                    return False
-                else:
-                    # Will retry
-                    logger.warning(f"Will retry connection (error: {str(e)[:100]}...)")
-                    continue
-        
-        # Should never reach here, but handle it gracefully
-        logger.error("[FAILED] Unexpected exit from connection loop")
-        self._record_failure()
-        return False
+                return True
+            else:
+                logger.error("Failed to retrieve account info")
+                self._record_failure()
+                return False
+            
+        except Exception as e:
+            logger.error(f"Failed to connect to TopStep SDK: {e}")
+            self._record_failure()
+            return False
     
     def disconnect(self) -> None:
         """Disconnect from TopStep SDK."""
         try:
+            if self.websocket and self.websocket.is_connected:
+                logger.info("=" * 60)
+                logger.info("WEBSOCKET STATISTICS (Total Session)")
+                logger.info("=" * 60)
+                logger.info(f"Quotes received: {self.websocket.quotes_received}")
+                logger.info(f"Trades received: {self.websocket.trades_received}")
+                logger.info(f"Depth updates: {self.websocket.depth_updates_received}")
+                logger.info(f"Last message time: {self.websocket.last_message_time}")
+                logger.info(f"Active subscriptions: {len(self.websocket.subscriptions)}")
+                logger.info(f"Subscriptions: {self.websocket.subscriptions}")
+                logger.info("=" * 60)
+                logger.info("Disconnecting WebSocket...")
+                self.websocket.is_connected = False
             if self.trading_suite:
                 # Close any active connections
                 self.trading_suite = None
@@ -427,120 +309,145 @@ class TopStepBroker(BrokerInterface):
         except Exception as e:
             logger.error(f"Error disconnecting from TopStep SDK: {e}")
     
-    async def _ensure_token_fresh(self) -> bool:
-        """
-        Ensure JWT token is fresh and refresh if needed.
-        The SDK handles this automatically, but we call it explicitly for long-running bots.
+    def _get_contract_id(self, symbol: str) -> str:
+        """Convert symbol to TopStep contract ID format.
         
+        TopStep WebSocket requires full contract notation like:
+        CON.F.US.MES.Z25 (Futures, US, MES symbol, Dec 2025)
+        
+        Format: CON.F.US.<SYMBOL>.<MONTH><YEAR>
+        Month codes: F=Jan, G=Feb, H=Mar, J=Apr, K=May, M=Jun, 
+                     N=Jul, Q=Aug, U=Sep, V=Oct, X=Nov, Z=Dec
+        
+        Args:
+            symbol: Trading symbol (e.g., 'MES', 'NQ', 'ES')
+            
         Returns:
-            bool: True if token is fresh/refreshed, False if refresh failed
+            Contract ID string for WebSocket subscription
         """
-        if not self.sdk_client or not self.connected:
-            return False
-        
         try:
-            # SDK's built-in method checks expiry and refreshes if within 5 minutes
-            await self.sdk_client._refresh_authentication()
-            return True
+            from datetime import datetime
+            
+            # Get current month to determine front month contract
+            now = datetime.now()
+            current_month = now.month
+            current_year = now.year % 100  # Last 2 digits
+            
+            # Futures month codes (CME standard)
+            month_codes = {
+                1: 'F', 2: 'G', 3: 'H', 4: 'J', 5: 'K', 6: 'M',
+                7: 'N', 8: 'Q', 9: 'U', 10: 'V', 11: 'X', 12: 'Z'
+            }
+            
+            # Quarterly contracts (Mar, Jun, Sep, Dec) for equity index futures
+            quarterly_months = {3: 'H', 6: 'M', 9: 'U', 12: 'Z'}
+            
+            # Determine front month for quarterly contracts (MES, ES, NQ, etc.)
+            if symbol in ['MES', 'ES', 'NQ', 'RTY', 'YM']:
+                # Find next quarterly month
+                for month in [3, 6, 9, 12]:
+                    if month >= current_month:
+                        front_month = quarterly_months[month]
+                        front_year = current_year
+                        break
+                else:
+                    # Roll to next year's March
+                    front_month = 'H'
+                    front_year = (current_year + 1) % 100
+            else:
+                # Monthly contracts - use current or next month
+                front_month = month_codes[current_month]
+                front_year = current_year
+            
+            # Build TopStep contract notation
+            contract_id = f"CON.F.US.{symbol}.{front_month}{front_year:02d}"
+            logger.info(f"[CONTRACT] {symbol} -> {contract_id}")
+            return contract_id
+            
         except Exception as e:
-            logger.error(f"Token refresh failed: {e}")
-            return False
+            logger.error(f"Error building contract ID for {symbol}: {e}")
+            logger.warning(f"Falling back to symbol: {symbol}")
+            return symbol
     
     def get_account_equity(self) -> float:
-        """
-        Get account equity from TopStep.
-        Automatically reconfigures risk limits if balance changes significantly.
-        Ensures 100% TopStep compliance at all times.
-        """
+        """Get account equity from TopStep."""
+        import asyncio
+        
         if not self.connected or not self.sdk_client:
             logger.error("Cannot get equity: not connected")
             return 0.0
         
         try:
-            account = self.sdk_client.get_account_info()
-            if account:
-                current_balance = float(account.balance or 0.0)
+            # Use get_account_info() instead of deprecated get_account()
+            account_info = self.sdk_client.get_account_info()
+            
+            # If it returns a coroutine, await it
+            if asyncio.iscoroutine(account_info):
+                account_info = asyncio.run(account_info)
+            
+            if account_info:
+                # Debug: Log what we got
+                logger.info(f"[ACCOUNT DEBUG] Type: {type(account_info)}")
+                logger.info(f"[ACCOUNT DEBUG] Attributes: {[x for x in dir(account_info) if not x.startswith('_')][:10]}")
                 
-                # CRITICAL: Always reconfigure if config doesn't exist (safety net)
-                if not self.config:
-                    logger.warning("[WARNING] Config missing - initializing auto-configuration")
-                    from config import BotConfiguration
-                    self.config = BotConfiguration()
-                    if self.config.auto_configure_for_account(current_balance, logger):
-                        self._last_configured_balance = current_balance
-                    return current_balance
+                # Try different fields that might contain the balance
+                balance = None
                 
-                # Validate TopStep compliance (safety check every balance check)
-                if not self.config.validate_topstep_compliance(current_balance):
-                    logger.warning("[WARNING] Compliance violation detected - forcing reconfiguration")
-                    if self.config.auto_configure_for_account(current_balance, logger, force=True):
-                        self._last_configured_balance = current_balance
+                # Check object attributes
+                for field in ['cash_balance', 'balance', 'equity', 'available_funds', 'net_liquidation_value']:
+                    if hasattr(account_info, field):
+                        val = getattr(account_info, field)
+                        if val is not None and val != 0:
+                            logger.info(f"[ACCOUNT DEBUG] Found {field}: {val}")
+                            balance = float(val)
+                            break
                 
-                # Check if balance changed significantly (5% threshold for reconfiguration)
-                if self._last_configured_balance > 0:
-                    balance_change_pct = abs(current_balance - self._last_configured_balance) / self._last_configured_balance
-                    
-                    if balance_change_pct >= self._balance_change_threshold:
-                        logger.info("=" * 80)
-                        logger.info("💰 BALANCE CHANGED - AUTO-RECONFIGURING RISK LIMITS")
-                        logger.info("=" * 80)
-                        logger.info(f"Previous Balance: ${self._last_configured_balance:,.2f}")
-                        logger.info(f"Current Balance: ${current_balance:,.2f}")
-                        logger.info(f"Change: {balance_change_pct * 100:.1f}%")
-                        
-                        # Reconfigure with new balance (with safety checks)
-                        if self.config.auto_configure_for_account(current_balance, logger):
-                            self._last_configured_balance = current_balance
-                            logger.info("[SUCCESS] Risk limits updated successfully")
-                        else:
-                            logger.error("❌ Failed to reconfigure - keeping previous limits")
-                            logger.error(f"Still using limits for ${self._last_configured_balance:,.2f} balance")
+                # If it's a dict, try dict access
+                if balance is None and isinstance(account_info, dict):
+                    for field in ['cash_balance', 'balance', 'equity', 'available_funds']:
+                        val = account_info.get(field)
+                        if val is not None and val != 0:
+                            logger.info(f"[ACCOUNT DEBUG] Found dict[{field}]: {val}")
+                            balance = float(val)
+                            break
                 
-                return current_balance
-            return 0.0
+                if balance:
+                    logger.info(f"✅ Account equity: ${balance:,.2f}")
+                    return balance
+                else:
+                    logger.warning("[ACCOUNT DEBUG] No balance field found, using config fallback")
+                    return 0.0
+            else:
+                logger.warning("[ACCOUNT DEBUG] account_info is None/empty")
+                return 0.0
         except Exception as e:
-            logger.error(f"Error getting account equity: {e}")
-            self._record_failure()
+            logger.warning(f"Could not fetch account equity: {e}")
+            import traceback
+            logger.debug(traceback.format_exc())
             return 0.0
     
     def get_position_quantity(self, symbol: str) -> int:
         """Get position quantity from TopStep."""
+        import asyncio
+        
         if not self.connected or not self.sdk_client:
             logger.error("Cannot get position: not connected")
             return 0
         
         try:
             # Use search_open_positions() instead of deprecated get_positions()
-            # This is an async function, so we need to run it in the event loop
-            import asyncio
-            try:
-                loop = asyncio.get_running_loop()
-                # If loop is already running, we can't use run_until_complete
-                # Return 0 and log debug - position reconciliation will happen async
-                logger.debug("Event loop running - skipping sync position check")
-                return 0
-            except RuntimeError:
-                # No running loop, safe to create one
-                loop = asyncio.new_event_loop()
-                asyncio.set_event_loop(loop)
-                try:
-                    positions = loop.run_until_complete(self.sdk_client.search_open_positions())
-                    for pos in positions:
-                        if pos.instrument.symbol == symbol:
-                            # Return signed quantity (positive for long, negative for short)
-                            qty = int(pos.quantity)
-                            return qty if pos.position_type.value == "LONG" else -qty
-                    return 0  # No position found
-                finally:
-                    loop.close()
-        except AttributeError as e:
-            # Common Windows asyncio proactor error during shutdown - ignore
-            if "'NoneType' object has no attribute 'send'" in str(e):
-                logger.debug("AsyncIO proactor error during position check - returning 0")
-                return 0
-            logger.error(f"Error getting position quantity: {e}")
-            self._record_failure()
-            return 0
+            positions = self.sdk_client.search_open_positions()
+            
+            # If it returns a coroutine, await it
+            if asyncio.iscoroutine(positions):
+                positions = asyncio.run(positions)
+            
+            for pos in positions:
+                if pos.instrument.symbol == symbol:
+                    # Return signed quantity (positive for long, negative for short)
+                    qty = int(pos.quantity)
+                    return qty if pos.position_type.value == "LONG" else -qty
+            return 0  # No position found
         except Exception as e:
             logger.error(f"Error getting position quantity: {e}")
             self._record_failure()
@@ -548,217 +455,100 @@ class TopStepBroker(BrokerInterface):
     
     def place_market_order(self, symbol: str, side: str, quantity: int) -> Optional[Dict[str, Any]]:
         """Place market order using TopStep SDK."""
-        if not self.connected or self.trading_suite is None:
+        if not self.connected or not self.trading_suite:
             logger.error("Cannot place order: not connected")
             return None
         
         try:
-            import asyncio
-            
-            # Get contract ID for the symbol dynamically
-            contract_id = self._get_contract_id_sync(symbol)
-            if not contract_id:
-                logger.error(f"Failed to resolve contract ID for {symbol}")
-                return None
-            
-            # Convert side to OrderSide enum
+            # Convert side to SDK enum
             order_side = OrderSide.BUY if side.upper() == "BUY" else OrderSide.SELL
             
-            logger.info(f"Placing market order: {symbol} ({contract_id}) {side} {quantity}")
+            # Place market order
+            order_response = self.trading_suite.place_market_order(
+                symbol=symbol,
+                side=order_side,
+                quantity=quantity
+            )
             
-            # Define async wrapper
-            async def place_order_async():
-                # Refresh token if needed (for long-running bots)
-                await self._ensure_token_fresh()
-                
-                return await self.trading_suite.orders.place_market_order(
-                    contract_id=contract_id,
-                    side=order_side,
-                    size=quantity
-                )
-            
-            # Run async order placement - check for existing event loop
-            try:
-                loop = asyncio.get_running_loop()
-                # If we get here, we're in an async context - use thread pool
-                import concurrent.futures
-                with concurrent.futures.ThreadPoolExecutor() as pool:
-                    order_response = pool.submit(
-                        lambda: asyncio.run(place_order_async())
-                    ).result()
-            except RuntimeError:
-                # No running loop - safe to use asyncio.run
-                order_response = asyncio.run(place_order_async())
-            
-            logger.info(f"Order response: {order_response}")
-            
-            if order_response and order_response.success:
-                logger.info(f"Market order placed successfully: {order_response.orderId}")
+            if order_response and order_response.order:
+                order = order_response.order
                 return {
-                    "order_id": order_response.orderId,
+                    "order_id": order.order_id,
                     "symbol": symbol,
                     "side": side,
                     "quantity": quantity,
                     "type": "MARKET",
-                    "status": "SUBMITTED",
-                    "filled_quantity": 0
+                    "status": order.status.value,
+                    "filled_quantity": order.filled_quantity or 0,
+                    "avg_fill_price": order.avg_fill_price or 0.0
                 }
             else:
-                error_msg = order_response.errorMessage if order_response else "Unknown error"
-                logger.error(f"Market order placement failed: {error_msg}")
+                logger.error("Market order placement failed")
                 self._record_failure()
                 return None
                 
         except Exception as e:
             logger.error(f"Error placing market order: {e}")
-            import traceback
-            traceback.print_exc()
             self._record_failure()
             return None
     
     def place_limit_order(self, symbol: str, side: str, quantity: int, limit_price: float) -> Optional[Dict[str, Any]]:
         """Place limit order using TopStep SDK."""
-        if not self.connected or self.trading_suite is None:
+        if not self.connected or not self.trading_suite:
             logger.error("Cannot place order: not connected")
             return None
         
         try:
-            import asyncio
-            
-            # Get contract ID for the symbol dynamically
-            contract_id = self._get_contract_id_sync(symbol)
-            if not contract_id:
-                logger.error(f"Failed to resolve contract ID for {symbol}")
-                return None
-            
-            # Convert side to OrderSide enum
+            # Convert side to SDK enum
             order_side = OrderSide.BUY if side.upper() == "BUY" else OrderSide.SELL
             
-            logger.info(f"Placing limit order: {symbol} ({contract_id}) {side} {quantity} @ {limit_price}")
+            # Place limit order
+            order_response = self.trading_suite.place_limit_order(
+                symbol=symbol,
+                side=order_side,
+                quantity=quantity,
+                limit_price=limit_price
+            )
             
-            # Define async wrapper
-            async def place_order_async():
-                # Refresh token if needed (for long-running bots)
-                await self._ensure_token_fresh()
-                
-                return await self.trading_suite.orders.place_limit_order(
-                    contract_id=contract_id,
-                    side=order_side,
-                    size=quantity,
-                    limit_price=limit_price
-                )
-            
-            # Run async order placement - check for existing event loop
-            try:
-                loop = asyncio.get_running_loop()
-                # If we get here, we're in an async context - use thread pool
-                import concurrent.futures
-                with concurrent.futures.ThreadPoolExecutor() as pool:
-                    order_response = pool.submit(
-                        lambda: asyncio.run(place_order_async())
-                    ).result()
-            except RuntimeError:
-                # No running loop - safe to use asyncio.run
-                order_response = asyncio.run(place_order_async())
-            
-            logger.info(f"Order response: {order_response}")
-            
-            if order_response and order_response.success:
-                logger.info(f"Order placed successfully: {order_response.orderId}")
+            if order_response and order_response.order:
+                order = order_response.order
                 return {
-                    "order_id": order_response.orderId,
+                    "order_id": order.order_id,
                     "symbol": symbol,
                     "side": side,
                     "quantity": quantity,
                     "type": "LIMIT",
                     "limit_price": limit_price,
-                    "status": "SUBMITTED",
-                    "filled_quantity": 0
+                    "status": order.status.value,
+                    "filled_quantity": order.filled_quantity or 0
                 }
             else:
-                error_msg = order_response.errorMessage if order_response else "Unknown error"
-                logger.error(f"Limit order placement failed: {error_msg}")
+                logger.error("Limit order placement failed")
                 self._record_failure()
                 return None
                 
         except Exception as e:
             logger.error(f"Error placing limit order: {e}")
-            import traceback
-            traceback.print_exc()
             self._record_failure()
             return None
-            self._record_failure()
-            return None
-    
-    def cancel_order(self, order_id: str) -> bool:
-        """Cancel an open order using TopStep SDK."""
-        if not self.connected or self.trading_suite is None:
-            logger.error("Cannot cancel order: not connected")
-            return False
-        
-        try:
-            import asyncio
-            
-            # Define async wrapper
-            async def cancel_order_async():
-                return await self.trading_suite.orders.cancel_order(order_id=order_id)
-            
-            # Run async order cancellation - check for existing event loop
-            try:
-                loop = asyncio.get_running_loop()
-                import concurrent.futures
-                with concurrent.futures.ThreadPoolExecutor() as pool:
-                    cancel_response = pool.submit(
-                        lambda: asyncio.run(cancel_order_async())
-                    ).result()
-            except RuntimeError:
-                cancel_response = asyncio.run(cancel_order_async())
-            
-            if cancel_response and cancel_response.success:
-                logger.info(f"Order {order_id} cancelled successfully")
-                return True
-            else:
-                error_msg = cancel_response.errorMessage if cancel_response else "Unknown error"
-                logger.error(f"Order cancellation failed: {error_msg}")
-                self._record_failure()
-                return False
-                
-        except Exception as e:
-            logger.error(f"Error cancelling order: {e}")
-            self._record_failure()
-            return False
     
     def place_stop_order(self, symbol: str, side: str, quantity: int, stop_price: float) -> Optional[Dict[str, Any]]:
         """Place stop order using TopStep SDK."""
-        if not self.connected or self.trading_suite is None:
+        if not self.connected or not self.trading_suite:
             logger.error("Cannot place order: not connected")
             return None
         
         try:
-            import asyncio
-            
             # Convert side to SDK enum
             order_side = OrderSide.BUY if side.upper() == "BUY" else OrderSide.SELL
             
-            # Define async wrapper
-            async def place_order_async():
-                return await self.trading_suite.orders.place_stop_order(
-                    symbol=symbol,
-                    side=order_side,
-                    quantity=quantity,
-                    stop_price=stop_price
-                )
-            
-            # Run async order placement - check for existing event loop
-            try:
-                loop = asyncio.get_running_loop()
-                import concurrent.futures
-                with concurrent.futures.ThreadPoolExecutor() as pool:
-                    order_response = pool.submit(
-                        lambda: asyncio.run(place_order_async())
-                    ).result()
-            except RuntimeError:
-                order_response = asyncio.run(place_order_async())
+            # Place stop order
+            order_response = self.trading_suite.place_stop_order(
+                symbol=symbol,
+                side=order_side,
+                quantity=quantity,
+                stop_price=stop_price
+            )
             
             if order_response and order_response.order:
                 order = order_response.order
@@ -782,210 +572,119 @@ class TopStepBroker(BrokerInterface):
             return None
     
     def subscribe_market_data(self, symbol: str, callback: Callable[[str, float, int, int], None]) -> None:
-        """Subscribe to real-time market data (trades) via WebSocket."""
+        """Subscribe to real-time market data (trades)."""
         if not self.connected:
             logger.error("Cannot subscribe: not connected")
             return
         
-        if not self.websocket_streamer:
-            logger.error("WebSocket streamer not initialized - cannot subscribe to live data")
-            logger.error("Make sure WebSocket module is available and session token is valid")
-            return
+        # Get proper contract ID for WebSocket subscription
+        contract_id = self._get_contract_id(symbol)
         
-        try:
-            # Get contract ID for the symbol (synchronous)
-            contract_id = self._get_contract_id_sync(symbol)
-            if not contract_id:
-                logger.error(f"Failed to get contract ID for {symbol}")
-                return
-            
-            # Define callback wrapper to convert WebSocket data format
-            def trade_callback(data):
-                """Handle trade data from WebSocket: [contract_id, [{trade1}, {trade2}, ...]]"""
-                if isinstance(data, list) and len(data) >= 2:
-                    trades = data[1]  # List of trade dicts
-                    if isinstance(trades, list):
-                        for trade in trades:
-                            price = float(trade.get('price', 0))
-                            volume = int(trade.get('volume', 0))
+        # Use WebSocket for real-time trades
+        if self.websocket and self.websocket.is_connected:
+            try:
+                logger.info(f"Subscribing to WebSocket trades for {symbol} (contract: {contract_id})...")
+                
+                # WebSocket callback wrapper to transform data format
+                def ws_trade_handler(data):
+                    """Transform WebSocket trade data to expected format"""
+                    try:
+                        # Data format from WebSocket may vary - handle both list and dict
+                        if isinstance(data, (list, tuple)) and len(data) >= 2:
+                            trade_symbol = data[0]
+                            trade_data = data[1] if isinstance(data[1], dict) else {}
                             
-                            # Parse timestamp (ISO format string to milliseconds)
-                            timestamp_str = trade.get('timestamp', '')
-                            try:
-                                from datetime import datetime
-                                if timestamp_str:
-                                    dt = datetime.fromisoformat(str(timestamp_str).replace('Z', '+00:00'))
-                                    timestamp = int(dt.timestamp() * 1000)
-                                else:
-                                    timestamp = int(datetime.now().timestamp() * 1000)
-                            except:
-                                timestamp = int(datetime.now().timestamp() * 1000)
+                            price = float(trade_data.get('Price', 0.0))
+                            size = int(trade_data.get('Size', 0))
+                            timestamp_ms = int(time.time() * 1000)
+                            if 'Timestamp' in trade_data:
+                                timestamp_ms = int(trade_data['Timestamp'])
                             
-                            # Call bot's callback with tick data
-                            callback(symbol, price, volume, timestamp)
-            
-            # Subscribe to trades via WebSocket
-            self.websocket_streamer.subscribe_trades(contract_id, trade_callback)
-            logger.info(f"[SUCCESS] Subscribed to LIVE trade data for {symbol} (contract: {contract_id})")
-            
-        except Exception as e:
-            logger.error(f"Error subscribing to market data: {e}")
-            self._record_failure()
+                            # Use original symbol, not contract ID
+                            callback(symbol, price, size, timestamp_ms)
+                    except Exception as e:
+                        logger.error(f"Error processing WebSocket trade data: {e}")
+                
+                self.websocket.subscribe_trades(contract_id, ws_trade_handler)
+                logger.info(f"✅ Subscribed to WebSocket trades for {symbol} using contract {contract_id}")
+            except Exception as e:
+                logger.error(f"Error subscribing to WebSocket trades: {e}")
+                self._record_failure()
+        else:
+            logger.warning("⚠️ WebSocket not available - using quotes only for market data")
+            # Fallback: use quotes to simulate trades (less ideal but better than nothing)
+            if self.websocket and self.websocket.is_connected:
+                logger.info("Falling back to quote-based market data simulation...")
+                
+                def quote_to_trade_handler(data):
+                    """Simulate trade data from quotes"""
+                    try:
+                        if isinstance(data, list) and len(data) >= 2:
+                            symbol_val = data[0]
+                            quote_data = data[1]
+                            last_price = float(quote_data.get('LastPrice', quote_data.get('BidPrice', 0.0)))
+                            timestamp_ms = int(time.time() * 1000)
+                            callback(symbol, last_price, 1, timestamp_ms)
+                    except Exception as e:
+                        logger.error(f"Error in quote-to-trade simulation: {e}")
+                
+                self.websocket.subscribe_quotes(contract_id, quote_to_trade_handler)
     
     def subscribe_quotes(self, symbol: str, callback: Callable[[str, float, float, int, int, float, int], None]) -> None:
-        """Subscribe to real-time bid/ask quotes via WebSocket."""
+        """Subscribe to real-time bid/ask quotes."""
         if not self.connected:
             logger.error("Cannot subscribe to quotes: not connected")
             return
         
-        if not self.websocket_streamer:
-            logger.warning("WebSocket streamer not initialized - quote subscription unavailable")
-            return
-        
-        try:
-            # Get contract ID for the symbol (synchronous)
-            contract_id = self._get_contract_id_sync(symbol)
-            if not contract_id:
-                logger.error(f"Failed to get contract ID for {symbol}")
-                return
-            
-            # Sticky state - keep last valid bid/ask
-            last_valid_bid = [0.0]  # Use list to maintain closure reference
-            last_valid_ask = [0.0]
-            last_valid_timestamp = [0]
-            
-            # Define callback wrapper to convert WebSocket data format
-            def quote_callback(data):
-                """Handle quote data from WebSocket: [contract_id, {quote_dict}]"""
-                if isinstance(data, list) and len(data) >= 2:
-                    quote = data[1]  # Quote dict
-                    if isinstance(quote, dict):
-                        # STICKY STATE PATTERN: Update only if new values are valid
-                        # This prevents false signals from partial/incomplete WebSocket updates
-                        
-                        # Update bid if present and valid
-                        if 'bestBid' in quote:
-                            new_bid = float(quote.get('bestBid', 0))
-                            if new_bid > 0:
-                                last_valid_bid[0] = new_bid
-                        
-                        # Update ask if present and valid
-                        if 'bestAsk' in quote:
-                            new_ask = float(quote.get('bestAsk', 0))
-                            if new_ask > 0:
-                                last_valid_ask[0] = new_ask
-                        
-                        # Only process if we have BOTH valid bid and ask
-                        if last_valid_bid[0] <= 0 or last_valid_ask[0] <= 0:
-                            logger.debug(f"Waiting for valid bid/ask - bid={last_valid_bid[0]}, ask={last_valid_ask[0]}")
-                            return
-                        
-                        # Sanity check: ask must be >= bid
-                        if last_valid_ask[0] < last_valid_bid[0]:
-                            logger.warning(f"Inverted market: bid={last_valid_bid[0]} > ask={last_valid_ask[0]} - skipping")
-                            return
-                        
-                        bid_price = last_valid_bid[0]
-                        ask_price = last_valid_ask[0]
-                        last_price = float(quote.get('lastPrice', bid_price))  # Default to bid if missing
-                        bid_size = 1  # TopStep doesn't provide sizes in quote data
-                        ask_size = 1
-                        
-                        # Parse timestamp (ISO format string to milliseconds)
-                        timestamp_str = quote.get('timestamp', '')
-                        try:
-                            from datetime import datetime
-                            import time
-                            if timestamp_str:
-                                dt = datetime.fromisoformat(timestamp_str.replace('Z', '+00:00'))
-                                timestamp = int(dt.timestamp() * 1000)
-                            else:
-                                timestamp = int(datetime.now().timestamp() * 1000)
-                            
-                            # Staleness detection: warn if quote is more than 2 seconds old
-                            current_time = int(time.time() * 1000)
-                            age_seconds = (current_time - last_valid_timestamp[0]) / 1000.0
-                            if last_valid_timestamp[0] > 0 and age_seconds > 2.0:
-                                logger.warning(f"Quote feed stale - {age_seconds:.1f}s since last update")
-                            last_valid_timestamp[0] = current_time
-                            
-                        except:
-                            timestamp = int(datetime.now().timestamp() * 1000)
-                        
-                        # Call bot's callback with quote data
-                        callback(symbol, bid_price, ask_price, bid_size, ask_size, last_price, timestamp)
-            
-            # Subscribe to quotes via WebSocket
-            self.websocket_streamer.subscribe_quotes(contract_id, quote_callback)
-            logger.info(f"[SUCCESS] Subscribed to LIVE quote data for {symbol} (contract: {contract_id})")
-            
-        except Exception as e:
-            logger.error(f"Error subscribing to quotes: {e}")
-            self._record_failure()
-    
-    def _get_contract_id_sync(self, symbol: str) -> Optional[str]:
-        """
-        Get TopStep contract ID for a symbol (e.g., ES -> CON.F.US.EP.Z25).
-        Uses cache to avoid repeated API calls. Falls back to synchronous lookup if not cached.
-        """
-        # Check cache first (populated during connection)
-        if symbol in self._contract_id_cache:
-            logger.debug(f"Using cached contract ID for {symbol}: {self._contract_id_cache[symbol]}")
-            return self._contract_id_cache[symbol]
-        
-        # Remove leading slash if present (e.g., /ES -> ES)
-        clean_symbol = symbol.lstrip('/')
-        
-        # Not in cache - need to look it up
-        # This shouldn't happen often if connection caching works properly
-        logger.warning(f"Contract ID for {symbol} not in cache - performing lookup")
-        
-        try:
-            # Use the SDK's synchronous method if available, otherwise async
-            if hasattr(self.sdk_client, 'search_instruments_sync'):
-                instruments = self.sdk_client.search_instruments_sync(query=clean_symbol)
-            else:
-                # Run async method in a new thread with its own event loop
-                import asyncio
-                from concurrent.futures import ThreadPoolExecutor
+        # Use WebSocket for real-time quotes
+        if self.websocket and self.websocket.is_connected:
+            try:
+                # Get proper contract ID for WebSocket subscription
+                contract_id = self._get_contract_id(symbol)
+                logger.info(f"Subscribing to WebSocket quotes for {symbol} (contract: {contract_id})...")
                 
-                def run_async_search():
-                    loop = asyncio.new_event_loop()
-                    asyncio.set_event_loop(loop)
+                # WebSocket callback wrapper to transform data format
+                def ws_quote_handler(data):
+                    """Transform WebSocket quote data to expected format"""
                     try:
-                        return loop.run_until_complete(
-                            self.sdk_client.search_instruments(query=clean_symbol)
-                        )
-                    finally:
-                        loop.close()
+                        # TopStep sends: [symbol_string, quote_dict] 
+                        if isinstance(data, list) and len(data) >= 2:
+                            quote_data = data[1]
+                            
+                            if isinstance(quote_data, dict):
+                                # Extract all values from THIS message only
+                                bid_price = float(quote_data.get('bestBid', 0.0) or 0.0)
+                                ask_price = float(quote_data.get('bestAsk', 0.0) or 0.0)
+                                bid_size = int(quote_data.get('bestBidSize', 0) or 0)
+                                ask_size = int(quote_data.get('bestAskSize', 0) or 0)
+                                last_price = float(quote_data.get('lastPrice', 0.0) or 0.0)
+                                
+                                # TopStep doesn't always provide size - default to 1 if not available
+                                # This allows quotes to be used even without depth data
+                                if bid_size == 0:
+                                    bid_size = 1
+                                if ask_size == 0:
+                                    ask_size = 1
+                                
+                                # Only send if THIS message has BOTH valid bid AND ask
+                                # Don't mix data from different messages - prevents stale/inconsistent quotes
+                                if bid_price > 0 and ask_price > 0 and bid_price <= ask_price:
+                                    timestamp_ms = int(time.time() * 1000)
+                                    callback(symbol, bid_price, ask_price, bid_size, ask_size, last_price, timestamp_ms)
+                                
+                    except Exception as e:
+                        logger.error(f"Error processing WebSocket quote data: {e}")
+                        import traceback
+                        logger.error(traceback.format_exc())
                 
-                with ThreadPoolExecutor(max_workers=1) as executor:
-                    future = executor.submit(run_async_search)
-                    instruments = future.result(timeout=10)
-            
-            if instruments and len(instruments) > 0:
-                # Find exact match or closest match
-                for instr in instruments:
-                    if instr.symbol == clean_symbol or instr.symbol.startswith(clean_symbol):
-                        contract_id = instr.contract_id
-                        self._contract_id_cache[symbol] = contract_id
-                        logger.info(f"Cached contract ID for {symbol}: {contract_id}")
-                        return contract_id
-                
-                # No exact match - use first result
-                contract_id = instruments[0].contract_id
-                self._contract_id_cache[symbol] = contract_id
-                logger.info(f"Using first match for {symbol}: {contract_id}")
-                return contract_id
-            
-            logger.error(f"No contracts found for symbol: {symbol}")
-            return None
-            
-        except Exception as e:
-            logger.error(f"Error getting contract ID for {symbol}: {e}")
-            import traceback
-            traceback.print_exc()
-            return None
+                self.websocket.subscribe_quotes(contract_id, ws_quote_handler)
+                logger.info(f"✅ Subscribed to WebSocket quotes for {symbol} using contract {contract_id}")
+            except Exception as e:
+                logger.error(f"Error subscribing to WebSocket quotes: {e}")
+                self._record_failure()
+        else:
+            logger.error("❌ WebSocket not available - cannot subscribe to quotes")
+            logger.error("Market data will not work without WebSocket connection")
     
     def fetch_historical_bars(self, symbol: str, timeframe: str, count: int, 
                              start_date: datetime = None, end_date: datetime = None) -> List[Dict[str, Any]]:
@@ -1054,14 +753,13 @@ class TopStepBroker(BrokerInterface):
         logger.info("Circuit breaker reset")
 
 
-def create_broker(api_token: str, username: str = None, instrument: str = "ES") -> BrokerInterface:
+def create_broker(api_token: str, username: str = None) -> BrokerInterface:
     """
     Factory function to create TopStep broker instance.
     
     Args:
         api_token: API token for TopStep (required)
         username: TopStep username/email (required for SDK v3.5+)
-        instrument: Trading instrument symbol (default: ES)
     
     Returns:
         TopStepBroker instance
@@ -1071,4 +769,4 @@ def create_broker(api_token: str, username: str = None, instrument: str = "ES") 
     """
     if not api_token:
         raise ValueError("API token is required for TopStep broker")
-    return TopStepBroker(api_token=api_token, username=username, instrument=instrument)
+    return TopStepBroker(api_token=api_token, username=username)

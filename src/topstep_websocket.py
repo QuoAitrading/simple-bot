@@ -47,27 +47,37 @@ class TopStepWebSocketStreamer:
         """Connect to TopStep SignalR market hub"""
         try:
             logger.info(f"Connecting to TopStep WebSocket: {self.hub_url}")
+            logger.info(f"Session token length: {len(self.session_token) if self.session_token else 0}")
+            
+            if not self.session_token:
+                logger.error("[ERROR] No session token provided - cannot connect to WebSocket")
+                self.is_connected = False
+                return False
             
             auth_url = f"{self.hub_url}?access_token={self.session_token}"
             
+            logger.info("Building SignalR connection...")
             self.connection = (
                 HubConnectionBuilder()
                 .with_url(auth_url)
-                .configure_logging(logging.INFO)
+                .configure_logging(logging.WARNING)  # Suppress DEBUG/INFO from SignalRCore
                 .with_automatic_reconnect({"type": "interval", "intervals": [0, 2, 5, 10, 30]})
                 .build()
             )
             
             self._register_handlers()
             self.connection.start()
-            time.sleep(1)
+            time.sleep(2)  # Give it time to establish connection
             
             self.is_connected = True
             logger.info("[SUCCESS] Connected to TopStep WebSocket (SignalR Market Hub)")
+            logger.info("WebSocket is ready to receive market data")
             return True
             
         except Exception as e:
             logger.error(f"[ERROR] Failed to connect to WebSocket: {e}", exc_info=True)
+            logger.error(f"Error type: {type(e).__name__}")
+            logger.error(f"This means live streaming data is NOT available")
             self.is_connected = False
             return False
     
@@ -76,9 +86,15 @@ class TopStepWebSocketStreamer:
         self.connection.on_open(self._on_open)
         self.connection.on_close(self._on_close)
         self.connection.on_error(self._on_error)
+        
+        # Register message handlers
+        logger.info("Registering GatewayQuote handler...")
         self.connection.on("GatewayQuote", self._on_quote)
+        logger.info("Registering GatewayTrade handler...")
         self.connection.on("GatewayTrade", self._on_trade)
+        logger.info("Registering GatewayDepth handler...")
         self.connection.on("GatewayDepth", self._on_depth)
+        logger.info("All handlers registered successfully")
     
     def _on_open(self):
         """Called when WebSocket connection opens"""
@@ -138,38 +154,46 @@ class TopStepWebSocketStreamer:
         logger.error(f"[ERROR] WebSocket error: {error_msg}")
     
     def _on_quote(self, data):
-        """Handle incoming quote data"""
+        """Handle incoming quote data - SignalR passes the arguments array as a single list"""
         self.quotes_received += 1
         self.last_message_time = time.time()
+        
+        # Log first few quotes to see structure
+        if self.quotes_received <= 3:
+            logger.info(f"[QUOTE DEBUG] Quote #{self.quotes_received} data type: {type(data)}")
+            logger.info(f"[QUOTE DEBUG] Quote data: {data}")
+        
         if self.on_quote_callback:
             try:
-                # Log first quote to see structure
-                if self.quotes_received == 1:
-                    logger.info(f"[DATA] First quote data structure: {type(data)} = {data}")
+                # Pass data as-is (should be a list like ["CON.F.US.CLE.Z25", {quote_dict}])
                 self.on_quote_callback(data)
             except Exception as e:
-                logger.error(f"Error in quote callback: {e}")
+                logger.error(f"[WEBSOCKET ERROR] Exception in quote callback: {e}")
+                import traceback
+                traceback.print_exc()
+        else:
+            logger.warning("[WEBSOCKET] No callback set - quote data ignored!")
     
-    def _on_trade(self, data):
-        """Handle incoming trade data"""
+    def _on_trade(self, *args):
+        """Handle incoming trade data - SignalR passes arguments as separate params"""
         self.trades_received += 1
         self.last_message_time = time.time()
         if self.on_trade_callback:
             try:
                 # Log first trade to see structure
                 if self.trades_received == 1:
-                    logger.info(f"[DATA] First trade data structure: {type(data)} = {data}")
-                self.on_trade_callback(data)
+                    logger.info(f"[DATA] First trade - args: {args}")
+                self.on_trade_callback(args)
             except Exception as e:
                 logger.error(f"Error in trade callback: {e}")
     
-    def _on_depth(self, data):
-        """Handle incoming market depth data"""
+    def _on_depth(self, *args):
+        """Handle incoming market depth data - SignalR passes arguments as separate params"""
         self.depth_updates_received += 1
         self.last_message_time = time.time()
         if self.on_depth_callback:
             try:
-                self.on_depth_callback(data)
+                self.on_depth_callback(args)
             except Exception as e:
                 logger.error(f"Error in depth callback: {e}")
     
