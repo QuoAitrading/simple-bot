@@ -3670,6 +3670,17 @@ def execute_entry(symbol: str, side: str, entry_price: float) -> None:
     save_position_state(symbol)
     logger.info("  ✓ Position state saved to disk")
     
+    # Update dashboard with new position
+    if dashboard:
+        dashboard.update_symbol_data(symbol, {
+            "position": f"{side.upper()} {contracts}",
+            "position_qty": contracts,
+            "position_side": side,
+            "last_signal": f"{side.upper()} @ ${actual_fill_price:.2f}",
+            "status": f"In trade - Target: ${target_price:.2f}"
+        })
+        dashboard.display()
+    
     # ===== CRITICAL FIX #2: Stop Loss Execution Validation =====
     # Verify stop order accepted by broker - critical for capital protection
     stop_side = "SELL" if side == "long" else "BUY"
@@ -5503,6 +5514,20 @@ def execute_exit(symbol: str, exit_price: float, reason: str) -> None:
     # CRITICAL: IMMEDIATELY save state to disk - position is now FLAT
     save_position_state(symbol)
     logger.info("  ✓ Position state saved to disk (FLAT)")
+    
+    # Update dashboard to show flat position
+    if dashboard:
+        dashboard.update_symbol_data(symbol, {
+            "position": "FLAT",
+            "position_qty": 0,
+            "position_side": None,
+            "status": "Monitoring..."
+        })
+        # Update P&L
+        dashboard.update_symbol_data(symbol, {
+            "pnl_today": state[symbol].get("daily_pnl", 0.0)
+        })
+        dashboard.display()
 
 
 def calculate_aggressive_price(base_price: float, order_side: str, attempt: int) -> float:
@@ -7314,6 +7339,14 @@ def handle_shutdown_event(data: Dict[str, Any]) -> None:
 def cleanup_on_shutdown() -> None:
     """Cleanup tasks on shutdown"""
     logger.info("Running cleanup tasks...")
+    
+    # Stop dashboard display
+    if dashboard:
+        try:
+            dashboard.stop()
+            logger.info("Dashboard stopped")
+        except Exception as e:
+            logger.error(f"Error stopping dashboard: {e}")
     
     # Send bot shutdown alert
     try:

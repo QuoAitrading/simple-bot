@@ -204,7 +204,7 @@ class Dashboard:
         lines.append(f"Condition: {data['condition']}")
         
         # Position and P&L
-        pnl_sign = "+" if data['pnl_today'] >= 0 else ""
+        pnl_sign = "+" if data['pnl_today'] > 0 else ""
         lines.append(f"Position: {data['position']} | P&L Today: ${pnl_sign}{data['pnl_today']:.2f}")
         
         # Last signal
