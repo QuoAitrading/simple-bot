@@ -948,7 +948,7 @@ async def should_take_signal(request: Dict):
         redis_mgr = get_redis()
         
         if redis_mgr:
-            cached = redis_mgr.get_cached_data(cache_key)
+            cached = redis_mgr.get(cache_key)
             if cached:
                 logger.info(f"⚡ Cache HIT: {cache_key}")
                 return cached
@@ -996,7 +996,7 @@ async def should_take_signal(request: Dict):
         
         # Cache the result for 60 seconds (multi-user optimization)
         if redis_mgr:
-            redis_mgr.cache_data(cache_key, response, ttl=60)
+            redis_mgr.set(cache_key, response, ex=60)
         
         return response
         
