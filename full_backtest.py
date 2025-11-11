@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """
 COMPLETE TRADING SYSTEM BACKTEST
 =================================
@@ -19,11 +20,19 @@ from datetime import datetime, time
 import json
 import os
 import random
+import requests
 from typing import Dict, List, Tuple, Optional
 import statistics
 import aiohttp
 import asyncio
 import sys
+import io
+
+# Force UTF-8 encoding for Windows console
+if sys.platform == 'win32':
+    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
+    sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8')
+
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'src'))
 from adaptive_exits_backtest import get_adaptive_exit_params
 from adaptive_exits import AdaptiveExitManager  # EXIT RL LEARNING
@@ -532,65 +541,74 @@ class Trade:
 
 def save_signal_experience(rl_state: Dict, took_trade: bool, outcome: Dict, backtest_mode: bool = False):
     """
-    Save signal experience to JSON for RL learning.
-    Appends to cloud-api/signal_experience.json (MAIN file used by live bot).
+    Save signal experience to CLOUD API (PostgreSQL database).
+    NO LOCAL FILES - everything goes to cloud for shared learning.
     
     Args:
-        rl_state: State at signal time (with all features)
+        rl_state: State at signal time (with ALL 13 features for pattern matching)
         took_trade: Whether cloud RL approved the trade
         outcome: Trade result (pnl, duration, exit_reason, etc.)
-        backtest_mode: Ignored - always saves to main file
+        backtest_mode: Ignored - always saves to cloud
     """
     from datetime import datetime
-    import json
-    import os
+    import requests
     
+    # Send ALL 13 pattern matching features to cloud
     experience = {
         'timestamp': datetime.now().isoformat(),
-        'state': rl_state,
-        'action': {
-            'took_trade': took_trade,
-            'exploration_rate': 0.05  # Backtest uses cloud RL decisions (no exploration)
-        },
-        'reward': outcome.get('pnl', 0),
-        'duration': outcome.get('duration_min', 0) * 60,  # Convert to seconds
-        'execution': {
-            'exit_reason': outcome.get('exit_reason', 'unknown'),
-            'partial_fill': outcome.get('partial_exits', 0) > 0,
-            'fill_ratio': 1.0,  # Backtest assumes full fills
-            'entry_slippage_ticks': 1.0,  # Estimate 1 tick slippage
-            'order_type_used': 'market',
-            'held_full_duration': outcome.get('duration_min', 0) > 30
-        }
+        'user_id': 'backtest',  # Backtest trades marked separately
+        'symbol': rl_state.get('symbol', 'ES'),
+        'side': rl_state.get('side', 'long').upper(),
+        'entry_price': rl_state.get('entry_price', 0),
+        'exit_price': outcome.get('exit_price', 0),
+        'entry_time': datetime.now().isoformat(),
+        'exit_time': datetime.now().isoformat(),
+        'pnl': outcome.get('pnl', 0),
+        'entry_vwap': rl_state.get('vwap', 0),
+        'entry_rsi': rl_state.get('rsi', 50),
+        'exit_reason': outcome.get('exit_reason', 'unknown'),
+        'duration_minutes': outcome.get('duration_min', 0),
+        'volatility': rl_state.get('atr', 0),
+        'confidence': rl_state.get('confidence', 0.5),
+        # ALL additional context features for full pattern matching:
+        'vwap_distance': rl_state.get('vwap_distance', 0),
+        'vix': rl_state.get('vix', 15.0),
+        'volume_ratio': rl_state.get('volume_ratio', 1.0),
+        'recent_pnl': rl_state.get('recent_pnl', 0.0),
+        'streak': rl_state.get('streak', 0),
+        'hour': rl_state.get('hour', 12),
+        'day_of_week': rl_state.get('day_of_week', 0),
+        'price': rl_state.get('price', rl_state.get('entry_price', 0)),
+        'vwap': rl_state.get('vwap', 0),
+        'atr': rl_state.get('atr', 0)
     }
     
-    # ALWAYS use MAIN signal experience file (live bot reads this)
-    experience_file = 'cloud-api/signal_experience.json'
+    # DEBUG: Print what we're sending
+    print(f"    [DEBUG] Sending to cloud: ATR={experience['atr']:.2f}, Vol={experience['volume_ratio']:.2f}, Recent P&L=${experience['recent_pnl']:.0f}, Streak={experience['streak']:+d}")
     
-    # Load existing experiences
-    if os.path.exists(experience_file):
-        with open(experience_file, 'r') as f:
-            try:
-                data = json.load(f)
-                # Handle both dict and list formats
-                if isinstance(data, dict):
-                    experiences = data
-                else:
-                    experiences = {str(i): exp for i, exp in enumerate(data)}
-            except:
-                experiences = {}
-    else:
-        experiences = {}
     
-    # Add new experience with unique key
-    next_key = str(len(experiences))
-    experiences[next_key] = experience
-    
-    # Save back to file
-    with open(experience_file, 'w') as f:
-        json.dump(experiences, f, indent=2)
-    
-    return len(experiences)
+    # POST to cloud API with full context
+    try:
+        response = requests.post(
+            f"{CLOUD_RL_API_URL}/api/ml/save_trade",
+            json=experience,
+            timeout=5
+        )
+        
+        if response.status_code == 200:
+            data = response.json()
+            if data.get('saved'):
+                total = data.get('total_shared_trades', 0)
+                return total
+            else:
+                print(f"[CLOUD] Failed to save: {data.get('error', 'Unknown')}")
+                return 0
+        else:
+            print(f"[CLOUD] Save failed with status {response.status_code}")
+            return 0
+    except Exception as e:
+        print(f"[CLOUD] Error saving to cloud: {e}")
+        return 0
 
 
 # ========================================
@@ -609,6 +627,9 @@ def run_full_backtest(csv_file: str, days: int = 15):
     print(f"ML Confidence Threshold: {CONFIG['rl_confidence_threshold']:.0%}")
     print(f"Exploration Rate: {CONFIG['exploration_rate']:.0%} (randomly take some rejected trades)")
     print(f"Max Contracts: {CONFIG['max_contracts']}")
+    
+    # Collect experiences during backtest for bulk save at end
+    backtest_experiences = []
     print(f"Partial Exits: ADAPTIVE (learned from market context)")
     print(f"  - Aggressive: 70% @ 2R, 25% @ 3R (choppy/overbought)")
     print(f"  - Hold Full: 0% @ 3R, 30% @ 4R, 70% @ 6R (trending)")
@@ -651,7 +672,8 @@ def run_full_backtest(csv_file: str, days: int = 15):
         experience_file='cloud-api/exit_experience.json',  # Local fallback only
         cloud_api_url=CLOUD_RL_API_URL  # Fetch/save to cloud for 10k+ shared experiences
     )
-    print(f"  ✅ Loaded {len(adaptive_exit_manager.exit_experiences):,} past exit experiences from {'CLOUD' if adaptive_exit_manager.use_cloud else 'LOCAL'}")
+    initial_exit_count = len(adaptive_exit_manager.exit_experiences)  # Track starting count
+    print(f"  Loaded {initial_exit_count:,} past exit experiences from {'CLOUD' if adaptive_exit_manager.use_cloud else 'LOCAL'}")
     print()
     
     # Trading state
@@ -792,23 +814,27 @@ def run_full_backtest(csv_file: str, days: int = 15):
                     'r_multiple': (profit_ticks / active_trade.initial_risk_ticks) if active_trade.initial_risk_ticks > 0 else 0
                 })
                 
-                # SAVE SIGNAL EXPERIENCE FOR RL LEARNING
+                # SAVE SIGNAL EXPERIENCE FOR RL LEARNING TO CLOUD API
                 # Store the entry state and trade outcome for pattern learning
                 if hasattr(active_trade, 'entry_state'):
+                    # Add exit price and confidence to state
+                    active_trade.entry_state['exit_price'] = exit_price
+                    active_trade.entry_state['confidence'] = active_trade.confidence
+                    
                     outcome = {
                         'pnl': total_pnl,
                         'duration_min': duration,
                         'exit_reason': exit_reason,
+                        'exit_price': exit_price,
                         'partial_exits': len(active_trade.partial_exits)
                     }
-                    total_experiences = save_signal_experience(
-                        active_trade.entry_state, 
-                        True,  # Trade was taken (cloud RL approved)
-                        outcome,
-                        backtest_mode=False  # Save to MAIN file for live bot learning
-                    )
-                    if len(completed_trades) % 5 == 0:  # Log every 5 trades
-                        print(f"  [RL LEARNING] Saved to signal_experience.json #{total_experiences} | Recent P&L: ${recent_pnl_sum:+.2f} | Streak: {current_streak:+d}")
+                    
+                    # COLLECT for bulk save at end (don't POST during backtest - too slow!)
+                    backtest_experiences.append({
+                        'rl_state': active_trade.entry_state.copy(),
+                        'took_trade': True,
+                        'outcome': outcome
+                    })
                 
                 # RECORD FULL EXIT FOR EXIT RL LEARNING
                 if hasattr(active_trade, 'current_exit_params') and active_trade.current_exit_params:
@@ -838,11 +864,9 @@ def run_full_backtest(csv_file: str, days: int = 15):
                                 'contracts': contracts_closed,
                                 'win': total_pnl > 0
                             },
-                            market_state=market_state
+                            market_state=market_state,
+                            backtest_mode=True  # Collect for bulk save at end
                         )
-                        
-                        if len(completed_trades) % 5 == 0:  # Log every 5 trades
-                            print(f"  [EXIT RL] Saved exit experience | Regime: {active_trade.current_exit_params.get('market_regime', 'UNKNOWN')} | RSI: {rsi:.1f} | Vol: {volume_ratio:.2f}x")
                     except Exception as e:
                         print(f"  [WARN] Exit learning failed: {e}")
                 
@@ -888,6 +912,7 @@ def run_full_backtest(csv_file: str, days: int = 15):
                 
                 # Build COMPLETE RL state (matches live bot format)
                 rl_state = {
+                    'symbol': 'ES',  # Backtest symbol
                     'entry_price': bar['close'],
                     'vwap': vwap_bands['vwap'],
                     'rsi': rsi,
@@ -936,6 +961,7 @@ def run_full_backtest(csv_file: str, days: int = 15):
                 
                 # Build COMPLETE RL state (matches live bot format)
                 rl_state = {
+                    'symbol': 'ES',  # Backtest symbol
                     'entry_price': bar['close'],
                     'vwap': vwap_bands['vwap'],
                     'rsi': rsi,
@@ -1077,6 +1103,76 @@ def run_full_backtest(csv_file: str, days: int = 15):
     
     print("\n" + "=" * 80)
     
+    # BULK SAVE ALL EXPERIENCES TO CLOUD API
+    print(f"\n[CLOUD RL] Saving {len(backtest_experiences)} signal experiences to cloud...")
+    saved_signal_count = 0
+    failed_signal_count = 0
+    
+    for i, exp in enumerate(backtest_experiences):
+        total = save_signal_experience(
+            exp['rl_state'],
+            exp['took_trade'],
+            exp['outcome'],
+            backtest_mode=False  # Actually save to cloud
+        )
+        
+        if total > 0:
+            saved_signal_count += 1
+            if (i + 1) % 10 == 0:  # Progress every 10 trades
+                print(f"  Progress: {i+1}/{len(backtest_experiences)} saved... (Total in DB: {total:,})")
+        else:
+            failed_signal_count += 1
+    
+    print(f"[CLOUD RL] ✓ Saved {saved_signal_count} signal experiences | Failed: {failed_signal_count}")
+    
+    # BULK SAVE EXIT EXPERIENCES (only NEW ones from this backtest)
+    all_exit_experiences = adaptive_exit_manager.exit_experiences
+    new_exit_experiences = all_exit_experiences[initial_exit_count:]  # Only save experiences added during backtest
+    
+    if len(new_exit_experiences) > 0:
+        print(f"\n[CLOUD RL] Saving {len(new_exit_experiences)} NEW exit experiences to cloud...")
+        saved_exit_count = 0
+        failed_exit_count = 0
+        
+        for i, exp in enumerate(new_exit_experiences):
+            try:
+                # Convert boolean to int for JSON
+                cloud_exp = {
+                    **exp,
+                    'outcome': {
+                        **exp['outcome'],
+                        'win': int(exp['outcome']['win'])
+                    }
+                }
+                
+                response = requests.post(
+                    f"{CLOUD_RL_API_URL}/api/ml/save_exit_experience",
+                    json=cloud_exp,
+                    timeout=5
+                )
+                
+                if response.status_code == 200:
+                    data = response.json()
+                    if data.get('saved'):
+                        saved_exit_count += 1
+                        if (i + 1) % 10 == 0:
+                            print(f"  Progress: {i+1}/{len(new_exit_experiences)} saved... (Total in DB: {data.get('total_exit_experiences', 0):,})")
+                    else:
+                        failed_exit_count += 1
+                else:
+                    failed_exit_count += 1
+            except Exception as e:
+                failed_exit_count += 1
+                if i < 3:  # Only log first 3 errors
+                    print(f"  Error saving exit {i+1}: {e}")
+        
+        print(f"[CLOUD RL] ✓ Saved {saved_exit_count} exit experiences | Failed: {failed_exit_count}")
+    else:
+        saved_exit_count = 0  # No new exits to save
+    
+    if saved_signal_count > 0 or saved_exit_count > 0:
+        print(f"\n[CLOUD RL] ✓ Cloud database now learning from {saved_signal_count} new signals + {saved_exit_count} new exits!")
+    
     # Save trades to CSV for analysis
     df_trades.to_csv('data/backtest_trades.csv', index=False)
     print(f"\n[OK] Full trade log saved to: data/backtest_trades.csv")
@@ -1089,10 +1185,23 @@ def run_full_backtest(csv_file: str, days: int = 15):
 # ========================================
 
 if __name__ == "__main__":
+    import sys
+    
+    # Parse command-line arguments
+    days = 15  # Default
+    if len(sys.argv) > 1:
+        for i, arg in enumerate(sys.argv):
+            if arg == "--days" and i + 1 < len(sys.argv):
+                try:
+                    days = int(sys.argv[i + 1])
+                except ValueError:
+                    print(f"Invalid --days value: {sys.argv[i + 1]}")
+                    sys.exit(1)
+    
     csv_file = "data/historical_data/ES_1min.csv"
     
     if not os.path.exists(csv_file):
         print(f"ERROR: Data file not found: {csv_file}")
         print("Please ensure historical data is available.")
     else:
-        df_trades = run_full_backtest(csv_file, days=15)
+        df_trades = run_full_backtest(csv_file, days=days)

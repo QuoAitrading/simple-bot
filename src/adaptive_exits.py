@@ -45,6 +45,10 @@ class AdaptiveExitManager:
         self.cloud_api_url = cloud_api_url  # NEW: Cloud API endpoint
         self.use_cloud = cloud_api_url is not None  # Use cloud if URL provided
         
+        # CACHE: Store cloud exit params to avoid rate limiting
+        self.cloud_exit_params_cache = {}  # {regime: {params, timestamp}}
+        self.cloud_cache_duration = 60  # Cache for 60 seconds (1 minute)
+        
         # Track recent ATR values for regime detection
         self.recent_atr_values = deque(maxlen=20)
         self.recent_volatility_regime = "NORMAL"
@@ -55,6 +59,9 @@ class AdaptiveExitManager:
         # RL Learning for exit parameters
         self.exit_experiences = []  # All past exit outcomes
         
+        # MAE/MFE tracking for learning optimal exit timing
+        self.active_trades_mae_mfe = {}  # Trade ID -> {mae, mfe, entry_price}
+        
         # Learned optimal parameters per regime (updated from experiences)
         # MUST be defined BEFORE load_experiences() since it uses it as default
         # NOW LEARNS: stops, breakeven, trailing, partial exits, sideways timeout
@@ -64,49 +71,56 @@ class AdaptiveExitManager:
                 'partial_1_r': 2.0, 'partial_1_pct': 0.50,  # 50% @ 2R
                 'partial_2_r': 3.0, 'partial_2_pct': 0.30,  # 30% @ 3R
                 'partial_3_r': 5.0, 'partial_3_pct': 0.20,  # 20% @ 5R (runner)
-                'sideways_timeout_minutes': 15  # Exit runner if sideways 15 min
+                'sideways_timeout_minutes': 15,  # Exit runner if sideways 15 min
+                'runner_hold_criteria': {'min_r_multiple': 6.0, 'min_duration_minutes': 30, 'max_drawdown_pct': 0.25}
             },
             'HIGH_VOL_TRENDING': {
                 'breakeven_mult': 0.85, 'trailing_mult': 1.1, 'stop_mult': 4.2,
                 'partial_1_r': 2.5, 'partial_1_pct': 0.40,  # Let trends run more
                 'partial_2_r': 4.0, 'partial_2_pct': 0.30,
                 'partial_3_r': 6.0, 'partial_3_pct': 0.30,
-                'sideways_timeout_minutes': 20
+                'sideways_timeout_minutes': 20,
+                'runner_hold_criteria': {'min_r_multiple': 8.0, 'min_duration_minutes': 40, 'max_drawdown_pct': 0.20}
             },
             'LOW_VOL_RANGING': {
                 'breakeven_mult': 1.0, 'trailing_mult': 1.0, 'stop_mult': 3.2,
                 'partial_1_r': 1.5, 'partial_1_pct': 0.60,  # Take profits quick in ranges
                 'partial_2_r': 2.5, 'partial_2_pct': 0.30,
                 'partial_3_r': 4.0, 'partial_3_pct': 0.10,
-                'sideways_timeout_minutes': 10
+                'sideways_timeout_minutes': 10,
+                'runner_hold_criteria': {'min_r_multiple': 4.0, 'min_duration_minutes': 20, 'max_drawdown_pct': 0.30}
             },
             'LOW_VOL_TRENDING': {
                 'breakeven_mult': 1.0, 'trailing_mult': 1.15, 'stop_mult': 3.4,
                 'partial_1_r': 2.0, 'partial_1_pct': 0.40,
                 'partial_2_r': 3.5, 'partial_2_pct': 0.30,
                 'partial_3_r': 5.5, 'partial_3_pct': 0.30,
-                'sideways_timeout_minutes': 18
+                'sideways_timeout_minutes': 18,
+                'runner_hold_criteria': {'min_r_multiple': 5.5, 'min_duration_minutes': 28, 'max_drawdown_pct': 0.26}
             },
             'NORMAL': {
                 'breakeven_mult': 1.0, 'trailing_mult': 1.0, 'stop_mult': 3.6,
                 'partial_1_r': 2.0, 'partial_1_pct': 0.50,
                 'partial_2_r': 3.0, 'partial_2_pct': 0.30,
                 'partial_3_r': 5.0, 'partial_3_pct': 0.20,
-                'sideways_timeout_minutes': 12
+                'sideways_timeout_minutes': 12,
+                'runner_hold_criteria': {'min_r_multiple': 5.0, 'min_duration_minutes': 25, 'max_drawdown_pct': 0.27}
             },
             'NORMAL_TRENDING': {
                 'breakeven_mult': 1.0, 'trailing_mult': 1.1, 'stop_mult': 3.6,
                 'partial_1_r': 2.2, 'partial_1_pct': 0.45,
                 'partial_2_r': 3.5, 'partial_2_pct': 0.30,
                 'partial_3_r': 5.5, 'partial_3_pct': 0.25,
-                'sideways_timeout_minutes': 15
+                'sideways_timeout_minutes': 15,
+                'runner_hold_criteria': {'min_r_multiple': 6.0, 'min_duration_minutes': 30, 'max_drawdown_pct': 0.25}
             },
             'NORMAL_CHOPPY': {
                 'breakeven_mult': 0.95, 'trailing_mult': 0.95, 'stop_mult': 3.4,
                 'partial_1_r': 1.8, 'partial_1_pct': 0.55,
                 'partial_2_r': 2.8, 'partial_2_pct': 0.30,
                 'partial_3_r': 4.5, 'partial_3_pct': 0.15,
-                'sideways_timeout_minutes': 10
+                'sideways_timeout_minutes': 10,
+                'runner_hold_criteria': {'min_r_multiple': 4.0, 'min_duration_minutes': 18, 'max_drawdown_pct': 0.29}
             }
         }
         
@@ -143,7 +157,7 @@ class AdaptiveExitManager:
         self.recent_trade_durations.append(duration_minutes)
     
     def record_exit_outcome(self, regime: str, exit_params: Dict, trade_outcome: Dict, 
-                           market_state: Dict = None, partial_exits: list = None):
+                           market_state: Dict = None, partial_exits: list = None, backtest_mode: bool = False):
         """
         Record exit outcome for RL learning (including scaling decisions).
         
@@ -153,6 +167,7 @@ class AdaptiveExitManager:
             trade_outcome: Trade result (pnl, duration, exit_reason, win/loss)
             market_state: Optional dict with RSI, volume_ratio, hour, day_of_week, streak, recent_pnl, vix, vwap_distance, atr
             partial_exits: List of partial exit decisions (level, r_multiple, contracts, percentage)
+            backtest_mode: If True, collect for bulk save at end (don't POST immediately)
         """
         # Build market context (use provided state or defaults)
         if market_state is None:
@@ -186,7 +201,11 @@ class AdaptiveExitManager:
         
         self.exit_experiences.append(experience)
         
-        # Save to cloud API immediately if configured
+        # BULK SAVE MODE: Collect for later (backtest)
+        if backtest_mode:
+            return  # Don't POST immediately, backtest will bulk save at end
+        
+        # LIVE MODE: Save to cloud API immediately
         if self.use_cloud:
             try:
                 # Convert boolean values to int for JSON serialization
@@ -318,6 +337,9 @@ class AdaptiveExitManager:
             
             # NEW: Learn optimal scaling strategies from outcomes
             self._learn_scaling_strategies(regime, outcomes)
+            
+            # NEW: Learn runner hold criteria
+            self._learn_runner_hold_criteria(regime, outcomes)
     
     def _learn_partial_exit_params(self, regime: str, outcomes: list):
         """
@@ -613,6 +635,91 @@ class AdaptiveExitManager:
                        f"{quick_be}/{len(afternoon_exits)} used quick breakeven")
 
     
+    def _learn_runner_hold_criteria(self, regime: str, outcomes: list):
+        """
+        Learn optimal runner hold criteria (when to let runner run vs exit early).
+        
+        Analyzes runner trades for:
+        - Minimum R-multiple to justify holding
+        - Minimum duration to hold runner
+        - Maximum drawdown percentage before exit
+        """
+        if len(outcomes) < 20:
+            return
+        
+        # Find trades that achieved 3R+ (had a runner)
+        runner_trades = [o for o in outcomes if o['outcome'].get('r_multiple', 0) >= 3.0]
+        
+        if len(runner_trades) < 10:
+            return
+        
+        # Analyze min R-multiple for best runners
+        high_runners = [o for o in runner_trades if o['outcome'].get('r_multiple', 0) >= 6.0]
+        med_runners = [o for o in runner_trades if 4.0 <= o['outcome'].get('r_multiple', 0) < 6.0]
+        low_runners = [o for o in runner_trades if 3.0 <= o['outcome'].get('r_multiple', 0) < 4.0]
+        
+        best_group = None
+        best_pnl = -999999
+        
+        for group, trades in [('high', high_runners), ('med', med_runners), ('low', low_runners)]:
+            if len(trades) >= 5:
+                avg_pnl = sum(o['outcome']['pnl'] for o in trades) / len(trades)
+                if avg_pnl > best_pnl:
+                    best_pnl, best_group = avg_pnl, group
+        
+        # Adjust min_r_multiple toward best group
+        if best_group and 'runner_hold_criteria' in self.learned_params[regime]:
+            current_min_r = self.learned_params[regime]['runner_hold_criteria']['min_r_multiple']
+            
+            if best_group == 'high':
+                new_min_r = min(10.0, current_min_r * 0.9 + 6.0 * 0.1)
+                logger.info(f"[RUNNER RL] {regime}: HIGH runners (6R+) most profitable, targeting {new_min_r:.1f}R")
+            elif best_group == 'med':
+                new_min_r = min(8.0, current_min_r * 0.9 + 4.5 * 0.1)
+                logger.info(f"[RUNNER RL] {regime}: MED runners (4-6R) most profitable, targeting {new_min_r:.1f}R")
+            else:
+                new_min_r = max(3.0, current_min_r * 0.9 + 3.5 * 0.1)
+                logger.info(f"[RUNNER RL] {regime}: LOW runners (3-4R) most profitable, targeting {new_min_r:.1f}R")
+            
+            self.learned_params[regime]['runner_hold_criteria']['min_r_multiple'] = new_min_r
+        
+        # Analyze min duration to hold runner
+        long_holds = [o for o in runner_trades if o.get('duration_minutes', 0) >= 30 and o['outcome']['pnl'] > 0]
+        short_holds = [o for o in runner_trades if o.get('duration_minutes', 0) < 20 and o['outcome']['pnl'] > 0]
+        
+        if len(long_holds) >= 5 and len(short_holds) >= 5:
+            long_avg = sum(o['outcome']['pnl'] for o in long_holds) / len(long_holds)
+            short_avg = sum(o['outcome']['pnl'] for o in short_holds) / len(short_holds)
+            
+            if 'runner_hold_criteria' in self.learned_params[regime]:
+                current_min_dur = self.learned_params[regime]['runner_hold_criteria']['min_duration_minutes']
+                
+                if long_avg > short_avg + 25:  # Long holds significantly better
+                    new_min_dur = min(60, current_min_dur + 5)
+                    self.learned_params[regime]['runner_hold_criteria']['min_duration_minutes'] = new_min_dur
+                    logger.info(f"[RUNNER RL] {regime}: Long holds (30+ min) better (${long_avg:.2f} vs ${short_avg:.2f}), "
+                               f"increasing min duration to {new_min_dur} min")
+                elif short_avg > long_avg + 25:  # Short holds significantly better
+                    new_min_dur = max(10, current_min_dur - 5)
+                    self.learned_params[regime]['runner_hold_criteria']['min_duration_minutes'] = new_min_dur
+                    logger.info(f"[RUNNER RL] {regime}: Short holds (<20 min) better (${short_avg:.2f} vs ${long_avg:.2f}), "
+                               f"decreasing min duration to {new_min_dur} min")
+        
+        # Analyze max drawdown percentage before exit
+        drawdown_trades = [o for o in runner_trades if o.get('max_drawdown_pct', 0.0) > 0.25 and o['outcome']['pnl'] < 0]
+        
+        if len(drawdown_trades) >= 5 and 'runner_hold_criteria' in self.learned_params[regime]:
+            avg_loss = sum(o['outcome']['pnl'] for o in drawdown_trades) / len(drawdown_trades)
+            current_dd = self.learned_params[regime]['runner_hold_criteria']['max_drawdown_pct']
+            
+            # If many losing trades had high drawdowns, tighten max drawdown
+            if avg_loss < -50:
+                new_dd = max(0.15, current_dd * 0.95)
+                self.learned_params[regime]['runner_hold_criteria']['max_drawdown_pct'] = new_dd
+                logger.info(f"[RUNNER RL] {regime}: {len(drawdown_trades)} high-drawdown losers (avg ${avg_loss:.2f}), "
+                           f"tightening max drawdown to {new_dd:.2%}")
+
+    
     def load_experiences(self):
         """Load past exit experiences from cloud API or local file (fallback)."""
         
@@ -663,20 +770,760 @@ class AdaptiveExitManager:
             logger.warning(f"[LOCAL] Exit experience file not found: {self.experience_file}")
     
     
-    def get_stop_multiplier(self, regime: str) -> float:
+    def get_cloud_exit_params(self, regime: str, market_state: Dict, position: Dict, entry_confidence: float = 0.75) -> Optional[Dict]:
+        """
+        Query cloud API for REAL-TIME exit parameter recommendations.
+        
+        This is called MID-TRADE to adapt exit strategy as market conditions change.
+        Unlike load_experiences() which loads once at startup, this queries the cloud
+        on every bar update to get fresh exit recommendations based on current conditions.
+        
+        CACHED: To avoid rate limiting, results are cached for 60 seconds per regime.
+        
+        Args:
+            regime: Current market regime (HIGH_VOL_CHOPPY, etc.)
+            market_state: Current market conditions (RSI, ATR, VWAP distance, etc.)
+            position: Current position state (side, duration, unrealized P&L, etc.)
+            entry_confidence: Signal RL confidence score (0.0-1.0)
+            
+        Returns:
+            Dict with cloud-recommended exit parameters, or None if cloud unavailable
+            {
+                "breakeven_threshold_ticks": 9,
+                "breakeven_offset_ticks": 2,
+                "trailing_distance_ticks": 10,
+                "partial_1_r": 2.0,
+                "partial_1_pct": 0.50,
+                "stop_mult": 3.8,
+                "recommendation": "TIGHTEN (68% win rate in 342 similar exits)"
+            }
+        """
+        if not self.use_cloud:
+            return None  # Cloud disabled, use local learned params
+        
+        # Check cache first (avoid rate limiting)
+        import time
+        current_time = time.time()
+        if regime in self.cloud_exit_params_cache:
+            cached = self.cloud_exit_params_cache[regime]
+            cache_age = current_time - cached['timestamp']
+            if cache_age < self.cloud_cache_duration:
+                logger.debug(f"[CLOUD EXIT RL] Using cached params for {regime} (age: {cache_age:.1f}s)")
+                return cached['params']
+        
+        try:
+            # Build request payload
+            request_data = {
+                "regime": regime,
+                "market_state": market_state,
+                "position": position,
+                "entry_confidence": entry_confidence
+            }
+            
+            # Query cloud API
+            response = requests.post(
+                f"{self.cloud_api_url}/api/ml/get_adaptive_exit_params",
+                json=request_data,
+                timeout=3  # Fast timeout - can't block trade management
+            )
+            
+            if response.status_code == 200:
+                data = response.json()
+                
+                if data.get('success'):
+                    params = data.get('params', {})
+                    similar_count = data.get('similar_exits_analyzed', 0)
+                    recommendation = data.get('recommendation', 'N/A')
+                    
+                    logger.info(f"🎯 [CLOUD EXIT RL] {recommendation} (analyzed {similar_count} similar exits)")
+                    
+                    # Add metadata for debugging
+                    params['_cloud_metadata'] = {
+                        'similar_exits': similar_count,
+                        'avg_pnl': data.get('avg_pnl_similar', 0.0),
+                        'win_rate': data.get('win_rate_similar', 0.0),
+                        'recommendation': recommendation
+                    }
+                    
+                    # Cache the result
+                    self.cloud_exit_params_cache[regime] = {
+                        'params': params,
+                        'timestamp': current_time
+                    }
+                    
+                    return params
+                else:
+                    logger.warning(f"[CLOUD EXIT RL] Cloud returned no success: {data}")
+                    return None
+            elif response.status_code == 429:
+                logger.warning("[CLOUD EXIT RL] Rate limited - using cached/local params")
+                return None
+            else:
+                logger.warning(f"[CLOUD EXIT RL] HTTP {response.status_code}")
+                return None
+                
+        except requests.Timeout:
+            logger.warning("[CLOUD EXIT RL] Timeout (>3s) - using local params")
+            return None
+        except Exception as e:
+            logger.error(f"[CLOUD EXIT RL] Error querying cloud: {e}")
+            return None
+    
+    
+    def get_stop_multiplier(self, regime: str, recent_exits: list = None) -> float:
         """
         Get the learned stop loss multiplier for the current regime.
+        Automatically widens stops after cluster of stop-outs.
         
         Args:
             regime: Current market regime
+            recent_exits: Optional list of recent exit outcomes
             
         Returns: Stop loss multiplier (ATR multiple, typically 2.8x-4.5x)
         """
         params = self.learned_params.get(regime, self.learned_params.get('NORMAL', {}))
         stop_mult = params.get('stop_mult', 3.6)  # Default 3.6x if not found
         
+        # ADAPTIVE STOP WIDENING: Check for cluster of recent stop-outs
+        if recent_exits and len(recent_exits) >= 3:
+            # Check last 3 trades
+            last_3 = recent_exits[-3:]
+            stop_outs = [e for e in last_3 if e.get('exit_reason') == 'stop_loss']
+            
+            # If 2+ of last 3 were stopped out, widen stop
+            if len(stop_outs) >= 2:
+                # Widen by 15% (e.g., 3.6 → 4.14)
+                widened_mult = stop_mult * 1.15
+                widened_mult = min(5.0, widened_mult)  # Cap at 5.0x
+                
+                logger.warning(f"⚠️ [ADAPTIVE STOP] {len(stop_outs)}/3 recent stop-outs in {regime} → "
+                             f"widening stop from {stop_mult:.1f}x to {widened_mult:.1f}x ATR (+15%)")
+                return widened_mult
+            
+            # If all 3 were stopped out, widen even more
+            if len(stop_outs) == 3:
+                widened_mult = stop_mult * 1.25  # +25%
+                widened_mult = min(5.5, widened_mult)  # Cap at 5.5x
+                
+                logger.critical(f"🚨 [ADAPTIVE STOP] 3/3 consecutive stop-outs in {regime} → "
+                               f"widening stop from {stop_mult:.1f}x to {widened_mult:.1f}x ATR (+25%)")
+                return widened_mult
+        
         logger.info(f"[EXIT RL] Using {regime} stop multiplier: {stop_mult:.1f}x ATR")
         return stop_mult
+    
+    def choose_exit_order_type(self, exit_reason: str, pnl: float, urgency: str = 'normal', 
+                               current_spread_ticks: float = 1.0) -> str:
+        """
+        Learn and choose optimal exit order type based on conditions.
+        
+        Args:
+            exit_reason: Why exiting ('profit_target', 'stop_loss', 'timeout', 'runner_exit')
+            pnl: Current P&L in dollars
+            urgency: 'low', 'normal', 'high'
+            current_spread_ticks: Current bid/ask spread
+            
+        Returns: 'limit' or 'market'
+        
+        Learning logic:
+        - Stop loss: Always market (get out NOW)
+        - Profit target + low urgency: Limit order (patient)
+        - Runner exit + high profit: Limit order (don't give back to slippage)
+        - High urgency: Market order
+        - Wide spread: Limit order (avoid bad price)
+        """
+        # Hard rules first (safety)
+        if exit_reason == 'stop_loss':
+            return 'market'  # Get out immediately on stop
+        
+        if urgency == 'high':
+            return 'market'  # Urgent exits need speed
+        
+        # Learn from past exit slippage outcomes
+        if len(self.exit_experiences) >= 20:
+            # Find similar exits
+            similar_limit = [
+                exp for exp in self.exit_experiences
+                if exp.get('execution', {}).get('exit_order_type') == 'limit'
+                and exp.get('outcome', {}).get('exit_reason') == exit_reason
+            ]
+            
+            similar_market = [
+                exp for exp in self.exit_experiences
+                if exp.get('execution', {}).get('exit_order_type') == 'market'
+                and exp.get('outcome', {}).get('exit_reason') == exit_reason
+            ]
+            
+            if len(similar_limit) >= 5 and len(similar_market) >= 5:
+                # Compare average exit slippage
+                limit_slippage = sum(
+                    exp.get('execution', {}).get('exit_slippage_ticks', 0)
+                    for exp in similar_limit
+                ) / len(similar_limit)
+                
+                market_slippage = sum(
+                    exp.get('execution', {}).get('exit_slippage_ticks', 0)
+                    for exp in similar_market
+                ) / len(similar_market)
+                
+                # Compare final P&L (did slippage cost us?)
+                limit_pnl = sum(exp['outcome']['pnl'] for exp in similar_limit) / len(similar_limit)
+                market_pnl = sum(exp['outcome']['pnl'] for exp in similar_market) / len(similar_market)
+                
+                # Log learning
+                if abs(limit_pnl - market_pnl) > 10:
+                    logger.info(f"📊 [EXIT EXECUTION] {exit_reason}: Limit={limit_slippage:.2f}t slip (${limit_pnl:.2f} avg) "
+                               f"vs Market={market_slippage:.2f}t slip (${market_pnl:.2f} avg)")
+                
+                # Choose better option (prefer limit if similar P&L, less slippage)
+                if limit_pnl >= market_pnl - 5:  # Limit at least as good
+                    return 'limit'
+        
+        # Default heuristics if not enough data
+        if exit_reason == 'profit_target' and pnl > 100:
+            return 'limit'  # Protect profit with limit
+        
+        if current_spread_ticks > 2.0:
+            return 'limit'  # Wide spread = use limit
+        
+        if urgency == 'low':
+            return 'limit'  # No rush = patient limit
+        
+        return 'market'  # Default to market for safety
+    
+    def get_dynamic_partial_percentage(self, regime: str, current_r_multiple: float, 
+                                      partial_level: int, market_conditions: Dict = None) -> float:
+        """
+        Dynamically adjust partial exit percentage based on real-time conditions.
+        
+        Args:
+            regime: Current market regime
+            current_r_multiple: Current R-multiple achieved
+            partial_level: Which partial (1, 2, or 3)
+            market_conditions: Optional dict with rsi, volume_spike, reversal_risk
+            
+        Returns: Percentage to exit (0.0-1.0)
+        
+        Example: If at 2R and market shows reversal, exit 80% instead of learned 50%
+        """
+        if market_conditions is None:
+            market_conditions = {}
+        
+        # Get base learned percentage
+        param_key = f'partial_{partial_level}_pct'
+        base_pct = self.learned_params.get(regime, {}).get(param_key, 0.50)
+        
+        # Adjust for real-time conditions
+        adjusted_pct = base_pct
+        
+        # Reversal risk detection
+        rsi = market_conditions.get('rsi', 50)
+        volume_spike = market_conditions.get('volume_spike', False)
+        
+        if partial_level == 1:  # First partial
+            # If showing reversal signs at 2R, take MORE
+            if current_r_multiple >= 2.0:
+                if rsi > 75 or rsi < 25:  # Overbought/oversold
+                    adjusted_pct = min(0.90, base_pct * 1.5)
+                    logger.info(f"📊 [DYNAMIC PARTIAL] RSI={rsi:.0f} at {current_r_multiple:.1f}R → "
+                               f"increasing partial 1 to {adjusted_pct:.0%} (from {base_pct:.0%})")
+                elif volume_spike:  # Climax volume
+                    adjusted_pct = min(0.85, base_pct * 1.4)
+                    logger.info(f"📊 [DYNAMIC PARTIAL] Volume spike at {current_r_multiple:.1f}R → "
+                               f"increasing partial 1 to {adjusted_pct:.0%}")
+        
+        elif partial_level == 2:  # Second partial
+            # If deep in profit and trending, take LESS (let it run)
+            if current_r_multiple >= 4.0:
+                if 40 < rsi < 60:  # Healthy trend
+                    adjusted_pct = max(0.20, base_pct * 0.7)
+                    logger.info(f"📊 [DYNAMIC PARTIAL] Healthy trend at {current_r_multiple:.1f}R → "
+                               f"decreasing partial 2 to {adjusted_pct:.0%} (let it run)")
+        
+        return min(1.0, max(0.1, adjusted_pct))
+    
+    def get_exit_urgency(self, current_time, entry_time, r_multiple: float) -> str:
+        """
+        Determine exit urgency based on time of day and trade duration.
+        
+        Args:
+            current_time: Current datetime
+            entry_time: Entry datetime
+            r_multiple: Current R-multiple
+            
+        Returns: 'low', 'normal', or 'high'
+        
+        Time-based urgency:
+        - 3:45-4:00 PM ET: HIGH (market closing soon - exit everything)
+        - 12:00-1:00 PM ET: HIGH if losing (lunch chop)
+        - Normal hours: NORMAL unless conditions warrant
+        """
+        hour = current_time.hour
+        minute = current_time.minute
+        
+        # CRITICAL: Near market close (3:45-4:00 PM ET)
+        if hour == 15 and minute >= 45:  # 3:45-4:00 PM
+            return 'high'  # Get out NOW
+        elif hour >= 16:  # After 4 PM
+            return 'high'
+        
+        # HIGH URGENCY: Lunch hour with losing trade
+        if 12 <= hour <= 13 and r_multiple < 0:
+            return 'high'  # Choppy lunch period - exit losers fast
+        
+        # NORMAL: Standard trading hours
+        return 'normal'
+    
+    def check_profit_lock(self, current_r_multiple: float, peak_r_multiple: float, 
+                         current_profit_ticks: float, direction: str) -> Dict:
+        """
+        Check if profit should be locked (ratchet mechanism).
+        Once at high R-multiple, never let it fall below lower threshold.
+        
+        Args:
+            current_r_multiple: Current R-multiple (profit/risk)
+            peak_r_multiple: Highest R-multiple achieved in trade
+            current_profit_ticks: Current profit in ticks
+            direction: 'long' or 'short'
+            
+        Returns:
+            Dict with lock_profit (bool), min_acceptable_r (float), reason (str)
+        """
+        # Define profit lock zones (once achieved X, never go below Y)
+        lock_zones = [
+            {'achieved': 5.0, 'min_lock': 3.5, 'description': '5R → Lock 3.5R'},
+            {'achieved': 4.0, 'min_lock': 3.0, 'description': '4R → Lock 3R'},
+            {'achieved': 3.0, 'min_lock': 2.0, 'description': '3R → Lock 2R'},
+            {'achieved': 2.5, 'min_lock': 1.5, 'description': '2.5R → Lock 1.5R'},
+        ]
+        
+        # Check which zone applies based on peak R
+        for zone in lock_zones:
+            if peak_r_multiple >= zone['achieved']:
+                # We achieved this level - enforce the lock
+                if current_r_multiple < zone['min_lock']:
+                    return {
+                        'lock_profit': True,
+                        'min_acceptable_r': zone['min_lock'],
+                        'reason': f"🔒 PROFIT LOCK: Peaked at {peak_r_multiple:.1f}R, "
+                                 f"current {current_r_multiple:.1f}R < lock threshold {zone['min_lock']}R "
+                                 f"({zone['description']})"
+                    }
+                
+                # Still above lock threshold - no action needed yet
+                return {
+                    'lock_profit': False,
+                    'min_acceptable_r': zone['min_lock'],
+                    'reason': f"Above lock ({current_r_multiple:.1f}R > {zone['min_lock']}R)"
+                }
+        
+        # No lock zone reached yet
+        return {
+            'lock_profit': False,
+            'min_acceptable_r': 0.0,
+            'reason': f"No lock zone (peak {peak_r_multiple:.1f}R)"
+        }
+    
+    def detect_adverse_momentum(self, recent_bars: list, direction: str, 
+                                entry_price: float, current_price: float,
+                                position_size: int) -> Dict:
+        """
+        Detect when price momentum has shifted strongly against the position.
+        Exit FAST when market reversing hard.
+        
+        Args:
+            recent_bars: Last 3-5 bars
+            direction: 'long' or 'short'
+            entry_price: Entry price
+            current_price: Current price
+            position_size: Number of contracts
+            
+        Returns:
+            Dict with adverse_detected (bool), severity ('low'/'medium'/'high'), reason (str)
+        """
+        if len(recent_bars) < 3:
+            return {
+                'adverse_detected': False,
+                'severity': 'low',
+                'reason': 'Insufficient bar data'
+            }
+        
+        # Get last 3 bars for momentum check
+        bars = recent_bars[-3:]
+        
+        # Calculate price momentum
+        if direction == 'long':
+            # For LONG: Adverse = rapid downward movement
+            bar_directions = []
+            for bar in bars:
+                if bar['close'] < bar['open']:
+                    bar_directions.append('down')
+                else:
+                    bar_directions.append('up')
+            
+            # Check for consecutive red bars with increasing ranges
+            consecutive_red = all(d == 'down' for d in bar_directions)
+            ranges = [(bar['high'] - bar['low']) for bar in bars]
+            expanding_range = ranges[-1] > ranges[0] * 1.5  # Last bar 50% bigger
+            
+            # Current drawdown from entry
+            drawdown_pct = ((entry_price - current_price) / entry_price) * 100
+            
+            if consecutive_red and expanding_range and drawdown_pct > 0.5:
+                return {
+                    'adverse_detected': True,
+                    'severity': 'high',
+                    'reason': f"⚠️ ADVERSE MOMENTUM: 3 consecutive red bars with expanding range, "
+                             f"drawdown {drawdown_pct:.1f}%"
+                }
+            elif consecutive_red and drawdown_pct > 0.3:
+                return {
+                    'adverse_detected': True,
+                    'severity': 'medium',
+                    'reason': f"Adverse: 3 red bars, drawdown {drawdown_pct:.1f}%"
+                }
+        
+        else:  # SHORT
+            # For SHORT: Adverse = rapid upward movement
+            bar_directions = []
+            for bar in bars:
+                if bar['close'] > bar['open']:
+                    bar_directions.append('up')
+                else:
+                    bar_directions.append('down')
+            
+            # Check for consecutive green bars
+            consecutive_green = all(d == 'up' for d in bar_directions)
+            ranges = [(bar['high'] - bar['low']) for bar in bars]
+            expanding_range = ranges[-1] > ranges[0] * 1.5
+            
+            # Current drawdown from entry
+            drawdown_pct = ((current_price - entry_price) / entry_price) * 100
+            
+            if consecutive_green and expanding_range and drawdown_pct > 0.5:
+                return {
+                    'adverse_detected': True,
+                    'severity': 'high',
+                    'reason': f"⚠️ ADVERSE MOMENTUM: 3 consecutive green bars with expanding range, "
+                             f"drawdown {drawdown_pct:.1f}%"
+                }
+            elif consecutive_green and drawdown_pct > 0.3:
+                return {
+                    'adverse_detected': True,
+                    'severity': 'medium',
+                    'reason': f"Adverse: 3 green bars, drawdown {drawdown_pct:.1f}%"
+                }
+        
+        return {
+            'adverse_detected': False,
+            'severity': 'low',
+            'reason': 'No adverse momentum detected'
+        }
+    
+    def check_volume_exhaustion(self, recent_bars: list, r_multiple: float, 
+                                avg_volume: float = None) -> Dict:
+        """
+        Detect when volume is drying up during a profit run (exhaustion signal).
+        Exit runners before trend reverses.
+        
+        Args:
+            recent_bars: Last 5-10 bars
+            r_multiple: Current R-multiple (only relevant if in profit)
+            avg_volume: Average volume for comparison (optional)
+            
+        Returns:
+            Dict with exhaustion_detected (bool), volume_trend (str), reason (str)
+        """
+        if len(recent_bars) < 5:
+            return {
+                'exhaustion_detected': False,
+                'volume_trend': 'unknown',
+                'reason': 'Insufficient bar data'
+            }
+        
+        # Get last 5 bars
+        bars = recent_bars[-5:]
+        volumes = [bar.get('volume', 0) for bar in bars]
+        
+        # Calculate volume trend (comparing recent vs earlier)
+        early_avg = statistics.mean(volumes[:3])  # First 3 bars
+        recent_avg = statistics.mean(volumes[3:])  # Last 2 bars
+        
+        # Calculate average volume if not provided
+        if avg_volume is None:
+            avg_volume = statistics.mean([bar.get('volume', 0) for bar in recent_bars[-20:]])
+        
+        # Volume dropping during profit run = exhaustion
+        if r_multiple > 2.0:  # Only relevant when in good profit
+            if recent_avg < early_avg * 0.6:  # Volume dropped 40%+
+                return {
+                    'exhaustion_detected': True,
+                    'volume_trend': 'declining',
+                    'reason': f"📉 VOLUME EXHAUSTION: Profit at {r_multiple:.1f}R but volume dropped "
+                             f"{(1 - recent_avg/early_avg)*100:.0f}% → Exit runner before reversal"
+                }
+            elif recent_avg < avg_volume * 0.5:  # Recent volume 50% below average
+                return {
+                    'exhaustion_detected': True,
+                    'volume_trend': 'very_low',
+                    'reason': f"Volume very low ({recent_avg:.0f} vs {avg_volume:.0f} avg) at {r_multiple:.1f}R"
+                }
+        
+        return {
+            'exhaustion_detected': False,
+            'volume_trend': 'normal',
+            'reason': f"Volume OK (recent {recent_avg:.0f} vs early {early_avg:.0f})"
+        }
+    
+    def detect_failed_breakout(self, recent_bars: list, direction: str,
+                               target_hit: bool, entry_price: float,
+                               current_price: float) -> Dict:
+        """
+        Detect when price hit target but immediately reversed (trap/failed breakout).
+        Exit FAST before full reversal.
+        
+        Args:
+            recent_bars: Last 2-3 bars
+            direction: 'long' or 'short'
+            target_hit: Whether target was reached
+            entry_price: Entry price
+            current_price: Current price
+            
+        Returns:
+            Dict with failed_breakout (bool), severity (str), reason (str)
+        """
+        if not target_hit or len(recent_bars) < 2:
+            return {
+                'failed_breakout': False,
+                'severity': 'low',
+                'reason': 'Target not hit or insufficient data'
+            }
+        
+        # Get last 2 bars
+        bars = recent_bars[-2:]
+        last_bar = bars[-1]
+        prev_bar = bars[-2] if len(bars) > 1 else bars[0]
+        
+        if direction == 'long':
+            # For LONG: Failed breakout = hit high then closed near low
+            bar_range = last_bar['high'] - last_bar['low']
+            close_from_high = last_bar['high'] - last_bar['close']
+            
+            # If closed in bottom 30% of range after hitting target
+            if bar_range > 0 and (close_from_high / bar_range) > 0.7:
+                # Check if actually reversing (current price below close)
+                if current_price < last_bar['close'] * 0.999:
+                    return {
+                        'failed_breakout': True,
+                        'severity': 'high',
+                        'reason': f"⚠️ FAILED BREAKOUT: Hit target but closed in bottom 70% of range, "
+                                 f"now reversing → Exit NOW"
+                    }
+                else:
+                    return {
+                        'failed_breakout': True,
+                        'severity': 'medium',
+                        'reason': f"Possible failed breakout: Closed near lows after target"
+                    }
+        
+        else:  # SHORT
+            # For SHORT: Failed breakout = hit low then closed near high
+            bar_range = last_bar['high'] - last_bar['low']
+            close_from_low = last_bar['close'] - last_bar['low']
+            
+            # If closed in top 30% of range after hitting target
+            if bar_range > 0 and (close_from_low / bar_range) > 0.7:
+                # Check if actually reversing
+                if current_price > last_bar['close'] * 1.001:
+                    return {
+                        'failed_breakout': True,
+                        'severity': 'high',
+                        'reason': f"⚠️ FAILED BREAKOUT: Hit target but closed in top 70% of range, "
+                                 f"now reversing → Exit NOW"
+                    }
+                else:
+                    return {
+                        'failed_breakout': True,
+                        'severity': 'medium',
+                        'reason': f"Possible failed breakout: Closed near highs after target"
+                    }
+        
+        return {
+            'failed_breakout': False,
+            'severity': 'low',
+            'reason': 'No failed breakout detected'
+        }
+    
+    def track_mae_mfe(self, trade_id: str, entry_price: float, current_price: float, 
+                     direction: str, position_size: int):
+        """
+        Track Maximum Adverse Excursion (MAE) and Maximum Favorable Excursion (MFE).
+        This data helps learn optimal exit timing.
+        
+        Args:
+            trade_id: Unique trade identifier
+            entry_price: Entry price
+            current_price: Current price
+            direction: 'long' or 'short'
+            position_size: Number of contracts
+        """
+        # Initialize tracking if new trade
+        if trade_id not in self.active_trades_mae_mfe:
+            self.active_trades_mae_mfe[trade_id] = {
+                'mae': 0.0,  # Max drawdown
+                'mfe': 0.0,  # Max profit
+                'entry_price': entry_price,
+                'direction': direction,
+                'position_size': position_size
+            }
+        
+        trade_data = self.active_trades_mae_mfe[trade_id]
+        
+        # Calculate current P&L
+        if direction == 'long':
+            pnl = current_price - entry_price
+        else:  # short
+            pnl = entry_price - current_price
+        
+        # Update MAE (max adverse - worst drawdown)
+        if pnl < trade_data['mae']:
+            trade_data['mae'] = pnl
+        
+        # Update MFE (max favorable - best profit)
+        if pnl > trade_data['mfe']:
+            trade_data['mfe'] = pnl
+    
+    def get_mae_mfe_stats(self, trade_id: str) -> Dict:
+        """
+        Get MAE/MFE statistics for a trade.
+        
+        Returns:
+            Dict with mae, mfe, mae_pct, mfe_pct, efficiency_ratio
+        """
+        if trade_id not in self.active_trades_mae_mfe:
+            return {
+                'mae': 0.0,
+                'mfe': 0.0,
+                'mae_pct': 0.0,
+                'mfe_pct': 0.0,
+                'efficiency_ratio': 0.0
+            }
+        
+        trade_data = self.active_trades_mae_mfe[trade_id]
+        entry_price = trade_data['entry_price']
+        
+        # Calculate percentages
+        mae_pct = (trade_data['mae'] / entry_price) * 100 if entry_price > 0 else 0
+        mfe_pct = (trade_data['mfe'] / entry_price) * 100 if entry_price > 0 else 0
+        
+        # Efficiency ratio: How much of max profit did we capture?
+        # 1.0 = exited at peak, 0.0 = gave it all back
+        efficiency = 0.0
+        if trade_data['mfe'] > 0:
+            # This will be calculated when trade exits
+            # efficiency = (exit_pnl / mfe)
+            efficiency = 0.0  # Placeholder until exit
+        
+        return {
+            'mae': trade_data['mae'],
+            'mfe': trade_data['mfe'],
+            'mae_pct': mae_pct,
+            'mfe_pct': mfe_pct,
+            'efficiency_ratio': efficiency
+        }
+    
+    def analyze_mae_mfe_patterns(self):
+        """
+        Analyze MAE/MFE patterns from past trades to learn optimal exit timing.
+        Helps answer:
+        - How much profit do we typically give back?
+        - At what point should we lock in profits?
+        - What's typical MAE before a winner?
+        """
+        if len(self.exit_experiences) < 20:
+            return
+        
+        # Separate winners and losers
+        winners = [exp for exp in self.exit_experiences if exp['outcome'].get('win', False)]
+        losers = [exp for exp in self.exit_experiences if not exp['outcome'].get('win', False)]
+        
+        if len(winners) >= 10:
+            # Calculate average MFE for winners
+            avg_mfe = statistics.mean([exp.get('mfe', 0) for exp in winners if 'mfe' in exp])
+            avg_exit_pnl = statistics.mean([exp['outcome']['pnl'] for exp in winners])
+            
+            # Efficiency: How much of peak profit do we capture?
+            if avg_mfe > 0:
+                efficiency = (avg_exit_pnl / avg_mfe) * 100
+                logger.info(f"📊 [MAE/MFE ANALYSIS] Winners: Avg MFE ${avg_mfe:.2f}, "
+                           f"Avg Exit ${avg_exit_pnl:.2f} → {efficiency:.0f}% efficiency")
+                
+                if efficiency < 60:
+                    logger.warning(f"⚠️ [EXIT TIMING] Only capturing {efficiency:.0f}% of peak profit! "
+                                  f"Consider tighter trailing stops.")
+        
+        if len(losers) >= 10:
+            # Typical MAE before stop-out
+            avg_mae = statistics.mean([abs(exp.get('mae', 0)) for exp in losers if 'mae' in exp])
+            logger.info(f"📊 [MAE/MFE ANALYSIS] Losers: Avg MAE ${avg_mae:.2f}")
+    
+    def check_profit_velocity(self, entry_time, current_time, r_multiple: float, 
+                              peak_r: float) -> dict:
+        """
+        Detect rapid profit moves that should be protected with tighter management.
+        
+        Args:
+            entry_time: When trade entered
+            current_time: Current time
+            r_multiple: Current R-multiple
+            peak_r: Peak R-multiple achieved
+            
+        Returns: dict with velocity_detected, recommended_action
+        
+        Examples:
+        - Hit 5R in 10 minutes → Tighten trail to lock profit
+        - Hit 3R in 5 minutes → Move to breakeven immediately
+        """
+        from datetime import timedelta
+        
+        duration = current_time - entry_time
+        duration_minutes = duration.total_seconds() / 60
+        
+        result = {
+            'velocity_detected': False,
+            'recommended_action': None,
+            'reason': ''
+        }
+        
+        # Avoid division by zero
+        if duration_minutes < 1:
+            return result
+        
+        # Calculate R per minute
+        r_per_minute = r_multiple / duration_minutes
+        
+        # FAST PROFIT: 5R in < 10 minutes (0.5 R/min)
+        if r_multiple >= 5.0 and duration_minutes < 10:
+            result['velocity_detected'] = True
+            result['recommended_action'] = 'tighten_trail'
+            result['reason'] = f"🚀 Hit {r_multiple:.1f}R in {duration_minutes:.0f} min ({r_per_minute:.2f} R/min) - LOCK PROFIT"
+            return result
+        
+        # MEDIUM VELOCITY: 3R in < 5 minutes (0.6 R/min)
+        if r_multiple >= 3.0 and duration_minutes < 5:
+            result['velocity_detected'] = True
+            result['recommended_action'] = 'move_to_breakeven'
+            result['reason'] = f"⚡ Hit {r_multiple:.1f}R in {duration_minutes:.0f} min - protect profit"
+            return result
+        
+        # EXTREME VELOCITY: 2R in < 2 minutes (1.0 R/min)
+        if r_multiple >= 2.0 and duration_minutes < 2:
+            result['velocity_detected'] = True
+            result['recommended_action'] = 'tighten_trail'
+            result['reason'] = f"💨 Hit {r_multiple:.1f}R in {duration_minutes:.0f} min (parabolic) - LOCK IT"
+            return result
+        
+        return result
     
     
     def should_skip_trade(self, symbol: str, symbol_state: dict) -> tuple:
@@ -831,42 +1678,18 @@ class AdaptiveExitManager:
     
     
     def save_experiences(self):
-        """Save exit experiences to cloud API or local file (fallback)."""
+        """
+        Save exit experiences to cloud API ONLY.
+        NO LOCAL FILES - everything goes to cloud PostgreSQL database.
+        """
         
-        # Try cloud first if configured
+        # Individual experiences already saved via record_exit_outcome()
+        # This method is just a placeholder for compatibility
         if self.use_cloud:
-            # Note: Individual experiences already saved via record_exit_outcome()
-            # This method is for batch saves or fallback
-            logger.info(f"[CLOUD] Using cloud API - experiences saved individually on record")
-            return
-        
-        # Fallback to local file
-        try:
-            import json
-            
-            # Use custom JSON encoder that handles numpy types
-            class NumpyEncoder(json.JSONEncoder):
-                def default(self, obj):
-                    if hasattr(obj, 'item'):  # numpy scalar
-                        return obj.item()
-                    elif hasattr(obj, 'tolist'):  # numpy array
-                        return obj.tolist()
-                    return super().default(obj)
-            
-            # Ensure directory exists
-            os.makedirs(os.path.dirname(self.experience_file), exist_ok=True)
-            
-            # Save with custom encoder
-            with open(self.experience_file, 'w') as f:
-                json.dump({
-                    'exit_experiences': self.exit_experiences,
-                    'learned_params': self.learned_params,
-                    'total_exits': len(self.exit_experiences)
-                }, f, indent=2, cls=NumpyEncoder)
-                
-            logger.info(f"[LOCAL] Saved {len(self.exit_experiences)} exit experiences to local file")
-        except Exception as e:
-            logger.error(f"[LOCAL] Failed to save exit experiences: {e}")
+            logger.info(f"[CLOUD] ✅ {len(self.exit_experiences)} exit experiences saved to cloud API individually")
+        else:
+            logger.warning(f"[WARN] Cloud API not configured! Exit experiences NOT being saved!")
+            logger.warning(f"[WARN] Set cloud_api_url in config to enable cloud learning")
 
 
 def detect_market_regime(bars: list, current_atr: float) -> str:
@@ -1206,7 +2029,8 @@ def _extract_scaling_strategy_from_experiences(similar_exits: list, market_state
 
 
 def get_adaptive_exit_params(bars: list, position: Dict, current_price: float, 
-                             config: Dict, adaptive_manager: Optional[AdaptiveExitManager] = None) -> Dict:
+                             config: Dict, adaptive_manager: Optional[AdaptiveExitManager] = None,
+                             entry_confidence: float = 0.75) -> Dict:
     """
     Calculate adaptive exit parameters based on current market conditions.
     
@@ -1216,6 +2040,7 @@ def get_adaptive_exit_params(bars: list, position: Dict, current_price: float,
         current_price: Current market price
         config: Bot configuration
         adaptive_manager: Optional manager instance for state persistence
+        entry_confidence: Confidence score from Signal RL (0.0-1.0) - affects exit tightness
     
     Returns:
         Dict with adaptive parameters:
@@ -1226,6 +2051,7 @@ def get_adaptive_exit_params(bars: list, position: Dict, current_price: float,
         - market_regime: Detected regime
         - current_volatility_atr: Current ATR
         - is_aggressive_mode: Whether in aggressive profit-taking mode
+        - confidence_adjusted: Whether params were tightened due to low confidence
     """
     # Convert DataFrame or deque to list of dicts (prevent slicing errors)
     if hasattr(bars, 'iloc'):
@@ -1267,6 +2093,65 @@ def get_adaptive_exit_params(bars: list, position: Dict, current_price: float,
     
     # Detect market regime
     market_regime = detect_market_regime(bars, current_atr)
+    
+    # ========================================================================
+    # CLOUD EXIT RL - Query cloud for REAL-TIME exit recommendations
+    # ========================================================================
+    # Try to get cloud-recommended exit params based on current market conditions
+    cloud_params = None
+    if adaptive_manager and hasattr(adaptive_manager, 'get_cloud_exit_params'):
+        # Build market state dict for cloud query
+        market_state_for_cloud = {}
+        if len(bars) > 0:
+            latest_bar = bars[-1]
+            market_state_for_cloud = {
+                'rsi': latest_bar.get('rsi', 50.0),
+                'atr': current_atr,
+                'vwap_distance': abs(current_price - latest_bar.get('vwap', current_price)) if 'vwap' in latest_bar else 0.0,
+                'volume_ratio': latest_bar.get('volume', 1.0) / latest_bar.get('avg_volume', 1.0) if 'avg_volume' in latest_bar else 1.0,
+                'hour': current_hour,
+                'day_of_week': latest_bar.get('day_of_week', 0) if 'day_of_week' in latest_bar else 0,
+                'streak': position.get('streak', 0) if 'streak' in position else 0,
+                'recent_pnl': position.get('recent_pnl', 0.0) if 'recent_pnl' in position else 0.0,
+                'vix': latest_bar.get('vix', 15.0) if 'vix' in latest_bar else 15.0
+            }
+        
+        # Build position state for cloud query
+        position_for_cloud = {
+            'side': position.get('side', 'long'),
+            'duration_minutes': duration_minutes,
+            'unrealized_pnl': position.get('unrealized_pnl', 0.0) if 'unrealized_pnl' in position else 0.0,
+            'entry_price': position.get('entry_price', current_price),
+            'r_multiple': position.get('r_multiple', 0.0) if 'r_multiple' in position else 0.0
+        }
+        
+        # Query cloud for real-time exit params
+        cloud_params = adaptive_manager.get_cloud_exit_params(
+            regime=market_regime,
+            market_state=market_state_for_cloud,
+            position=position_for_cloud,
+            entry_confidence=entry_confidence
+        )
+        
+        # If cloud returns params, use them directly (they're already optimized)
+        if cloud_params:
+            logger.info(f"🎯 [CLOUD EXIT RL] Using cloud-recommended params: {cloud_params.get('_cloud_metadata', {}).get('recommendation', 'N/A')}")
+            return {
+                "breakeven_threshold_ticks": cloud_params.get('breakeven_threshold_ticks', base_breakeven_threshold),
+                "breakeven_offset_ticks": cloud_params.get('breakeven_offset_ticks', base_breakeven_offset),
+                "trailing_distance_ticks": cloud_params.get('trailing_distance_ticks', base_trailing_distance),
+                "trailing_min_profit_ticks": cloud_params.get('partial_1_r', 2.0) * base_trailing_distance,  # Estimate
+                "market_regime": market_regime,
+                "current_volatility_atr": current_atr,
+                "is_aggressive_mode": "TIGHTEN" in cloud_params.get('_cloud_metadata', {}).get('recommendation', ''),
+                "confidence_adjusted": False,  # Cloud already factors in confidence
+                "cloud_recommendation": cloud_params.get('_cloud_metadata', {})
+            }
+        else:
+            logger.debug(f"[CLOUD EXIT RL] Cloud unavailable, using local learned params")
+    
+    # If cloud query failed or not available, continue with local learned parameters below
+    # ========================================================================
     
     # Calculate trade duration
     entry_time = position.get("entry_time")
@@ -1402,6 +2287,34 @@ def get_adaptive_exit_params(bars: list, position: Dict, current_price: float,
         trailing_distance_multiplier *= 1.2    # Extra room in trends
         logger.debug(f"[PATIENT] Giving 20% more room for trend to develop")
     
+    # ========================================================================
+    # CONFIDENCE CORRELATION - Low confidence entries get TIGHTER exits
+    # ========================================================================
+    confidence_adjusted = False
+    if entry_confidence < 0.7:
+        # Low confidence entry - tighten everything to limit damage
+        confidence_penalty = (0.7 - entry_confidence) / 0.7  # 0.0 to 1.0 scale
+        tighten_factor = 1.0 - (confidence_penalty * 0.3)    # Max 30% tighter
+        
+        breakeven_threshold_multiplier *= tighten_factor
+        trailing_distance_multiplier *= tighten_factor
+        trailing_min_profit_multiplier *= tighten_factor
+        
+        confidence_adjusted = True
+        logger.info(f"⚠️ [CONFIDENCE CORRELATION] Low entry confidence {entry_confidence:.1%} "
+                   f"→ Tightening exits by {(1-tighten_factor)*100:.0f}%")
+    elif entry_confidence >= 0.85:
+        # High confidence entry - give more room to run
+        confidence_bonus = (entry_confidence - 0.85) / 0.15  # 0.0 to 1.0 scale
+        loosen_factor = 1.0 + (confidence_bonus * 0.15)      # Max 15% looser
+        
+        trailing_distance_multiplier *= loosen_factor
+        trailing_min_profit_multiplier *= 0.95  # Activate trailing slightly earlier
+        
+        confidence_adjusted = True
+        logger.info(f"✅ [CONFIDENCE CORRELATION] High entry confidence {entry_confidence:.1%} "
+                   f"→ Giving {(loosen_factor-1)*100:.0f}% more room")
+    
     # Calculate final parameters (rounded to whole ticks)
     adaptive_breakeven_threshold = max(4, round(base_breakeven_threshold * breakeven_threshold_multiplier))
     adaptive_breakeven_offset = base_breakeven_offset  # Keep at 1 tick
@@ -1444,6 +2357,8 @@ def get_adaptive_exit_params(bars: list, position: Dict, current_price: float,
         "market_regime": market_regime,
         "current_volatility_atr": current_atr,
         "is_aggressive_mode": is_aggressive_mode,
+        "confidence_adjusted": confidence_adjusted,
+        "entry_confidence": entry_confidence,
         "situation_factors": situation_factors,
         "decision_reasons": aggression_reasons if aggression_reasons else ["balanced"],
         "duration_minutes": duration_minutes,

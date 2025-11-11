@@ -176,6 +176,78 @@ def get_adaptive_exit_params(bars: List[Dict], position: Dict, current_price: fl
     # Detect market regime
     market_regime = detect_market_regime(bars, current_atr)
     
+    # ========================================================================
+    # CLOUD EXIT RL - Query cloud for REAL-TIME exit recommendations
+    # ========================================================================
+    # Try to get cloud-recommended exit params based on current market conditions
+    cloud_params = None
+    if adaptive_manager and hasattr(adaptive_manager, 'get_cloud_exit_params'):
+        # Build market state dict for cloud query
+        market_state_for_cloud = {}
+        if len(bars) > 0:
+            latest_bar = bars[-1]
+            market_state_for_cloud = {
+                'rsi': latest_bar.get('rsi', 50.0),
+                'atr': current_atr,
+                'vwap_distance': abs(current_price - latest_bar.get('vwap', current_price)) if 'vwap' in latest_bar else 0.0,
+                'volume_ratio': latest_bar.get('volume', 1.0) / latest_bar.get('avg_volume', 1.0) if 'avg_volume' in latest_bar else 1.0,
+                'hour': entry_time.hour if entry_time else 12,
+                'day_of_week': entry_time.weekday() if entry_time else 0,
+                'streak': position.get('streak', 0) if 'streak' in position else 0,
+                'recent_pnl': position.get('recent_pnl', 0.0) if 'recent_pnl' in position else 0.0,
+                'vix': latest_bar.get('vix', 15.0) if 'vix' in latest_bar else 15.0
+            }
+        
+        # Calculate duration for position state
+        if len(bars) > 0 and "timestamp" in bars[-1]:
+            current_time = bars[-1]["timestamp"]
+            if isinstance(current_time, str):
+                current_time = datetime.fromisoformat(current_time.replace('Z', '+00:00'))
+            duration_minutes = (current_time.timestamp() - entry_time.timestamp()) / 60 if entry_time else 0
+        else:
+            duration_minutes = 0
+        
+        # Build position state for cloud query
+        position_for_cloud = {
+            'side': position.get('side', 'long'),
+            'duration_minutes': duration_minutes,
+            'unrealized_pnl': position.get('unrealized_pnl', 0.0) if 'unrealized_pnl' in position else 0.0,
+            'entry_price': position.get('entry_price', current_price),
+            'r_multiple': position.get('r_multiple', 0.0) if 'r_multiple' in position else 0.0
+        }
+        
+        # Query cloud for real-time exit params
+        cloud_params = adaptive_manager.get_cloud_exit_params(
+            regime=market_regime,
+            market_state=market_state_for_cloud,
+            position=position_for_cloud,
+            entry_confidence=0.75  # Default confidence for backtest
+        )
+        
+        # If cloud returns params, use them directly (they're already optimized)
+        if cloud_params:
+            cloud_meta = cloud_params.get('_cloud_metadata', {})
+            logger.info(f"🎯 [CLOUD EXIT RL] {cloud_meta.get('recommendation', 'N/A')} (analyzed {cloud_meta.get('similar_exits', 0)} similar exits)")
+            return {
+                'breakeven_threshold_ticks': cloud_params.get('breakeven_threshold_ticks', base_breakeven_threshold),
+                'breakeven_offset_ticks': cloud_params.get('breakeven_offset_ticks', base_breakeven_offset),
+                'trailing_distance_ticks': cloud_params.get('trailing_distance_ticks', base_trailing_distance),
+                'trailing_min_profit_ticks': int(cloud_params.get('partial_1_r', 2.0) * base_trailing_distance),
+                'market_regime': market_regime,
+                'current_volatility_atr': current_atr,
+                'is_aggressive_mode': "TIGHTEN" in cloud_meta.get('recommendation', ''),
+                'situation_factors': {},
+                'decision_reasons': ['CLOUD_RL'],
+                'duration_minutes': duration_minutes,
+                'learned_multiplier': 1.0,
+                'cloud_recommendation': cloud_meta
+            }
+        else:
+            logger.debug("[CLOUD EXIT RL] Cloud unavailable, using local learned params")
+    
+    # If cloud query failed or not available, continue with local learned parameters below
+    # ========================================================================
+    
     # Calculate trade duration
     if len(bars) > 0 and "timestamp" in bars[-1]:
         current_time = bars[-1]["timestamp"]

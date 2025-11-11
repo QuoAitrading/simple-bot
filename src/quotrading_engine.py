@@ -278,16 +278,16 @@ def get_user_id() -> str:
 USER_ID = get_user_id()
 
 
-async def get_ml_confidence_async(rl_state: Dict[str, Any], side: str) -> Tuple[bool, float, str]:
+async def get_ml_confidence_async(rl_state: Dict[str, Any], side: str, current_spread_ticks: float = 1.0) -> Tuple[bool, float, float, str]:
     """
     Get ML confidence from cloud API (shared RL learning pool) with automatic retry.
-    Returns: (take_signal, confidence, reason)
+    Returns: (take_signal, confidence, size_mult, reason)
     """
     if not USE_CLOUD_SIGNALS:
         # Fallback to local RL brain if cloud disabled
         if rl_brain is not None:
-            return rl_brain.should_take_signal(rl_state)
-        return True, 0.5, "Cloud API disabled, no local RL"
+            return rl_brain.should_take_signal(rl_state, current_spread_ticks)
+        return True, 0.5, 1.0, "Cloud API disabled, no local RL"
     
     # Retry up to 3 times with exponential backoff
     max_retries = 3
@@ -318,21 +318,22 @@ async def get_ml_confidence_async(rl_state: Dict[str, Any], side: str) -> Tuple[
                         confidence = data.get("confidence", 0.5)
                         take_signal = data.get("should_trade", False)
                         reason = data.get("reason", "Cloud RL evaluation")
+                        size_mult = data.get("size_multiplier", 1.0)  # Get size mult from cloud
                         
                         if attempt > 0:
                             logger.info(f"[CLOUD RL] ✅ Success on retry {attempt + 1}")
                         
-                        logger.debug(f"[CLOUD RL] {side.upper()} signal: {take_signal} (confidence: {confidence:.1%}) - {reason}")
+                        logger.debug(f"[CLOUD RL] {side.upper()} signal: {take_signal} (confidence: {confidence:.1%}, size: {size_mult:.2f}x) - {reason}")
                         logger.debug(f"   Shared pool: {data.get('total_trades', 0)} trades, WR: {data.get('win_rate', 0):.1%}")
                         
-                        return take_signal, confidence, reason
+                        return take_signal, confidence, size_mult, reason
                     else:
                         logger.warning(f"Cloud ML API returned status {response.status} (attempt {attempt + 1}/{max_retries})")
                         if attempt < max_retries - 1:
                             await asyncio.sleep(0.5 * (attempt + 1))  # 0.5s, 1s, 1.5s backoff
                             continue
                         logger.error("Cloud API failed after all retries - REJECTING TRADE for safety")
-                        return False, 0.0, "Cloud API error - rejecting trade for safety"
+                        return False, 0.0, 1.0, "Cloud API error - rejecting trade for safety"
                         
         except asyncio.TimeoutError:
             logger.warning(f"Cloud ML API timeout (attempt {attempt + 1}/{max_retries})")
@@ -340,26 +341,26 @@ async def get_ml_confidence_async(rl_state: Dict[str, Any], side: str) -> Tuple[
                 await asyncio.sleep(0.5 * (attempt + 1))
                 continue
             logger.error("Cloud API timeout after all retries - REJECTING TRADE for safety")
-            return False, 0.0, "API timeout - rejecting trade for safety"
+            return False, 0.0, 1.0, "API timeout - rejecting trade for safety"
         except Exception as e:
             logger.warning(f"Cloud ML API error: {e} (attempt {attempt + 1}/{max_retries})")
             if attempt < max_retries - 1:
                 await asyncio.sleep(0.5 * (attempt + 1))
                 continue
             logger.error(f"Cloud API error after all retries - REJECTING TRADE for safety: {e}")
-            return False, 0.0, f"API error - rejecting trade for safety"
+            return False, 0.0, 1.0, f"API error - rejecting trade for safety"
     
     # Should never reach here, but just in case
     logger.error("Unknown error in RL API call - REJECTING TRADE for safety")
-    return False, 0.0, "Unknown error - rejecting trade for safety"
+    return False, 0.0, 1.0, "Unknown error - rejecting trade for safety"
 
 
-def get_ml_confidence(rl_state: Dict[str, Any], side: str) -> Tuple[bool, float, str]:
+def get_ml_confidence(rl_state: Dict[str, Any], side: str, current_spread_ticks: float = 1.0) -> Tuple[bool, float, float, str]:
     """Synchronous wrapper for get_ml_confidence_async"""
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
     try:
-        return loop.run_until_complete(get_ml_confidence_async(rl_state, side))
+        return loop.run_until_complete(get_ml_confidence_async(rl_state, side, current_spread_ticks))
     finally:
         loop.close()
 
@@ -2850,6 +2851,67 @@ def check_for_signals(symbol: str) -> None:
     if check_long_signal_conditions(symbol, prev_bar, current_bar):
         logger.critical(f"🎯 LONG SIGNAL DETECTED! Prev Low: ${prev_bar['low']:.2f} | Lower Band: ${vwap_bands['lower_2']:.2f}")
         
+        # === SIGNAL RL FEATURE 1: SPREAD FILTER ===
+        # Check if spread is too wide (high slippage risk)
+        if rl_brain is not None:
+            current_spread_ticks = 1.0  # Default
+            if bid_ask_manager is not None:
+                quote = bid_ask_manager.get_current_quote(symbol)
+                if quote and quote.bid > 0 and quote.ask > 0:
+                    tick_size = CONFIG.get("tick_size", 0.25)
+                    current_spread_ticks = (quote.ask - quote.bid) / tick_size
+            
+            spread_ok, spread_reason = rl_brain.check_spread_acceptable(current_spread_ticks)
+            if not spread_ok:
+                logger.info(f"❌ SPREAD FILTER REJECTED LONG: {spread_reason}")
+                state[symbol]["last_rejected_signal"] = {
+                    "time": get_current_time(),
+                    "side": "long",
+                    "price": current_bar["close"],
+                    "reason": spread_reason
+                }
+                # Track as skipped signal for learning
+                rl_state = capture_rl_state(symbol, "long", current_bar["close"])
+                rl_brain.track_skipped_signal(rl_state, 0.0, spread_reason)
+                
+                if dashboard:
+                    sig_time = get_current_time().strftime("%H:%M")
+                    dashboard.update_symbol_data(symbol, {
+                        "last_rejected_signal": f"{sig_time} LONG @ ${current_bar['close']:.2f} ({spread_reason})",
+                        "status": "Signal rejected - spread too wide"
+                    })
+                    dashboard.display()
+                return
+        
+        # === SIGNAL RL FEATURE 2: LIQUIDITY FILTER ===
+        # Check if volume is too low (fill risk)
+        if rl_brain is not None:
+            avg_volume = state[symbol].get("avg_volume", 1)
+            current_volume = current_bar.get("volume", 0)
+            volume_ratio = current_volume / avg_volume if avg_volume > 0 else 1.0
+            
+            liquidity_ok, liquidity_reason = rl_brain.check_liquidity_acceptable(volume_ratio)
+            if not liquidity_ok:
+                logger.info(f"❌ LIQUIDITY FILTER REJECTED LONG: {liquidity_reason}")
+                state[symbol]["last_rejected_signal"] = {
+                    "time": get_current_time(),
+                    "side": "long",
+                    "price": current_bar["close"],
+                    "reason": liquidity_reason
+                }
+                # Track as skipped signal for learning
+                rl_state = capture_rl_state(symbol, "long", current_bar["close"])
+                rl_brain.track_skipped_signal(rl_state, 0.0, liquidity_reason)
+                
+                if dashboard:
+                    sig_time = get_current_time().strftime("%H:%M")
+                    dashboard.update_symbol_data(symbol, {
+                        "last_rejected_signal": f"{sig_time} LONG @ ${current_bar['close']:.2f} ({liquidity_reason})",
+                        "status": "Signal rejected - low liquidity"
+                    })
+                    dashboard.display()
+                return
+        
         # ADAPTIVE LEARNING - Check if we should skip this trade based on learned patterns
         should_skip, skip_reason = adaptive_manager.should_skip_trade(symbol, state[symbol]) if adaptive_manager else (False, "")
         if should_skip:
@@ -2860,6 +2922,12 @@ def check_for_signals(symbol: str) -> None:
                 "price": current_bar["close"],
                 "reason": skip_reason
             }
+            # === SIGNAL RL FEATURE 3: ADVERSE SELECTION TRACKING ===
+            # Track rejected signals to learn from adverse selection
+            if rl_brain is not None:
+                rl_state = capture_rl_state(symbol, "long", current_bar["close"])
+                rl_brain.track_skipped_signal(rl_state, 0.0, skip_reason)
+            
             if dashboard:
                 sig_time = get_current_time().strftime("%H:%M")
                 dashboard.update_symbol_data(symbol, {
@@ -2873,8 +2941,16 @@ def check_for_signals(symbol: str) -> None:
         # Capture market state
         rl_state = capture_rl_state(symbol, "long", current_bar["close"])
         
+        # Calculate current spread in ticks for RL spread filter
+        current_spread_ticks = 1.0  # Default
+        if bid_ask_manager is not None:
+            quote = bid_ask_manager.get_current_quote(symbol)
+            if quote and quote.bid > 0 and quote.ask > 0:
+                tick_size = CONFIG.get("tick_size", 0.25)
+                current_spread_ticks = (quote.ask - quote.bid) / tick_size
+        
         # Ask cloud RL API for decision (or local RL as fallback)
-        take_signal, confidence, reason = get_ml_confidence(rl_state, "long")
+        take_signal, confidence, size_mult, reason = get_ml_confidence(rl_state, "long", current_spread_ticks)
         
         logger.critical(f"🤖 ML DECISION: {'✅ TAKE' if take_signal else '❌ REJECT'} | Confidence: {confidence:.1%} | Reason: {reason}")
         
@@ -2929,14 +3005,15 @@ def check_for_signals(symbol: str) -> None:
             
             return
         
-        # RL approved - adjust position size based on confidence
-        logger.info(f"✅ RL APPROVED LONG signal: {reason} (confidence: {confidence:.1%})")
+        # RL approved - adjust position size based on confidence and learned size multiplier
+        logger.info(f"✅ RL APPROVED LONG signal: {reason} (confidence: {confidence:.1%}, size: {size_mult:.2f}x)")
         logger.info(f"   RSI: {rl_state['rsi']:.1f}, VWAP dist: {rl_state['vwap_distance']:.2f}, "
                   f"Vol ratio: {rl_state['volume_ratio']:.2f}x, Streak: {rl_state['streak']:+d}")
         
         # Store the state for outcome recording after trade
         state[symbol]["entry_rl_state"] = rl_state
         state[symbol]["entry_rl_confidence"] = confidence
+        state[symbol]["entry_rl_size_mult"] = size_mult  # Store learned size multiplier
         
         # Store signal info for dashboard display
         state[symbol]["last_signal_type"] = f"LONG @ ${current_bar['close']:.2f}"
@@ -2957,6 +3034,67 @@ def check_for_signals(symbol: str) -> None:
     if check_short_signal_conditions(symbol, prev_bar, current_bar):
         logger.critical(f"🎯 SHORT SIGNAL DETECTED! Prev High: ${prev_bar['high']:.2f} | Upper Band: ${vwap_bands['upper_2']:.2f}")
         
+        # === SIGNAL RL FEATURE 1: SPREAD FILTER ===
+        # Check if spread is too wide (high slippage risk)
+        if rl_brain is not None:
+            current_spread_ticks = 1.0  # Default
+            if bid_ask_manager is not None:
+                quote = bid_ask_manager.get_current_quote(symbol)
+                if quote and quote.bid > 0 and quote.ask > 0:
+                    tick_size = CONFIG.get("tick_size", 0.25)
+                    current_spread_ticks = (quote.ask - quote.bid) / tick_size
+            
+            spread_ok, spread_reason = rl_brain.check_spread_acceptable(current_spread_ticks)
+            if not spread_ok:
+                logger.info(f"❌ SPREAD FILTER REJECTED SHORT: {spread_reason}")
+                state[symbol]["last_rejected_signal"] = {
+                    "time": get_current_time(),
+                    "side": "short",
+                    "price": current_bar["close"],
+                    "reason": spread_reason
+                }
+                # Track as skipped signal for learning
+                rl_state = capture_rl_state(symbol, "short", current_bar["close"])
+                rl_brain.track_skipped_signal(rl_state, 0.0, spread_reason)
+                
+                if dashboard:
+                    sig_time = get_current_time().strftime("%H:%M")
+                    dashboard.update_symbol_data(symbol, {
+                        "last_rejected_signal": f"{sig_time} SHORT @ ${current_bar['close']:.2f} ({spread_reason})",
+                        "status": "Signal rejected - spread too wide"
+                    })
+                    dashboard.display()
+                return
+        
+        # === SIGNAL RL FEATURE 2: LIQUIDITY FILTER ===
+        # Check if volume is too low (fill risk)
+        if rl_brain is not None:
+            avg_volume = state[symbol].get("avg_volume", 1)
+            current_volume = current_bar.get("volume", 0)
+            volume_ratio = current_volume / avg_volume if avg_volume > 0 else 1.0
+            
+            liquidity_ok, liquidity_reason = rl_brain.check_liquidity_acceptable(volume_ratio)
+            if not liquidity_ok:
+                logger.info(f"❌ LIQUIDITY FILTER REJECTED SHORT: {liquidity_reason}")
+                state[symbol]["last_rejected_signal"] = {
+                    "time": get_current_time(),
+                    "side": "short",
+                    "price": current_bar["close"],
+                    "reason": liquidity_reason
+                }
+                # Track as skipped signal for learning
+                rl_state = capture_rl_state(symbol, "short", current_bar["close"])
+                rl_brain.track_skipped_signal(rl_state, 0.0, liquidity_reason)
+                
+                if dashboard:
+                    sig_time = get_current_time().strftime("%H:%M")
+                    dashboard.update_symbol_data(symbol, {
+                        "last_rejected_signal": f"{sig_time} SHORT @ ${current_bar['close']:.2f} ({liquidity_reason})",
+                        "status": "Signal rejected - low liquidity"
+                    })
+                    dashboard.display()
+                return
+        
         # ADAPTIVE LEARNING - Check if we should skip this trade based on learned patterns
         should_skip, skip_reason = adaptive_manager.should_skip_trade(symbol, state[symbol]) if adaptive_manager else (False, "")
         if should_skip:
@@ -2967,6 +3105,12 @@ def check_for_signals(symbol: str) -> None:
                 "price": current_bar["close"],
                 "reason": skip_reason
             }
+            # === SIGNAL RL FEATURE 3: ADVERSE SELECTION TRACKING ===
+            # Track rejected signals to learn from adverse selection
+            if rl_brain is not None:
+                rl_state = capture_rl_state(symbol, "short", current_bar["close"])
+                rl_brain.track_skipped_signal(rl_state, 0.0, skip_reason)
+            
             if dashboard:
                 sig_time = get_current_time().strftime("%H:%M")
                 dashboard.update_symbol_data(symbol, {
@@ -2980,8 +3124,16 @@ def check_for_signals(symbol: str) -> None:
         # Capture market state
         rl_state = capture_rl_state(symbol, "short", current_bar["close"])
         
+        # Calculate current spread in ticks for RL spread filter
+        current_spread_ticks = 1.0  # Default
+        if bid_ask_manager is not None:
+            quote = bid_ask_manager.get_current_quote(symbol)
+            if quote and quote.bid > 0 and quote.ask > 0:
+                tick_size = CONFIG.get("tick_size", 0.25)
+                current_spread_ticks = (quote.ask - quote.bid) / tick_size
+        
         # Ask cloud RL API for decision (or local RL as fallback)
-        take_signal, confidence, reason = get_ml_confidence(rl_state, "short")
+        take_signal, confidence, size_mult, reason = get_ml_confidence(rl_state, "short", current_spread_ticks)
         
         logger.critical(f"🤖 ML DECISION: {'✅ TAKE' if take_signal else '❌ REJECT'} | Confidence: {confidence:.1%} | Reason: {reason}")
         
@@ -3036,14 +3188,15 @@ def check_for_signals(symbol: str) -> None:
             
             return
         
-        # RL approved - adjust position size based on confidence
-        logger.info(f"✅ RL APPROVED SHORT signal: {reason} (confidence: {confidence:.1%})")
+        # RL approved - adjust position size based on confidence and learned size multiplier
+        logger.info(f"✅ RL APPROVED SHORT signal: {reason} (confidence: {confidence:.1%}, size: {size_mult:.2f}x)")
         logger.info(f"   RSI: {rl_state['rsi']:.1f}, VWAP dist: {rl_state['vwap_distance']:.2f}, "
                   f"Vol ratio: {rl_state['volume_ratio']:.2f}x, Streak: {rl_state['streak']:+d}")
         
         # Store the state for outcome recording after trade
         state[symbol]["entry_rl_state"] = rl_state
         state[symbol]["entry_rl_confidence"] = confidence
+        state[symbol]["entry_rl_size_mult"] = size_mult  # Store learned size multiplier
         
         # Store signal info for dashboard display
         state[symbol]["last_signal_type"] = f"SHORT @ ${current_bar['close']:.2f}"
@@ -3065,7 +3218,7 @@ def check_for_signals(symbol: str) -> None:
 # PHASE EIGHT: Position Sizing
 # ============================================================================
 
-def calculate_position_size(symbol: str, side: str, entry_price: float, rl_confidence: Optional[float] = None) -> Tuple[int, float, float]:
+def calculate_position_size(symbol: str, side: str, entry_price: float, rl_confidence: Optional[float] = None, size_mult: Optional[float] = None) -> Tuple[int, float, float]:
     """
     Calculate position size based on risk management rules.
     
@@ -3078,7 +3231,8 @@ def calculate_position_size(symbol: str, side: str, entry_price: float, rl_confi
         symbol: Instrument symbol
         side: 'long' or 'short'
         entry_price: Expected entry price
-        rl_confidence: Optional RL confidence (0-1) to adjust position size
+        rl_confidence: Optional RL confidence (0-1) - legacy parameter
+        size_mult: Optional size multiplier from RL system (0.25-2.0x)
     
     Returns:
         Tuple of (contracts, stop_price, target_price)
@@ -3186,7 +3340,38 @@ def calculate_position_size(symbol: str, side: str, entry_price: float, rl_confi
     # DYNAMIC MODE: Apply confidence/streak/session multipliers WITHIN your max
     dynamic_contracts_enabled = CONFIG.get("dynamic_contracts", False)
     
-    if rl_confidence is not None and dynamic_contracts_enabled:
+    # Use size_mult from Signal RL if provided (preferred), otherwise fall back to legacy method
+    if size_mult is not None and dynamic_contracts_enabled:
+        # NEW: Use size multiplier directly from Signal RL (includes confidence, streak, volatility, time)
+        # CRITICAL: RL scales WITHIN user's max - never exceeds it
+        # Size mult 0.25-2.0 but CAPPED at user_max_contracts
+        # 
+        # Examples with user max = 3:
+        #   size=0.5x  -> 2 contracts (0.5 * 3 = 1.5 → 2)
+        #   size=1.0x  -> 3 contracts (1.0 * 3 = 3)
+        #   size=2.0x  -> 3 contracts (2.0 * 3 = 6 → CAPPED at 3)
+        # 
+        # Examples with user max = 10:
+        #   size=0.5x  -> 5 contracts
+        #   size=1.0x  -> 10 contracts
+        #   size=2.0x  -> 10 contracts (CAPPED, won't go to 20)
+        rl_scaled_max = max(1, int(round(user_max_contracts * size_mult)))
+        
+        # HARD CAP: Never exceed user's max_contracts setting
+        rl_scaled_max = min(rl_scaled_max, user_max_contracts)
+        
+        # Use MINIMUM of risk-based calculation and RL-scaled max
+        # This ensures we respect BOTH the risk management AND user's max limit
+        contracts = min(contracts, rl_scaled_max)
+        
+        # Detailed size multiplier logging
+        logger.info(f"[POSITION SIZING] Size mult: {size_mult:.2f}x | "
+                   f"Risk-based: {int(risk_dollars / risk_per_contract)} → "
+                   f"RL-scaled max: {rl_scaled_max} (capped at user max {user_max_contracts}) → "
+                   f"Final: {contracts} contracts")
+        
+    elif rl_confidence is not None and dynamic_contracts_enabled:
+        # LEGACY: Calculate size multiplier from confidence only (deprecated)
         global rl_brain
         if rl_brain is not None:
             size_multiplier = rl_brain.get_position_size_multiplier(rl_confidence)
@@ -3194,13 +3379,16 @@ def calculate_position_size(symbol: str, side: str, entry_price: float, rl_confi
             size_multiplier = 1.0
             
         # Calculate RL-scaled max contracts
-        # DYNAMIC SCALING: Works with ANY max_contracts setting (1-25)
+        # DYNAMIC SCALING: RL learns to scale WITHIN user's max
         # Examples:
         #   max=3, conf=50%  -> 2 contracts
         #   max=10, conf=50% -> 5 contracts  
         #   max=25, conf=50% -> 13 contracts
         #   max=25, conf=90% -> 23 contracts
         rl_scaled_max = max(1, int(round(user_max_contracts * size_multiplier)))
+        
+        # HARD CAP: Never exceed user's max_contracts setting
+        rl_scaled_max = min(rl_scaled_max, user_max_contracts)
         
         # Use MINIMUM of risk-based calculation and RL-scaled max
         # This ensures we respect BOTH the risk management AND user's max limit
@@ -3762,11 +3950,12 @@ def execute_entry(symbol: str, side: str, entry_price: float) -> None:
     logger.info(f"  [OK] Price validation passed: ${entry_price:.2f} -> ${current_market_price:.2f}")
     entry_price = current_market_price
     
-    # Get RL confidence if available
+    # Get RL confidence and size multiplier if available
     rl_confidence = state[symbol].get("entry_rl_confidence")
+    size_mult = state[symbol].get("entry_rl_size_mult")
     
-    # Calculate position size (with RL adjustment if confidence available)
-    contracts, stop_price, target_price = calculate_position_size(symbol, side, entry_price, rl_confidence)
+    # Calculate position size (with RL adjustment if size_mult available)
+    contracts, stop_price, target_price = calculate_position_size(symbol, side, entry_price, rl_confidence, size_mult)
     
     if contracts == 0:
         logger.warning("Cannot enter trade - position size is zero")
@@ -3848,6 +4037,7 @@ def execute_entry(symbol: str, side: str, entry_price: float) -> None:
             state[symbol]["position"]["quantity"] = contracts
             state[symbol]["position"]["entry_price"] = actual_fill_price
             state[symbol]["position"]["entry_time"] = entry_time
+            state[symbol]["position"]["entry_confidence"] = state[symbol].get("entry_rl_confidence", 0.75)  # NEW: Save confidence for Exit RL correlation
             state[symbol]["position"]["order_id"] = order.get("order_id")
             save_position_state(symbol)
             logger.info(f"  [CHECKPOINT] Emergency position state saved (crash protection)")
@@ -3868,6 +4058,7 @@ def execute_entry(symbol: str, side: str, entry_price: float) -> None:
                 state[symbol]["position"]["entry_price"] = actual_fill_price
                 state[symbol]["position"]["entry_time"] = entry_time
                 state[symbol]["position"]["order_id"] = order.get("order_id")
+                state[symbol]["position"]["entry_confidence"] = state[symbol].get("entry_rl_confidence", 0.75)  # NEW: Save confidence for Exit RL correlation
                 save_position_state(symbol)
                 logger.info(f"  [CHECKPOINT] Emergency position state saved (fallback path)")
     else:
@@ -3884,6 +4075,7 @@ def execute_entry(symbol: str, side: str, entry_price: float) -> None:
             state[symbol]["position"]["entry_price"] = entry_price
             state[symbol]["position"]["entry_time"] = entry_time
             state[symbol]["position"]["order_id"] = order.get("order_id")
+            state[symbol]["position"]["entry_confidence"] = state[symbol].get("entry_rl_confidence", 0.75)  # NEW: Save confidence for Exit RL correlation
             save_position_state(symbol)
             logger.info(f"  [CHECKPOINT] Emergency position state saved (no manager path)")
     
@@ -4409,12 +4601,17 @@ def check_breakeven_protection(symbol: str, current_price: float) -> None:
             
             # CONTINUOUS ADAPTATION: Recalculate exit params on EVERY bar
             # This allows the bot to adapt as market conditions change mid-trade
+            
+            # Get entry confidence from position (saved during entry)
+            entry_confidence = position.get("entry_confidence", 0.75)  # Default to 0.75 if not saved
+            
             adaptive_params = get_adaptive_exit_params(
                 bars=state[symbol]["bars_1min"],
                 position=position,
                 current_price=current_price,
                 config=CONFIG,
-                adaptive_manager=adaptive_manager  # Pass global instance for persistence
+                adaptive_manager=adaptive_manager,  # Pass global instance for persistence
+                entry_confidence=entry_confidence   # NEW: Pass confidence for exit correlation
             )
             
             breakeven_threshold_ticks = adaptive_params["breakeven_threshold_ticks"]
@@ -4447,6 +4644,41 @@ def check_breakeven_protection(symbol: str, current_price: float) -> None:
         profit_ticks = (current_price - entry_price) / tick_size
     else:  # short
         profit_ticks = (entry_price - current_price) / tick_size
+    
+    # === EXIT RL FEATURE 5: PROFIT LOCK ZONES ===
+    # Check if profit is retreating from peak (lock in gains)
+    if adaptive_manager is not None and position.get("breakeven_active"):
+        try:
+            # Calculate R-multiple
+            initial_risk_ticks = position.get("initial_risk_ticks", 10)
+            current_r_multiple = profit_ticks / initial_risk_ticks if initial_risk_ticks > 0 else 0
+            
+            # Track peak R-multiple
+            peak_r_multiple = position.get("peak_r_multiple", 0)
+            if current_r_multiple > peak_r_multiple:
+                position["peak_r_multiple"] = current_r_multiple
+                peak_r_multiple = current_r_multiple
+            
+            # Check for profit lock
+            if peak_r_multiple >= 3.0:  # Only check if we've hit significant profit
+                lock_result = adaptive_manager.check_profit_lock(
+                    current_r_multiple=current_r_multiple,
+                    peak_r_multiple=peak_r_multiple,
+                    current_profit_ticks=profit_ticks,
+                    direction=side
+                )
+                
+                if lock_result.get('should_lock'):
+                    lock_reason = lock_result.get('reason', 'Profit lock triggered')
+                    logger.warning(f"[EXIT RL] {lock_reason}")
+                    logger.warning(f"  Peak: {peak_r_multiple:.1f}R → Current: {current_r_multiple:.1f}R")
+                    
+                    # Execute immediate exit to lock profit
+                    from quotrading_engine import execute_exit
+                    execute_exit(symbol, current_price, "profit_lock")
+                    return  # Exit function immediately
+        except Exception as e:
+            logger.debug(f"Profit lock check failed: {e}")
     
     # Step 3 - Compare to threshold
     if profit_ticks < breakeven_threshold_ticks:
@@ -4535,12 +4767,17 @@ def check_trailing_stop(symbol: str, current_price: float) -> None:
             
             # CONTINUOUS ADAPTATION: Recalculate trailing params on EVERY bar
             # Market conditions change while holding → trailing should adapt too!
+            
+            # Get entry confidence from position (saved during entry)
+            entry_confidence = position.get("entry_confidence", 0.75)  # Default to 0.75 if not saved
+            
             adaptive_params = get_adaptive_exit_params(
                 bars=state[symbol]["bars_1min"],
                 position=position,
                 current_price=current_price,
                 config=CONFIG,
-                adaptive_manager=adaptive_manager  # Pass global instance for persistence
+                adaptive_manager=adaptive_manager,  # Pass global instance for persistence
+                entry_confidence=entry_confidence   # NEW: Pass confidence for exit correlation
             )
             
             trailing_distance_ticks = adaptive_params["trailing_distance_ticks"]
@@ -5134,6 +5371,20 @@ def check_exit_conditions(symbol: str) -> None:
     entry_price = position["entry_price"]
     stop_price = position["stop_price"]
     
+    # Track MAE/MFE on EVERY bar for learning
+    if adaptive_manager:
+        try:
+            trade_id = position.get("entry_time", bar_time).isoformat()
+            adaptive_manager.track_mae_mfe(
+                trade_id=trade_id,
+                entry_price=entry_price,
+                current_price=current_bar["close"],
+                direction=side,
+                position_size=position["quantity"]
+            )
+        except Exception as e:
+            logger.debug(f"MAE/MFE tracking failed: {e}")
+    
     # Phase Two: Check trading state and handle market close/open
     trading_state = get_trading_state(bar_time)
     
@@ -5414,16 +5665,142 @@ def check_exit_conditions(symbol: str) -> None:
         execute_exit(symbol, price, "proactive_stop")
         return
     
-    # FIFTH - Partial exits (happens before breakeven/trailing because it reduces position size)
+    # FIFTH - Advanced Exit RL: Adverse Momentum Detection
+    # Check if price momentum has shifted strongly against position
+    if position["active"] and adaptive_manager:
+        try:
+            bars = state[symbol]["bars_1min"]
+            recent_bars = [
+                {
+                    'timestamp': b['timestamp'],
+                    'open': b['open'],
+                    'high': b['high'],
+                    'low': b['low'],
+                    'close': b['close'],
+                    'volume': b['volume']
+                }
+                for b in bars[-5:]  # Last 5 bars for momentum analysis
+            ]
+            
+            if len(recent_bars) >= 3:
+                adverse_result = adaptive_manager.detect_adverse_momentum(
+                    recent_bars=recent_bars,
+                    direction=side,
+                    entry_price=entry_price,
+                    current_price=current_bar["close"],
+                    position_size=position["quantity"]
+                )
+                
+                if adverse_result.get('adverse_detected'):
+                    severity = adverse_result.get('severity', 'medium')
+                    reason = adverse_result.get('reason', 'Adverse momentum detected')
+                    logger.warning(f"[EXIT RL] {reason}")
+                    logger.warning(f"  Severity: {severity.upper()} - Exiting FAST")
+                    execute_exit(symbol, current_bar["close"], "adverse_momentum")
+                    return
+        except Exception as e:
+            logger.debug(f"Adverse momentum check failed: {e}")
+    
+    # SIXTH - Advanced Exit RL: Volume Exhaustion Detection
+    # Check if volume is drying up during profit run (trend exhaustion)
+    if position["active"] and adaptive_manager and position.get("breakeven_active"):
+        try:
+            bars = state[symbol]["bars_1min"]
+            recent_bars = [
+                {
+                    'timestamp': b['timestamp'],
+                    'open': b['open'],
+                    'high': b['high'],
+                    'low': b['low'],
+                    'close': b['close'],
+                    'volume': b['volume']
+                }
+                for b in bars[-10:]  # Last 10 bars for volume analysis
+            ]
+            
+            # Calculate current R-multiple
+            tick_size = CONFIG["tick_size"]
+            initial_risk_ticks = position.get("initial_risk_ticks", 10)
+            if side == "long":
+                profit_ticks = (current_bar["close"] - entry_price) / tick_size
+            else:
+                profit_ticks = (entry_price - current_bar["close"]) / tick_size
+            r_multiple = profit_ticks / initial_risk_ticks if initial_risk_ticks > 0 else 0
+            
+            # Calculate average volume for context
+            avg_volume = sum(b['volume'] for b in recent_bars) / len(recent_bars) if recent_bars else 1
+            
+            if len(recent_bars) >= 5 and r_multiple > 2.0:
+                exhaustion_result = adaptive_manager.check_volume_exhaustion(
+                    recent_bars=recent_bars,
+                    r_multiple=r_multiple,
+                    avg_volume=avg_volume
+                )
+                
+                if exhaustion_result.get('exhaustion_detected'):
+                    reason = exhaustion_result.get('reason', 'Volume exhaustion detected')
+                    logger.warning(f"[EXIT RL] {reason}")
+                    logger.warning(f"  Volume dropped {exhaustion_result.get('volume_drop_pct', 0):.1f}% during profit run")
+                    execute_exit(symbol, current_bar["close"], "volume_exhaustion")
+                    return
+        except Exception as e:
+            logger.debug(f"Volume exhaustion check failed: {e}")
+    
+    # SEVENTH - Advanced Exit RL: Failed Breakout Detection
+    # Check if price hit target band but failed to sustain (weak breakout)
+    if position["active"] and adaptive_manager:
+        try:
+            bars = state[symbol]["bars_1min"]
+            recent_bars = [
+                {
+                    'timestamp': b['timestamp'],
+                    'open': b['open'],
+                    'high': b['high'],
+                    'low': b['low'],
+                    'close': b['close'],
+                    'volume': b['volume']
+                }
+                for b in bars[-5:]  # Last 5 bars for breakout analysis
+            ]
+            
+            # Check if target was hit (touched the band)
+            target_price = position.get("target_price", 0)
+            target_hit = False
+            if target_price > 0:
+                for bar in recent_bars:
+                    if side == "long" and bar['high'] >= target_price:
+                        target_hit = True
+                    elif side == "short" and bar['low'] <= target_price:
+                        target_hit = True
+            
+            if len(recent_bars) >= 3 and target_hit:
+                breakout_result = adaptive_manager.detect_failed_breakout(
+                    recent_bars=recent_bars,
+                    direction=side,
+                    target_hit=target_hit,
+                    entry_price=entry_price,
+                    current_price=current_bar["close"]
+                )
+                
+                if breakout_result.get('failed_breakout'):
+                    reason = breakout_result.get('reason', 'Failed breakout detected')
+                    logger.warning(f"[EXIT RL] {reason}")
+                    logger.warning(f"  Target hit but price rejected - exit before reversal")
+                    execute_exit(symbol, current_bar["close"], "failed_breakout")
+                    return
+        except Exception as e:
+            logger.debug(f"Failed breakout check failed: {e}")
+    
+    # EIGHTH - Partial exits (happens before breakeven/trailing because it reduces position size)
     check_partial_exits(symbol, current_bar["close"])
     
-    # SIXTH - Breakeven protection (must activate before trailing)
+    # NINTH - Breakeven protection (must activate before trailing)
     check_breakeven_protection(symbol, current_bar["close"])
     
-    # SEVENTH - Trailing stop (only runs if breakeven already active)
+    # TENTH - Trailing stop (only runs if breakeven already active)
     check_trailing_stop(symbol, current_bar["close"])
     
-    # EIGHTH - Market divergence check (tighten stops if fighting momentum)
+    # ELEVENTH - Market divergence check (tighten stops if fighting momentum)
     if position["active"]:
         is_diverging, divergence_reason = check_market_divergence(symbol, position["side"])
         if is_diverging:
@@ -5463,7 +5840,7 @@ def check_exit_conditions(symbol: str) -> None:
                     if new_stop_order.get("order_id"):
                         position["stop_order_id"] = new_stop_order.get("order_id")
     
-    # NINTH - Time-decay tightening (last priority, gradual adjustment)
+    # TWELFTH - Time-decay tightening (last priority, gradual adjustment)
     check_time_decay_tightening(symbol, bar_time)
     
     # Check for signal reversal (lowest priority)
@@ -5934,6 +6311,22 @@ def execute_exit(symbol: str, exit_price: float, reason: str) -> None:
                 )
                 
                 logger.info(f"[EXIT RL] Learned {regime} exit -> ${pnl:+.2f} in {duration_minutes:.1f}min with market context")
+                
+                # === EXIT RL FEATURE 10: EXIT EFFICIENCY ANALYSIS ===
+                # Analyze MAE/MFE patterns periodically (every 5 trades)
+                exit_count = len(adaptive_manager.exit_experiences) if hasattr(adaptive_manager, 'exit_experiences') else 0
+                if exit_count > 0 and exit_count % 5 == 0:
+                    try:
+                        efficiency_results = adaptive_manager.analyze_mae_mfe_patterns()
+                        if efficiency_results:
+                            logger.info(f"[EXIT EFFICIENCY] Analysis complete:")
+                            logger.info(f"   Analyzed {efficiency_results.get('total_analyzed', 0)} trades")
+                            logger.info(f"   Avg MAE: ${efficiency_results.get('avg_mae', 0):.2f}, Avg MFE: ${efficiency_results.get('avg_mfe', 0):.2f}")
+                            capture_rate = efficiency_results.get('capture_rate', 0)
+                            if capture_rate > 0:
+                                logger.info(f"   Capture Rate: {capture_rate:.1%} (how much of MFE was captured)")
+                    except Exception as e:
+                        logger.debug(f"Exit efficiency analysis failed: {e}")
     except Exception as e:
         logger.debug(f"Exit learning failed: {e}")
     

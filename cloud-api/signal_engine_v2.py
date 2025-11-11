@@ -862,13 +862,16 @@ async def get_ml_confidence(request: Dict):
         
         return {
             "ml_confidence": result['confidence'],
+            "confidence": result['confidence'],  # Duplicate for compatibility
+            "should_trade": result['should_take'],
+            "size_multiplier": result.get('size_multiplier', 1.0),  # NEW: Position sizing
             "win_rate": result['win_rate'],
             "sample_size": result['sample_size'],
             "avg_pnl": result['avg_pnl'],
             "reason": result['reason'],
             "should_take": result['should_take'],
             "action": signal if result['should_take'] else "NONE",
-            "model_version": "v5.0-advanced-pattern-matching",
+            "model_version": "v5.1-position-sizing",
             "total_experience_count": len(all_trades),
             "timestamp": datetime.utcnow().isoformat()
         }
@@ -878,6 +881,9 @@ async def get_ml_confidence(request: Dict):
         # Return neutral confidence on error
         return {
             "ml_confidence": 0.5,
+            "confidence": 0.5,
+            "should_trade": False,
+            "size_multiplier": 1.0,
             "action": "NONE",
             "model_version": "v1.0-simple",
             "error": str(e)
@@ -1141,18 +1147,35 @@ def filter_experiences_by_context(experiences: List, signal_type: str, current_d
     return filtered
 
 
-def calculate_advanced_confidence(similar_experiences: List, recency_hours: int = 168) -> Dict:
+def calculate_advanced_confidence(
+    winner_experiences: List,
+    loser_experiences: List, 
+    recency_hours: int = 168, 
+    streak: int = 0, 
+    current_vix: float = 15.0, 
+    volume_ratio: float = 1.0
+) -> Dict:
     """
-    Calculate smart confidence based on similar past experiences
+    DUAL PATTERN MATCHING: Calculate confidence by comparing to WINNERS and LOSERS
+    
+    This is the UPGRADED Feature 3 - learns from ALL experiences, not just winners.
+    
+    Formula: confidence = winner_similarity - loser_penalty
     
     Args:
-        similar_experiences: Pre-filtered experiences matching current conditions
+        winner_experiences: Similar past winning trades (teaches what TO do)
+        loser_experiences: Similar past losing trades (teaches what to AVOID)
         recency_hours: How many hours back to weight more heavily (default 1 week)
+        streak: Current win/loss streak (positive = wins, negative = losses)
+        current_vix: Current VIX level for volatility adjustment
+        volume_ratio: Current volume / average volume ratio
     
     Returns:
         Dict with confidence, win_rate, sample_size, avg_pnl
     """
-    if len(similar_experiences) == 0:
+    total_samples = len(winner_experiences) + len(loser_experiences)
+    
+    if total_samples == 0:
         return {
             'confidence': 0.5,
             'win_rate': 0.5,
@@ -1161,67 +1184,100 @@ def calculate_advanced_confidence(similar_experiences: List, recency_hours: int 
             'reason': 'No similar past experiences found'
         }
     
-    # Separate wins and losses
-    # Handle both flat and nested structures: exp['reward'] (nested) or exp['pnl'] (flat)
-    wins = []
-    losses = []
-    for exp in similar_experiences:
-        # Get PnL from either 'reward' (nested RL format) or 'pnl' (flat format)
-        pnl = exp.get('reward', exp.get('pnl', 0))
-        outcome = exp.get('outcome', '')
-        
-        if outcome == 'WIN' or pnl > 0:
-            wins.append(exp)
-        else:
-            losses.append(exp)
+    # Calculate win rate
+    win_rate = len(winner_experiences) / total_samples if total_samples > 0 else 0.5
     
-    # Calculate basic win rate
-    win_rate = len(wins) / len(similar_experiences)
+    # Calculate win rate
+    win_rate = len(winner_experiences) / total_samples if total_samples > 0 else 0.5
     
-    # Calculate weighted win rate (recent trades matter more)
+    # DUAL PATTERN MATCHING: Calculate average similarity to winners
     now = datetime.utcnow()
-    weighted_wins = 0
-    weighted_total = 0
+    winner_similarity_sum = 0
+    winner_weighted_total = 0
     
-    for exp in similar_experiences:
-        # Calculate recency weight (1.0 for very recent, 0.5 for old)
+    for exp in winner_experiences:
+        # Get similarity score (set during filtering)
+        similarity = exp.get('similarity_score', 0.7)
+        
+        # Calculate recency weight
         if 'timestamp' in exp:
             try:
                 exp_time = datetime.fromisoformat(exp['timestamp']) if isinstance(exp['timestamp'], str) else exp['timestamp']
                 hours_ago = (now - exp_time).total_seconds() / 3600
                 recency_weight = max(0.5, 1.0 - (hours_ago / recency_hours) * 0.5)
             except:
-                recency_weight = 0.7  # Default weight if timestamp parsing fails
+                recency_weight = 0.7
         else:
             recency_weight = 0.7
         
-        # Apply quality score weight (better trades = more weight)
+        # Apply quality score weight
         quality_weight = exp.get('quality_score', 0.5)
         
         # Combined weight
         total_weight = recency_weight * quality_weight
         
-        weighted_total += total_weight
-        # Check both 'reward' (nested RL) and 'pnl' (flat) formats
-        pnl = exp.get('reward', exp.get('pnl', 0))
-        if exp.get('outcome') == 'WIN' or pnl > 0:
-            weighted_wins += total_weight
+        winner_weighted_total += total_weight
+        winner_similarity_sum += similarity * total_weight
     
-    # Weighted win rate
-    weighted_win_rate = weighted_wins / weighted_total if weighted_total > 0 else win_rate
+    # Average winner similarity (0.0-1.0)
+    avg_winner_similarity = winner_similarity_sum / winner_weighted_total if winner_weighted_total > 0 else 0.5
     
-    # Calculate average P&L (check both 'reward' and 'pnl' fields)
-    total_pnl = sum(exp.get('reward', exp.get('pnl', 0)) for exp in similar_experiences)
-    avg_pnl = total_pnl / len(similar_experiences)
+    # DUAL PATTERN MATCHING: Calculate average similarity to losers
+    loser_similarity_sum = 0
+    loser_weighted_total = 0
     
-    # Calculate confidence score
-    # Start with weighted win rate, then adjust based on sample size and avg P&L
-    confidence = weighted_win_rate
+    for exp in loser_experiences:
+        # Get similarity score
+        similarity = exp.get('similarity_score', 0.7)
+        
+        # Calculate recency weight
+        if 'timestamp' in exp:
+            try:
+                exp_time = datetime.fromisoformat(exp['timestamp']) if isinstance(exp['timestamp'], str) else exp['timestamp']
+                hours_ago = (now - exp_time).total_seconds() / 3600
+                recency_weight = max(0.5, 1.0 - (hours_ago / recency_hours) * 0.5)
+            except:
+                recency_weight = 0.7
+        else:
+            recency_weight = 0.7
+        
+        # Apply quality score weight
+        quality_weight = exp.get('quality_score', 0.5)
+        
+        # Combined weight
+        total_weight = recency_weight * quality_weight
+        
+        loser_weighted_total += total_weight
+        loser_similarity_sum += similarity * total_weight
+    
+    # Average loser similarity (0.0-1.0)
+    avg_loser_similarity = loser_similarity_sum / loser_weighted_total if loser_weighted_total > 0 else 0.0
+    
+    # DUAL PATTERN FORMULA: confidence = winner_similarity - loser_penalty
+    # If similar to winners but NOT similar to losers → HIGH confidence
+    # If similar to both winners and losers → MODERATE confidence
+    # If similar to losers but NOT winners → LOW confidence (reject)
+    loser_penalty = avg_loser_similarity * 0.5  # Penalize 50% of loser similarity
+    base_confidence = avg_winner_similarity - loser_penalty
+    
+    # Clamp to reasonable range
+    base_confidence = max(0.0, min(0.95, base_confidence))
+    
+    # Clamp to reasonable range
+    base_confidence = max(0.0, min(0.95, base_confidence))
+    
+    # Calculate average P&L from ALL experiences (winners + losers)
+    all_experiences = winner_experiences + loser_experiences
+    total_pnl = sum(exp.get('reward', exp.get('pnl', 0)) for exp in all_experiences)
+    avg_pnl = total_pnl / len(all_experiences) if all_experiences else 0.0
+    
+    # Start with base dual-pattern confidence
+    confidence = base_confidence
     
     # Sample size adjustment (more samples = more confidence in the estimate)
-    if len(similar_experiences) < 10:
+    if total_samples < 10:
         confidence *= 0.7  # Low confidence with few samples
-    elif len(similar_experiences) < 30:
+    elif total_samples < 30:
         confidence *= 0.85  # Medium confidence
     # else: Full confidence with 30+ samples
     
@@ -1231,15 +1287,50 @@ def calculate_advanced_confidence(similar_experiences: List, recency_hours: int 
     elif avg_pnl < -20:
         confidence *= 0.7  # Penalize consistently losing setups
     
-    # Generate reason string
-    reason = f"{int(weighted_win_rate * 100)}% win rate in {len(similar_experiences)} similar setups (avg ${avg_pnl:.0f} P&L)"
+    # Calculate position size multiplier (0.25x-2.0x)
+    # Base multiplier from confidence
+    size_mult = max(0.25, min(2.0, confidence * 1.5))  # 0.25-1.0 range for low confidence
+    
+    # Adjust for streak (±25%)
+    if streak > 0:  # Win streak
+        streak_bonus = min(0.25, streak * 0.05)  # Max +25%
+        size_mult *= (1.0 + streak_bonus)
+    elif streak < 0:  # Loss streak
+        streak_penalty = min(0.25, abs(streak) * 0.05)  # Max -25%
+        size_mult *= (1.0 - streak_penalty)
+    
+    # Adjust for volatility (VIX-based)
+    if current_vix > 25:  # High volatility
+        size_mult *= 0.8  # -20% in high vol
+    elif current_vix < 12:  # Low volatility
+        size_mult *= 1.15  # +15% in low vol
+    
+    # Adjust for volume (volume_ratio-based)
+    if volume_ratio > 2.0:  # High volume
+        size_mult *= 1.1  # +10%
+    elif volume_ratio < 0.5:  # Low volume
+        size_mult *= 0.9  # -10%
+    
+    # Final clamp
+    size_mult = max(0.25, min(2.0, size_mult))
+    
+    # Generate reason string with dual-pattern details
+    reason = (
+        f"Dual Pattern: {len(winner_experiences)}W/{len(loser_experiences)}L "
+        f"(win_sim={avg_winner_similarity:.2f}, lose_sim={avg_loser_similarity:.2f}, "
+        f"penalty={loser_penalty:.2f}) → {int(win_rate * 100)}% WR, avg ${avg_pnl:.0f}"
+    )
     
     return {
         'confidence': min(confidence, 0.95),  # Cap at 95%
-        'win_rate': weighted_win_rate,
-        'sample_size': len(similar_experiences),
+        'win_rate': win_rate,
+        'sample_size': total_samples,
         'avg_pnl': avg_pnl,
-        'reason': reason
+        'reason': reason,
+        'size_multiplier': round(size_mult, 2),
+        'winner_similarity': round(avg_winner_similarity, 3),
+        'loser_similarity': round(avg_loser_similarity, 3),
+        'loser_penalty': round(loser_penalty, 3)
     }
 
 
@@ -1332,8 +1423,91 @@ def calculate_signal_confidence(
     
     logger.info(f"   → Found {len(similar_experiences)} highly similar patterns (similarity >= {similarity_threshold})")
     
-    # STEP 3: Calculate advanced confidence from similar experiences
-    result = calculate_advanced_confidence(similar_experiences)
+    # STEP 2.5: DUAL PATTERN MATCHING - Separate winners and losers
+    winner_experiences = []
+    loser_experiences = []
+    
+    for exp in similar_experiences:
+        # Get PnL from either 'reward' (nested RL format) or 'pnl' (flat format)
+        pnl = exp.get('reward', exp.get('pnl', 0))
+        outcome = exp.get('outcome', '')
+        
+        if outcome == 'WIN' or pnl > 0:
+            winner_experiences.append(exp)
+        else:
+            loser_experiences.append(exp)
+    
+    logger.info(f"   → Dual Pattern: {len(winner_experiences)} winners, {len(loser_experiences)} losers")
+    
+    # STEP 2.75: SIGNAL-EXIT CROSS-TALK - Check exit performance for similar signals
+    # If similar signals consistently hit stop loss, reduce confidence
+    exit_penalty = 0.0
+    try:
+        from database import DatabaseManager, ExitExperience
+        db_manager = DatabaseManager()
+        session = db_manager.get_session()
+        
+        # Query exit experiences with similar market conditions
+        similar_exits = []
+        all_exits = session.query(ExitExperience).limit(1000).all()  # Last 1000 exits
+        
+        for exit_exp in all_exits:
+            exit_data = exit_exp.to_dict()
+            exit_market = exit_data.get('market_state', {})
+            exit_outcome = exit_data.get('outcome', {})
+            
+            # Check if exit had similar signal conditions
+            exit_rsi = exit_market.get('rsi', 50)
+            exit_vwap_dist = exit_market.get('vwap_distance', 0)
+            
+            # Calculate similarity to current signal
+            rsi_diff = abs(exit_rsi - rsi)
+            vwap_diff = abs(exit_vwap_dist - vwap_distance)
+            
+            if rsi_diff <= 10 and vwap_diff <= 2.0:
+                # Similar signal conditions
+                similar_exits.append({
+                    'win': exit_outcome.get('win', False),
+                    'pnl': exit_outcome.get('pnl', 0.0),
+                    'exit_reason': exit_outcome.get('exit_reason', 'UNKNOWN')
+                })
+        
+        if len(similar_exits) >= 10:
+            # Calculate exit performance
+            exit_wins = sum(1 for e in similar_exits if e['win'])
+            exit_win_rate = exit_wins / len(similar_exits)
+            stop_loss_count = sum(1 for e in similar_exits if 'STOP' in e['exit_reason'].upper())
+            stop_loss_rate = stop_loss_count / len(similar_exits)
+            
+            # Apply penalty if exits are poor
+            if exit_win_rate < 0.50:
+                # Poor exit performance → reduce signal confidence
+                exit_penalty = (0.50 - exit_win_rate) * 0.3  # Max 15% penalty
+                logger.info(f"   ⚠️  Signal-Exit Cross-Talk: {len(similar_exits)} similar exits, {exit_win_rate*100:.0f}% WR, {stop_loss_rate*100:.0f}% stops → penalty={exit_penalty:.3f}")
+            else:
+                logger.info(f"   ✅ Signal-Exit Cross-Talk: {len(similar_exits)} similar exits, {exit_win_rate*100:.0f}% WR (good exits)")
+        
+        session.close()
+    except Exception as e:
+        logger.warning(f"   Signal-Exit cross-talk failed: {e}")
+    
+    # STEP 3: Calculate advanced confidence using DUAL pattern matching
+    result = calculate_advanced_confidence(
+        winner_experiences=winner_experiences,
+        loser_experiences=loser_experiences,
+        recency_hours=168,
+        streak=streak,
+        current_vix=current_vix,
+        volume_ratio=volume_ratio
+    )
+    
+    # Apply exit penalty to final confidence
+    if exit_penalty > 0:
+        original_confidence = result['confidence']
+        result['confidence'] = max(0.0, result['confidence'] - exit_penalty)
+        result['exit_penalty'] = round(exit_penalty, 3)
+        result['reason'] += f" | Exit penalty: -{exit_penalty:.1%} (poor exit performance on similar signals)"
+        logger.info(f"   Applied exit penalty: {original_confidence:.2%} → {result['confidence']:.2%}")
     
     # Add recommendation
     result['should_take'] = result['confidence'] >= 0.65  # Only recommend high-confidence trades
@@ -1438,17 +1612,24 @@ async def save_trade_experience(trade: Dict, db: Session = Depends(get_db)):
                 pnl = trade['pnl']
                 outcome = 'WIN' if pnl > 0 else 'LOSS'
                 
-                # Extract context data (with defaults if not provided)
+                # Extract ALL context data (with defaults if not provided)
                 rsi = trade.get('entry_rsi', trade.get('rsi', 50.0))
                 vwap_distance = trade.get('vwap_distance', 0.0)
                 vix = trade.get('vix', 15.0)
+                atr = trade.get('volatility', trade.get('atr', 0.0))
+                volume_ratio = trade.get('volume_ratio', 1.0)
+                recent_pnl = trade.get('recent_pnl', 0.0)
+                streak = trade.get('streak', 0)
+                entry_price = trade.get('entry_price', 0.0)
+                vwap = trade.get('entry_vwap', trade.get('vwap', 0.0))
+                price = trade.get('price', entry_price)
                 
                 # Calculate time context
                 entry_time = datetime.fromisoformat(trade['entry_time']) if trade.get('entry_time') else datetime.utcnow()
                 day_of_week = entry_time.weekday()  # 0=Monday, 6=Sunday
                 hour_of_day = entry_time.hour  # 0-23
                 
-                # Signal experience (entry decision) WITH CONTEXT
+                # Signal experience (entry decision) WITH FULL 13-FEATURE CONTEXT
                 signal_exp = RLExperience(
                     user_id=user.id,
                     account_id=user_id,
@@ -1459,35 +1640,28 @@ async def save_trade_experience(trade: Dict, db: Session = Depends(get_db)):
                     pnl=pnl,
                     confidence_score=trade.get('confidence', 0.0),
                     quality_score=min(abs(pnl) / 100, 1.0),  # Quality based on P&L magnitude
+                    # All 13 pattern matching features:
                     rsi=rsi,
                     vwap_distance=vwap_distance,
                     vix=vix,
                     day_of_week=day_of_week,
-                    hour_of_day=hour_of_day
+                    hour_of_day=hour_of_day,
+                    atr=atr,
+                    volume_ratio=volume_ratio,
+                    recent_pnl=recent_pnl,
+                    streak=streak,
+                    entry_price=entry_price,
+                    vwap=vwap,
+                    price=price,
+                    side=trade['side']
                 )
                 db.add(signal_exp)
                 
-                # Exit experience (exit decision) WITH CONTEXT
-                exit_exp = RLExperience(
-                    user_id=user.id,
-                    account_id=user_id,
-                    experience_type='EXIT',
-                    symbol=symbol,
-                    signal_type=trade['side'],
-                    outcome=outcome,
-                    pnl=pnl,
-                    confidence_score=trade.get('confidence', 0.0),
-                    quality_score=min(abs(pnl) / 100, 1.0),
-                    rsi=rsi,
-                    vwap_distance=vwap_distance,
-                    vix=vix,
-                    day_of_week=day_of_week,
-                    hour_of_day=hour_of_day
-                )
-                db.add(exit_exp)
+                # EXIT experiences are saved separately via /api/ml/save_exit_experience
+                # (Not saved here to avoid duplication)
                 
                 db.commit()
-                logger.debug(f"✅ Trade & RL experiences (with context) saved to database for {user_id}")
+                logger.debug(f"✅ Trade & Signal RL experience saved to database for {user_id}")
         except Exception as db_error:
             logger.warning(f"Failed to save trade to database: {db_error}")
             # Don't fail the entire request if database save fails
@@ -1622,19 +1796,26 @@ async def save_exit_experience(experience: dict):
     Save new exit experience to PostgreSQL - ALL USERS contribute!
     Every trade exit adds to the collective learning pool.
     
-    NEW: Saves to rl_experiences table with 9-feature context for pattern matching
+    Saves to TWO tables:
+    1. RLExperience: 9-feature context for pattern matching
+    2. ExitExperience: Full exit parameters for regime-based learning
     """
     try:
-        from database import DatabaseManager, RLExperience
+        from database import DatabaseManager, RLExperience, ExitExperience
         from datetime import datetime
+        import json
         
         db_manager = DatabaseManager()
         session = db_manager.get_session()
         
         try:
-            # Extract 9-feature market context (RSI, volume_ratio, hour, day_of_week, streak, recent_pnl, VIX, VWAP distance, ATR)
+            # Extract data
             market_state = experience.get('market_state', {})
             outcome = experience.get('outcome', {})
+            exit_params = experience.get('exit_params', {})
+            regime = experience.get('regime', 'UNKNOWN')
+            situation = experience.get('situation', {})
+            partial_exits = experience.get('partial_exits', [])
             
             # Get or create a default user for backtest data
             from database import User
@@ -1651,17 +1832,17 @@ async def save_exit_experience(experience: dict):
                 session.add(default_user)
                 session.flush()
             
-            # Create RLExperience record for exit (experience_type='EXIT')
-            exit_exp = RLExperience(
+            # 1. Create RLExperience record for exit pattern matching (experience_type='EXIT')
+            exit_rl_exp = RLExperience(
                 experience_type='EXIT',
-                user_id=default_user.id,  # Use backtest user ID
+                user_id=default_user.id,
                 account_id='backtest',
-                symbol='ES',  # Default to ES
-                signal_type=outcome.get('side', 'long').upper(),  # LONG or SHORT
+                symbol='ES',
+                signal_type=outcome.get('side', 'long').upper(),
                 outcome='WIN' if outcome.get('win', False) else 'LOSS',
                 pnl=float(outcome.get('pnl', 0.0)),
                 confidence_score=None,
-                quality_score=None,
+                quality_score=min(abs(outcome.get('pnl', 0.0)) / 100.0, 1.0),
                 
                 # 9-feature market context for exit pattern matching
                 rsi=float(market_state.get('rsi', 50.0)),
@@ -1674,7 +1855,6 @@ async def save_exit_experience(experience: dict):
                 vwap_distance=float(market_state.get('vwap_distance', 0.0)),
                 atr=float(market_state.get('atr', 0.0)),
                 
-                # Additional fields (not used for pattern matching but stored for reference)
                 entry_price=None,
                 vwap=None,
                 price=None,
@@ -1682,21 +1862,37 @@ async def save_exit_experience(experience: dict):
                 
                 timestamp=datetime.fromisoformat(experience.get('timestamp', datetime.utcnow().isoformat()))
             )
+            session.add(exit_rl_exp)
             
-            session.add(exit_exp)
+            # 2. Create ExitExperience record for full exit parameter learning
+            full_exit_exp = ExitExperience(
+                regime=regime,
+                exit_params_json=json.dumps(exit_params),
+                outcome_json=json.dumps(outcome),
+                situation_json=json.dumps(situation),
+                market_state_json=json.dumps(market_state),
+                partial_exits_json=json.dumps(partial_exits),
+                quality_score=min(abs(outcome.get('pnl', 0.0)) / 100.0, 1.0),
+                timestamp=datetime.fromisoformat(experience.get('timestamp', datetime.utcnow().isoformat()))
+            )
+            session.add(full_exit_exp)
+            
             session.commit()
             
-            # Get updated count
-            total_count = session.query(RLExperience).filter(
+            # Get updated counts
+            rl_exit_count = session.query(RLExperience).filter(
                 RLExperience.experience_type == 'EXIT'
             ).count()
             
-            logger.info(f"✅ Saved EXIT experience to rl_experiences table (now {total_count:,} total exits)")
+            full_exit_count = session.query(ExitExperience).count()
+            
+            logger.info(f"✅ Saved EXIT to BOTH tables: RLExperience ({rl_exit_count:,}) + ExitExperience ({full_exit_count:,})")
             
             return {
                 "saved": True,
-                "total_exit_experiences": total_count,
-                "message": f"🌍 Exit experience saved to rl_experiences table ({total_count:,} exits with 9 features)"
+                "total_exit_experiences": rl_exit_count,
+                "total_full_exit_experiences": full_exit_count,
+                "message": f"🌍 Exit saved to BOTH tables (RL pattern matching + full params)"
             }
             
         except Exception as e:
@@ -1708,6 +1904,353 @@ async def save_exit_experience(experience: dict):
     except Exception as e:
         logger.error(f"❌ Error saving exit experience to PostgreSQL: {e}")
         return {"saved": False, "error": str(e)}
+
+
+@app.post("/api/ml/get_adaptive_exit_params")
+async def get_adaptive_exit_params(request: dict):
+    """
+    REAL-TIME exit parameter recommendations based on current market conditions.
+    Queries 3,214+ exit experiences to find similar situations and returns optimal params.
+    
+    Called MID-TRADE to adapt exit strategy as market conditions change.
+    
+    Request:
+        {
+            "regime": "HIGH_VOL_CHOPPY",
+            "market_state": {
+                "rsi": 65.5,
+                "atr": 3.2,
+                "vwap_distance": 1.5,
+                "volume_ratio": 1.8,
+                "hour": 10,
+                "day_of_week": 2,
+                "streak": 2,
+                "recent_pnl": 150.0,
+                "vix": 18.5
+            },
+            "position": {
+                "side": "long",
+                "duration_minutes": 12.5,
+                "unrealized_pnl": 225.0,
+                "entry_price": 5950.0,
+                "r_multiple": 2.3
+            },
+            "entry_confidence": 0.85  # From signal RL
+        }
+    
+    Returns:
+        {
+            "success": true,
+            "params": {
+                "breakeven_threshold_ticks": 9,
+                "breakeven_offset_ticks": 2,
+                "trailing_distance_ticks": 10,
+                "partial_1_r": 2.0,
+                "partial_1_pct": 0.50,
+                "stop_mult": 3.8
+            },
+            "similar_exits_analyzed": 342,
+            "avg_pnl_similar": 187.50,
+            "win_rate_similar": 0.68,
+            "recommendation": "TIGHTEN (68% win rate in 342 similar choppy exits, avg $188 P&L)"
+        }
+    """
+    try:
+        from database import DatabaseManager, ExitExperience
+        import json
+        import statistics
+        
+        db_manager = DatabaseManager()
+        session = db_manager.get_session()
+        
+        try:
+            # Extract request data
+            regime = request.get('regime', 'NORMAL')
+            market_state = request.get('market_state', {})
+            position = request.get('position', {})
+            entry_confidence = request.get('entry_confidence', 0.75)
+            
+            # Query ALL exit experiences from PostgreSQL
+            all_exits = session.query(ExitExperience).all()
+            
+            if len(all_exits) == 0:
+                # No experiences yet - return defaults
+                return {
+                    "success": True,
+                    "params": {
+                        "breakeven_threshold_ticks": 8,
+                        "breakeven_offset_ticks": 1,
+                        "trailing_distance_ticks": 8,
+                        "partial_1_r": 2.0,
+                        "partial_1_pct": 0.50,
+                        "stop_mult": 3.6
+                    },
+                    "similar_exits_analyzed": 0,
+                    "recommendation": "Using defaults (no exit experiences yet)"
+                }
+            
+            # Find similar exit situations (same regime, similar market conditions)
+            similar_exits = []
+            for exp in all_exits:
+                exit_data = exp.to_dict()
+                exp_regime = exit_data.get('regime', 'NORMAL')
+                exp_market_state = exit_data.get('market_state', {})
+                exp_outcome = exit_data.get('outcome', {})
+                
+                # Match regime (exact match or similar)
+                regime_match = False
+                if exp_regime == regime:
+                    regime_match = True
+                elif "HIGH_VOL" in regime and "HIGH_VOL" in exp_regime:
+                    regime_match = True
+                elif "LOW_VOL" in regime and "LOW_VOL" in exp_regime:
+                    regime_match = True
+                elif "CHOPPY" in regime and "CHOPPY" in exp_regime:
+                    regime_match = True
+                elif "TRENDING" in regime and "TRENDING" in exp_regime:
+                    regime_match = True
+                
+                if not regime_match:
+                    continue
+                
+                # Calculate similarity score (0.0 - 1.0)
+                similarity = 0.0
+                weights = 0.0
+                
+                # RSI similarity (most important for exits)
+                if 'rsi' in market_state and 'rsi' in exp_market_state:
+                    rsi_diff = abs(market_state['rsi'] - exp_market_state['rsi'])
+                    rsi_sim = max(0, 1.0 - (rsi_diff / 50.0))  # 50 RSI points = 0 similarity
+                    similarity += rsi_sim * 3.0  # Weight 3x
+                    weights += 3.0
+                
+                # ATR similarity (volatility)
+                if 'atr' in market_state and 'atr' in exp_market_state:
+                    atr_diff = abs(market_state['atr'] - exp_market_state['atr'])
+                    atr_sim = max(0, 1.0 - (atr_diff / 5.0))  # 5 ATR points = 0 similarity
+                    similarity += atr_sim * 2.0  # Weight 2x
+                    weights += 2.0
+                
+                # VWAP distance similarity
+                if 'vwap_distance' in market_state and 'vwap_distance' in exp_market_state:
+                    vwap_diff = abs(market_state['vwap_distance'] - exp_market_state['vwap_distance'])
+                    vwap_sim = max(0, 1.0 - (vwap_diff / 3.0))
+                    similarity += vwap_sim * 1.5
+                    weights += 1.5
+                
+                # Hour of day (time-based patterns)
+                if 'hour' in market_state and 'hour' in exp_market_state:
+                    hour_diff = abs(market_state['hour'] - exp_market_state['hour'])
+                    hour_sim = max(0, 1.0 - (hour_diff / 12.0))
+                    similarity += hour_sim * 1.0
+                    weights += 1.0
+                
+                # Normalize similarity
+                if weights > 0:
+                    similarity /= weights
+                
+                # Only include if similarity >= 0.60 (60% match)
+                if similarity >= 0.60:
+                    similar_exits.append({
+                        'experience': exit_data,
+                        'similarity': similarity,
+                        'pnl': exp_outcome.get('pnl', 0.0),
+                        'win': exp_outcome.get('win', False),
+                        'exit_params': exit_data.get('exit_params', {})
+                    })
+            
+            # Sort by similarity (most similar first)
+            similar_exits.sort(key=lambda x: x['similarity'], reverse=True)
+            
+            # Take top 500 most similar (or all if fewer)
+            similar_exits = similar_exits[:500]
+            
+            # DUAL PATTERN MATCHING: Separate winners and losers
+            winner_exits = [e for e in similar_exits if e['win']]
+            loser_exits = [e for e in similar_exits if not e['win']]
+            
+            logger.info(f"📊 Exit Dual Pattern: {len(winner_exits)} winners, {len(loser_exits)} losers from {len(similar_exits)} similar exits")
+            
+            if len(similar_exits) == 0:
+                # No similar exits found - return defaults
+                return {
+                    "success": True,
+                    "params": {
+                        "breakeven_threshold_ticks": 8,
+                        "breakeven_offset_ticks": 1,
+                        "trailing_distance_ticks": 8,
+                        "partial_1_r": 2.0,
+                        "partial_1_pct": 0.50,
+                        "stop_mult": 3.6
+                    },
+                    "similar_exits_analyzed": 0,
+                    "recommendation": f"Using defaults (no similar {regime} exits found)"
+                }
+            
+            # Calculate statistics from similar exits
+            pnls = [e['pnl'] for e in similar_exits]
+            wins = [e['win'] for e in similar_exits]
+            win_rate = sum(wins) / len(wins) if wins else 0.0
+            avg_pnl = statistics.mean(pnls) if pnls else 0.0
+            
+            # DUAL PATTERN MATCHING: Learn from winners, avoid loser patterns
+            # Winners teach what params WORK, losers teach what params to AVOID
+            
+            # Extract parameters from WINNERS (what to do)
+            winner_params = {
+                'breakeven_mult': [],
+                'trailing_mult': [],
+                'stop_mult': [],
+                'partial_1_r': [],
+                'partial_1_pct': []
+            }
+            
+            for exit in winner_exits:
+                params = exit['exit_params']
+                if 'breakeven_mult' in params:
+                    winner_params['breakeven_mult'].append(params['breakeven_mult'])
+                if 'trailing_mult' in params:
+                    winner_params['trailing_mult'].append(params['trailing_mult'])
+                if 'stop_mult' in params:
+                    winner_params['stop_mult'].append(params['stop_mult'])
+                if 'partial_1_r' in params:
+                    winner_params['partial_1_r'].append(params['partial_1_r'])
+                if 'partial_1_pct' in params:
+                    winner_params['partial_1_pct'].append(params['partial_1_pct'])
+            
+            # Extract parameters from LOSERS (what to avoid)
+            loser_params = {
+                'breakeven_mult': [],
+                'trailing_mult': [],
+                'stop_mult': [],
+                'partial_1_r': [],
+                'partial_1_pct': []
+            }
+            
+            for exit in loser_exits:
+                params = exit['exit_params']
+                if 'breakeven_mult' in params:
+                    loser_params['breakeven_mult'].append(params['breakeven_mult'])
+                if 'trailing_mult' in params:
+                    loser_params['trailing_mult'].append(params['trailing_mult'])
+                if 'stop_mult' in params:
+                    loser_params['stop_mult'].append(params['stop_mult'])
+                if 'partial_1_r' in params:
+                    loser_params['partial_1_r'].append(params['partial_1_r'])
+                if 'partial_1_pct' in params:
+                    loser_params['partial_1_pct'].append(params['partial_1_pct'])
+            
+            # Calculate optimal parameters using DUAL PATTERN MATCHING
+            # Strategy: Use winner medians, but AVOID loser medians
+            optimal_params = {}
+            
+            for key in winner_params.keys():
+                winner_values = winner_params[key]
+                loser_values = loser_params[key]
+                
+                if winner_values and loser_values:
+                    # Both winners and losers have data
+                    winner_median = statistics.median(winner_values)
+                    loser_median = statistics.median(loser_values)
+                    
+                    # If winner params and loser params are similar → unclear which is better
+                    # If winner params differ from loser params → use winner params
+                    param_diff = abs(winner_median - loser_median)
+                    
+                    if param_diff < 0.2:
+                        # Too similar - can't tell which is better, use winner median
+                        optimal_params[key] = winner_median
+                        logger.info(f"   {key}: winners={winner_median:.2f}, losers={loser_median:.2f} (similar, using winner)")
+                    else:
+                        # Clear difference - strongly prefer winner params
+                        optimal_params[key] = winner_median
+                        logger.info(f"   {key}: winners={winner_median:.2f}, losers={loser_median:.2f} (diff={param_diff:.2f}, using winner)")
+                        
+                elif winner_values:
+                    # Only winners have data
+                    optimal_params[key] = statistics.median(winner_values)
+                    logger.info(f"   {key}: only winners={optimal_params[key]:.2f}")
+                elif loser_values:
+                    # Only losers have data - avoid their params by using opposite/defaults
+                    loser_median = statistics.median(loser_values)
+                    if key == 'stop_mult':
+                        # Losers had tight stops → use wider
+                        optimal_params[key] = max(3.6, loser_median + 0.5)
+                    elif key in ['breakeven_mult', 'trailing_mult']:
+                        # Losers had loose params → use tighter
+                        optimal_params[key] = max(0.8, loser_median - 0.2)
+                    else:
+                        optimal_params[key] = loser_median
+                    logger.info(f"   {key}: only losers={loser_median:.2f}, adjusted to {optimal_params[key]:.2f}")
+                else:
+                    # No data - use defaults
+                    if key == 'breakeven_mult':
+                        optimal_params[key] = 1.0
+                    elif key == 'trailing_mult':
+                        optimal_params[key] = 1.0
+                    elif key == 'stop_mult':
+                        optimal_params[key] = 3.6
+                    elif key == 'partial_1_r':
+                        optimal_params[key] = 2.0
+                    elif key == 'partial_1_pct':
+                        optimal_params[key] = 0.50
+            
+            # Convert multipliers to actual tick values (assuming base values)
+            base_breakeven = 8
+            base_trailing = 8
+            
+            recommended_params = {
+                "breakeven_threshold_ticks": int(base_breakeven * optimal_params.get('breakeven_mult', 1.0)),
+                "breakeven_offset_ticks": 2,  # Fixed at 2 ticks
+                "trailing_distance_ticks": int(base_trailing * optimal_params.get('trailing_mult', 1.0)),
+                "partial_1_r": optimal_params.get('partial_1_r', 2.0),
+                "partial_1_pct": optimal_params.get('partial_1_pct', 0.50),
+                "stop_mult": optimal_params.get('stop_mult', 3.6)
+            }
+            
+            # Generate recommendation message with dual pattern info
+            if win_rate >= 0.65:
+                action = "HOLD"
+            elif win_rate >= 0.55:
+                action = "NORMAL"
+            else:
+                action = "TIGHTEN"
+            
+            recommendation = f"{action} - Dual Pattern: {len(winner_exits)}W/{len(loser_exits)}L ({win_rate*100:.0f}% WR, avg ${avg_pnl:.0f})"
+            
+            logger.info(f"🎯 Exit RL Dual Pattern: {len(winner_exits)}W/{len(loser_exits)}L → {action} ({win_rate*100:.0f}% WR, avg ${avg_pnl:.0f})")
+            
+            return {
+                "success": True,
+                "params": recommended_params,
+                "similar_exits_analyzed": len(similar_exits),
+                "winner_exits": len(winner_exits),
+                "loser_exits": len(loser_exits),
+                "avg_pnl_similar": round(avg_pnl, 2),
+                "win_rate_similar": round(win_rate, 3),
+                "recommendation": recommendation,
+                "dual_pattern": True,  # Flag to indicate dual pattern matching is active
+                "regime": regime
+            }
+            
+        finally:
+            session.close()
+            
+    except Exception as e:
+        logger.error(f"❌ Error getting adaptive exit params: {e}")
+        return {
+            "success": False,
+            "params": {
+                "breakeven_threshold_ticks": 8,
+                "breakeven_offset_ticks": 1,
+                "trailing_distance_ticks": 8,
+                "partial_1_r": 2.0,
+                "partial_1_pct": 0.50,
+                "stop_mult": 3.6
+            },
+            "similar_exits_analyzed": 0,
+            "recommendation": f"Using defaults (error: {str(e)})"
+        }
 
 
 @app.get("/api/ml/stats")

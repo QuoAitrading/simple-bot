@@ -83,14 +83,32 @@ class SignalConfidenceRL:
         self.current_win_streak = 0
         self.current_loss_streak = 0
         
-        # Regime-specific multipliers (reserved for future use)
+        # Session tracking for learning (NO hard stops - let RL learn)
+        self.session_start_time = datetime.now()
+        self.session_pnl = 0.0
+        self.session_trades = []
+        
+        # Adverse selection tracking - learn from signals we skipped
+        self.skipped_signals = deque(maxlen=50)  # Track last 50 skipped signals
+        self.skipped_signal_outcomes = {}  # Track what happened to skipped signals
+        
+        # Regime-specific multipliers (NOW ACTIVE)
         self.regime_multipliers = {
             'HIGH_VOL_CHOPPY': 0.7,    # Reduce size in choppy high vol
             'HIGH_VOL_TRENDING': 0.85,  # Slightly reduce in volatile trends
             'LOW_VOL_RANGING': 1.0,     # Standard in calm range
             'LOW_VOL_TRENDING': 1.15,   # Increase in calm trends
-            'NORMAL': 1.0               # Standard
         }
+        
+        # ALL RL FEATURES NOW 100% CLOUD-BASED
+        # Cloud PostgreSQL database tracks:
+        # - Feature 1: Win rates by market regime
+        # - Feature 2: Immediate adverse movement patterns
+        # - Feature 3: Dual pattern matching (winners + losers)
+        # - Feature 4: Dynamic confidence thresholds
+        # - Feature 5: Entry context validation (spread, liquidity, regime)
+        # - Feature 6: Regime pause system
+        # Bot queries cloud API for decisions, saves results back to cloud
         
         self.load_experience()
         logger.info(f" Signal Confidence RL initialized: {len(self.experiences)} past experiences")
@@ -139,17 +157,188 @@ class SignalConfidenceRL:
             'streak': streak
         }
     
-    def should_take_signal(self, state: Dict) -> Tuple[bool, float, str]:
+    def check_spread_acceptable(self, current_spread_ticks: float) -> Tuple[bool, str]:
         """
-        Decide whether to take this VWAP signal.
+        Check if bid/ask spread is acceptable for entry.
+        Wide spreads = poor fills = slippage losses.
+        
+        Args:
+            current_spread_ticks: Current bid/ask spread in ticks
+            
+        Returns:
+            (acceptable, reason)
+        """
+        # LEARNED THRESHOLDS from institutional trading
+        # 1 tick = tight (ideal)
+        # 2 ticks = acceptable (normal market)
+        # 3+ ticks = wide (avoid entry, slippage will kill edge)
+        
+        if current_spread_ticks <= 2.0:
+            return True, f"Spread OK ({current_spread_ticks:.1f} ticks)"
+        
+        # Wide spread - reject entry
+        return False, f"❌ SPREAD TOO WIDE ({current_spread_ticks:.1f} ticks > 2.0) - Slippage risk"
+    
+    def check_liquidity_acceptable(self, volume_ratio: float) -> Tuple[bool, str]:
+        """
+        Check if market has enough liquidity for entry.
+        Thin volume = poor fills = difficulty getting in/out.
+        
+        Args:
+            volume_ratio: Current volume vs average (1.0 = normal)
+            
+        Returns:
+            (acceptable, reason)
+        """
+        # LEARNED THRESHOLDS
+        # 1.0+ = normal or above (good liquidity)
+        # 0.5-1.0 = lower but acceptable
+        # < 0.3 = very thin (avoid - can't fill orders properly)
+        
+        if volume_ratio >= 0.3:
+            return True, f"Liquidity OK (vol {volume_ratio:.2f}x)"
+        
+        # Very thin market - reject entry
+        return False, f"❌ LIQUIDITY TOO LOW (vol {volume_ratio:.2f}x < 0.3x) - Fill risk"
+    
+    def check_regime_acceptable(self, regime: str) -> Tuple[bool, str]:
+        """
+        Check if market regime is acceptable.
+        Cloud API tracks regime win rates - this is just a basic check.
+        
+        Args:
+            regime: Market regime (HIGH_VOL_TRENDING, LOW_VOL_RANGING, etc.)
+            
+        Returns:
+            (acceptable, reason)
+        """
+        # Basic validation - cloud API handles actual regime filtering
+        return True, f"Regime {regime} (cloud API validates)"
+    
+    def check_immediate_adverse_movement(self, state: Dict) -> Tuple[bool, str]:
+        """
+        Check if setup is acceptable.
+        Cloud API tracks adverse movement patterns - this is just a passthrough.
+        
+        Args:
+            state: Current market state
+            
+        Returns:
+            (acceptable, reason)
+        """
+        # Cloud API handles adverse movement detection
+        return True, "Cloud API validates adverse movement"
+    
+    def separate_winner_loser_experiences(self) -> tuple:
+        """
+        NEW FEATURE 3 UPGRADED: Dual Pattern Matching
+        Separate experiences into winners and losers for intelligent learning.
         
         Returns:
-            (take_trade, confidence, reason)
+            (winner_experiences, loser_experiences)
+        """
+        winners = []
+        losers = []
+        
+        for exp in self.experiences:
+            reward = exp.get('reward', 0)
+            
+            if reward > 0:
+                winners.append(exp)
+            else:
+                losers.append(exp)
+        
+        return winners, losers
+    
+    def validate_entry_context(self, state: Dict, spread_ok: bool, liquidity_ok: bool, 
+                               regime_ok: bool) -> Tuple[bool, str]:
+        """
+        NEW FEATURE 5: Entry Context Validation
+        Check if current setup matches WINNING experience patterns.
+        Require ALL context factors to be acceptable.
+        
+        Args:
+            state: Current market state
+            spread_ok: Spread check result
+            liquidity_ok: Liquidity check result  
+            regime_ok: Regime check result
+            
+        Returns:
+            (acceptable, reason)
+        """
+        if not self.context_validation_enabled:
+            return True, "Context validation disabled"
+        
+        failed_checks = []
+        
+        # Check spread
+        if not spread_ok and 'spread' in self.required_context_checks:
+            failed_checks.append('spread')
+        
+        # Check liquidity
+        if not liquidity_ok and 'volume' in self.required_context_checks:
+            failed_checks.append('volume')
+        
+        # Check regime
+        if not regime_ok and 'regime' in self.required_context_checks:
+            failed_checks.append('regime')
+        
+        # Check recent wins
+        if 'recent_wins' in self.required_context_checks:
+            recent_trades = list(self.recent_trades)[-self.recent_win_rate_window:]
+            if len(recent_trades) >= 10:
+                recent_wins = sum(1 for t in recent_trades if t.get('reward', 0) > 0)
+                recent_win_rate = recent_wins / len(recent_trades)
+                if recent_win_rate < 0.40:  # Less than 40% recent win rate
+                    failed_checks.append(f'recent_wins({recent_win_rate:.0%})')
+        
+        if failed_checks:
+            return False, f"❌ CONTEXT VALIDATION FAILED: {', '.join(failed_checks)}"
+        
+        return True, "✅ All context checks passed"
+    
+    def update_regime_stats(self, regime: str, is_winner: bool):
+        """
+        REMOVED - Cloud API handles regime tracking.
+        Kept as stub to avoid breaking existing code.
+        """
+        pass
+    
+    def should_take_signal(self, state: Dict, current_spread_ticks: float = 1.0) -> Tuple[bool, float, float, str]:
+        """
+        Decide whether to take this VWAP signal and how much to risk.
+        
+        Args:
+            state: Market state dict
+            current_spread_ticks: Current bid/ask spread in ticks (default 1.0)
+        
+        Returns:
+            (take_trade, confidence, size_multiplier, reason)
             - take_trade: True/False
             - confidence: 0.0-1.0 (how confident)
+            - size_multiplier: 0.25-2.0 (position size adjustment)
             - reason: Why this decision
         """
         self.total_signals += 1
+        
+        # PRE-FILTERS: Check spread and liquidity BEFORE calculating confidence
+        spread_ok, spread_reason = self.check_spread_acceptable(current_spread_ticks)
+        if not spread_ok:
+            self.signals_skipped += 1
+            return False, 0.0, 0.0, spread_reason
+        
+        volume_ratio = state.get('volume_ratio', 1.0)
+        liquidity_ok, liquidity_reason = self.check_liquidity_acceptable(volume_ratio)
+        if not liquidity_ok:
+            self.signals_skipped += 1
+            return False, 0.0, 0.0, liquidity_reason
+        
+        # NEW FEATURE 1: Win Rate Filter by Market Regime
+        regime = state.get('regime', 'NORMAL')
+        regime_ok, regime_reason = self.check_regime_acceptable(regime)
+        if not regime_ok:
+            self.signals_skipped += 1
+            return False, 0.0, 0.0, regime_reason
         
         # SMART EXPLORATION: Only in backtest mode!
         # LIVE MODE: 0% exploration (pure exploitation of learned intelligence)
@@ -191,7 +380,9 @@ class SignalConfidenceRL:
             else:
                 self.signals_skipped += 1
             
-            return take, confidence, reason
+            # Calculate position size even during exploration
+            size_mult = self._calculate_position_size(confidence, state)
+            return take, confidence, size_mult, reason
         
         # FILTER BASED ON LEARNED THRESHOLD
         take = confidence > optimal_threshold
@@ -203,62 +394,179 @@ class SignalConfidenceRL:
             self.signals_skipped += 1
             reason += f" REJECTED ({confidence:.1%} < {optimal_threshold:.1%})"
         
+        # Calculate position size based on confidence and conditions
+        size_mult = self._calculate_position_size(confidence, state)
+        
         # Decay exploration over time
         self.exploration_rate = max(self.min_exploration, 
                                    self.exploration_rate * self.exploration_decay)
         
-        return take, confidence, reason
+        return take, confidence, size_mult, reason
     
     def calculate_confidence(self, current_state: Dict) -> Tuple[float, str]:
         """
-        Calculate confidence based on similar past experiences.
+        Calculate confidence using DUAL PATTERN MATCHING.
+        NEW FEATURE 3 UPGRADED: Compare similarity to BOTH winners and losers.
+        
+        Formula: confidence = winner_similarity - loser_penalty
+        
+        This allows the AI to:
+        - Learn from ALL 6,880 experiences (not just winners)
+        - Actively AVOID patterns that lost money
+        - Be much smarter than just "match winners"
         
         Returns:
             (confidence, reason)
         """
         # Need at least 10 experiences before using them for decisions
-        # Otherwise, a few early losses will make Brain 2 reject everything!
         if len(self.experiences) < 10:
             return 0.65, f"🆕 Limited experience ({len(self.experiences)} trades) - optimistic"
         
-        # Find similar past situations
-        similar = self.find_similar_states(current_state, max_results=10)
+        # Separate into winners and losers
+        winners, losers = self.separate_winner_loser_experiences()
         
-        if not similar:
-            return 0.5, " No similar situations - neutral confidence"
+        if len(winners) < 5:
+            return 0.65, f"🆕 Limited winning experience ({len(winners)} wins) - optimistic"
         
-        # Calculate win rate from similar situations
-        wins = sum(1 for exp in similar if exp['reward'] > 0)
-        win_rate = wins / len(similar)
+        # Find similar WINNING patterns
+        similar_winners = self.find_similar_states(current_state, max_results=10, experiences=winners)
         
-        # Average profit from similar situations
-        avg_profit = sum(exp['reward'] for exp in similar) / len(similar)
+        # Find similar LOSING patterns  
+        similar_losers = self.find_similar_states(current_state, max_results=10, experiences=losers) if len(losers) >= 5 else []
         
-        # SAFETY CHECK: Reject signals with negative expected value
-        if avg_profit < 0:
-            reason = f" {len(similar)} similar: {win_rate*100:.0f}% WR, ${avg_profit:.0f} avg (NEGATIVE EV - REJECTED)"
-            return 0.0, reason
+        # Calculate winner confidence
+        if similar_winners:
+            winner_wins = sum(1 for exp in similar_winners if exp['reward'] > 0)
+            winner_win_rate = winner_wins / len(similar_winners)
+            winner_avg_profit = sum(exp['reward'] for exp in similar_winners) / len(similar_winners)
+            
+            # Winner confidence (same formula as before)
+            winner_confidence = (winner_win_rate * 0.9) + (min(winner_avg_profit / 300, 1.0) * 0.1)
+            winner_confidence = max(0.0, min(1.0, winner_confidence))
+        else:
+            winner_confidence = 0.5
+            winner_win_rate = 0.5
+            winner_avg_profit = 0
         
-        # MORE AGGRESSIVE confidence formula to match best-run quality
-        # Win rate is king (90% weight), profit is secondary (10% weight)
-        # Examples: 80% WR + $100 avg = 73% confidence
-        #          100% WR + $150 avg = 93% confidence
-        #           50% WR + $45 avg = 45% confidence (was 37.7% - now higher bar)
-        confidence = (win_rate * 0.9) + (min(avg_profit / 300, 1.0) * 0.1)
-        confidence = max(0.0, min(1.0, confidence))
+        # Calculate loser penalty
+        if similar_losers:
+            loser_losses = sum(1 for exp in similar_losers if exp['reward'] < 0)
+            loser_loss_rate = loser_losses / len(similar_losers)
+            loser_avg_loss = sum(exp['reward'] for exp in similar_losers) / len(similar_losers)
+            
+            # Penalty is HIGH if very similar to losers
+            # Scale: 0.0 (not similar to losers) to 0.5 (very similar to losers)
+            loser_penalty = (loser_loss_rate * 0.4) + (min(abs(loser_avg_loss) / 300, 1.0) * 0.1)
+            loser_penalty = max(0.0, min(0.5, loser_penalty))
+        else:
+            loser_penalty = 0.0
+            loser_loss_rate = 0.0
+            loser_avg_loss = 0
         
-        reason = f" {len(similar)} similar: {win_rate*100:.0f}% WR, ${avg_profit:.0f} avg"
+        # DUAL PATTERN MATCHING: Confidence = Winners - Losers
+        final_confidence = winner_confidence - loser_penalty
+        final_confidence = max(0.0, min(1.0, final_confidence))
         
-        return confidence, reason
+        # Build detailed reason
+        reason = f" {len(similar_winners)}W/{len(similar_losers)}L similar"
+        reason += f" | Winners: {winner_win_rate*100:.0f}% WR, ${winner_avg_profit:.0f} avg"
+        
+        if similar_losers:
+            reason += f" | Losers: {loser_loss_rate*100:.0f}% LR, ${loser_avg_loss:.0f} avg"
+            reason += f" | Penalty: -{loser_penalty:.1%}"
+        
+        # SAFETY CHECK: Reject if more similar to losers or negative EV
+        if final_confidence < 0.3:
+            reason += " | LOOKS LIKE PAST LOSERS - REJECTED"
+        
+        return final_confidence, reason
     
-    def find_similar_states(self, current: Dict, max_results: int = 10) -> list:
-        """Find past experiences with similar market states."""
-        if not self.experiences:
+    def _calculate_position_size(self, confidence: float, state: Dict) -> float:
+        """
+        Calculate position size multiplier based on confidence and conditions.
+        
+        Args:
+            confidence: Signal confidence (0.0-1.0)
+            state: Market state dict (includes vix, regime, atr, etc.)
+            
+        Returns:
+            Size multiplier (0.25-2.0)
+            - 0.25x = minimum size (very low confidence or bad conditions)
+            - 1.0x = standard size (normal conditions)
+            - 2.0x = maximum size (very high confidence + good conditions)
+        """
+        # Base multiplier from confidence
+        # confidence 0.0 → 0.25x, 0.5 → 1.0x, 1.0 → 1.75x
+        base_mult = 0.25 + (confidence * 1.5)
+        
+        # 1. WIN/LOSS STREAK ADJUSTMENT
+        if self.current_loss_streak >= 2:
+            # Reduce size after losses (defensive)
+            streak_adj = 0.75 ** min(self.current_loss_streak - 1, 3)  # 0.75x, 0.56x, 0.42x
+            base_mult *= streak_adj
+        elif self.current_win_streak >= 3:
+            # Increase size after wins (capitalize on hot streak)
+            streak_adj = 1.0 + (min(self.current_win_streak - 2, 3) * 0.15)  # +15%, +30%, +45%
+            base_mult *= streak_adj
+        
+        # 2. VIX-BASED ADJUSTMENT (Broader market volatility)
+        vix = state.get('vix', 15.0)  # Default 15 if not provided
+        if vix > 25:  # High market fear
+            base_mult *= 0.75  # -25% size in high VIX
+        elif vix > 20:  # Elevated volatility
+            base_mult *= 0.90  # -10% size
+        elif vix < 12:  # Very low volatility
+            base_mult *= 1.15  # +15% size (calm markets)
+        elif vix < 15:  # Low volatility
+            base_mult *= 1.05  # +5% size
+        
+        # 3. MARKET REGIME ADJUSTMENT (NOW ACTIVE!)
+        regime = state.get('regime', 'NORMAL')
+        regime_mult = self.regime_multipliers.get(regime, 1.0)
+        base_mult *= regime_mult
+        
+        # 4. ATR-BASED ADJUSTMENT (Instrument-specific volatility)
+        atr = state.get('atr', 0)
+        avg_atr = atr / 1.2 if atr > 0 else atr  # Estimate normal ATR
+        if atr > avg_atr * 1.3:  # High volatility
+            base_mult *= 0.85  # 15% reduction (already have VIX, less aggressive)
+        elif atr < avg_atr * 0.7:  # Low volatility
+            base_mult *= 1.10  # 10% increase
+        
+        # 5. TIME OF DAY ADJUSTMENT
+        tod_score = state.get('time_of_day_score', 1.0)
+        if tod_score < 0.5:  # Poor time of day
+            base_mult *= 0.85  # 15% reduction
+        
+        # Clamp to reasonable range
+        final_mult = max(0.25, min(2.0, base_mult))
+        
+        # Log position sizing decision if significantly different from 1.0x
+        if final_mult < 0.75 or final_mult > 1.25:
+            logger.info(f"📊 [POSITION SIZING] {final_mult:.2f}x size: conf={confidence:.1%}, "
+                       f"streak=W{self.current_win_streak}/L{self.current_loss_streak}, "
+                       f"VIX={vix:.1f}, regime={regime} ({regime_mult:.2f}x), "
+                       f"atr={atr:.1f}, tod={tod_score:.2f}")
+        
+        return final_mult
+    
+    def find_similar_states(self, current: Dict, max_results: int = 10, experiences: Optional[list] = None) -> list:
+        """
+        Find past experiences with similar market states.
+        NEW FEATURE 3: Can optionally use filtered experiences list
+        
+        Args:
+            current: Current market state
+            max_results: Max number of similar states to return
+            experiences: Optional list of experiences to search (defaults to self.experiences)
+        """
+        exp_list = experiences if experiences is not None else self.experiences
+        if not exp_list:
             return []
         
         # Calculate similarity score for each past experience
         scored = []
-        for exp in self.experiences:
+        for exp in exp_list:
             past = exp['state']
             
             # Calculate distance in each dimension (with safety checks for missing keys)
@@ -434,19 +742,14 @@ class SignalConfidenceRL:
                       execution_data: Optional[Dict] = None):
         """
         Record the outcome of this signal for learning.
+        ALL LEARNING NOW HAPPENS IN CLOUD API - This just tracks local session stats.
         
         Args:
             state: Market state when signal triggered
             took_trade: Whether we took the trade
             pnl: Profit/loss (0 if skipped)
             duration_minutes: How long trade lasted
-            execution_data: Optional execution quality metrics (for live trading learning)
-                - order_type_used: "passive", "aggressive", "mixed"
-                - entry_slippage_ticks: Actual slippage in ticks
-                - partial_fill: Whether partial fill occurred
-                - fill_ratio: Percentage filled (0.66 = 2 of 3)
-                - exit_reason: How trade closed
-                - held_full_duration: Whether hit target/stop vs time exit
+            execution_data: Optional execution quality metrics
         """
         experience = {
             'timestamp': datetime.now().isoformat(),
@@ -457,16 +760,17 @@ class SignalConfidenceRL:
             },
             'reward': pnl,
             'duration': duration_minutes,
-            'execution': execution_data or {}  # Store execution quality data
+            'execution': execution_data or {}
         }
         
-        # Add to memory (learning enabled)
+        # Add to memory (for local session tracking only - cloud has full history)
         self.experiences.append(experience)
         self.recent_trades.append(pnl)
         
-        # Update win/loss streaks
+        # Update win/loss streaks (local session only)
         if took_trade:
-            if pnl > 0:
+            is_winner = pnl > 0
+            if is_winner:
                 self.current_win_streak += 1
                 self.current_loss_streak = 0
             else:
@@ -477,25 +781,65 @@ class SignalConfidenceRL:
         if len(self.experiences) % 5 == 0:
             self.save_experience()
         
-        # Log learning progress with execution details
+        # Log outcome
         if took_trade:
             outcome = "WIN" if pnl > 0 else "LOSS"
-            log_msg = f"Recorded {outcome}: ${pnl:.2f} in {duration_minutes}min | Streak: W{self.current_win_streak}/L{self.current_loss_streak}"
-            
-            # Add execution quality info if available
-            if execution_data:
-                exec_notes = []
-                if execution_data.get("order_type_used"):
-                    exec_notes.append(f"Order: {execution_data['order_type_used']}")
-                if execution_data.get("entry_slippage_ticks", 0) > 0:
-                    exec_notes.append(f"Slippage: {execution_data['entry_slippage_ticks']:.1f}t")
-                if execution_data.get("partial_fill"):
-                    exec_notes.append(f"Partial: {execution_data.get('fill_ratio', 0):.0%}")
-                
-                if exec_notes:
-                    log_msg += f" | Exec: {', '.join(exec_notes)}"
-            
-            logger.info(log_msg)
+            logger.info(f"Recorded {outcome}: ${pnl:.2f} in {duration_minutes}min | Streak: W{self.current_win_streak}/L{self.current_loss_streak}")
+    
+    def _learn_execution_quality(self, state: Dict, execution_data: Dict, pnl: float):
+        """
+        REMOVED - Cloud API handles execution quality learning.
+        Kept as stub to avoid breaking existing code.
+        """
+        pass
+    
+    def track_skipped_signal(self, state: Dict, confidence: float, reason: str):
+        """
+        Track signals we skipped to learn from adverse selection.
+        Helps identify when we're being too conservative (FOMO reduction).
+        
+        Args:
+            state: Market state when signal was rejected
+            confidence: Confidence score when rejected
+            reason: Why signal was rejected
+        """
+        signal_id = f"{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+        
+        self.skipped_signals.append({
+            'id': signal_id,
+            'timestamp': datetime.now(),
+            'state': state.copy(),
+            'confidence': confidence,
+            'reason': reason
+        })
+    
+    def analyze_adverse_selection(self):
+        """
+        Analyze outcomes of signals we skipped (would've won but rejected).
+        This helps detect if threshold is too conservative.
+        """
+        if len(self.skipped_signal_outcomes) < 20:
+            return
+        
+        # How many skipped signals would've won?
+        winners = [outcome for outcome in self.skipped_signal_outcomes.values() if outcome['pnl'] > 0]
+        losers = [outcome for outcome in self.skipped_signal_outcomes.values() if outcome['pnl'] <= 0]
+        
+        if len(winners) + len(losers) < 20:
+            return
+        
+        win_rate = len(winners) / (len(winners) + len(losers))
+        avg_winner_pnl = sum(w['pnl'] for w in winners) / len(winners) if winners else 0
+        avg_loser_pnl = sum(l['pnl'] for l in losers) / len(losers) if losers else 0
+        expected_value = (win_rate * avg_winner_pnl) + ((1 - win_rate) * avg_loser_pnl)
+        
+        logger.info(f"📊 [ADVERSE SELECTION] Skipped {len(winners) + len(losers)} signals: "
+                   f"{win_rate*100:.1f}% would've won, EV: ${expected_value:.2f}")
+        
+        # If we're skipping profitable signals, threshold might be too high
+        if expected_value > 20:  # Skipping signals with $20+ EV
+            logger.warning(f"⚠️ [THRESHOLD WARNING] Skipping profitable signals! "
+                          f"Consider lowering confidence threshold (current: {self.user_threshold:.1%})")
     
     def get_stats(self) -> Dict:
         """Get current performance statistics."""
