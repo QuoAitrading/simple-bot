@@ -320,6 +320,9 @@ class LocalExperienceManager:
             'entry_slippage_ticks': float(rl_state.get('entry_slippage_ticks', 0.0)),
             'commission_cost': float(rl_state.get('commission_cost', 0.0)),
             'bid_ask_spread_ticks': float(rl_state.get('bid_ask_spread_ticks', 0.5)),
+            # ADDITIONAL FIELDS (for future use - multi-symbol support and price-based learning)
+            'symbol': str(rl_state.get('symbol', 'ES')),
+            'entry_price': float(rl_state.get('entry_price', rl_state.get('price', 0))),
         }
         self.new_signal_experiences.append(experience)
     
