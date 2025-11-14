@@ -32,7 +32,7 @@ class SignalConfidenceRL:
     Reward: Profit/loss from trade outcome
     """
     
-    def __init__(self, experience_file: str = "data/signal_experience.json", backtest_mode: bool = False, confidence_threshold: Optional[float] = None, exploration_rate: Optional[float] = None, min_exploration: Optional[float] = None, exploration_decay: Optional[float] = None):
+    def __init__(self, experience_file: str = "data/local_experiences/signal_experiences_v2.json", backtest_mode: bool = False, confidence_threshold: Optional[float] = None, exploration_rate: Optional[float] = None, min_exploration: Optional[float] = None, exploration_decay: Optional[float] = None):
         """
         Initialize RL confidence scorer with neural network support.
         
@@ -917,39 +917,19 @@ class SignalConfidenceRL:
         }
     
     def load_experience(self):
-        """Load past experiences from file (tries v2 format first, then legacy)."""
-        # Try v2 format first (shared with backtest)
-        v2_file = "data/local_experiences/signal_experiences_v2.json"
-        
-        if os.path.exists(v2_file):
-            try:
-                with open(v2_file, 'r') as f:
-                    data = json.load(f)
-                    self.experiences = data.get('experiences', [])
-                    logger.info(f"✅ Loaded {len(self.experiences)} experiences from v2 format (shared with backtest)")
-                return
-            except Exception as e:
-                logger.warning(f"Failed to load v2 experiences: {e}, trying legacy format...")
-        
-        # Fallback to legacy format
-        logger.info(f"[DEBUG] Attempting to load experiences from: {self.experience_file}")
-        logger.info(f"[DEBUG] File exists check: {os.path.exists(self.experience_file)}")
-        
+        """Load past experiences from v2 format (shared with backtest)."""
         if os.path.exists(self.experience_file):
             try:
-                logger.info(f"[DEBUG] Opening file...")
                 with open(self.experience_file, 'r') as f:
-                    logger.info(f"[DEBUG] Loading JSON...")
                     data = json.load(f)
-                    logger.info(f"[DEBUG] JSON loaded successfully. Keys: {list(data.keys())}")
                     self.experiences = data.get('experiences', [])
-                    logger.info(f"✅ Loaded {len(self.experiences)} past signal experiences (legacy format)")
+                    logger.info(f"✅ Loaded {len(self.experiences)} experiences from v2 format")
             except Exception as e:
                 logger.error(f"Failed to load experiences: {e}")
-                import traceback
-                logger.error(traceback.format_exc())
+                self.experiences = []
         else:
-            logger.warning(f"[DEBUG] No experience files found - starting fresh")
+            logger.warning(f"No experience file found - starting fresh")
+            self.experiences = []
     
     def save_experience(self):
         """Save experiences to file in v2 format (compatible with backtest training)."""

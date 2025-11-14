@@ -14,13 +14,13 @@ RUN pip install --no-cache-dir -r requirements-signal.txt
 COPY signal_engine_v2.py .
 COPY database.py .
 COPY redis_manager.py .
+COPY neural_confidence.py .
+
+# Copy neural network model (your trained brain)
+COPY neural_model.pth .
 
 # Copy admin dashboard
 COPY admin-dashboard/ ./admin-dashboard/
-
-# Copy Kevin's proven exit RL experiences (3,105 exits)
-# Signal experiences now stored in PostgreSQL database
-COPY exit_experience.json .
 
 # Expose port
 EXPOSE 8000

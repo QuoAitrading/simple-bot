@@ -31,6 +31,9 @@ from database import (
 from redis_manager import RedisManager, get_redis
 from sqlalchemy.orm import Session
 
+# Import neural network confidence scorer
+from neural_confidence import init_neural_scorer, get_neural_prediction
+
 # Initialize FastAPI
 app = FastAPI(
     title="QuoTrading Signal Engine",
@@ -675,50 +678,9 @@ def load_initial_experiences():
         db_manager = DatabaseManager()
         engine = db_manager.get_engine()
         Base.metadata.create_all(engine)
-        logger.info("✅ Database tables initialized (including ExitExperience table)")
+        logger.info("✅ Database tables initialized")
         
-        # Import exit experiences from JSON to PostgreSQL (one-time migration)
-        if os.path.exists("exit_experience.json"):
-            from database import ExitExperience
-            session = db_manager.get_session()
-            
-            try:
-                # Check if table is empty
-                count = session.query(ExitExperience).count()
-                
-                if count == 0:
-                    logger.info("🔄 Migrating exit experiences from JSON to PostgreSQL...")
-                    
-                    # Load JSON data
-                    with open("exit_experience.json", "r") as f:
-                        data = json.load(f)
-                        json_experiences = data.get("exit_experiences", [])
-                    
-                    # Import each experience
-                    for exp in json_experiences:
-                        exit_exp = ExitExperience(
-                            regime=exp.get('regime', 'UNKNOWN'),
-                            exit_params_json=json.dumps(exp.get('exit_params', {})),
-                            outcome_json=json.dumps(exp.get('outcome', {})),
-                            situation_json=json.dumps(exp.get('situation', {})),
-                            market_state_json=json.dumps(exp.get('market_state', {})),
-                            partial_exits_json=json.dumps(exp.get('partial_exits', [])),
-                            quality_score=exp.get('quality_score')
-                        )
-                        session.add(exit_exp)
-                    
-                    session.commit()
-                    logger.info(f"✅ Migrated {len(json_experiences):,} exit experiences to PostgreSQL")
-                else:
-                    logger.info(f"✅ PostgreSQL already has {count:,} exit experiences - skipping migration")
-                
-            except Exception as e:
-                session.rollback()
-                logger.error(f"❌ Migration error: {e}")
-            finally:
-                session.close()
-        else:
-            logger.warning("⚠️  exit_experience.json not found - starting fresh")
+        logger.info("� All experiences stored in PostgreSQL database")
         
         # Count experiences in database
         session = db_manager.get_session()
@@ -784,16 +746,11 @@ def load_database_experiences(db: Session):
 load_initial_experiences()
 
 def save_experiences():
-    """Save updated experiences back to disk (persist hive mind growth)"""
-    import json
-    try:
-        with open("signal_experience.json", "w") as f:
-            json.dump(signal_experiences, f)
-        with open("exit_experience.json", "w") as f:
-            json.dump(exit_experiences, f)
-        logger.info(f"💾 Saved hive mind: {len(signal_experiences):,} signals + {len(exit_experiences):,} exits")
-    except Exception as e:
-        logger.error(f"Failed to save experiences: {e}")
+    """
+    DEPRECATED: Experiences now stored in PostgreSQL database only.
+    This function kept for compatibility but does nothing.
+    """
+    logger.debug("save_experiences() called - PostgreSQL handles persistence automatically")
 
 def get_all_experiences() -> List:
     """Get all RL experiences (shared learning - same strategy for everyone)"""
@@ -844,35 +801,37 @@ async def get_ml_confidence(request: Dict):
         signal = request.get('signal', 'NONE')
         vix = request.get('vix', 15.0)
         
-        # Get ALL signal experiences (everyone learns from same strategy)
-        all_trades = signal_experiences
+        # Prepare state for neural network (same format as backtest)
+        current_time = datetime.now(pytz.UTC)
+        state = {
+            'rsi': rsi,
+            'vwap_distance': abs(price - vwap) / vwap if vwap > 0 else 0,
+            'vix': vix,
+            'spread_ticks': request.get('spread_ticks', 1.0),
+            'hour': current_time.hour,
+            'day_of_week': current_time.weekday(),
+            'volume_ratio': request.get('volume_ratio', 1.0),
+            'atr': request.get('atr', 10.0),
+            'recent_pnl': request.get('recent_pnl', 0.0),
+            'streak': request.get('streak', 0)
+        }
         
-        # ADVANCED ML confidence with pattern matching
-        result = calculate_signal_confidence(
-            all_experiences=all_trades,
-            vwap_distance=abs(price - vwap) / vwap if vwap > 0 else 0,
-            rsi=rsi,
-            signal=signal,
-            current_time=datetime.now(pytz.UTC),
-            current_vix=vix,
-            similarity_threshold=0.6  # 60% similarity required
-        )
+        # Get neural network prediction (SAME AS BACKTEST)
+        result = get_neural_prediction(state, signal)
         
-        logger.info(f"🧠 ML Confidence: {symbol} {signal} @ {price}, RSI={rsi:.1f} → {result['reason']}")
+        logger.info(f"🧠 Neural ML: {symbol} {signal} @ {price}, RSI={rsi:.1f} → {result['reason']}")
         
         return {
             "ml_confidence": result['confidence'],
-            "confidence": result['confidence'],  # Duplicate for compatibility
-            "should_trade": result['should_take'],
-            "size_multiplier": result.get('size_multiplier', 1.0),  # NEW: Position sizing
-            "win_rate": result['win_rate'],
-            "sample_size": result['sample_size'],
-            "avg_pnl": result['avg_pnl'],
+            "confidence": result['confidence'],
+            "should_trade": result['should_trade'],
+            "size_multiplier": result['size_multiplier'],
             "reason": result['reason'],
-            "should_take": result['should_take'],
-            "action": signal if result['should_take'] else "NONE",
-            "model_version": "v5.1-position-sizing",
-            "total_experience_count": len(all_trades),
+            "should_take": result['should_trade'],
+            "action": signal if result['should_trade'] else "NONE",
+            "model_version": "v6.0-neural-network",
+            "model_used": result['model_used'],
+            "threshold": result.get('threshold', 0.5),
             "timestamp": datetime.now(pytz.UTC).isoformat()
         }
         
@@ -3295,6 +3254,17 @@ import os
 if os.path.exists("admin-dashboard"):
     app.mount("/admin-dashboard", StaticFiles(directory="admin-dashboard"), name="admin-dashboard")
     logger.info("📊 Admin dashboard mounted at /admin-dashboard")
+
+
+# ============================================================================
+# STARTUP: Initialize Neural Network
+# ============================================================================
+@app.on_event("startup")
+async def startup_event():
+    """Initialize neural network model on API startup"""
+    logger.info("🚀 Initializing neural network confidence scorer...")
+    init_neural_scorer(model_path="neural_model.pth")
+    logger.info("✅ Neural network ready for predictions")
 
 
 if __name__ == "__main__":

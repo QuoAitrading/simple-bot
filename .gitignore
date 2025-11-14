@@ -139,9 +139,9 @@ logs/
 /data/bot_state_*.json.backup
 /data/*.json.backup
 
-# Keep RL training data (needed for Docker build)
-!/data/signal_experience.json
-!/data/exit_experience.json
+# Keep v2 RL training data (needed for training)
+!/data/local_experiences/signal_experiences_v2.json
+!/data/local_experiences/exit_experiences_v2.json
 
 # Keep historical data for backtesting
 !/data/historical_data/

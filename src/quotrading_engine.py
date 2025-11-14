@@ -1420,6 +1420,430 @@ def fetch_historical_bars(symbol: str, timeframe: int, count: int) -> List[Dict[
 
 
 # ============================================================================
+# SHADOW TRADE TRACKING (Ghost Signals for RL Learning)
+# ============================================================================
+
+class ShadowTrade:
+    """
+    Represents a rejected signal being tracked in the background.
+    Simulates what WOULD happen if we took the trade, providing learning data.
+    
+    FULLY SIMULATES A REAL TRADE:
+    - Uses adaptive neural exit model (45 features → dynamic params)
+    - Updates stop/breakeven/trailing EVERY bar (just like real trades)
+    - Tracks MAE/MFE, partials, all metrics
+    - Outcome reflects what would ACTUALLY happen with current exit logic
+    """
+    def __init__(self, symbol: str, rl_state: Dict, side: str, entry_price: float, 
+                 entry_time: datetime, confidence: float, rejection_reason: str):
+        self.symbol = symbol
+        self.rl_state = rl_state.copy()  # Snapshot of RL state at rejection
+        self.side = side  # 'long' or 'short'
+        self.entry_price = entry_price
+        self.entry_time = entry_time
+        self.confidence = confidence  # AI confidence when rejected
+        self.rejection_reason = rejection_reason
+        
+        # Shadow position state (pretend we're IN the trade)
+        self.quantity = 1  # Start with 1 contract (matches ghost simulation)
+        self.remaining_quantity = 1
+        self.stop_price = None  # Will be set by adaptive exit model
+        self.breakeven_active = False
+        self.trailing_active = False
+        self.highest_price_reached = entry_price if side == 'long' else None
+        self.lowest_price_reached = entry_price if side == 'short' else None
+        
+        # Performance tracking (like real trades)
+        self.mae = 0.0  # Maximum Adverse Excursion
+        self.mfe = 0.0  # Maximum Favorable Excursion
+        self.partial_exits_completed = []  # Track partial exits
+        
+        # Exit params will be calculated dynamically each bar
+        self.current_exit_params = None
+        
+        self.bars_elapsed = 0
+        self.max_bars = 200  # Timeout after 200 bars (~3 hours)
+        self.completed = False
+        self.outcome = None  # Will be set when shadow completes
+    
+    def update(self, bar: Dict, bars_1min: deque, adaptive_manager, config: Dict) -> Optional[Dict]:
+        """
+        Update shadow with new bar data - FULLY SIMULATES REAL TRADE.
+        
+        Every bar:
+        1. Calculate adaptive exit params (45-feature neural network)
+        2. Update stop loss (breakeven, trailing, time-decay)
+        3. Check if stopped out or target hit
+        4. Track MAE/MFE
+        5. Handle partial exits
+        
+        Args:
+            bar: Latest 1-minute bar
+            bars_1min: Full bar history (for adaptive exit calculation)
+            adaptive_manager: AdaptiveExitManager instance
+            config: Bot config
+            
+        Returns:
+            Dict with outcome if shadow completed, None if still tracking
+        """
+        if self.completed:
+            return None
+        
+        self.bars_elapsed += 1
+        current_price = bar['close']
+        
+        # ========== STEP 1: Get Adaptive Exit Params (Neural Network) ==========
+        try:
+            from adaptive_exits import get_adaptive_exit_params
+            
+            # Create fake position dict (pretend we're in trade)
+            fake_position = {
+                'entry_price': self.entry_price,
+                'side': self.side,
+                'quantity': self.quantity,
+                'remaining_quantity': self.remaining_quantity,
+                'entry_time': self.entry_time,
+                'entry_confidence': self.confidence,
+                'breakeven_active': self.breakeven_active,
+                'trailing_stop_active': self.trailing_active,
+                'highest_price_reached': self.highest_price_reached,
+                'lowest_price_reached': self.lowest_price_reached,
+                'mae': self.mae,
+                'mfe': self.mfe,
+                'partial_exit_1_completed': len(self.partial_exits_completed) >= 1,
+                'partial_exit_2_completed': len(self.partial_exits_completed) >= 2,
+                'partial_exit_3_completed': len(self.partial_exits_completed) >= 3,
+            }
+            
+            # Get dynamic exit params from neural network
+            adaptive_params = get_adaptive_exit_params(
+                bars=bars_1min,
+                position=fake_position,
+                current_price=current_price,
+                config=config,
+                adaptive_manager=adaptive_manager,
+                entry_confidence=self.confidence
+            )
+            
+            self.current_exit_params = adaptive_params
+            
+        except Exception as e:
+            # Fallback to simple stop if adaptive fails
+            atr = self.rl_state.get('atr', 2.0)
+            stop_distance = atr * 3.6
+            if self.side == 'long':
+                self.stop_price = self.entry_price - stop_distance
+            else:
+                self.stop_price = self.entry_price + stop_distance
+        
+        # ========== STEP 2: Update Stop Loss (Breakeven/Trailing/Time-Decay) ==========
+        if self.current_exit_params:
+            # Calculate current R-multiple
+            if self.side == 'long':
+                initial_risk = self.entry_price - self.stop_price if self.stop_price else 0
+                current_r = (current_price - self.entry_price) / initial_risk if initial_risk > 0 else 0
+            else:
+                initial_risk = self.stop_price - self.entry_price if self.stop_price else 0
+                current_r = (self.entry_price - current_price) / initial_risk if initial_risk > 0 else 0
+            
+            # Breakeven activation
+            if not self.breakeven_active:
+                breakeven_threshold = self.current_exit_params.get('breakeven_threshold_ticks', 0) / 4.0  # ticks to R
+                if current_r >= breakeven_threshold:
+                    self.breakeven_active = True
+                    breakeven_offset = self.current_exit_params.get('breakeven_offset_ticks', 0.5) / 4.0
+                    if self.side == 'long':
+                        self.stop_price = self.entry_price + (initial_risk * breakeven_offset)
+                    else:
+                        self.stop_price = self.entry_price - (initial_risk * breakeven_offset)
+            
+            # Trailing stop activation
+            if self.breakeven_active and not self.trailing_active:
+                trailing_threshold = 1.5  # Activate trailing at 1.5R
+                if current_r >= trailing_threshold:
+                    self.trailing_active = True
+            
+            # Update trailing stop
+            if self.trailing_active:
+                trailing_distance_ticks = self.current_exit_params.get('trailing_distance_ticks', 2.0)
+                trailing_distance = trailing_distance_ticks / 4.0  # ticks to points
+                
+                if self.side == 'long':
+                    if self.highest_price_reached is None or current_price > self.highest_price_reached:
+                        self.highest_price_reached = current_price
+                    new_stop = self.highest_price_reached - trailing_distance
+                    if new_stop > self.stop_price:
+                        self.stop_price = new_stop
+                else:
+                    if self.lowest_price_reached is None or current_price < self.lowest_price_reached:
+                        self.lowest_price_reached = current_price
+                    new_stop = self.lowest_price_reached + trailing_distance
+                    if new_stop < self.stop_price:
+                        self.stop_price = new_stop
+        
+        # ========== STEP 3: Track MAE/MFE ==========
+        if self.side == 'long':
+            unrealized_pnl = (current_price - self.entry_price) * 50 * self.remaining_quantity
+            if unrealized_pnl < 0 and abs(unrealized_pnl) > self.mae:
+                self.mae = abs(unrealized_pnl)
+            if unrealized_pnl > 0 and unrealized_pnl > self.mfe:
+                self.mfe = unrealized_pnl
+        else:
+            unrealized_pnl = (self.entry_price - current_price) * 50 * self.remaining_quantity
+            if unrealized_pnl < 0 and abs(unrealized_pnl) > self.mae:
+                self.mae = abs(unrealized_pnl)
+            if unrealized_pnl > 0 and unrealized_pnl > self.mfe:
+                self.mfe = unrealized_pnl
+        
+        # ========== STEP 4: Check for Stop Loss Hit ==========
+        if self.stop_price:
+            if self.side == 'long':
+                if bar['low'] <= self.stop_price:
+                    # Stopped out
+                    pnl = (self.stop_price - self.entry_price) * 50 * self.remaining_quantity
+                    self.outcome = {
+                        'pnl': pnl,
+                        'exit_price': self.stop_price,
+                        'duration_min': self.bars_elapsed,
+                        'exit_reason': 'ghost_stop_loss',
+                        'took_trade': False,
+                        'confidence': self.confidence,
+                        'rejection_reason': self.rejection_reason,
+                        'mae': self.mae,
+                        'mfe': self.mfe,
+                        'breakeven_activated': self.breakeven_active,
+                        'trailing_activated': self.trailing_active,
+                        'partials_taken': len(self.partial_exits_completed)
+                    }
+                    self.completed = True
+                    return self.outcome
+            else:  # short
+                if bar['high'] >= self.stop_price:
+                    pnl = (self.entry_price - self.stop_price) * 50 * self.remaining_quantity
+                    self.outcome = {
+                        'pnl': pnl,
+                        'exit_price': self.stop_price,
+                        'duration_min': self.bars_elapsed,
+                        'exit_reason': 'ghost_stop_loss',
+                        'took_trade': False,
+                        'confidence': self.confidence,
+                        'rejection_reason': self.rejection_reason,
+                        'mae': self.mae,
+                        'mfe': self.mfe,
+                        'breakeven_activated': self.breakeven_active,
+                        'trailing_activated': self.trailing_active,
+                        'partials_taken': len(self.partial_exits_completed)
+                    }
+                    self.completed = True
+                    return self.outcome
+        
+        # ========== STEP 5: Check for Partial Exits ==========
+        if self.current_exit_params and self.remaining_quantity > 0:
+            partial_1_r = self.current_exit_params.get('partial_1_r', 999)
+            partial_2_r = self.current_exit_params.get('partial_2_r', 999)
+            partial_3_r = self.current_exit_params.get('partial_3_r', 999)
+            
+            # Calculate current R
+            if self.side == 'long':
+                initial_risk = abs(self.entry_price - (self.stop_price or self.entry_price - 5))
+                current_r = (current_price - self.entry_price) / initial_risk if initial_risk > 0 else 0
+                
+                # Check if hit partial targets
+                if len(self.partial_exits_completed) == 0 and current_r >= partial_1_r:
+                    if bar['high'] >= self.entry_price + (initial_risk * partial_1_r):
+                        partial_pnl = initial_risk * partial_1_r * 50 * 0.33  # 1/3 position
+                        self.partial_exits_completed.append({'r': partial_1_r, 'pnl': partial_pnl})
+                        self.remaining_quantity *= 0.67
+                
+                elif len(self.partial_exits_completed) == 1 and current_r >= partial_2_r:
+                    if bar['high'] >= self.entry_price + (initial_risk * partial_2_r):
+                        partial_pnl = initial_risk * partial_2_r * 50 * 0.5  # 1/2 of remaining
+                        self.partial_exits_completed.append({'r': partial_2_r, 'pnl': partial_pnl})
+                        self.remaining_quantity *= 0.5
+                
+                elif len(self.partial_exits_completed) == 2 and current_r >= partial_3_r:
+                    if bar['high'] >= self.entry_price + (initial_risk * partial_3_r):
+                        # Full exit at R-target
+                        total_pnl = sum(p['pnl'] for p in self.partial_exits_completed)
+                        final_pnl = (current_price - self.entry_price) * 50 * self.remaining_quantity
+                        self.outcome = {
+                            'pnl': total_pnl + final_pnl,
+                            'exit_price': current_price,
+                            'duration_min': self.bars_elapsed,
+                            'exit_reason': 'ghost_target',
+                            'took_trade': False,
+                            'confidence': self.confidence,
+                            'rejection_reason': self.rejection_reason,
+                            'mae': self.mae,
+                            'mfe': self.mfe,
+                            'breakeven_activated': self.breakeven_active,
+                            'trailing_activated': self.trailing_active,
+                            'partials_taken': len(self.partial_exits_completed)
+                        }
+                        self.completed = True
+                        return self.outcome
+        
+        # ========== STEP 6: Check for Timeout ==========
+        if self.bars_elapsed >= self.max_bars:
+            # Exit at current close price
+            total_partial_pnl = sum(p['pnl'] for p in self.partial_exits_completed)
+            
+            if self.side == 'long':
+                final_pnl = (bar['close'] - self.entry_price) * 50 * self.remaining_quantity
+            else:
+                final_pnl = (self.entry_price - bar['close']) * 50 * self.remaining_quantity
+            
+            self.outcome = {
+                'pnl': total_partial_pnl + final_pnl,
+                'exit_price': bar['close'],
+                'duration_min': self.bars_elapsed,
+                'exit_reason': 'ghost_timeout',
+                'took_trade': False,
+                'confidence': self.confidence,
+                'rejection_reason': self.rejection_reason,
+                'mae': self.mae,
+                'mfe': self.mfe,
+                'breakeven_activated': self.breakeven_active,
+                'trailing_activated': self.trailing_active,
+                'partials_taken': len(self.partial_exits_completed)
+            }
+            self.completed = True
+            return self.outcome
+        
+        return None  # Still tracking
+
+
+def create_shadow_trade(symbol: str, rl_state: Dict, side: str, entry_price: float, 
+                       confidence: float, rejection_reason: str) -> None:
+    """
+    Create a shadow trade to track a rejected signal.
+    Shadow FULLY SIMULATES a real trade with adaptive neural exit model.
+    Limit to max 5 active shadows to prevent memory bloat.
+    
+    Args:
+        symbol: Instrument symbol
+        rl_state: RL state snapshot at rejection
+        side: 'long' or 'short'
+        entry_price: Price where signal occurred
+        confidence: AI confidence when rejected
+        rejection_reason: Why signal was rejected
+    """
+    MAX_SHADOWS = 5
+    
+    # Remove any completed shadows first
+    state[symbol]["shadow_trades"] = [s for s in state[symbol]["shadow_trades"] if not s.completed]
+    
+    # Only create new shadow if under limit
+    if len(state[symbol]["shadow_trades"]) < MAX_SHADOWS:
+        shadow = ShadowTrade(
+            symbol=symbol,
+            rl_state=rl_state,
+            side=side,
+            entry_price=entry_price,
+            entry_time=get_current_time(),
+            confidence=confidence,
+            rejection_reason=rejection_reason
+        )
+        state[symbol]["shadow_trades"].append(shadow)
+        logger.debug(f"[SHADOW] Created {side} shadow @ ${entry_price:.2f} (will use adaptive exit model)")
+    else:
+        logger.debug(f"[SHADOW] Skipped creating shadow (max {MAX_SHADOWS} active)")
+
+
+def update_shadow_trades(symbol: str, bar: Dict) -> None:
+    """
+    Update all active shadow trades with the latest bar.
+    Shadows FULLY SIMULATE real trades with adaptive neural exit model.
+    Send completed shadow outcomes to cloud for RL learning.
+    
+    Args:
+        symbol: Instrument symbol
+        bar: Latest 1-minute bar
+    """
+    if not state[symbol]["shadow_trades"]:
+        return
+    
+    completed_shadows = []
+    
+    # Get required data for adaptive exit model
+    bars_1min = state[symbol]["bars_1min"]
+    
+    for shadow in state[symbol]["shadow_trades"]:
+        # Update shadow with full simulation (adaptive exits, breakeven, trailing, partials)
+        outcome = shadow.update(bar, bars_1min, adaptive_manager, CONFIG)
+        if outcome:
+            completed_shadows.append((shadow, outcome))
+    
+    # Send completed shadows to cloud
+    for shadow, outcome in completed_shadows:
+        # Send to cloud (async, fire and forget)
+        send_shadow_outcome_to_cloud(shadow.rl_state, outcome)
+        
+        # Log for debugging
+        pnl_sign = "+" if outcome['pnl'] > 0 else ""
+        partials_info = f", {outcome['partials_taken']} partials" if outcome['partials_taken'] > 0 else ""
+        breakeven_info = ", BE" if outcome.get('breakeven_activated') else ""
+        trailing_info = ", TRAIL" if outcome.get('trailing_activated') else ""
+        logger.info(f"[SHADOW] Completed {shadow.side} shadow: {pnl_sign}${outcome['pnl']:.2f} ({outcome['exit_reason']}) after {outcome['duration_min']} min{partials_info}{breakeven_info}{trailing_info}")
+    
+    # Remove completed shadows
+    state[symbol]["shadow_trades"] = [s for s in state[symbol]["shadow_trades"] if not s.completed]
+
+
+async def send_shadow_outcome_async(rl_state: Dict, outcome: Dict) -> None:
+    """
+    Send completed shadow trade outcome to cloud (async).
+    
+    Args:
+        rl_state: RL state snapshot at rejection
+        outcome: Shadow trade outcome with pnl, exit_reason, etc.
+    """
+    if not CLOUD_ML_API_URL:
+        return  # Cloud not configured
+    
+    try:
+        payload = {
+            "user_id": USER_ID,
+            "symbol": CONFIG["instrument"],
+            "rl_state": rl_state,
+            "outcome": outcome,
+            "experience_type": "ghost_trade"
+        }
+        
+        async with aiohttp.ClientSession() as session:
+            async with session.post(
+                f"{CLOUD_ML_API_URL}/api/ml/save_experience",
+                json=payload,
+                timeout=aiohttp.ClientTimeout(total=3.0)
+            ) as response:
+                if response.status == 200:
+                    logger.debug(f"[CLOUD RL] Shadow outcome saved: {outcome['exit_reason']}")
+                else:
+                    logger.debug(f"[CLOUD RL] Shadow save failed: HTTP {response.status}")
+    except Exception as e:
+        logger.debug(f"[CLOUD RL] Shadow save error: {e}")
+
+
+def send_shadow_outcome_to_cloud(rl_state: Dict, outcome: Dict) -> None:
+    """
+    Synchronous wrapper for sending shadow outcome to cloud.
+    Fire and forget - doesn't block trading logic.
+    
+    Args:
+        rl_state: RL state snapshot at rejection
+        outcome: Shadow trade outcome
+    """
+    try:
+        loop = asyncio.get_event_loop()
+        if loop.is_running():
+            asyncio.ensure_future(send_shadow_outcome_async(rl_state, outcome))
+        else:
+            loop.run_until_complete(send_shadow_outcome_async(rl_state, outcome))
+    except Exception as e:
+        logger.debug(f"[CLOUD RL] Error sending shadow outcome: {e}")
+
+
+# ============================================================================
 # PHASE THREE: State Management
 # ============================================================================
 
@@ -1531,7 +1955,70 @@ def initialize_state(symbol: str) -> None:
             "partial_exit_history": [],  # List of {"price": float, "quantity": int, "r_multiple": float}
             # Advanced Exit Management - General
             "initial_risk_ticks": None,
+            
+            # ========================================================================
+            # COMPLETE RL FEATURE TRACKING (matches backtest)
+            # ========================================================================
+            # Performance Metrics
+            "mae": 0.0,  # Maximum Adverse Excursion (max drawdown)
+            "mfe": 0.0,  # Maximum Favorable Excursion (max profit)
+            "max_r_achieved": 0.0,  # Maximum R-multiple reached
+            "min_r_achieved": 0.0,  # Minimum R-multiple reached (most negative)
+            "unrealized_pnl": 0.0,  # Current unrealized P&L
+            "peak_unrealized_pnl": 0.0,  # Highest unrealized P&L reached
+            "peak_r_multiple": 0.0,  # Peak R-multiple
+            
+            # Exit Strategy State Tracking
+            "breakeven_activation_bar": None,  # Bar number when breakeven activated
+            "trailing_activation_bar": None,  # Bar number when trailing activated
+            "bars_until_breakeven": 0,  # How many bars until breakeven activated
+            "bars_until_trailing": 0,  # How many bars until trailing activated
+            "time_in_breakeven_bars": 0,  # How many bars spent in breakeven mode
+            "exit_param_update_count": 0,  # How many times exit params were updated
+            "stop_adjustment_count": 0,  # How many times stop was adjusted
+            "rejected_partial_count": 0,  # How many partial exits were rejected
+            "stop_hit": False,  # Whether stop loss was hit
+            
+            # Decision History Tracking
+            "exit_param_updates": [],  # List of {bar, vix, atr, reason, r_at_update}
+            "stop_adjustments": [],  # List of {bar, old_stop, new_stop, reason, r_at_adjustment}
+            "decision_history": [],  # Every bar's decision
+            "unrealized_pnl_history": [],  # P&L tracking over time
+            
+            # Drawdown Tracking
+            "profit_drawdown_from_peak": 0.0,  # $ drawdown from peak profit
+            "max_drawdown_percent": 0.0,  # Max % drawdown
+            "drawdown_bars": 0,  # Bars in drawdown
+            
+            # Volatility Tracking
+            "entry_atr": None,  # ATR at entry
+            "atr_samples": [],  # ATR values during trade
+            "high_volatility_bars": 0,  # Count of high volatility bars
+            "volatility_regime_at_entry": None,  # Regime when entered
+            
+            # Session/Context Tracking
+            "entry_session": None,  # Asia/London/NY
+            "entry_confidence": 0.0,  # Signal confidence at entry
+            "duration_bars": 0,  # How many bars trade has been open
+            "trade_number_in_session": 0,  # Nth trade of the session
+            "wins_in_last_5_trades": 0,  # Recent performance
+            "losses_in_last_5_trades": 0,  # Recent performance
+            
+            # Execution Quality
+            "exit_slippage_ticks": 0.0,  # Slippage on exit
+            "commission_cost": 0.0,  # Total commission paid
+            "exit_bid_ask_spread_ticks": 0.0,  # Spread at exit
+            
+            # Exit Parameters Used (for learning)
+            "exit_params_used": {},  # The adaptive exit params used for this trade
         },
+        
+        # ========================================================================
+        # SHADOW TRADE TRACKING (Ghost signals for RL learning)
+        # ========================================================================
+        # Tracks rejected signals in real-time to see what WOULD have happened
+        # Max 5 active shadows to prevent memory bloat
+        "shadow_trades": [],  # List of active shadow trades being tracked
         
         # Volume history
         "volume_history": deque(maxlen=CONFIG["max_bars_storage"]),
@@ -2161,7 +2648,7 @@ def update_rsi(symbol: str) -> None:
         symbol: Instrument symbol
     """
     bars = state[symbol]["bars_15min"]
-    rsi_period = CONFIG.get("rsi_period", 10)  # Iteration 3 - fast RSI
+    rsi_period = CONFIG.get("rsi_period", 10)  # Fast RSI - feature for neural networks
     
     if len(bars) < rsi_period + 1:
         logger.debug(f"Not enough bars for RSI: {len(bars)}/{rsi_period + 1}")
@@ -2364,10 +2851,10 @@ def calculate_vwap(symbol: str) -> None:
     std_dev = variance ** 0.5
     state[symbol]["vwap_std_dev"] = std_dev
     
-    # Calculate bands using ITERATION 3 standard deviation multipliers
-    band_1_mult = CONFIG.get("vwap_std_dev_1", 2.5)  # Iteration 3
-    band_2_mult = CONFIG.get("vwap_std_dev_2", 2.1)  # Iteration 3 - Entry zone
-    band_3_mult = CONFIG.get("vwap_std_dev_3", 3.7)  # Iteration 3 - Exit/stop zone
+    # Calculate bands using neural network baseline standard deviation multipliers
+    band_1_mult = CONFIG.get("vwap_std_dev_1", 2.5)  # Warning zone
+    band_2_mult = CONFIG.get("vwap_std_dev_2", 2.1)  # Entry zone - baseline for signal detection
+    band_3_mult = CONFIG.get("vwap_std_dev_3", 3.7)  # Exit/stop zone - baseline for exits
     state[symbol]["vwap_bands"]["upper_1"] = vwap + (std_dev * band_1_mult)
     state[symbol]["vwap_bands"]["upper_2"] = vwap + (std_dev * band_2_mult)
     state[symbol]["vwap_bands"]["upper_3"] = vwap + (std_dev * band_3_mult)
@@ -2507,10 +2994,10 @@ def validate_signal_requirements(symbol: str, bar_time: datetime) -> Tuple[bool,
             return False, "Trend not established"
         # Neutral trend is OK - will trade both directions
     
-    # Check RSI (ITERATION 3 - selective entry thresholds)
+    # Check RSI (neural network baseline - selective entry thresholds)
     use_rsi_filter = CONFIG.get("use_rsi_filter", True)
-    rsi_oversold = CONFIG.get("rsi_oversold", 35.0)  # Iteration 3
-    rsi_overbought = CONFIG.get("rsi_overbought", 65.0)  # Iteration 3
+    rsi_oversold = CONFIG.get("rsi_oversold", 35.0)  # Baseline for LONG signals
+    rsi_overbought = CONFIG.get("rsi_overbought", 65.0)  # Baseline for SHORT signals
     
     if use_rsi_filter:
         rsi = state[symbol]["rsi"]
@@ -2605,9 +3092,9 @@ def check_long_signal_conditions(symbol: str, prev_bar: Dict[str, Any],
             return False
         logger.debug(f"Price below VWAP: {current_bar['close']:.2f} < {vwap:.2f} ")
     
-    # FILTER 2: RSI - extreme oversold (ITERATION 3)
+    # FILTER 2: RSI - extreme oversold (neural network baseline)
     use_rsi = CONFIG.get("use_rsi_filter", True)
-    rsi_oversold = CONFIG.get("rsi_oversold", 35.0)  # Iteration 3 - selective entry
+    rsi_oversold = CONFIG.get("rsi_oversold", 35.0)  # Baseline - neural network validates
     if use_rsi:
         rsi = state[symbol]["rsi"]
         if rsi is not None:
@@ -2674,9 +3161,9 @@ def check_short_signal_conditions(symbol: str, prev_bar: Dict[str, Any],
             return False
         logger.debug(f"Price above VWAP: {current_bar['close']:.2f} > {vwap:.2f} ")
     
-    # FILTER 2: RSI - extreme overbought (ITERATION 3)
+    # FILTER 2: RSI - extreme overbought (neural network baseline)
     use_rsi = CONFIG.get("use_rsi_filter", True)
-    rsi_overbought = CONFIG.get("rsi_overbought", 65.0)  # Iteration 3 - selective entry
+    rsi_overbought = CONFIG.get("rsi_overbought", 65.0)  # Baseline - neural network validates
     if use_rsi:
         rsi = state[symbol]["rsi"]
         if rsi is not None:
@@ -3927,16 +4414,19 @@ def execute_entry(symbol: str, side: str, entry_price: float) -> None:
                 price_move_ticks=price_move_ticks
             )
             
-            # Store for potential shadow outcome tracking
-            state[symbol]["last_rejected_signal"] = {
-                "time": get_current_time(),
-                "state": rl_state,
-                "side": side,
-                "reason": price_reason,
-                "price_move_ticks": price_move_ticks,
-                "signal_price": entry_price,
-                "current_price": current_market_price
-            }
+            # ========== SHADOW TRADE: Track what WOULD happen ==========
+            # Create shadow trade to track rejected signal in real-time
+            # Shadow will use FULL adaptive exit model (same as real trades)
+            confidence = state[symbol].get("last_signal_confidence", 0.0)
+            
+            create_shadow_trade(
+                symbol=symbol,
+                rl_state=rl_state,
+                side=side,
+                entry_price=entry_price,  # Original signal price
+                confidence=confidence,
+                rejection_reason=f"price_moved_{price_move_ticks:.0f}_ticks"
+            )
         
         return
     
@@ -4214,6 +4704,9 @@ def execute_entry(symbol: str, side: str, entry_price: float) -> None:
     # CRITICAL: IMMEDIATELY save position state to disk - NEVER forget we're in a trade!
     save_position_state(symbol)
     logger.info("  ✓ Position state saved to disk")
+    
+    # Initialize all RL tracking fields for complete feature capture
+    initialize_position_tracking(symbol)
     
     # Update state status message
     state[symbol]["bot_status_message"] = "In trade..."
@@ -5338,6 +5831,150 @@ def execute_partial_exit(symbol: str, contracts: int, exit_price: float, r_multi
         logger.error(f"Failed to execute partial exit #{level}")
 
 
+def initialize_position_tracking(symbol: str) -> None:
+    """
+    Initialize all RL tracking fields when position is opened.
+    Call this AFTER position basics (entry_price, side, etc.) are set.
+    """
+    position = state[symbol]["position"]
+    
+    # Get session info
+    current_time = get_current_time()
+    hour = current_time.hour
+    if 0 <= hour < 8:
+        session = "Asia"
+    elif 8 <= hour < 14:
+        session = "London"
+    else:
+        session = "NY"
+    
+    position["entry_session"] = session
+    
+    # Initialize ATR tracking
+    current_atr = calculate_atr(symbol, CONFIG.get("atr_period", 14))
+    if current_atr:
+        position["entry_atr"] = current_atr
+        position["atr_samples"] = [current_atr]
+    
+    # Get volatility regime
+    if len(state[symbol]["bars_1min"]) > 0:
+        latest_bar = state[symbol]["bars_1min"][-1]
+        vix = latest_bar.get("vix", 15.0)
+        if vix < 12:
+            vol_regime = "LOW_VOL"
+        elif vix > 20:
+            vol_regime = "HIGH_VOL"
+        else:
+            vol_regime = "NORMAL"
+        position["volatility_regime_at_entry"] = vol_regime
+    
+    # Initialize highest/lowest tracking
+    position["highest_price_reached"] = position["entry_price"]
+    position["lowest_price_reached"] = position["entry_price"]
+    
+    # Count recent wins/losses
+    if "trade_history" in state[symbol] and len(state[symbol]["trade_history"]) > 0:
+        recent_5 = state[symbol]["trade_history"][-5:]
+        position["wins_in_last_5_trades"] = sum(1 for t in recent_5 if t.get("pnl", 0) > 0)
+        position["losses_in_last_5_trades"] = sum(1 for t in recent_5 if t.get("pnl", 0) < 0)
+    
+    # Session trade number
+    position["trade_number_in_session"] = state[symbol].get("total_trades", 0) + 1
+    
+    logger.debug(f"[RL TRACKING] Initialized position metrics: session={session}, entry_atr={position.get('entry_atr', 0):.2f}")
+
+
+def update_position_metrics(symbol: str, current_price: float) -> None:
+    """
+    Update all position metrics on every bar for complete RL feature tracking.
+    Matches backtest tracking exactly.
+    
+    Args:
+        symbol: Instrument symbol
+        current_price: Current market price
+    """
+    position = state[symbol]["position"]
+    if not position["active"]:
+        return
+    
+    entry_price = position["entry_price"]
+    side = position["side"]
+    quantity = position["quantity"]
+    tick_size = CONFIG.get("tick_size", 0.25)
+    tick_value = CONFIG.get("tick_value", 12.50)
+    
+    # Increment duration
+    position["duration_bars"] += 1
+    
+    # Calculate current P&L
+    if side == "long":
+        pnl_ticks = (current_price - entry_price) / tick_size
+    else:
+        pnl_ticks = (entry_price - current_price) / tick_size
+    
+    unrealized_pnl = pnl_ticks * tick_value * quantity
+    position["unrealized_pnl"] = unrealized_pnl
+    position["unrealized_pnl_history"].append(unrealized_pnl)
+    
+    # Update MAE (Maximum Adverse Excursion) - worst drawdown
+    if side == "long":
+        current_mae = (position.get("lowest_price_reached", current_price) - entry_price) / tick_size * tick_value * quantity
+    else:
+        current_mae = (entry_price - position.get("highest_price_reached", current_price)) / tick_size * tick_value * quantity
+    
+    if current_mae < position["mae"]:
+        position["mae"] = current_mae
+    
+    # Update MFE (Maximum Favorable Excursion) - best profit
+    if side == "long":
+        current_mfe = (position.get("highest_price_reached", current_price) - entry_price) / tick_size * tick_value * quantity
+    else:
+        current_mfe = (entry_price - position.get("lowest_price_reached", current_price)) / tick_size * tick_value * quantity
+    
+    if current_mfe > position["mfe"]:
+        position["mfe"] = current_mfe
+    
+    # Update peak unrealized P&L
+    if unrealized_pnl > position["peak_unrealized_pnl"]:
+        position["peak_unrealized_pnl"] = unrealized_pnl
+        position["profit_drawdown_from_peak"] = 0.0
+    else:
+        # Calculate drawdown from peak
+        position["profit_drawdown_from_peak"] = position["peak_unrealized_pnl"] - unrealized_pnl
+        if position["peak_unrealized_pnl"] > 0:
+            position["drawdown_bars"] += 1
+    
+    # Calculate R-multiples
+    risk_dollars = abs(entry_price - position["stop_price"]) * quantity * tick_value / tick_size
+    if risk_dollars > 0:
+        r_multiple = unrealized_pnl / risk_dollars
+        position["max_r_achieved"] = max(position["max_r_achieved"], r_multiple)
+        position["min_r_achieved"] = min(position["min_r_achieved"], r_multiple)
+        position["peak_r_multiple"] = max(position["peak_r_multiple"], r_multiple)
+    
+    # Track ATR samples
+    current_atr = calculate_atr(symbol, CONFIG.get("atr_period", 14))
+    if current_atr:
+        position["atr_samples"].append(current_atr)
+        if position["entry_atr"] is None:
+            position["entry_atr"] = current_atr
+        
+        # Count high volatility bars (ATR > 1.5x entry ATR)
+        if current_atr > position["entry_atr"] * 1.5:
+            position["high_volatility_bars"] += 1
+    
+    # Track time in breakeven
+    if position.get("breakeven_active", False):
+        position["time_in_breakeven_bars"] += 1
+    
+    # Update bars until milestones
+    if not position.get("breakeven_active", False):
+        position["bars_until_breakeven"] = position["duration_bars"]
+    
+    if not position.get("trailing_stop_active", False):
+        position["bars_until_trailing"] = position["duration_bars"]
+
+
 def check_exit_conditions(symbol: str) -> None:
     """
     Check exit conditions for open position on each bar.
@@ -5353,6 +5990,15 @@ def check_exit_conditions(symbol: str) -> None:
     
     if len(state[symbol]["bars_1min"]) == 0:
         return
+    
+    current_bar = state[symbol]["bars_1min"][-1]
+    current_price = current_bar["close"]
+    
+    # UPDATE ALL POSITION METRICS FIRST (for complete RL tracking)
+    update_position_metrics(symbol, current_price)
+    
+    # UPDATE SHADOW TRADES (ghost signal tracking)
+    update_shadow_trades(symbol, current_bar)
     
     current_bar = state[symbol]["bars_1min"][-1]
     bar_time = current_bar["timestamp"]
@@ -6284,17 +6930,90 @@ def execute_exit(symbol: str, exit_price: float, reason: str) -> None:
                     logger.debug(f"Failed to capture market state for exit: {e}")
                     market_state = None
                 
-                # Record for learning with market context
+                # Record for learning with market context AND ALL TRACKED FEATURES
                 adaptive_manager.record_exit_outcome(
                     regime=regime,
                     exit_params=exit_params,
                     trade_outcome={
+                        # Basic outcome
                         'pnl': pnl,
                         'duration': duration_minutes,
                         'exit_reason': reason,
                         'side': position["side"],
                         'contracts': position["quantity"],
-                        'win': pnl > 0
+                        'win': pnl > 0,
+                        
+                        # === COMPLETE 45-FEATURE TRACKING (matches backtest) ===
+                        # Entry context
+                        'entry_confidence': position.get("entry_confidence", 0.0),
+                        'entry_price': position.get("entry_price", 0.0),
+                        
+                        # Performance Metrics (from tracking)
+                        'mae': position.get("mae", 0.0),
+                        'mfe': position.get("mfe", 0.0),
+                        'max_r_achieved': position.get("max_r_achieved", 0.0),
+                        'min_r_achieved': position.get("min_r_achieved", 0.0),
+                        'r_multiple': pnl / (abs(position["entry_price"] - position["stop_price"]) * position["quantity"] * CONFIG.get("tick_value", 12.50) / CONFIG.get("tick_size", 0.25)) if position.get("stop_price") else 0.0,
+                        
+                        # Exit Strategy State
+                        'breakeven_activated': position.get("breakeven_active", False),
+                        'trailing_activated': position.get("trailing_stop_active", False),
+                        'breakeven_activation_bar': position.get("breakeven_activation_bar", 0),
+                        'trailing_activation_bar': position.get("trailing_activation_bar", 0),
+                        'bars_until_breakeven': position.get("bars_until_breakeven", 0),
+                        'bars_until_trailing': position.get("bars_until_trailing", 0),
+                        'time_in_breakeven_bars': position.get("time_in_breakeven_bars", 0),
+                        'exit_param_update_count': position.get("exit_param_update_count", 0),
+                        'stop_adjustment_count': position.get("stop_adjustment_count", 0),
+                        'rejected_partial_count': position.get("rejected_partial_count", 0),
+                        'stop_hit': reason == "stop_loss",
+                        
+                        # Decision History
+                        'decision_history': position.get("decision_history", []),
+                        'unrealized_pnl_history': position.get("unrealized_pnl_history", []),
+                        'peak_unrealized_pnl': position.get("peak_unrealized_pnl", 0.0),
+                        'peak_r_multiple': position.get("peak_r_multiple", 0.0),
+                        'opportunity_cost': max(0.0, position.get("peak_unrealized_pnl", 0.0) - pnl),
+                        
+                        # Advanced tracking arrays
+                        'exit_param_updates': position.get("exit_param_updates", []),
+                        'stop_adjustments': position.get("stop_adjustments", []),
+                        
+                        # Execution quality
+                        'slippage_ticks': position.get("exit_slippage_ticks", 0.0),
+                        'commission_cost': position.get("commission_cost", 0.0),
+                        'bid_ask_spread_ticks': position.get("exit_bid_ask_spread_ticks", 0.0),
+                        
+                        # Market context
+                        'session': position.get("entry_session", "NY"),
+                        'volume_at_exit': state[symbol]["bars_1min"][-1].get("volume", 0) if len(state[symbol]["bars_1min"]) > 0 else 0,
+                        'volatility_regime_change': position.get("volatility_regime_at_entry", "NORMAL") != market_state.get("volatility_regime", "NORMAL") if market_state else False,
+                        
+                        # Drawdown tracking
+                        'profit_drawdown_from_peak': position.get("profit_drawdown_from_peak", 0.0),
+                        'max_drawdown_percent': position.get("max_drawdown_percent", 0.0),
+                        'drawdown_bars': position.get("drawdown_bars", 0),
+                        
+                        # Volatility during trade
+                        'avg_atr_during_trade': sum(position.get("atr_samples", [])) / len(position.get("atr_samples", [1])),
+                        'atr_change_percent': ((position.get("atr_samples", [0])[-1] - position.get("entry_atr", 1)) / position.get("entry_atr", 1) * 100.0) if position.get("atr_samples") and position.get("entry_atr", 0) > 0 else 0.0,
+                        'high_volatility_bars': position.get("high_volatility_bars", 0),
+                        
+                        # Trade context
+                        'duration_bars': position.get("duration_bars", 0),
+                        'trade_number_in_session': position.get("trade_number_in_session", 0),
+                        'wins_in_last_5_trades': position.get("wins_in_last_5_trades", 0),
+                        'losses_in_last_5_trades': position.get("losses_in_last_5_trades", 0),
+                        
+                        # Market conditions (for backtest compatibility)
+                        'vix': market_state.get('vix', 15.0) if market_state else 15.0,
+                        'cumulative_pnl_before_trade': state[symbol].get("daily_pnl", 0.0) - pnl,  # P&L before this trade
+                        
+                        # Time-of-day exit tracking
+                        'exit_hour': exit_time.hour,
+                        'exit_minute': exit_time.minute,
+                        'held_through_sessions': (exit_time - position.get("entry_time", exit_time)).total_seconds() > 14400 if position.get("entry_time") else False,  # >4 hours
+                        'minutes_until_close': max(0.0, (21 * 60) - (exit_time.hour * 60 + exit_time.minute)) if exit_time.hour < 21 else 0.0,
                     },
                     market_state=market_state
                 )
@@ -7882,8 +8601,8 @@ def main(symbol_override: str = None) -> None:
     from adaptive_exits import AdaptiveExitManager
     adaptive_manager = AdaptiveExitManager(
         config=CONFIG,
-        experience_file='cloud-api/exit_experience.json',  # Local fallback only
-        cloud_api_url=CLOUD_ML_API_URL  # Use cloud API for 10k+ shared experiences
+        experience_file='data/local_experiences/exit_experiences_v2.json',  # Local v2 format
+        cloud_api_url=CLOUD_ML_API_URL  # Use cloud API for shared experiences
     )
     logger.info(f"[{primary_symbol}]   ✅ Loaded {len(adaptive_manager.exit_experiences):,} exit experiences from {'CLOUD' if adaptive_manager.use_cloud else 'LOCAL'}")
     

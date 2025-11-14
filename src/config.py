@@ -27,7 +27,15 @@ except ImportError:
 
 @dataclass
 class BotConfiguration:
-    """Type-safe configuration for the VWAP Bounce Bot."""
+    """
+    Type-safe configuration for the VWAP Bounce Bot.
+    
+    IMPORTANT: These are BASELINE values for neural network systems.
+    - Signal Neural Network (data/neural_model.pth) learns which signals to take
+    - Exit Neural Network (data/exit_model.pth) predicts optimal exit parameters
+    - These config values are only used as fallbacks or starting points
+    - The actual trading logic is controlled by trained neural networks
+    """
     
     # Default account size constant
     DEFAULT_ACCOUNT_SIZE: float = 50000.0
@@ -52,26 +60,26 @@ class BotConfiguration:
     commission_per_contract: float = 2.50  # Round-turn commission (adjust to your broker)
         # Total cost per round-trip: ~3 ticks slippage + $2.50 commission = ~$42.50/contract
     
-    # VWAP bands (standard deviation multipliers) - ITERATION 3 (PROVEN WINNER!)
+    # VWAP bands (standard deviation multipliers) - Neural network baseline values
     vwap_std_dev_1: float = 2.5  # Warning zone (potential reversal area)
-    vwap_std_dev_2: float = 2.1  # Entry zone - Iteration 3
-    vwap_std_dev_3: float = 3.7  # Exit/stop zone - Iteration 3
+    vwap_std_dev_2: float = 2.1  # Entry zone - baseline for signal detection
+    vwap_std_dev_3: float = 3.7  # Exit/stop zone - baseline for exits
     
     # Trend Filter Parameters
     trend_ema_period: int = 21  # Optimizer best
     trend_threshold: float = 0.0001
     
-    # Technical Filters - ITERATION 3
-    use_trend_filter: bool = False  # Trend filter OFF (optimizer found better without)
+    # Technical Filters - Neural network learned settings
+    use_trend_filter: bool = False  # Trend filter OFF (neural network learned better without)
     use_rsi_filter: bool = True
-    use_vwap_direction_filter: bool = True  # VWAP direction filter ON (optimizer confirmed)
+    use_vwap_direction_filter: bool = True  # VWAP direction filter ON (neural network validated)
     use_volume_filter: bool = False  # Don't use volume filter - blocks overnight trades
     use_macd_filter: bool = False
     
-    # RSI Settings - ITERATION 3 (Conservative, Selective)
-    rsi_period: int = 10  # Iteration 3
-    rsi_oversold: int = 35  # Iteration 3 - selective entry
-    rsi_overbought: int = 65  # Iteration 3 - selective entry
+    # RSI Settings - Neural network baseline (conservative, selective)
+    rsi_period: int = 10  # Fast RSI - baseline for neural network features
+    rsi_oversold: int = 35  # Baseline - neural network learns when to override
+    rsi_overbought: int = 65  # Baseline - neural network learns when to override
     
     # MACD - Keep for reference but disabled
     macd_fast: int = 12
@@ -314,11 +322,11 @@ class BotConfiguration:
         
         return True
     
-    # ATR-Based Dynamic Risk Management - ITERATION 3 (PROVEN WINNER!)
-    use_atr_stops: bool = False  # ATR stops disabled - using proven 11-tick fixed stops
-    atr_period: int = 14  # ATR calculation period
-    stop_loss_atr_multiplier: float = 3.6  # Iteration 3 (tight stops)
-    profit_target_atr_multiplier: float = 4.75  # Iteration 3 (solid targets)
+    # ATR-Based Dynamic Risk Management - Neural network baseline values
+    use_atr_stops: bool = False  # ATR stops disabled - exit neural network manages stops
+    atr_period: int = 14  # ATR calculation period (feature for neural networks)
+    stop_loss_atr_multiplier: float = 3.6  # Baseline - exit neural network adjusts dynamically
+    profit_target_atr_multiplier: float = 4.75  # Baseline - exit neural network learns optimal targets
     
     # Instrument Specifications
     tick_size: float = 0.25
@@ -364,19 +372,19 @@ class BotConfiguration:
     adaptive_regime_detection: bool = True  # Adjust for trending vs choppy markets
     adaptive_performance_based: bool = True  # Adapt based on trade performance
     
-    # Breakeven Protection - ITERATION 3 (PROVEN WINNER!)
-    breakeven_enabled: bool = True  # ENABLED - Adaptive system will adjust dynamically
-    breakeven_profit_threshold_ticks: int = 9  # Iteration 3 - proven optimal
-    breakeven_stop_offset_ticks: int = 1  # Baseline (adaptive adjusts)
+    # Breakeven Protection - Neural network baseline values
+    breakeven_enabled: bool = True  # ENABLED - Exit neural network adjusts dynamically
+    breakeven_profit_threshold_ticks: int = 9  # Baseline - exit neural network learns optimal value
+    breakeven_stop_offset_ticks: int = 1  # Baseline - exit neural network adjusts per trade
     
-    # Partial Exits (baseline - adaptive system adjusts R-multiples)
+    # Partial Exits (baseline - exit neural network adjusts R-multiples dynamically)
     partial_exits_enabled: bool = True  # ENABLED - Scale out at targets
     partial_exit_1_percentage: float = 0.50  # 50% exit at first level
-    partial_exit_1_r_multiple: float = 2.0  # Exit at 2.0R (adaptive: 1.4-3.0)
+    partial_exit_1_r_multiple: float = 2.0  # Baseline 2.0R (neural network adjusts: 1.4-3.0)
     partial_exit_2_percentage: float = 0.30  # 30% exit at second level
-    partial_exit_2_r_multiple: float = 3.0  # Exit at 3.0R (adaptive: 2.1-4.5)
+    partial_exit_2_r_multiple: float = 3.0  # Baseline 3.0R (neural network adjusts: 2.1-4.5)
     partial_exit_3_percentage: float = 0.20  # 20% exit at third level
-    partial_exit_3_r_multiple: float = 5.0  # Exit at 5.0R
+    partial_exit_3_r_multiple: float = 5.0  # Baseline 5.0R (neural network adjusts dynamically)
     
     # Reinforcement Learning Parameters
     # RL ENABLED - Learning which signals to trust from experience
@@ -388,7 +396,7 @@ class BotConfiguration:
     rl_min_contracts: int = 1  # Minimum contracts (low confidence)
     rl_medium_contracts: int = 2  # Medium contracts (moderate confidence)
     rl_max_contracts: int = 3  # Maximum contracts (high confidence)
-    rl_experience_file: str = "data/signal_experience.json"  # Where to save learning
+    rl_experience_file: str = "data/local_experiences/signal_experiences_v2.json"  # Where to save learning
     rl_save_frequency: int = 5  # Save experiences every N trades
     
     # Dynamic AI Features (USER CONFIGURABLE via GUI)

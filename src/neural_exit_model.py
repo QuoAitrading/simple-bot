@@ -9,20 +9,15 @@ class ExitParamsNet(nn.Module):
     """
     Neural network to predict optimal exit parameters
     
-    Inputs (15 features):
-        - market_regime (one-hot: 3)
-        - rsi (1)
-        - volume_ratio (1) 
-        - atr (1)
-        - entry_confidence (1)
-        - hour (1)
-        - day_of_week (1)
-        - vix (1)
-        - vwap_distance (1)
-        - streak (1)
-        - recent_pnl (1)
-        - side (1: 0=LONG, 1=SHORT)
-        - session (1: 0=Asia, 1=London, 2=NY)
+    Inputs (45 features):
+        Market Context (8): regime, rsi, volume, atr, vix, volatility changes
+        Trade Context (7): confidence, side, session, spreads, commissions, slippage
+        Time Features (5): hour, day, duration, breakeven/trailing timing
+        Performance (5): MAE, MFE, R-multiples (max/min/current)
+        Strategy State (7): breakeven/trailing activated, stop hit, update counts
+        Results (5): pnl, win/loss, exit reason, max profit
+        Advanced (8): ATR evolution, avg volatility, peak R, profit drawdown,
+                      high vol bars, recent wins/losses, time to close
     
     Outputs (6 exit parameters):
         - breakeven_threshold_ticks (normalized)
@@ -33,19 +28,20 @@ class ExitParamsNet(nn.Module):
         - partial_3_r (normalized 5R target)
     """
     
-    def __init__(self, input_size=15, hidden_size=32):
+    def __init__(self, input_size=45, hidden_size=64):
         super(ExitParamsNet, self).__init__()
         
+        # Larger network for 45 features - matches trained model
         self.network = nn.Sequential(
             nn.Linear(input_size, hidden_size),
             nn.ReLU(),
-            nn.Dropout(0.2),
+            nn.Dropout(0.3),
             
-            nn.Linear(hidden_size, hidden_size),
+            nn.Linear(hidden_size, 32),
             nn.ReLU(),
-            nn.Dropout(0.2),
+            nn.Dropout(0.3),
             
-            nn.Linear(hidden_size, 16),
+            nn.Linear(32, 16),
             nn.ReLU(),
             
             nn.Linear(16, 6),  # 6 exit parameters
