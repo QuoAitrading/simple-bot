@@ -1479,14 +1479,14 @@ class ShadowTrade:
     Represents a rejected signal being tracked in the background.
     Simulates what WOULD happen if we took the trade, providing learning data.
     
-    FULLY SIMULATES A REAL TRADE:
-    - Uses adaptive neural exit model (45 features → dynamic params)
+    FULLY SIMULATES A REAL TRADE WITH COMPREHENSIVE 69-PARAMETER EXIT LOGIC:
+    - Uses comprehensive exit checker (ALL 69 exit parameters)
     - Updates stop/breakeven/trailing EVERY bar (just like real trades)
     - Tracks MAE/MFE, partials, all metrics
     - Outcome reflects what would ACTUALLY happen with current exit logic
     """
     def __init__(self, symbol: str, rl_state: Dict, side: str, entry_price: float, 
-                 entry_time: datetime, confidence: float, rejection_reason: str):
+                 entry_time: datetime, confidence: float, rejection_reason: str, initial_stop: float = None):
         self.symbol = symbol
         self.rl_state = rl_state.copy()  # Snapshot of RL state at rejection
         self.side = side  # 'long' or 'short'
@@ -1498,7 +1498,7 @@ class ShadowTrade:
         # Shadow position state (pretend we're IN the trade)
         self.quantity = 1  # Start with 1 contract (matches ghost simulation)
         self.remaining_quantity = 1
-        self.stop_price = None  # Will be set by adaptive exit model
+        self.stop_price = initial_stop if initial_stop else entry_price * 0.99  # Default stop
         self.breakeven_active = False
         self.trailing_active = False
         self.highest_price_reached = entry_price if side == 'long' else None
@@ -1511,6 +1511,11 @@ class ShadowTrade:
         
         # Exit params will be calculated dynamically each bar
         self.current_exit_params = None
+        
+        # NEW: Comprehensive 68-parameter exit checker
+        from exit_param_utils import extract_all_exit_params
+        self.extract_all_exit_params = extract_all_exit_params
+        self.all_exit_params_used = {}  # Will store complete parameter set
         
         self.bars_elapsed = 0
         self.max_bars = 200  # Timeout after 200 bars (~3 hours)
@@ -1577,6 +1582,9 @@ class ShadowTrade:
             )
             
             self.current_exit_params = adaptive_params
+            
+            # CRITICAL: Store ALL 68 exit parameters for learning
+            self.all_exit_params_used = self.extract_all_exit_params(adaptive_params)
             
         except Exception as e:
             # Fallback to simple stop if adaptive fails
@@ -1691,8 +1699,9 @@ class ShadowTrade:
                         'entry_confidence': self.confidence,
                         'entry_price': self.entry_price,
                         
-                        # Exit params
-                        'exit_params': self.current_exit_params
+                        # Exit params (ALL 68 PARAMETERS)
+                        'exit_params': self.current_exit_params,
+                        'exit_params_used': self.all_exit_params_used  # Complete 68-param set for learning
                     }
                     self.completed = True
                     return self.outcome
@@ -1738,8 +1747,9 @@ class ShadowTrade:
                         'entry_confidence': self.confidence,
                         'entry_price': self.entry_price,
                         
-                        # Exit params
-                        'exit_params': self.current_exit_params
+                        # Exit params (ALL 68 PARAMETERS)
+                        'exit_params': self.current_exit_params,
+                        'exit_params_used': self.all_exit_params_used  # Complete 68-param set for learning
                     }
                     self.completed = True
                     return self.outcome
@@ -1812,8 +1822,9 @@ class ShadowTrade:
                             'entry_confidence': self.confidence,
                             'entry_price': self.entry_price,
                             
-                            # Exit params
-                            'exit_params': self.current_exit_params
+                            # Exit params (ALL 68 PARAMETERS)
+                            'exit_params': self.current_exit_params,
+                            'exit_params_used': self.all_exit_params_used  # Complete 68-param set for learning
                         }
                         self.completed = True
                         return self.outcome
@@ -1869,8 +1880,9 @@ class ShadowTrade:
                 'entry_confidence': self.confidence,
                 'entry_price': self.entry_price,
                 
-                # Exit params used (if available)
-                'exit_params': self.current_exit_params
+                # Exit params (ALL 68 PARAMETERS)
+                'exit_params': self.current_exit_params,
+                'exit_params_used': self.all_exit_params_used  # Complete 68-param set for learning
             }
             self.completed = True
             return self.outcome
@@ -1996,7 +2008,7 @@ async def send_shadow_outcome_async(rl_state: Dict, outcome: Dict) -> None:
         # Market regime
         regime = rl_state.get('market_regime', 'NORMAL')
         
-        # Use capture_complete_exit_state for FULL 64-feature format
+        # Use capture_complete_exit_state for FULL 62-feature format
         if adaptive_manager is not None:
             try:
                 complete_exit_experience = adaptive_manager.capture_complete_exit_state(
@@ -2004,7 +2016,11 @@ async def send_shadow_outcome_async(rl_state: Dict, outcome: Dict) -> None:
                     exit_params=exit_params,
                     trade_outcome=outcome,  # Already has all fields
                     market_state=market_state,
-                    partial_exits=[]
+                    partial_exits=[],
+                    # Daily loss limit context (NEW)
+                    daily_pnl_before_trade=state[symbol].get("daily_pnl", 0.0),
+                    daily_loss_limit=CONFIG.get("daily_loss_limit", 1000.0),
+                    daily_loss_proximity_pct=max(0.0, (-state[symbol].get("daily_pnl", 0.0) / CONFIG.get("daily_loss_limit", 1000.0)) * 100.0)
                 )
                 
                 # Send as exit experience with ghost marker
@@ -2024,7 +2040,7 @@ async def send_shadow_outcome_async(rl_state: Dict, outcome: Dict) -> None:
                         if response.status == 200:
                             data = await response.json()
                             win_str = "WIN" if outcome.get('win') else "LOSS"
-                            logger.debug(f"[CLOUD RL] Ghost exit saved (64 features): {outcome.get('exit_reason')} - {win_str} ${outcome.get('pnl', 0):.2f}")
+                            logger.debug(f"[CLOUD RL] Ghost exit saved (62 features): {outcome.get('exit_reason')} - {win_str} ${outcome.get('pnl', 0):.2f}")
                         else:
                             logger.debug(f"[CLOUD RL] Ghost save failed: HTTP {response.status}")
                 return
@@ -6298,7 +6314,11 @@ def execute_partial_exit(symbol: str, contracts: int, exit_price: float, r_multi
                             'contracts': contracts,
                             'win': profit_dollars > 0,
                             'partial': True,
-                            'r_multiple': r_multiple
+                            'r_multiple': r_multiple,
+                            # Daily loss limit context (NEW)
+                            'daily_pnl_before_trade': state[symbol].get("daily_pnl", 0.0) - profit_dollars,
+                            'daily_loss_limit': CONFIG.get("daily_loss_limit", 1000.0),
+                            'daily_loss_proximity_pct': max(0.0, (-(state[symbol].get("daily_pnl", 0.0) - profit_dollars) / CONFIG.get("daily_loss_limit", 1000.0)) * 100.0)
                         },
                         market_state=market_state,
                         partial_exits=[{
@@ -7442,6 +7462,11 @@ def execute_exit(symbol: str, exit_price: float, reason: str) -> None:
                         'peak_unrealized_pnl': position.get("peak_unrealized_pnl", 0.0),
                         'peak_r_multiple': position.get("peak_r_multiple", 0.0),
                         'opportunity_cost': max(0.0, position.get("peak_unrealized_pnl", 0.0) - pnl),
+                        
+                        # Daily Loss Limit Context (3 NEW FEATURES)
+                        'daily_pnl_before_trade': state[symbol].get("daily_pnl", 0.0) - pnl,
+                        'daily_loss_limit': CONFIG.get("daily_loss_limit", 1000.0),
+                        'daily_loss_proximity_pct': max(0.0, (-(state[symbol].get("daily_pnl", 0.0) - pnl) / CONFIG.get("daily_loss_limit", 1000.0)) * 100.0),
                         
                         # Advanced tracking arrays
                         'exit_param_updates': position.get("exit_param_updates", []),

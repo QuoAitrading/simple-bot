@@ -12,7 +12,7 @@ class SignalConfidenceNet(nn.Module):
     Neural network that learns to predict trade success probability.
     
     Architecture:
-    - Input: 33 features (RSI, VIX, hour, ATR, volume, market_regime, volatility, price levels, temporal)
+    - Input: 29 features (RSI, VIX, hour, ATR, volume, market_regime, volatility, price levels, temporal)
     - Hidden Layer 1: 64 neurons with ReLU activation
     - Hidden Layer 2: 32 neurons with ReLU activation  
     - Output: 1 neuron with SIGMOID activation (0-1 confidence/probability)
@@ -20,11 +20,11 @@ class SignalConfidenceNet(nn.Module):
     Dropout: 0.3 to prevent overfitting
     """
     
-    def __init__(self, input_size=33):
+    def __init__(self, input_size=29):
         super(SignalConfidenceNet, self).__init__()
         
         self.network = nn.Sequential(
-            # Layer 1: 33 → 64
+            # Layer 1: 29 → 64
             nn.Linear(input_size, 64),
             nn.ReLU(),
             nn.Dropout(0.3),
@@ -110,7 +110,8 @@ class ConfidencePredictor:
         Predict confidence for a signal.
         
         Args:
-            rl_state: Dict with 26 features (RSI, VIX, hour, market_regime, volatility_clustering, etc.)
+            rl_state: Dict with 29 features (RSI, VIX, hour, market_regime, volatility_clustering, etc.)
+                     NOTE: bid_ask_spread and entry_slippage removed (live-only, not in backtest)
             
         Returns:
             confidence: Float 0-1.0 (probability of winning trade)
@@ -166,11 +167,9 @@ class ConfidencePredictor:
             rl_state.get('sr_proximity_ticks', 0.0),
             rl_state.get('trade_type', 0),  # reversal=0, continuation=1
             rl_state.get('time_since_last_trade_mins', 0.0),
-            rl_state.get('bid_ask_spread_ticks', 0.5),
             rl_state.get('drawdown_pct_at_entry', 0.0),
             rl_state.get('day_of_week', 0),
             rl_state.get('recent_pnl', 0.0),
-            rl_state.get('entry_slippage_ticks', 0.0),
             rl_state.get('commission_cost', 0.0),
             rl_state.get('signal', 0),  # LONG=0, SHORT=1
             # ADVANCED ML FEATURES

@@ -20,6 +20,7 @@ from datetime import datetime
 import statistics
 import requests
 import time
+from exit_param_utils import extract_all_exit_params, extract_execution_data
 
 logger = logging.getLogger(__name__)
 
@@ -45,30 +46,8 @@ class AdaptiveExitManager:
         self.cloud_api_url = cloud_api_url  # NEW: Cloud API endpoint
         self.use_cloud = cloud_api_url is not None  # Use cloud if URL provided
         
-        # Neural network support (NEW!)
-        self.neural_exit_model = None
-        self.use_neural_network = True
-        try:
-            from neural_exit_model import ExitParamsNet, denormalize_exit_params
-            import torch
-            
-            # Load trained exit neural network
-            model_path = 'data/exit_model.pth'
-            if os.path.exists(model_path):
-                self.neural_exit_model = ExitParamsNet(input_size=45, hidden_size=64)
-                checkpoint = torch.load(model_path)
-                self.neural_exit_model.load_state_dict(checkpoint['model_state_dict'])
-                self.neural_exit_model.eval()
-                self.denormalize_exit_params = denormalize_exit_params
-                self.use_neural_network = True
-                logger.info(f"🧠 EXIT NEURAL NETWORK LOADED from {model_path}")
-            else:
-                logger.warning(f"⚠️  Exit neural network not found at {model_path} - using pattern matching fallback")
-                self.use_neural_network = False
-        except Exception as e:
-            logger.warning(f"⚠️  Could not load exit neural network: {e}")
-            logger.warning("   Using pattern matching fallback")
-            self.use_neural_network = False
+        # REMOVED: Neural network is now cloud-only (protected model)
+        # Users no longer have direct access to exit_model.pth
         
         # CACHE: Store cloud exit params to avoid rate limiting
         self.cloud_exit_params_cache = {}  # {regime: {params, timestamp}}
@@ -191,13 +170,11 @@ class AdaptiveExitManager:
                                    volatility_regime_change: bool = False,
                                    volume_at_exit: float = 1.0,
                                    market_state: int = 0,
-                                   # Trade Context (7)
+                                   # Trade Context (5)
                                    entry_confidence: float = 0.5,
                                    side: str = 'LONG',
                                    session: str = 'NY',
-                                   bid_ask_spread_ticks: float = 0.5,
                                    commission_cost: float = 0.0,
-                                   slippage_ticks: float = 0.0,
                                    regime: str = 'NORMAL',
                                    # Time Features (5)
                                    hour: int = 12,
@@ -211,13 +188,12 @@ class AdaptiveExitManager:
                                    max_r_achieved: float = 0.0,
                                    min_r_achieved: float = 0.0,
                                    r_multiple: float = 0.0,
-                                   # Exit Strategy State (7)
+                                   # Exit Strategy State (6)
                                    breakeven_activated: bool = False,
                                    trailing_activated: bool = False,
                                    stop_hit: bool = False,
                                    exit_param_update_count: int = 0,
                                    stop_adjustment_count: int = 0,
-                                   rejected_partial_count: int = 0,
                                    bars_until_trailing: int = 0,
                                    # Results (5)
                                    pnl: float = 0.0,
@@ -260,12 +236,17 @@ class AdaptiveExitManager:
                                    held_through_sessions: bool = False,
                                    # Additional metadata
                                    symbol: str = 'ES',
-                                   timestamp: str = None) -> Dict:
+                                   timestamp: str = None,
+                                   # Daily Loss Limit Features (3) - NEW
+                                   daily_pnl_before_trade: float = 0.0,
+                                   daily_loss_limit: float = 1000.0,
+                                   daily_loss_proximity_pct: float = 0.0) -> Dict:
         """
-        Capture COMPLETE exit state with ALL 64 features for neural network.
+        Capture COMPLETE exit state with ALL 62 features for neural network.
+        (59 base features + 3 daily loss limit features, removed 2 backtest-incompatible features)
         
         Returns:
-            Dictionary with all 64 features properly formatted
+            Dictionary with all 62 features properly formatted
         """
         from datetime import datetime
         import pytz
@@ -298,15 +279,13 @@ class AdaptiveExitManager:
             'volume_at_exit': round(volume_at_exit, 4),
             'market_state': market_state,
             
-            # Trade Context (7)
+            # Trade Context (5)
             'entry_confidence': round(entry_confidence, 4),
             'side': side,
             'side_encoded': 1 if side == 'SHORT' else 0,
             'session': session,
             'session_encoded': session_map.get(session, 2),
-            'bid_ask_spread_ticks': round(bid_ask_spread_ticks, 2),
             'commission_cost': round(commission_cost, 2),
-            'slippage_ticks': round(slippage_ticks, 2),
             'regime': regime,
             
             # Time Features (5)
@@ -323,13 +302,12 @@ class AdaptiveExitManager:
             'min_r_achieved': round(min_r_achieved, 4),
             'r_multiple': round(r_multiple, 4),
             
-            # Exit Strategy State (7)
+            # Exit Strategy State (6)
             'breakeven_activated': int(breakeven_activated),
             'trailing_activated': int(trailing_activated),
             'stop_hit': int(stop_hit),
             'exit_param_update_count': exit_param_update_count,
             'stop_adjustment_count': stop_adjustment_count,
-            'rejected_partial_count': rejected_partial_count,
             'bars_until_trailing': bars_until_trailing,
             
             # Results (5)
@@ -380,6 +358,11 @@ class AdaptiveExitManager:
             'duration_bars': duration_bars,
             'held_through_sessions': int(held_through_sessions),
             
+            # Daily Loss Limit Features (3) - NEW
+            'daily_pnl_before_trade': round(daily_pnl_before_trade, 2),
+            'daily_loss_limit': round(daily_loss_limit, 2),
+            'daily_loss_proximity_pct': round(daily_loss_proximity_pct, 2),
+            
             # Metadata
             'symbol': symbol,
             'timestamp': timestamp,
@@ -389,24 +372,40 @@ class AdaptiveExitManager:
     def record_exit_outcome(self, regime: str, exit_params: Dict, trade_outcome: Dict, 
                            market_state: Dict = None, partial_exits: list = None, backtest_mode: bool = False):
         """
-        Record exit outcome for RL learning WITH COMPLETE 64-FEATURE CAPTURE.
+        Record exit outcome for RL learning WITH COMPLETE 62-FEATURE CAPTURE + 79 EXIT PARAMETERS.
         
         Args:
             regime: Market regime when exit occurred
-            exit_params: Exit parameters used (breakeven_threshold, trailing_distance, etc.)
+            exit_params: Exit parameters used (ALL 68 parameters)
             trade_outcome: Trade result (pnl, duration, exit_reason, win/loss, PLUS all 45 tracked features)
             market_state: Optional dict with RSI, volume_ratio, hour, day_of_week, streak, recent_pnl, vix, vwap_distance, atr
             partial_exits: List of partial exit decisions (level, r_multiple, contracts, percentage)
             backtest_mode: If True, collect for bulk save at end (don't POST immediately)
         """
-        # Use COMPLETE 64-feature capture method
+        # Extract daily loss limit features from trade_outcome (NEW)
+        daily_pnl_before = trade_outcome.get('daily_pnl_before_trade', 0.0)
+        daily_loss_lim = trade_outcome.get('daily_loss_limit', 1000.0)
+        daily_loss_prox = trade_outcome.get('daily_loss_proximity_pct', 0.0)
+        
+        # Use COMPLETE 64-feature capture method (was 62, added 3 daily limit features)
         experience = self.capture_complete_exit_state(
             regime=regime,
             exit_params=exit_params,
             trade_outcome=trade_outcome,
             market_state=market_state,
-            partial_exits=partial_exits
+            partial_exits=partial_exits,
+            # Pass daily loss limit features (NEW)
+            daily_pnl_before_trade=daily_pnl_before,
+            daily_loss_limit=daily_loss_lim,
+            daily_loss_proximity_pct=daily_loss_prox
         )
+        
+        # ADD: All 69 exit parameters that were USED for this trade
+        # This is what the neural network will learn to predict
+        experience['exit_params_used'] = extract_all_exit_params(exit_params)
+        
+        # ADD: Execution tracking - what actually happened
+        experience['execution_tracking'] = extract_execution_data(trade_outcome)
         
         self.exit_experiences.append(experience)
         
@@ -422,7 +421,7 @@ class AdaptiveExitManager:
                     "user_id": "default_user",  # TODO: Get real user_id
                     "symbol": "ES",
                     "experience_type": "exit",
-                    "experience": experience  # Complete 64-feature dict
+                    "experience": experience  # Complete 62-feature dict (59 base + 3 daily loss limit)
                 }
                 
                 response = requests.post(
@@ -434,7 +433,7 @@ class AdaptiveExitManager:
                 if response.status_code == 200:
                     data = response.json()
                     if data.get('saved'):
-                        logger.info(f"✅ [CLOUD] Saved exit experience with 64 features to cloud pool ({data.get('total_experiences', 0):,} total)")
+                        logger.info(f"✅ [CLOUD] Saved exit experience with 62 features to cloud pool ({data.get('total_experiences', 0):,} total)")
                     else:
                         logger.warning(f"[CLOUD] Failed to save: {data.get('error', 'Unknown error')}")
                 else:
@@ -2338,14 +2337,13 @@ def get_adaptive_exit_params(bars: list, position: Dict, current_price: float,
     market_regime = detect_market_regime(bars, current_atr)
     
     # ========================================================================
-    # NEURAL NETWORK EXIT PREDICTION - Try neural network first
+    # NEURAL NETWORK EXIT PREDICTION - Cloud API (protected model)
     # ========================================================================
-    if adaptive_manager and hasattr(adaptive_manager, 'use_neural_network') and adaptive_manager.use_neural_network and adaptive_manager.neural_exit_model is not None:
+    if adaptive_manager and hasattr(adaptive_manager, 'use_cloud') and adaptive_manager.use_cloud and adaptive_manager.cloud_api_url:
         try:
-            import torch
             import numpy as np
             
-            # Extract ALL 45 features for neural network (matches training data)
+            # Extract ALL 45 features for cloud neural network API
             latest_bar = bars[-1] if len(bars) > 0 else {}
             entry_time = position.get('entry_time', datetime.now())
             if not isinstance(entry_time, datetime):
@@ -2364,13 +2362,11 @@ def get_adaptive_exit_params(bars: list, position: Dict, current_price: float,
             volume_at_exit = np.clip(latest_bar.get('volume', 1.0) / latest_bar.get('avg_volume', 1.0) if 'avg_volume' in latest_bar else 1.0, 0, 3) / 3.0
             market_state_enc = 0.5
             
-            # Trade Context (7 features)
+            # Trade Context (5 features) - removed bid_ask_spread and slippage (live-only, not in backtest)
             entry_conf = entry_confidence
             side = 1.0 if position.get('side', 'long').lower() == 'short' else 0.0
             session = latest_bar.get('session', 0) / 2.0
-            bid_ask_spread = np.clip(latest_bar.get('bid_ask_spread_ticks', 0.5) / 3.0, 0, 1)
             commission = np.clip(2.0 / 10.0, 0, 1)
-            slippage = np.clip(1.0 / 5.0, 0, 1)
             regime_enc = market_regime_enc
             
             # Time Features (5 features)
@@ -2421,56 +2417,85 @@ def get_adaptive_exit_params(bars: list, position: Dict, current_price: float,
             close_time = current_time.replace(hour=16, minute=0, second=0)
             mins_to_close = np.clip((close_time - current_time).total_seconds() / 60 / 480.0, 0, 1)
             
-            # Build 45-feature vector
-            features = torch.tensor([
-                # Market Context (8)
-                market_regime_enc, rsi, volume_ratio, atr_norm, vix, volatility_regime_change, volume_at_exit, market_state_enc,
-                # Trade Context (7)
-                entry_conf, side, session, bid_ask_spread, commission, slippage, regime_enc,
-                # Time Features (5)
-                hour, day_of_week, duration, time_in_breakeven, bars_until_breakeven,
-                # Performance Metrics (5)
-                mae, mfe, max_r, min_r, r_multiple,
-                # Exit Strategy State (7)
-                breakeven_activated, trailing_activated, stop_hit, exit_param_updates, stop_adjustments, rejected_partials, bars_until_trailing,
-                # Results (5) - current values
-                pnl_norm, outcome_current, win_current, exit_reason, max_profit,
-                # ADVANCED (8)
-                atr_change_pct, avg_atr_trade, peak_r, profit_dd, high_vol_bars, recent_wins, recent_losses, mins_to_close
-            ], dtype=torch.float32).unsqueeze(0)
-            
-            # Get neural network prediction
-            with torch.no_grad():
-                normalized_output = adaptive_manager.neural_exit_model(features)
-                exit_params_dict = adaptive_manager.denormalize_exit_params(normalized_output)
-            
-            logger.info(f"🧠 [EXIT NN] Predicted params: breakeven={exit_params_dict['breakeven_threshold_ticks']:.1f}, "
-                       f"trailing={exit_params_dict['trailing_distance_ticks']:.1f}, "
-                       f"stop_mult={exit_params_dict['stop_mult']:.2f}x, "
-                       f"partials={exit_params_dict['partial_1_r']:.1f}R/{exit_params_dict['partial_2_r']:.1f}R/{exit_params_dict['partial_3_r']:.1f}R")
-            
-            # Convert to final format
-            return {
-                'breakeven_threshold_ticks': int(exit_params_dict['breakeven_threshold_ticks']),
-                'breakeven_offset_ticks': 1,  # Standard offset
-                'trailing_distance_ticks': int(exit_params_dict['trailing_distance_ticks']),
-                'trailing_min_profit_ticks': int(exit_params_dict['breakeven_threshold_ticks'] * 1.5),
-                'market_regime': market_regime,
-                'current_volatility_atr': current_atr,
-                'is_aggressive_mode': entry_confidence < 0.6,
-                'confidence_adjusted': entry_confidence < 0.6,
-                'partial_1_r': exit_params_dict['partial_1_r'],
-                'partial_1_pct': 0.50,
-                'partial_2_r': exit_params_dict['partial_2_r'],
-                'partial_2_pct': 0.30,
-                'partial_3_r': exit_params_dict['partial_3_r'],
-                'partial_3_pct': 0.20,
-                'stop_mult': exit_params_dict['stop_mult'],
-                'prediction_source': 'neural_network'
+            # Build request payload for cloud neural network API
+            api_request = {
+                "market_regime": market_regime,
+                "rsi": latest_bar.get('rsi', 50.0),
+                "volume_ratio": latest_bar.get('volume', 1.0) / latest_bar.get('avg_volume', 1.0) if 'avg_volume' in latest_bar else 1.0,
+                "atr": current_atr,
+                "vix": latest_bar.get('vix', 15.0),
+                "volatility_regime_change": position.get('volatility_regime_change', False),
+                "entry_confidence": entry_confidence,
+                "side": position.get('side', 'long'),
+                "session": latest_bar.get('session', 0),
+                "hour": latest_bar.get('hour', 12),
+                "day_of_week": latest_bar.get('day_of_week', 2),
+                "duration_bars": duration_bars,
+                "time_in_breakeven_bars": position.get('time_in_breakeven_bars', 0),
+                "bars_until_breakeven": position.get('bars_until_breakeven', 999),
+                "mae": position.get('mae', 0),
+                "mfe": position.get('mfe', 0),
+                "max_r_achieved": position.get('max_r_achieved', 0),
+                "min_r_achieved": position.get('min_r_achieved', 0),
+                "r_multiple": (current_pnl / risk if risk > 0 else 0),
+                "breakeven_activated": position.get('breakeven_activated', False),
+                "trailing_activated": position.get('trailing_activated', False),
+                "exit_param_update_count": position.get('exit_param_update_count', 0),
+                "stop_adjustment_count": position.get('stop_adjustment_count', 0),
+                "rejected_partial_count": position.get('rejected_partial_count', 0),
+                "bars_until_trailing": position.get('bars_until_trailing', 999),
+                "current_pnl": current_pnl,
+                "entry_atr": entry_atr,
+                "avg_atr_during_trade": position.get('avg_atr_during_trade', current_atr),
+                "profit_drawdown_from_peak": position.get('profit_drawdown_from_peak', 0),
+                "high_volatility_bars": position.get('high_volatility_bars', 0),
+                "wins_in_last_5_trades": position.get('wins_in_last_5_trades', 0),
+                "losses_in_last_5_trades": position.get('losses_in_last_5_trades', 0),
+                "minutes_to_close": (close_time - current_time).total_seconds() / 60
             }
             
+            # Call cloud neural network API
+            import requests
+            api_url = f"{adaptive_manager.cloud_api_url}/api/ml/predict_exit_params"
+            response = requests.post(api_url, json=api_request, timeout=2.0)  # 2 second timeout
+            
+            if response.status_code == 200:
+                api_response = response.json()
+                if api_response.get('success'):
+                    exit_params_dict = api_response.get('exit_params', {})
+                    
+                    logger.info(f"🧠 ☁️  [CLOUD EXIT NN] Predicted params: breakeven={exit_params_dict['breakeven_threshold_ticks']:.1f}, "
+                               f"trailing={exit_params_dict['trailing_distance_ticks']:.1f}, "
+                               f"stop_mult={exit_params_dict['stop_mult']:.2f}x, "
+                               f"partials={exit_params_dict['partial_1_r']:.1f}R/{exit_params_dict['partial_2_r']:.1f}R/{exit_params_dict['partial_3_r']:.1f}R "
+                               f"({api_response.get('prediction_time_ms', 0):.1f}ms)")
+                    
+                    # Convert to final format
+                    return {
+                        'breakeven_threshold_ticks': int(exit_params_dict['breakeven_threshold_ticks']),
+                        'breakeven_offset_ticks': 1,  # Standard offset
+                        'trailing_distance_ticks': int(exit_params_dict['trailing_distance_ticks']),
+                        'trailing_min_profit_ticks': int(exit_params_dict['breakeven_threshold_ticks'] * 1.5),
+                        'market_regime': market_regime,
+                        'current_volatility_atr': current_atr,
+                        'is_aggressive_mode': entry_confidence < 0.6,
+                        'confidence_adjusted': entry_confidence < 0.6,
+                        'partial_1_r': exit_params_dict['partial_1_r'],
+                        'partial_1_pct': 0.50,
+                        'partial_2_r': exit_params_dict['partial_2_r'],
+                        'partial_2_pct': 0.30,
+                        'partial_3_r': exit_params_dict['partial_3_r'],
+                        'partial_3_pct': 0.20,
+                        'stop_mult': exit_params_dict['stop_mult'],
+                        'prediction_source': 'cloud_neural_network'
+                    }
+                else:
+                    logger.warning(f"⚠️  Cloud exit NN returned error: {api_response.get('error', 'unknown')}")
+            else:
+                logger.warning(f"⚠️  Cloud exit NN API returned status {response.status_code}")
+            
         except Exception as e:
-            logger.warning(f"⚠️  Neural network exit prediction failed: {e}, falling back to pattern matching")
+            logger.warning(f"⚠️  Cloud exit neural network prediction failed: {e}, falling back to pattern matching")
             # Fall through to cloud/pattern matching below
     
     # ========================================================================

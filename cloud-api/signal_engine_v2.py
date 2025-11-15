@@ -34,6 +34,9 @@ from sqlalchemy.orm import Session
 # Import neural network confidence scorer
 from neural_confidence import init_neural_scorer, get_neural_prediction
 
+# Import neural network exit predictor
+from neural_exit import NeuralExitPredictor
+
 # Initialize FastAPI
 app = FastAPI(
     title="QuoTrading Signal Engine",
@@ -58,6 +61,7 @@ class NumpyEncoder(json.JSONEncoder):
 # Global instances (initialized on startup)
 db_manager: Optional[DatabaseManager] = None
 redis_manager: Optional[RedisManager] = None
+neural_exit_predictor: Optional[NeuralExitPredictor] = None  # Exit parameter predictor
 
 # Global RL experience pools (shared across all users)
 signal_experiences = []  # Signal RL learning pool
@@ -184,7 +188,7 @@ async def root():
         "status": "running",
         "version": "2.0",
         "endpoints": {
-            "ml": "/api/ml/get_confidence, /api/ml/save_trade, /api/ml/stats",
+            "ml": "/api/ml/get_confidence, /api/ml/predict_exit_params, /api/ml/save_trade, /api/ml/stats",
             "license": "/api/license/validate, /api/license/activate",
             "time": "/api/time, /api/time/simple"
         }
@@ -2494,6 +2498,120 @@ async def get_adaptive_exit_params(request: dict):
         }
 
 
+@app.post("/api/ml/predict_exit_params")
+async def predict_exit_params(request: dict):
+    """
+    NEURAL NETWORK exit parameter prediction (CLOUD-BASED).
+    Uses trained exit neural network to predict optimal exit parameters in real-time.
+    
+    Called EVERY TICK during trades for dynamic exit management.
+    
+    Request:
+        {
+            "market_regime": "HIGH_VOL_TRENDING",
+            "rsi": 65.5,
+            "volume_ratio": 1.8,
+            "atr": 3.2,
+            "vix": 18.5,
+            "volatility_regime_change": false,
+            "entry_confidence": 0.85,
+            "side": "long",
+            "session": 0,
+            "bid_ask_spread_ticks": 1.0,
+            "hour": 10,
+            "day_of_week": 2,
+            "duration_bars": 12,
+            "time_in_breakeven_bars": 0,
+            "bars_until_breakeven": 5,
+            "mae": -25.0,
+            "mfe": 87.50,
+            "max_r_achieved": 1.5,
+            "min_r_achieved": -0.2,
+            "r_multiple": 1.2,
+            "breakeven_activated": false,
+            "trailing_activated": false,
+            "exit_param_update_count": 3,
+            "stop_adjustment_count": 1,
+            "rejected_partial_count": 0,
+            "bars_until_trailing": 8,
+            "current_pnl": 50.0,
+            "entry_atr": 2.8,
+            "avg_atr_during_trade": 3.0,
+            "profit_drawdown_from_peak": 12.50,
+            "high_volatility_bars": 2,
+            "wins_in_last_5_trades": 3,
+            "losses_in_last_5_trades": 2,
+            "minutes_to_close": 240
+        }
+    
+    Returns:
+        {
+            "success": true,
+            "exit_params": {
+                "breakeven_threshold_ticks": 7.2,
+                "trailing_distance_ticks": 9.5,
+                "stop_mult": 3.8,
+                "partial_1_r": 2.1,
+                "partial_2_r": 3.2,
+                "partial_3_r": 5.5
+            },
+            "model_version": "v2_45features",
+            "prediction_time_ms": 12.3
+        }
+    """
+    try:
+        import time
+        start_time = time.time()
+        
+        # Check if exit predictor is initialized
+        if neural_exit_predictor is None:
+            logger.error("❌ Exit neural network not initialized")
+            return {
+                "success": False,
+                "error": "Exit predictor not available",
+                "exit_params": {
+                    "breakeven_threshold_ticks": 8.0,
+                    "trailing_distance_ticks": 10.0,
+                    "stop_mult": 3.5,
+                    "partial_1_r": 2.0,
+                    "partial_2_r": 3.0,
+                    "partial_3_r": 5.0
+                }
+            }
+        
+        # Get neural network prediction
+        exit_params = neural_exit_predictor.predict(request)
+        
+        prediction_time_ms = (time.time() - start_time) * 1000
+        
+        logger.info(f"🧠 Exit NN: BE={exit_params['breakeven_threshold_ticks']:.1f}t, "
+                   f"Trail={exit_params['trailing_distance_ticks']:.1f}t, "
+                   f"Partials={exit_params['partial_1_r']:.2f}R/{exit_params['partial_2_r']:.2f}R/{exit_params['partial_3_r']:.2f}R "
+                   f"({prediction_time_ms:.1f}ms)")
+        
+        return {
+            "success": True,
+            "exit_params": exit_params,
+            "model_version": "v2_45features",
+            "prediction_time_ms": round(prediction_time_ms, 2)
+        }
+        
+    except Exception as e:
+        logger.error(f"❌ Exit prediction error: {e}")
+        return {
+            "success": False,
+            "error": str(e),
+            "exit_params": {
+                "breakeven_threshold_ticks": 8.0,
+                "trailing_distance_ticks": 10.0,
+                "stop_mult": 3.5,
+                "partial_1_r": 2.0,
+                "partial_2_r": 3.0,
+                "partial_3_r": 5.0
+            }
+        }
+
+
 @app.get("/api/ml/stats")
 async def get_ml_stats():
     """
@@ -3415,14 +3533,20 @@ if os.path.exists("admin-dashboard"):
 
 
 # ============================================================================
-# STARTUP: Initialize Neural Network
+# STARTUP: Initialize Neural Networks
 # ============================================================================
 @app.on_event("startup")
 async def startup_event():
-    """Initialize neural network model on API startup"""
+    """Initialize neural network models on API startup"""
+    global neural_exit_predictor
+    
     logger.info("🚀 Initializing neural network confidence scorer...")
     init_neural_scorer(model_path="neural_model.pth")
     logger.info("✅ Neural network ready for predictions")
+    
+    logger.info("🚀 Initializing neural network exit predictor...")
+    neural_exit_predictor = NeuralExitPredictor(model_path="exit_model.pth")
+    logger.info("✅ Exit neural network ready for predictions")
 
 
 if __name__ == "__main__":

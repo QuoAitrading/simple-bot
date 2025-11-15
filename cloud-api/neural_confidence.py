@@ -18,11 +18,11 @@ class SignalConfidenceNet(nn.Module):
     EXACT SAME architecture as dev-tools/neural_confidence_model.py
     """
     
-    def __init__(self, input_size=33):
+    def __init__(self, input_size=31):
         super(SignalConfidenceNet, self).__init__()
         
         self.network = nn.Sequential(
-            # Layer 1: 33 → 64
+            # Layer 1: 31 → 64
             nn.Linear(input_size, 64),
             nn.ReLU(),
             nn.Dropout(0.3),
@@ -62,7 +62,7 @@ class NeuralConfidenceScorer:
     def load_model(self):
         """Load trained neural network"""
         try:
-            self.model = SignalConfidenceNet(input_size=33)
+            self.model = SignalConfidenceNet(input_size=31)
             checkpoint = torch.load(self.model_path, map_location=self.device)
             # Handle both checkpoint format and direct state_dict
             if isinstance(checkpoint, dict) and 'model_state_dict' in checkpoint:

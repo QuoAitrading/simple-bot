@@ -151,16 +151,14 @@ class SignalConfidenceRL:
                             atr: float, volume_ratio: float,
                             hour: int, day_of_week: int,
                             recent_pnl: float, streak: int,
-                            # NEW: Additional features for complete neural network input (33 total)
+                            # NEW: Additional features for complete neural network input (31 total)
                             vix: float = 15.0,
                             session: str = 'NY',
                             trend_strength: float = 0.0,
                             sr_proximity_ticks: float = 0.0,
                             trade_type: int = 0,
                             time_since_last_trade_mins: float = 0.0,
-                            bid_ask_spread_ticks: float = 0.5,
                             drawdown_pct_at_entry: float = 0.0,
-                            entry_slippage_ticks: float = 0.0,
                             commission_cost: float = 0.0,
                             signal: str = 'LONG',
                             market_regime: str = 'NORMAL',
@@ -176,7 +174,8 @@ class SignalConfidenceRL:
                             cumulative_pnl_at_entry: float = 0.0,
                             timestamp: str = None) -> Dict:
         """
-        Capture COMPLETE market state when VWAP signal triggers (33 features for neural network).
+        Capture COMPLETE market state when VWAP signal triggers (29 features for neural network).
+        NOTE: bid_ask_spread and entry_slippage removed (live-only, not available in backtesting)
         
         Args:
             # Basic features (8)
@@ -189,16 +188,14 @@ class SignalConfidenceRL:
             recent_pnl: P&L from last 3 trades
             streak: Win/loss streak (positive=wins, negative=losses)
             
-            # Advanced features (25)
+            # Advanced features (23)
             vix: VIX level
             session: Trading session (Asia/London/NY)
             trend_strength: Trend indicator
             sr_proximity_ticks: Distance to support/resistance
             trade_type: 0=reversal, 1=continuation
             time_since_last_trade_mins: Minutes since last trade
-            bid_ask_spread_ticks: Current spread
             drawdown_pct_at_entry: Current drawdown percentage
-            entry_slippage_ticks: Slippage on entry
             commission_cost: Commission paid
             signal: LONG or SHORT
             market_regime: Market classification
@@ -238,16 +235,14 @@ class SignalConfidenceRL:
             'recent_pnl': round(recent_pnl, 2),
             'streak': streak,
             
-            # Additional 25 features for complete neural network input
+            # Additional 23 features for complete neural network input
             'vix': round(vix, 2),
             'session': session_encoded,
             'trend_strength': round(trend_strength, 6),
             'sr_proximity_ticks': round(sr_proximity_ticks, 4),
             'trade_type': trade_type,
             'time_since_last_trade_mins': round(time_since_last_trade_mins, 2),
-            'bid_ask_spread_ticks': round(bid_ask_spread_ticks, 2),
             'drawdown_pct_at_entry': round(drawdown_pct_at_entry, 4),
-            'entry_slippage_ticks': round(entry_slippage_ticks, 2),
             'commission_cost': round(commission_cost, 2),
             'signal': signal_encoded,
             'market_regime': market_regime,
