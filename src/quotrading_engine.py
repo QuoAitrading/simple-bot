@@ -386,21 +386,66 @@ async def save_trade_experience_async(
     max_retries = 2
     for attempt in range(max_retries):
         try:
-            # Prepare trade experience payload
+            # Prepare trade experience payload WITH ALL 33 SIGNAL FEATURES
             payload = {
                 "user_id": USER_ID,
                 "symbol": CONFIG["instrument"],
-                "side": side,
-                "signal": f"{side}_bounce",  # "long_bounce" or "short_bounce"
-                "rsi": rl_state.get("rsi", 50),
-                "vwap_distance": rl_state.get("vwap_distance", 0),
-                "volume_ratio": rl_state.get("volume_ratio", 1.0),
-                "streak": rl_state.get("streak", 0),
-                "time_of_day_score": rl_state.get("time_of_day_score", 0.5),
-                "volatility": rl_state.get("volatility", 1.0),
-                "pnl": pnl,
-                "duration_minutes": duration_minutes,
-                "exit_reason": execution_data.get("exit_reason", "unknown")
+                "experience_type": "signal",  # Signal experience (took trade)
+                
+                # RL State (all 33 features)
+                "rl_state": {
+                    # Original 8 features
+                    "rsi": rl_state.get("rsi", 50),
+                    "vwap_distance": rl_state.get("vwap_distance", 0),
+                    "atr": rl_state.get("atr", 0),
+                    "volume_ratio": rl_state.get("volume_ratio", 1.0),
+                    "hour": rl_state.get("hour", 12),
+                    "day_of_week": rl_state.get("day_of_week", 0),
+                    "recent_pnl": rl_state.get("recent_pnl", 0.0),
+                    "streak": rl_state.get("streak", 0),
+                    
+                    # Additional 25 features
+                    "vix": rl_state.get("vix", 15.0),
+                    "session": rl_state.get("session", "NY"),
+                    "session_encoded": rl_state.get("session_encoded", 2),
+                    "trend_strength": rl_state.get("trend_strength", 0.0),
+                    "sr_proximity_ticks": rl_state.get("sr_proximity_ticks", 0.0),
+                    "trade_type": rl_state.get("trade_type", 0),
+                    "time_since_last_trade_mins": rl_state.get("time_since_last_trade_mins", 0.0),
+                    "bid_ask_spread_ticks": rl_state.get("bid_ask_spread_ticks", 1.0),
+                    "drawdown_pct_at_entry": rl_state.get("drawdown_pct_at_entry", 0.0),
+                    "entry_slippage_ticks": rl_state.get("entry_slippage_ticks", 1.0),
+                    "commission_cost": rl_state.get("commission_cost", 2.50),
+                    "signal": rl_state.get("signal", side.upper()),
+                    "signal_encoded": rl_state.get("signal_encoded", 0),
+                    "market_regime": rl_state.get("market_regime", "NORMAL"),
+                    "recent_volatility_20bar": rl_state.get("recent_volatility_20bar", 0.0),
+                    "volatility_trend": rl_state.get("volatility_trend", 0.0),
+                    "vwap_std_dev": rl_state.get("vwap_std_dev", 0.0),
+                    "confidence": rl_state.get("confidence", 0.5),
+                    "price": rl_state.get("price", 0.0),
+                    "entry_price": rl_state.get("entry_price", 0.0),
+                    "vwap": rl_state.get("vwap", 0.0),
+                    "minute": rl_state.get("minute", 0),
+                    "consecutive_wins": rl_state.get("consecutive_wins", 0),
+                    "consecutive_losses": rl_state.get("consecutive_losses", 0),
+                    "cumulative_pnl_at_entry": rl_state.get("cumulative_pnl_at_entry", 0.0),
+                    "timestamp": rl_state.get("timestamp", ""),
+                    "time_to_close": rl_state.get("time_to_close", 0),
+                    "price_mod_50": rl_state.get("price_mod_50", 0.0),
+                    
+                    # Legacy
+                    "side": side
+                },
+                
+                # Outcome data
+                "outcome": {
+                    "took_trade": True,
+                    "pnl": pnl,
+                    "duration_minutes": duration_minutes,
+                    "exit_reason": execution_data.get("exit_reason", "unknown"),
+                    "win": pnl > 0
+                }
             }
             
             # Increase timeout on retries
@@ -452,20 +497,66 @@ async def save_rejected_signal_async(
     max_retries = 1
     for attempt in range(max_retries):
         try:
+            # Prepare ghost trade payload WITH ALL 33 FEATURES
             payload = {
                 "user_id": USER_ID,
                 "symbol": CONFIG["instrument"],
-                "side": side,
-                "signal": f"{side}_bounce",
-                "rsi": rl_state.get("rsi", 50),
-                "vwap_distance": rl_state.get("vwap_distance", 0),
-                "volume_ratio": rl_state.get("volume_ratio", 1.0),
-                "streak": rl_state.get("streak", 0),
-                "time_of_day_score": rl_state.get("time_of_day_score", 0.5),
-                "volatility": rl_state.get("volatility", 1.0),
-                "took_trade": False,
-                "rejection_reason": rejection_reason,
-                "price_move_ticks": price_move_ticks
+                "experience_type": "ghost_trade",  # Signal we rejected but tracked
+                
+                # RL State (all 33 features)
+                "rl_state": {
+                    # Original 8 features
+                    "rsi": rl_state.get("rsi", 50),
+                    "vwap_distance": rl_state.get("vwap_distance", 0),
+                    "atr": rl_state.get("atr", 0),
+                    "volume_ratio": rl_state.get("volume_ratio", 1.0),
+                    "hour": rl_state.get("hour", 12),
+                    "day_of_week": rl_state.get("day_of_week", 0),
+                    "recent_pnl": rl_state.get("recent_pnl", 0.0),
+                    "streak": rl_state.get("streak", 0),
+                    
+                    # Additional 25 features
+                    "vix": rl_state.get("vix", 15.0),
+                    "session": rl_state.get("session", "NY"),
+                    "session_encoded": rl_state.get("session_encoded", 2),
+                    "trend_strength": rl_state.get("trend_strength", 0.0),
+                    "sr_proximity_ticks": rl_state.get("sr_proximity_ticks", 0.0),
+                    "trade_type": rl_state.get("trade_type", 0),
+                    "time_since_last_trade_mins": rl_state.get("time_since_last_trade_mins", 0.0),
+                    "bid_ask_spread_ticks": rl_state.get("bid_ask_spread_ticks", 1.0),
+                    "drawdown_pct_at_entry": rl_state.get("drawdown_pct_at_entry", 0.0),
+                    "entry_slippage_ticks": rl_state.get("entry_slippage_ticks", 1.0),
+                    "commission_cost": rl_state.get("commission_cost", 2.50),
+                    "signal": rl_state.get("signal", side.upper()),
+                    "signal_encoded": rl_state.get("signal_encoded", 0),
+                    "market_regime": rl_state.get("market_regime", "NORMAL"),
+                    "recent_volatility_20bar": rl_state.get("recent_volatility_20bar", 0.0),
+                    "volatility_trend": rl_state.get("volatility_trend", 0.0),
+                    "vwap_std_dev": rl_state.get("vwap_std_dev", 0.0),
+                    "confidence": rl_state.get("confidence", 0.5),
+                    "price": rl_state.get("price", 0.0),
+                    "entry_price": rl_state.get("entry_price", 0.0),
+                    "vwap": rl_state.get("vwap", 0.0),
+                    "minute": rl_state.get("minute", 0),
+                    "consecutive_wins": rl_state.get("consecutive_wins", 0),
+                    "consecutive_losses": rl_state.get("consecutive_losses", 0),
+                    "cumulative_pnl_at_entry": rl_state.get("cumulative_pnl_at_entry", 0.0),
+                    "timestamp": rl_state.get("timestamp", ""),
+                    "time_to_close": rl_state.get("time_to_close", 0),
+                    "price_mod_50": rl_state.get("price_mod_50", 0.0),
+                    
+                    # Legacy
+                    "side": side
+                },
+                
+                # Outcome (ghost trade we didn't take)
+                "outcome": {
+                    "took_trade": False,
+                    "rejection_reason": rejection_reason,
+                    "price_move_ticks": price_move_ticks,
+                    "pnl": 0.0,  # Didn't take it
+                    "win": False
+                }
             }
             
             timeout_seconds = 3.0
@@ -785,11 +876,10 @@ def check_azure_time_service() -> str:
     - Current UTC time (timezone-accurate)
     - Market hours status
     - Maintenance windows (Mon-Thu 21:00-22:00 UTC, Fri 21:00 - Sun 23:00 UTC)
-    - Economic events (FOMC/NFP/CPI blocking)
     - Trading permission (go/no-go flag)
     
     Returns:
-        Trading state: 'entry_window', 'flatten_mode', 'closed', or 'event_block'
+        Trading state: 'entry_window', 'flatten_mode', or 'closed'
     """
     global dashboard
     
@@ -833,50 +923,11 @@ def check_azure_time_service() -> str:
             if not trading_allowed:
                 if "maintenance" in halt_reason.lower():
                     state = "closed"  # Maintenance window
-                elif "event" in halt_reason.lower() or "fomc" in halt_reason.lower() or "nfp" in halt_reason.lower():
-                    # Check if FOMC blocking is enabled in config
-                    fomc_enabled = CONFIG.get("fomc_block_enabled", True)
-                    if fomc_enabled:
-                        state = "event_block"  # Economic event blocking
-                        # Log FOMC block (only once when it activates)
-                        if not bot_status.get("event_block_active", False):
-                            logger.warning("=" * 80)
-                            logger.warning(f"📅 ECONOMIC EVENT BLOCK ACTIVATED: {halt_reason}")
-                            logger.warning("  Trading halted 30 min before to 1 hour after event")
-                            logger.warning("  Will auto-resume when event window closes")
-                            logger.warning("=" * 80)
-                            bot_status["event_block_active"] = True
-                            
-                            # Update dashboard with FOMC block
-                            if dashboard:
-                                dashboard.update_bot_data({
-                                    "fomc_active": True,
-                                    "fomc_message": halt_reason
-                                })
-                                dashboard.display()
-                    else:
-                        logger.info(f"[TIME SERVICE] Economic event active but FOMC blocking disabled: {halt_reason}")
-                        state = "entry_window"  # User disabled event blocking
                 elif "weekend" in halt_reason.lower() or "closed" in halt_reason.lower():
                     state = "closed"  # Weekend or market closed
                 else:
                     state = "closed"  # Unknown halt reason - be safe
             else:
-                # Clear event block flag when trading resumes
-                if bot_status.get("event_block_active", False):
-                    logger.info("=" * 80)
-                    logger.info("✅ ECONOMIC EVENT ENDED - Trading resumed")
-                    logger.info("=" * 80)
-                    bot_status["event_block_active"] = False
-                    
-                    # Clear FOMC notification from dashboard
-                    if dashboard:
-                        dashboard.update_bot_data({
-                            "fomc_active": False,
-                            "fomc_message": ""
-                        })
-                        dashboard.display()
-                
                 # Trading allowed - check if we're approaching maintenance (flatten mode)
                 # Check if current UTC time is 20:45-21:00 (flatten mode)
                 try:
@@ -1599,9 +1650,13 @@ class ShadowTrade:
         if self.stop_price:
             if self.side == 'long':
                 if bar['low'] <= self.stop_price:
-                    # Stopped out
+                    # Stopped out - COMPLETE exit data
                     pnl = (self.stop_price - self.entry_price) * 50 * self.remaining_quantity
+                    initial_risk = abs(self.entry_price - self.stop_price)
+                    r_multiple = pnl / (initial_risk * 50) if initial_risk > 0 else 0
+                    
                     self.outcome = {
+                        # Basic outcome
                         'pnl': pnl,
                         'exit_price': self.stop_price,
                         'duration_min': self.bars_elapsed,
@@ -1609,18 +1664,46 @@ class ShadowTrade:
                         'took_trade': False,
                         'confidence': self.confidence,
                         'rejection_reason': self.rejection_reason,
+                        'side': self.side,
+                        'contracts': 1,
+                        'win': False,  # Stop = loss
+                        'is_ghost': True,
+                        
+                        # Performance Metrics
                         'mae': self.mae,
                         'mfe': self.mfe,
+                        'max_r_achieved': self.mfe / (initial_risk * 50) if initial_risk > 0 else 0,
+                        'min_r_achieved': -self.mae / (initial_risk * 50) if initial_risk > 0 else 0,
+                        'r_multiple': r_multiple,
+                        
+                        # Exit Strategy State
                         'breakeven_activated': self.breakeven_active,
                         'trailing_activated': self.trailing_active,
-                        'partials_taken': len(self.partial_exits_completed)
+                        'stop_hit': True,
+                        'partials_taken': len(self.partial_exits_completed),
+                        
+                        # Partial exits
+                        'partial_exit_1_completed': len(self.partial_exits_completed) >= 1,
+                        'partial_exit_2_completed': len(self.partial_exits_completed) >= 2,
+                        'partial_exit_3_completed': len(self.partial_exits_completed) >= 3,
+                        
+                        # Entry context
+                        'entry_confidence': self.confidence,
+                        'entry_price': self.entry_price,
+                        
+                        # Exit params
+                        'exit_params': self.current_exit_params
                     }
                     self.completed = True
                     return self.outcome
             else:  # short
                 if bar['high'] >= self.stop_price:
                     pnl = (self.entry_price - self.stop_price) * 50 * self.remaining_quantity
+                    initial_risk = abs(self.stop_price - self.entry_price)
+                    r_multiple = pnl / (initial_risk * 50) if initial_risk > 0 else 0
+                    
                     self.outcome = {
+                        # Basic outcome
                         'pnl': pnl,
                         'exit_price': self.stop_price,
                         'duration_min': self.bars_elapsed,
@@ -1628,11 +1711,35 @@ class ShadowTrade:
                         'took_trade': False,
                         'confidence': self.confidence,
                         'rejection_reason': self.rejection_reason,
+                        'side': self.side,
+                        'contracts': 1,
+                        'win': False,
+                        'is_ghost': True,
+                        
+                        # Performance Metrics
                         'mae': self.mae,
                         'mfe': self.mfe,
+                        'max_r_achieved': self.mfe / (initial_risk * 50) if initial_risk > 0 else 0,
+                        'min_r_achieved': -self.mae / (initial_risk * 50) if initial_risk > 0 else 0,
+                        'r_multiple': r_multiple,
+                        
+                        # Exit Strategy State
                         'breakeven_activated': self.breakeven_active,
                         'trailing_activated': self.trailing_active,
-                        'partials_taken': len(self.partial_exits_completed)
+                        'stop_hit': True,
+                        'partials_taken': len(self.partial_exits_completed),
+                        
+                        # Partial exits
+                        'partial_exit_1_completed': len(self.partial_exits_completed) >= 1,
+                        'partial_exit_2_completed': len(self.partial_exits_completed) >= 2,
+                        'partial_exit_3_completed': len(self.partial_exits_completed) >= 3,
+                        
+                        # Entry context
+                        'entry_confidence': self.confidence,
+                        'entry_price': self.entry_price,
+                        
+                        # Exit params
+                        'exit_params': self.current_exit_params
                     }
                     self.completed = True
                     return self.outcome
@@ -1663,29 +1770,57 @@ class ShadowTrade:
                 
                 elif len(self.partial_exits_completed) == 2 and current_r >= partial_3_r:
                     if bar['high'] >= self.entry_price + (initial_risk * partial_3_r):
-                        # Full exit at R-target
+                        # Full exit at R-target - COMPLETE exit data
                         total_pnl = sum(p['pnl'] for p in self.partial_exits_completed)
                         final_pnl = (current_price - self.entry_price) * 50 * self.remaining_quantity
+                        total_final_pnl = total_pnl + final_pnl
+                        r_multiple = total_final_pnl / (initial_risk * 50) if initial_risk > 0 else 0
+                        
                         self.outcome = {
-                            'pnl': total_pnl + final_pnl,
+                            # Basic outcome
+                            'pnl': total_final_pnl,
                             'exit_price': current_price,
                             'duration_min': self.bars_elapsed,
                             'exit_reason': 'ghost_target',
                             'took_trade': False,
                             'confidence': self.confidence,
                             'rejection_reason': self.rejection_reason,
+                            'side': self.side,
+                            'contracts': 1,
+                            'win': True,  # Hit target = win
+                            'is_ghost': True,
+                            
+                            # Performance Metrics
                             'mae': self.mae,
                             'mfe': self.mfe,
+                            'max_r_achieved': self.mfe / (initial_risk * 50) if initial_risk > 0 else 0,
+                            'min_r_achieved': -self.mae / (initial_risk * 50) if initial_risk > 0 else 0,
+                            'r_multiple': r_multiple,
+                            
+                            # Exit Strategy State
                             'breakeven_activated': self.breakeven_active,
                             'trailing_activated': self.trailing_active,
-                            'partials_taken': len(self.partial_exits_completed)
+                            'stop_hit': False,
+                            'partials_taken': len(self.partial_exits_completed),
+                            
+                            # Partial exits
+                            'partial_exit_1_completed': True,
+                            'partial_exit_2_completed': True,
+                            'partial_exit_3_completed': True,
+                            
+                            # Entry context
+                            'entry_confidence': self.confidence,
+                            'entry_price': self.entry_price,
+                            
+                            # Exit params
+                            'exit_params': self.current_exit_params
                         }
                         self.completed = True
                         return self.outcome
         
         # ========== STEP 6: Check for Timeout ==========
         if self.bars_elapsed >= self.max_bars:
-            # Exit at current close price
+            # Exit at current close price - with COMPLETE exit data
             total_partial_pnl = sum(p['pnl'] for p in self.partial_exits_completed)
             
             if self.side == 'long':
@@ -1693,7 +1828,13 @@ class ShadowTrade:
             else:
                 final_pnl = (self.entry_price - bar['close']) * 50 * self.remaining_quantity
             
+            # Calculate R-multiple
+            initial_risk = abs(self.entry_price - (self.stop_price or self.entry_price))
+            r_multiple = (total_partial_pnl + final_pnl) / (initial_risk * 50) if initial_risk > 0 else 0
+            
+            # Create COMPLETE exit outcome (all fields real trades track)
             self.outcome = {
+                # Basic outcome
                 'pnl': total_partial_pnl + final_pnl,
                 'exit_price': bar['close'],
                 'duration_min': self.bars_elapsed,
@@ -1701,11 +1842,35 @@ class ShadowTrade:
                 'took_trade': False,
                 'confidence': self.confidence,
                 'rejection_reason': self.rejection_reason,
+                'side': self.side,
+                'contracts': 1,
+                'win': (total_partial_pnl + final_pnl) > 0,
+                'is_ghost': True,
+                
+                # Performance Metrics (matches real trades)
                 'mae': self.mae,
                 'mfe': self.mfe,
+                'max_r_achieved': self.mfe / (initial_risk * 50) if initial_risk > 0 else 0,
+                'min_r_achieved': -self.mae / (initial_risk * 50) if initial_risk > 0 else 0,
+                'r_multiple': r_multiple,
+                
+                # Exit Strategy State
                 'breakeven_activated': self.breakeven_active,
                 'trailing_activated': self.trailing_active,
-                'partials_taken': len(self.partial_exits_completed)
+                'stop_hit': False,  # Timeout, not stop
+                'partials_taken': len(self.partial_exits_completed),
+                
+                # Partial exits
+                'partial_exit_1_completed': len(self.partial_exits_completed) >= 1,
+                'partial_exit_2_completed': len(self.partial_exits_completed) >= 2,
+                'partial_exit_3_completed': len(self.partial_exits_completed) >= 3,
+                
+                # Entry context
+                'entry_confidence': self.confidence,
+                'entry_price': self.entry_price,
+                
+                # Exit params used (if available)
+                'exit_params': self.current_exit_params
             }
             self.completed = True
             return self.outcome
@@ -1792,36 +1957,128 @@ def update_shadow_trades(symbol: str, bar: Dict) -> None:
 
 async def send_shadow_outcome_async(rl_state: Dict, outcome: Dict) -> None:
     """
-    Send completed shadow trade outcome to cloud (async).
+    Send completed ghost trade to cloud AS BOTH signal AND exit experience (64 features).
+    
+    Ghost trades = signals we rejected but fully simulated with complete exit tracking.
+    They need COMPLETE 64-feature exit data, same as real trades.
     
     Args:
-        rl_state: RL state snapshot at rejection
-        outcome: Shadow trade outcome with pnl, exit_reason, etc.
+        rl_state: RL state snapshot at rejection (33 signal features)
+        outcome: Complete ghost outcome with all exit tracking
     """
     if not CLOUD_ML_API_URL:
-        return  # Cloud not configured
+        return
     
     try:
-        payload = {
+        # Build market state for exit experience
+        market_state = {
+            'rsi': rl_state.get('rsi', 50.0),
+            'volume_ratio': rl_state.get('volume_ratio', 1.0),
+            'hour': rl_state.get('hour', 12),
+            'day_of_week': rl_state.get('day_of_week', 0),
+            'streak': rl_state.get('streak', 0),
+            'recent_pnl': rl_state.get('recent_pnl', 0.0),
+            'vix': rl_state.get('vix', 15.0),
+            'vwap_distance': rl_state.get('vwap_distance', 0.0),
+            'atr': rl_state.get('atr', 2.0)
+        }
+        
+        # Get exit params used (if available)
+        exit_params = outcome.get('exit_params', {
+            'breakeven_threshold_ticks': 0,
+            'trailing_distance_ticks': 0,
+            'partial_1_r': 999,
+            'partial_2_r': 999,
+            'partial_3_r': 999,
+            'current_atr': rl_state.get('atr', 2.0)
+        })
+        
+        # Market regime
+        regime = rl_state.get('market_regime', 'NORMAL')
+        
+        # Use capture_complete_exit_state for FULL 64-feature format
+        if adaptive_manager is not None:
+            try:
+                complete_exit_experience = adaptive_manager.capture_complete_exit_state(
+                    regime=regime,
+                    exit_params=exit_params,
+                    trade_outcome=outcome,  # Already has all fields
+                    market_state=market_state,
+                    partial_exits=[]
+                )
+                
+                # Send as exit experience with ghost marker
+                exit_payload = {
+                    "user_id": USER_ID,
+                    "symbol": CONFIG["instrument"],
+                    "experience_type": "ghost_exit",  # Ghost exit (not real trade)
+                    "experience": complete_exit_experience
+                }
+                
+                async with aiohttp.ClientSession() as session:
+                    async with session.post(
+                        f"{CLOUD_ML_API_URL}/api/ml/save_experience",
+                        json=exit_payload,
+                        timeout=aiohttp.ClientTimeout(total=3.0)
+                    ) as response:
+                        if response.status == 200:
+                            data = await response.json()
+                            win_str = "WIN" if outcome.get('win') else "LOSS"
+                            logger.debug(f"[CLOUD RL] Ghost exit saved (64 features): {outcome.get('exit_reason')} - {win_str} ${outcome.get('pnl', 0):.2f}")
+                        else:
+                            logger.debug(f"[CLOUD RL] Ghost save failed: HTTP {response.status}")
+                return
+            except Exception as e:
+                logger.debug(f"[CLOUD RL] Error using capture_complete_exit_state: {e}")
+        
+        # FALLBACK: Send basic ghost signal if adaptive_manager unavailable
+        signal_payload = {
             "user_id": USER_ID,
             "symbol": CONFIG["instrument"],
-            "rl_state": rl_state,
-            "outcome": outcome,
-            "experience_type": "ghost_trade"
+            "experience_type": "ghost_trade",
+            
+            # Complete RL State (33 features)
+            "rl_state": {
+                "rsi": rl_state.get("rsi", 50),
+                "vwap_distance": rl_state.get("vwap_distance", 0),
+                "atr": rl_state.get("atr", 0),
+                "volume_ratio": rl_state.get("volume_ratio", 1.0),
+                "hour": rl_state.get("hour", 12),
+                "day_of_week": rl_state.get("day_of_week", 0),
+                "recent_pnl": rl_state.get("recent_pnl", 0.0),
+                "streak": rl_state.get("streak", 0),
+                "vix": rl_state.get("vix", 15.0),
+                "session": rl_state.get("session", "NY"),
+                "signal": rl_state.get("signal", "LONG"),
+                "side": rl_state.get("side", "long")
+            },
+            
+            # Ghost Outcome
+            "outcome": {
+                "took_trade": False,
+                "pnl": outcome.get("pnl", 0.0),
+                "duration_minutes": outcome.get("duration_min", 0),
+                "exit_reason": outcome.get("exit_reason", "ghost_unknown"),
+                "rejection_reason": outcome.get("rejection_reason", "unknown"),
+                "win": outcome.get("win", False),
+                "mae": outcome.get("mae", 0.0),
+                "mfe": outcome.get("mfe", 0.0)
+            }
         }
         
         async with aiohttp.ClientSession() as session:
             async with session.post(
                 f"{CLOUD_ML_API_URL}/api/ml/save_experience",
-                json=payload,
+                json=signal_payload,
                 timeout=aiohttp.ClientTimeout(total=3.0)
             ) as response:
                 if response.status == 200:
-                    logger.debug(f"[CLOUD RL] Shadow outcome saved: {outcome['exit_reason']}")
+                    logger.debug(f"[CLOUD RL] Ghost saved (fallback): {outcome.get('exit_reason')}")
                 else:
-                    logger.debug(f"[CLOUD RL] Shadow save failed: HTTP {response.status}")
+                    logger.debug(f"[CLOUD RL] Ghost save failed: HTTP {response.status}")
+                    
     except Exception as e:
-        logger.debug(f"[CLOUD RL] Shadow save error: {e}")
+        logger.debug(f"[CLOUD RL] Ghost save error: {e}")
 
 
 def send_shadow_outcome_to_cloud(rl_state: Dict, outcome: Dict) -> None:
@@ -2885,7 +3142,7 @@ def calculate_vwap(symbol: str) -> None:
 def validate_signal_requirements(symbol: str, bar_time: datetime) -> Tuple[bool, Optional[str]]:
     """
     Validate that all requirements are met for signal generation.
-    24/5 trading - signals allowed anytime except maintenance/weekend/economic events.
+    24/5 trading - signals allowed anytime except maintenance/weekend.
     
     Args:
         symbol: Instrument symbol
@@ -2902,12 +3159,6 @@ def validate_signal_requirements(symbol: str, bar_time: datetime) -> Tuple[bool,
     if trading_state == "closed":
         logger.debug(f"Market closed, skipping signal check")
         return False, f"Market closed"
-    
-    if trading_state == "event_block":
-        # FOMC/NFP/CPI event blocking (if enabled in config)
-        halt_reason = bot_status.get("halt_reason", "Economic event")
-        logger.debug(f"Event block active: {halt_reason}")
-        return False, f"Economic event block: {halt_reason}"
     
     if trading_state == "flatten_mode":
         logger.debug(f"Flatten mode active (20:45-21:00 UTC), no new entries")
@@ -3290,23 +3541,166 @@ def capture_rl_state(symbol: str, side: str, current_price: float) -> Dict[str, 
     else:
         recent_volatility_20bar = 0.0
     
+    # ========================================================================
+    # ADDITIONAL FEATURES FOR NEURAL NETWORK (33 total features required)
+    # ========================================================================
+    
+    # Session classification based on hour
+    if 0 <= hour < 8:
+        session = 'Asia'
+    elif 8 <= hour < 13:
+        session = 'London'
+    else:
+        session = 'NY'
+    
+    # Trend strength (using EMA vs price)
+    trend_strength = 0.0
+    if len(bars_1min) >= 21:
+        # Calculate 21-period EMA
+        prices = [b["close"] for b in list(bars_1min)[-21:]]
+        ema = prices[0]
+        multiplier = 2 / (21 + 1)
+        for price_val in prices[1:]:
+            ema = (price_val - ema) * multiplier + ema
+        # Trend strength as % distance from EMA
+        trend_strength = ((current_price - ema) / ema * 100) if ema > 0 else 0.0
+    
+    # Support/Resistance proximity (distance to nearest VWAP band in ticks)
+    tick_size = 0.25  # ES futures tick size
+    sr_proximity_ticks = 0.0
+    if vwap_bands:
+        # Find nearest band
+        bands = [
+            vwap_bands.get("lower_3", vwap),
+            vwap_bands.get("lower_2", vwap),
+            vwap_bands.get("lower_1", vwap),
+            vwap,
+            vwap_bands.get("upper_1", vwap),
+            vwap_bands.get("upper_2", vwap),
+            vwap_bands.get("upper_3", vwap)
+        ]
+        distances = [abs(current_price - band) for band in bands]
+        sr_proximity_ticks = min(distances) / tick_size
+    
+    # Trade type classification (0=reversal at band, 1=continuation)
+    # If we're at outer bands (2+ std), it's a reversal setup
+    trade_type = 0 if vwap_distance >= 2.0 else 1
+    
+    # Time since last trade (minutes)
+    time_since_last_trade_mins = 0.0
+    if "trade_history" in state[symbol] and len(state[symbol]["trade_history"]) > 0:
+        last_trade = state[symbol]["trade_history"][-1]
+        if "exit_time" in last_trade:
+            from datetime import datetime
+            import pytz
+            last_exit_time = last_trade["exit_time"]
+            if isinstance(last_exit_time, str):
+                last_exit_time = datetime.fromisoformat(last_exit_time.replace('Z', '+00:00'))
+            current_utc = datetime.now(pytz.UTC)
+            time_diff = (current_utc - last_exit_time).total_seconds() / 60.0
+            time_since_last_trade_mins = max(0, time_diff)
+    
+    # Bid-ask spread estimate (in ticks) - use ATR as proxy if real spread unavailable
+    bid_ask_spread_ticks = (atr / tick_size * 0.5) if atr > 0 else 1.0
+    
+    # Entry slippage estimate (ticks) - assume 0.5 ticks for limit orders, 1-2 for market
+    entry_slippage_ticks = 1.0
+    
+    # Commission cost per contract (ES futures)
+    commission_cost = 2.50
+    
+    # Market regime classification
+    # High volatility = recent_volatility_20bar > ATR * 1.5
+    # Low volatility = recent_volatility_20bar < ATR * 0.7
+    market_regime = 'NORMAL'
+    if recent_volatility_20bar > atr * 1.5:
+        market_regime = 'HIGH_VOL'
+    elif recent_volatility_20bar < atr * 0.7:
+        market_regime = 'LOW_VOL'
+    
+    # VWAP standard deviation (already calculated above)
+    vwap_std_dev = vwap_std
+    
+    # Confidence placeholder (will be filled by neural network)
+    confidence = 0.5
+    
+    # Entry price = current price for now
+    entry_price = current_price
+    
+    # Consecutive wins/losses
+    consecutive_wins = max(0, streak)
+    consecutive_losses = max(0, -streak)
+    
+    # Cumulative P&L at entry
+    cumulative_pnl_at_entry = state[symbol].get("daily_pnl", 0.0)
+    
+    # Timestamp
+    timestamp = current_time.isoformat()
+    
+    # Minute of hour
+    minute = current_time.minute
+    
+    # Time to market close (in minutes) - ES closes 21:00 UTC daily
+    close_hour = 21  # 21:00 UTC
+    if current_time.hour < close_hour:
+        time_to_close = (close_hour - current_time.hour) * 60 - current_time.minute
+    else:
+        # After close or during maintenance, use 0
+        time_to_close = 0
+    
+    # Price mod 50 (distance to nearest round number) - psychological levels
+    # ES trades in 0.25 increments, round numbers at 00, 50
+    price_mod_50 = current_price % 50
+    if price_mod_50 > 25:
+        price_mod_50 = 50 - price_mod_50  # Distance to next 50
+    
+    # Signal direction encoding (LONG=0, SHORT=1)
+    signal_encoded = 0 if side.lower() == 'long' else 1
+    
     rl_state = {
-        "rsi": rsi if rsi is not None else 50,
-        "vwap_distance": vwap_distance,
-        "atr": atr,
-        "volume_ratio": volume_ratio,
+        # Original 8 features
+        "rsi": round(rsi if rsi is not None else 50, 2),
+        "vwap_distance": round(vwap_distance, 4),
+        "atr": round(atr, 4),
+        "volume_ratio": round(volume_ratio, 4),
         "hour": hour,
         "day_of_week": day_of_week,
-        "recent_pnl": recent_pnl,
+        "recent_pnl": round(recent_pnl, 2),
         "streak": streak,
+        
+        # Additional features (25 more = 33 total)
+        "vix": 15.0,  # TODO: Fetch real VIX from data feed
+        "session": session,
+        "session_encoded": 0 if session == 'Asia' else (1 if session == 'London' else 2),
+        "trend_strength": round(trend_strength, 4),
+        "sr_proximity_ticks": round(sr_proximity_ticks, 2),
+        "trade_type": trade_type,
+        "time_since_last_trade_mins": round(time_since_last_trade_mins, 2),
+        "bid_ask_spread_ticks": round(bid_ask_spread_ticks, 2),
+        "drawdown_pct_at_entry": round(drawdown_pct_at_entry, 4),
+        "entry_slippage_ticks": round(entry_slippage_ticks, 2),
+        "commission_cost": round(commission_cost, 2),
+        "signal": side.upper(),
+        "signal_encoded": signal_encoded,
+        "market_regime": market_regime,
+        "recent_volatility_20bar": round(recent_volatility_20bar, 4),
+        "volatility_trend": round(volatility_trend, 6),
+        "vwap_std_dev": round(vwap_std_dev, 4),
+        "confidence": round(confidence, 4),
+        "price": round(current_price, 2),
+        "entry_price": round(entry_price, 2),
+        "vwap": round(vwap, 2),
+        "minute": minute,
+        "consecutive_wins": consecutive_wins,
+        "consecutive_losses": consecutive_losses,
+        "cumulative_pnl_at_entry": round(cumulative_pnl_at_entry, 2),
+        "timestamp": timestamp,
+        "time_to_close": time_to_close,  # Minutes until market close
+        "price_mod_50": round(price_mod_50, 2),  # Distance to round 50-level
+        
+        # Legacy fields for backward compatibility
         "side": side,
-        "price": current_price,
-        "vwap": vwap,  # ADDED: need for cloud RL API
-        "vix": 15.0,   # ADDED: default VIX (could fetch real VIX later)
-        # Reward shaping features (for RL training)
-        "volatility_trend": volatility_trend,
-        "drawdown_pct_at_entry": drawdown_pct_at_entry,
-        "recent_volatility_20bar": recent_volatility_20bar
+        "volatility": round(recent_volatility_20bar, 4)  # Alias for backward compatibility
     }
     
     return rl_state
@@ -6163,48 +6557,6 @@ def check_exit_conditions(symbol: str) -> None:
         logger.info("Position flattened - bot will continue running and auto-resume when market opens")
         return
     
-    # ECONOMIC EVENT: Force close ONLY if user enabled it
-    if trading_state == "event_block" and position["active"]:
-        fomc_force_close = CONFIG.get("fomc_force_close", False)
-        
-        if fomc_force_close:
-            # User wants to force close during economic events
-            event_reason = bot_status.get('halt_reason', 'Economic event active')
-            
-            logger.critical(SEPARATOR_LINE)
-            logger.critical(f"ECONOMIC EVENT - AUTO-FLATTENING POSITION")
-            logger.critical(f"Event: {event_reason}")
-            logger.critical(f"Time: {bar_time.strftime('%H:%M:%S %Z')}")
-            logger.critical(f"Position: {side.upper()} {position['quantity']} @ ${entry_price:.2f}")
-            logger.critical("(User enabled 'Force Close During FOMC')")
-            logger.critical(SEPARATOR_LINE)
-            
-            # Force close immediately
-            flatten_price = get_flatten_price(symbol, side, current_bar["close"])
-            
-            log_time_based_action(
-                "event_flatten",
-                f"{event_reason} - auto-flattening position per user preference",
-                {
-                    "side": side,
-                    "quantity": position["quantity"],
-                    "entry_price": f"${entry_price:.2f}",
-                    "exit_price": f"${flatten_price:.2f}",
-                    "time": bar_time.strftime('%H:%M:%S %Z'),
-                    "reason": event_reason
-                }
-            )
-            
-            # Execute close order
-            handle_exit_orders(symbol, position, flatten_price, "event_flatten")
-            logger.info("Position flattened for economic event - will auto-resume after event window")
-            return
-        else:
-            # User wants to keep position during events, just block new entries
-            logger.info(f"📅 Economic event active: {bot_status.get('halt_reason', 'Event')}")
-            logger.info("  Keeping existing position (Force Close disabled)")
-            logger.info("  New entries blocked until event window closes")
-    
     # AUTO-RESUME: Reset flatten mode when market reopens
     if trading_state == "entry_window" and bot_status["flatten_mode"]:
         bot_status["flatten_mode"] = False
@@ -8336,7 +8688,6 @@ def get_trading_state(dt: datetime = None) -> str:
     
     **AZURE-FIRST DESIGN**: Checks Azure time service first for:
     - Maintenance windows (Mon-Thu 21:00-22:00 UTC, Fri 21:00 - Sun 23:00 UTC)
-    - Economic events (FOMC/NFP/CPI blocking)
     - Single source of truth for all time-based decisions
     
     Falls back to local time logic if Azure unreachable.
@@ -8350,7 +8701,6 @@ def get_trading_state(dt: datetime = None) -> str:
         - 'entry_window': Market open, ready to trade
         - 'flatten_mode': 20:45-21:00 UTC, close positions before maintenance
         - 'closed': Market closed (flatten all positions immediately)
-        - 'event_block': Economic event active (FOMC/NFP/CPI)
     """
     # AZURE-FIRST: Try cloud time service (unless in backtest mode)
     if backtest_current_time is None:  # Live mode only

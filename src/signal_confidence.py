@@ -150,11 +150,36 @@ class SignalConfidenceRL:
     def capture_signal_state(self, rsi: float, vwap_distance: float, 
                             atr: float, volume_ratio: float,
                             hour: int, day_of_week: int,
-                            recent_pnl: float, streak: int) -> Dict:
+                            recent_pnl: float, streak: int,
+                            # NEW: Additional features for complete neural network input (33 total)
+                            vix: float = 15.0,
+                            session: str = 'NY',
+                            trend_strength: float = 0.0,
+                            sr_proximity_ticks: float = 0.0,
+                            trade_type: int = 0,
+                            time_since_last_trade_mins: float = 0.0,
+                            bid_ask_spread_ticks: float = 0.5,
+                            drawdown_pct_at_entry: float = 0.0,
+                            entry_slippage_ticks: float = 0.0,
+                            commission_cost: float = 0.0,
+                            signal: str = 'LONG',
+                            market_regime: str = 'NORMAL',
+                            recent_volatility_20bar: float = 2.0,
+                            volatility_trend: float = 0.0,
+                            vwap_std_dev: float = 2.0,
+                            confidence: float = 0.5,
+                            price: float = 6500.0,
+                            entry_price: float = 6500.0,
+                            vwap: float = 6500.0,
+                            consecutive_wins: int = 0,
+                            consecutive_losses: int = 0,
+                            cumulative_pnl_at_entry: float = 0.0,
+                            timestamp: str = None) -> Dict:
         """
-        Capture market state when VWAP signal triggers.
+        Capture COMPLETE market state when VWAP signal triggers (33 features for neural network).
         
         Args:
+            # Basic features (8)
             rsi: Current RSI value
             vwap_distance: Distance from VWAP in std devs
             atr: Current ATR (volatility)
@@ -163,16 +188,85 @@ class SignalConfidenceRL:
             day_of_week: 0=Monday, 4=Friday
             recent_pnl: P&L from last 3 trades
             streak: Win/loss streak (positive=wins, negative=losses)
+            
+            # Advanced features (25)
+            vix: VIX level
+            session: Trading session (Asia/London/NY)
+            trend_strength: Trend indicator
+            sr_proximity_ticks: Distance to support/resistance
+            trade_type: 0=reversal, 1=continuation
+            time_since_last_trade_mins: Minutes since last trade
+            bid_ask_spread_ticks: Current spread
+            drawdown_pct_at_entry: Current drawdown percentage
+            entry_slippage_ticks: Slippage on entry
+            commission_cost: Commission paid
+            signal: LONG or SHORT
+            market_regime: Market classification
+            recent_volatility_20bar: Rolling 20-bar volatility
+            volatility_trend: Volatility direction
+            vwap_std_dev: VWAP standard deviation
+            confidence: Model's own prediction (meta-learning)
+            price: Current price
+            entry_price: Entry price
+            vwap: VWAP value
+            consecutive_wins: Consecutive wins count
+            consecutive_losses: Consecutive losses count
+            cumulative_pnl_at_entry: Total P&L at entry
+            timestamp: ISO timestamp
         """
+        from datetime import datetime
+        import pytz
+        
+        if timestamp is None:
+            timestamp = datetime.now(pytz.UTC).isoformat()
+        
+        # Session encoding: Asia=0, London=1, NY=2
+        session_map = {'Asia': 0, 'London': 1, 'NY': 2}
+        session_encoded = session_map.get(session, 2)
+        
+        # Signal encoding: LONG=0, SHORT=1
+        signal_encoded = 0 if signal == 'LONG' else 1
+        
         return {
-            'rsi': round(rsi, 1),
-            'vwap_distance': round(vwap_distance, 2),
-            'atr': round(atr, 2),
-            'volume_ratio': round(volume_ratio, 2),
+            # Original 8 features
+            'rsi': round(rsi, 2),
+            'vwap_distance': round(vwap_distance, 4),
+            'atr': round(atr, 4),
+            'volume_ratio': round(volume_ratio, 4),
             'hour': hour,
             'day_of_week': day_of_week,
             'recent_pnl': round(recent_pnl, 2),
-            'streak': streak
+            'streak': streak,
+            
+            # Additional 25 features for complete neural network input
+            'vix': round(vix, 2),
+            'session': session_encoded,
+            'trend_strength': round(trend_strength, 6),
+            'sr_proximity_ticks': round(sr_proximity_ticks, 4),
+            'trade_type': trade_type,
+            'time_since_last_trade_mins': round(time_since_last_trade_mins, 2),
+            'bid_ask_spread_ticks': round(bid_ask_spread_ticks, 2),
+            'drawdown_pct_at_entry': round(drawdown_pct_at_entry, 4),
+            'entry_slippage_ticks': round(entry_slippage_ticks, 2),
+            'commission_cost': round(commission_cost, 2),
+            'signal': signal_encoded,
+            'market_regime': market_regime,
+            'recent_volatility_20bar': round(recent_volatility_20bar, 4),
+            'volatility_trend': round(volatility_trend, 6),
+            'vwap_std_dev': round(vwap_std_dev, 4),
+            'confidence': round(confidence, 4),
+            'price': round(price, 2),
+            'entry_price': round(entry_price, 2),
+            'vwap': round(vwap, 2),
+            'consecutive_wins': consecutive_wins,
+            'consecutive_losses': consecutive_losses,
+            'cumulative_pnl_at_entry': round(cumulative_pnl_at_entry, 2),
+            'timestamp': timestamp,
+            
+            # Meta info
+            'symbol': 'ES',  # Add symbol for tracking
+            'took_trade': False,  # Will be updated when trade decision is made
+            'outcome': None  # Will be filled when trade completes
         }
     
     def check_spread_acceptable(self, current_spread_ticks: float) -> Tuple[bool, str]:

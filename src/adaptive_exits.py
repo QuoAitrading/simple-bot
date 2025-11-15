@@ -181,49 +181,232 @@ class AdaptiveExitManager:
         """Record how long a trade lasted for adaptive timing."""
         self.recent_trade_durations.append(duration_minutes)
     
+    def capture_complete_exit_state(self, 
+                                   # Market Context (8)
+                                   market_regime: str = 'NORMAL',
+                                   rsi: float = 50.0,
+                                   volume_ratio: float = 1.0,
+                                   atr: float = 2.0,
+                                   vix: float = 15.0,
+                                   volatility_regime_change: bool = False,
+                                   volume_at_exit: float = 1.0,
+                                   market_state: int = 0,
+                                   # Trade Context (7)
+                                   entry_confidence: float = 0.5,
+                                   side: str = 'LONG',
+                                   session: str = 'NY',
+                                   bid_ask_spread_ticks: float = 0.5,
+                                   commission_cost: float = 0.0,
+                                   slippage_ticks: float = 0.0,
+                                   regime: str = 'NORMAL',
+                                   # Time Features (5)
+                                   hour: int = 12,
+                                   day_of_week: int = 0,
+                                   duration: float = 10.0,
+                                   time_in_breakeven_bars: int = 0,
+                                   bars_until_breakeven: int = 0,
+                                   # Performance Metrics (5)
+                                   mae: float = 0.0,
+                                   mfe: float = 0.0,
+                                   max_r_achieved: float = 0.0,
+                                   min_r_achieved: float = 0.0,
+                                   r_multiple: float = 0.0,
+                                   # Exit Strategy State (7)
+                                   breakeven_activated: bool = False,
+                                   trailing_activated: bool = False,
+                                   stop_hit: bool = False,
+                                   exit_param_update_count: int = 0,
+                                   stop_adjustment_count: int = 0,
+                                   rejected_partial_count: int = 0,
+                                   bars_until_trailing: int = 0,
+                                   # Results (5)
+                                   pnl: float = 0.0,
+                                   outcome: str = 'LOSS',
+                                   win: bool = False,
+                                   exit_reason: str = 'stop_loss',
+                                   max_profit_reached: float = 0.0,
+                                   # Advanced (8)
+                                   atr_change_percent: float = 0.0,
+                                   avg_atr_during_trade: float = 2.0,
+                                   peak_r_multiple: float = 0.0,
+                                   profit_drawdown_from_peak: float = 0.0,
+                                   high_volatility_bars: int = 0,
+                                   wins_in_last_5_trades: int = 0,
+                                   losses_in_last_5_trades: int = 0,
+                                   minutes_until_close: float = 240.0,
+                                   # Temporal (5)
+                                   entry_hour: int = 12,
+                                   entry_minute: int = 0,
+                                   exit_hour: int = 12,
+                                   exit_minute: int = 0,
+                                   bars_held: int = 0,
+                                   # Position Tracking (3)
+                                   entry_bar: int = 0,
+                                   exit_bar: int = 0,
+                                   contracts: int = 1,
+                                   # Trade Context (3)
+                                   trade_number_in_session: int = 0,
+                                   cumulative_pnl_before_trade: float = 0.0,
+                                   entry_price: float = 6500.0,
+                                   # Performance (4)
+                                   peak_unrealized_pnl: float = 0.0,
+                                   opportunity_cost: float = 0.0,
+                                   max_drawdown_percent: float = 0.0,
+                                   drawdown_bars: int = 0,
+                                   # Strategy Milestones (4)
+                                   breakeven_activation_bar: int = 0,
+                                   trailing_activation_bar: int = 0,
+                                   duration_bars: int = 0,
+                                   held_through_sessions: bool = False,
+                                   # Additional metadata
+                                   symbol: str = 'ES',
+                                   timestamp: str = None) -> Dict:
+        """
+        Capture COMPLETE exit state with ALL 64 features for neural network.
+        
+        Returns:
+            Dictionary with all 64 features properly formatted
+        """
+        from datetime import datetime
+        import pytz
+        
+        if timestamp is None:
+            timestamp = datetime.now(pytz.UTC).isoformat()
+        
+        # Mappings
+        regime_map = {
+            'NORMAL': 0, 'NORMAL_TRENDING': 1, 'HIGH_VOL_TRENDING': 2,
+            'HIGH_VOL_CHOPPY': 3, 'LOW_VOL_TRENDING': 4, 'LOW_VOL_RANGING': 5,
+            'UNKNOWN': 0
+        }
+        session_map = {'Asia': 0, 'London': 1, 'NY': 2}
+        outcome_map = {'WIN': 1, 'LOSS': 0}
+        exit_reason_map = {
+            'take_profit': 0, 'stop_loss': 1, 'trailing_stop': 2,
+            'time_limit': 3, 'partial_exit': 4
+        }
+        
+        return {
+            # Market Context (8)
+            'market_regime': market_regime,
+            'regime_encoded': regime_map.get(market_regime, 0),
+            'rsi': round(rsi, 2),
+            'volume_ratio': round(volume_ratio, 4),
+            'atr': round(atr, 4),
+            'vix': round(vix, 2),
+            'volatility_regime_change': int(volatility_regime_change),
+            'volume_at_exit': round(volume_at_exit, 4),
+            'market_state': market_state,
+            
+            # Trade Context (7)
+            'entry_confidence': round(entry_confidence, 4),
+            'side': side,
+            'side_encoded': 1 if side == 'SHORT' else 0,
+            'session': session,
+            'session_encoded': session_map.get(session, 2),
+            'bid_ask_spread_ticks': round(bid_ask_spread_ticks, 2),
+            'commission_cost': round(commission_cost, 2),
+            'slippage_ticks': round(slippage_ticks, 2),
+            'regime': regime,
+            
+            # Time Features (5)
+            'hour': hour,
+            'day_of_week': day_of_week,
+            'duration': round(duration, 2),
+            'time_in_breakeven_bars': time_in_breakeven_bars,
+            'bars_until_breakeven': bars_until_breakeven,
+            
+            # Performance Metrics (5)
+            'mae': round(mae, 4),
+            'mfe': round(mfe, 4),
+            'max_r_achieved': round(max_r_achieved, 4),
+            'min_r_achieved': round(min_r_achieved, 4),
+            'r_multiple': round(r_multiple, 4),
+            
+            # Exit Strategy State (7)
+            'breakeven_activated': int(breakeven_activated),
+            'trailing_activated': int(trailing_activated),
+            'stop_hit': int(stop_hit),
+            'exit_param_update_count': exit_param_update_count,
+            'stop_adjustment_count': stop_adjustment_count,
+            'rejected_partial_count': rejected_partial_count,
+            'bars_until_trailing': bars_until_trailing,
+            
+            # Results (5)
+            'pnl': round(pnl, 2),
+            'outcome': outcome,
+            'outcome_encoded': outcome_map.get(outcome, 0),
+            'win': int(win),
+            'exit_reason': exit_reason,
+            'exit_reason_encoded': exit_reason_map.get(exit_reason, 1),
+            'max_profit_reached': round(max_profit_reached, 2),
+            
+            # Advanced (8)
+            'atr_change_percent': round(atr_change_percent, 4),
+            'avg_atr_during_trade': round(avg_atr_during_trade, 4),
+            'peak_r_multiple': round(peak_r_multiple, 4),
+            'profit_drawdown_from_peak': round(profit_drawdown_from_peak, 4),
+            'high_volatility_bars': high_volatility_bars,
+            'wins_in_last_5_trades': wins_in_last_5_trades,
+            'losses_in_last_5_trades': losses_in_last_5_trades,
+            'minutes_until_close': round(minutes_until_close, 2),
+            
+            # Temporal (5)
+            'entry_hour': entry_hour,
+            'entry_minute': entry_minute,
+            'exit_hour': exit_hour,
+            'exit_minute': exit_minute,
+            'bars_held': bars_held,
+            
+            # Position Tracking (3)
+            'entry_bar': entry_bar,
+            'exit_bar': exit_bar,
+            'contracts': contracts,
+            
+            # Trade Context (3)
+            'trade_number_in_session': trade_number_in_session,
+            'cumulative_pnl_before_trade': round(cumulative_pnl_before_trade, 2),
+            'entry_price': round(entry_price, 2),
+            
+            # Performance (4)
+            'peak_unrealized_pnl': round(peak_unrealized_pnl, 2),
+            'opportunity_cost': round(opportunity_cost, 2),
+            'max_drawdown_percent': round(max_drawdown_percent, 4),
+            'drawdown_bars': drawdown_bars,
+            
+            # Strategy Milestones (4)
+            'breakeven_activation_bar': breakeven_activation_bar,
+            'trailing_activation_bar': trailing_activation_bar,
+            'duration_bars': duration_bars,
+            'held_through_sessions': int(held_through_sessions),
+            
+            # Metadata
+            'symbol': symbol,
+            'timestamp': timestamp,
+            'experience_type': 'exit'
+        }
+    
     def record_exit_outcome(self, regime: str, exit_params: Dict, trade_outcome: Dict, 
                            market_state: Dict = None, partial_exits: list = None, backtest_mode: bool = False):
         """
-        Record exit outcome for RL learning (including scaling decisions).
+        Record exit outcome for RL learning WITH COMPLETE 64-FEATURE CAPTURE.
         
         Args:
             regime: Market regime when exit occurred
             exit_params: Exit parameters used (breakeven_threshold, trailing_distance, etc.)
-            trade_outcome: Trade result (pnl, duration, exit_reason, win/loss)
+            trade_outcome: Trade result (pnl, duration, exit_reason, win/loss, PLUS all 45 tracked features)
             market_state: Optional dict with RSI, volume_ratio, hour, day_of_week, streak, recent_pnl, vix, vwap_distance, atr
             partial_exits: List of partial exit decisions (level, r_multiple, contracts, percentage)
             backtest_mode: If True, collect for bulk save at end (don't POST immediately)
         """
-        # Build market context (use provided state or defaults)
-        if market_state is None:
-            market_state = {}
-        
-        now_utc = datetime.now(pytz.UTC)
-        experience = {
-            'timestamp': now_utc.isoformat(),
-            'regime': regime,
-            'exit_params': exit_params,
-            'outcome': trade_outcome,
-            'situation': {
-                'time_of_day': now_utc.strftime('%H:%M'),
-                'volatility_atr': exit_params.get('current_atr', 0),
-                'trend_strength': trade_outcome.get('trend_strength', 0)
-            },
-            # NEW: Add 9-feature market state for context-aware exit learning
-            'market_state': {
-                'rsi': market_state.get('rsi', 50.0),
-                'volume_ratio': market_state.get('volume_ratio', 1.0),
-                'hour': market_state.get('hour', 12),
-                'day_of_week': market_state.get('day_of_week', 0),
-                'streak': market_state.get('streak', 0),
-                'recent_pnl': market_state.get('recent_pnl', 0.0),
-                'vix': market_state.get('vix', 15.0),
-                'vwap_distance': market_state.get('vwap_distance', 0.0),
-                'atr': market_state.get('atr', exit_params.get('current_atr', 0))
-            },
-            # NEW: Store partial exit decisions for scaling strategy learning
-            'partial_exits': partial_exits if partial_exits else []
-        }
+        # Use COMPLETE 64-feature capture method
+        experience = self.capture_complete_exit_state(
+            regime=regime,
+            exit_params=exit_params,
+            trade_outcome=trade_outcome,
+            market_state=market_state,
+            partial_exits=partial_exits
+        )
         
         self.exit_experiences.append(experience)
         
@@ -231,28 +414,27 @@ class AdaptiveExitManager:
         if backtest_mode:
             return  # Don't POST immediately, backtest will bulk save at end
         
-        # LIVE MODE: Save to cloud API immediately
+        # LIVE MODE: Save to cloud API immediately WITH ALL 64 FEATURES
         if self.use_cloud:
             try:
-                # Convert boolean values to int for JSON serialization
-                cloud_experience = {
-                    **experience,
-                    'outcome': {
-                        **experience['outcome'],
-                        'win': int(experience['outcome']['win'])  # bool → int
-                    }
+                # Prepare cloud payload
+                cloud_payload = {
+                    "user_id": "default_user",  # TODO: Get real user_id
+                    "symbol": "ES",
+                    "experience_type": "exit",
+                    "experience": experience  # Complete 64-feature dict
                 }
                 
                 response = requests.post(
-                    f"{self.cloud_api_url}/api/ml/save_exit_experience",
-                    json=cloud_experience,
+                    f"{self.cloud_api_url}/api/ml/save_experience",  # Updated endpoint
+                    json=cloud_payload,
                     timeout=5
                 )
                 
                 if response.status_code == 200:
                     data = response.json()
                     if data.get('saved'):
-                        logger.info(f"✅ [CLOUD] Saved exit experience to cloud pool ({data.get('total_exit_experiences', 0):,} total)")
+                        logger.info(f"✅ [CLOUD] Saved exit experience with 64 features to cloud pool ({data.get('total_experiences', 0):,} total)")
                     else:
                         logger.warning(f"[CLOUD] Failed to save: {data.get('error', 'Unknown error')}")
                 else:
@@ -270,9 +452,9 @@ class AdaptiveExitManager:
             self.update_learned_parameters()
         
         # Log with market context
-        market_ctx = experience.get('market_state', {})
-        logger.info(f"[EXIT RL] LEARNED: {regime} | {exit_params['breakeven_threshold_ticks']}t BE, "
-                   f"{exit_params['trailing_distance_ticks']}t Trail | "
+        market_ctx = experience.get('market_context', {})
+        logger.info(f"[EXIT RL] LEARNED: {regime} | {exit_params.get('breakeven_threshold_ticks', 0)}t BE, "
+                   f"{exit_params.get('trailing_distance_ticks', 0)}t Trail | "
                    f"P&L: ${trade_outcome['pnl']:.2f} | {trade_outcome['exit_reason']} | "
                    f"RSI:{market_ctx.get('rsi', 0):.1f} Vol:{market_ctx.get('volume_ratio', 0):.2f} "
                    f"Hour:{market_ctx.get('hour', 0)} Streak:{market_ctx.get('streak', 0)}")

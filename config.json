@@ -68,12 +68,9 @@
   "alert_carrier": "verizon",
   "theme": "dark",
   "selected_account_id": "50KTC-V2-398684-33989413",
-  "avoid_news_days": false,
   "alerts_enabled": false,
   "topstep_starting_balances": {
     "13897180": 50000.0
   },
-  "fomc_block_enabled": false,
-  "fomc_force_close": false,
   "cloud_api_url": "https://quotrading-signals.icymeadow-86b2969e.eastus.azurecontainerapps.io"
 }

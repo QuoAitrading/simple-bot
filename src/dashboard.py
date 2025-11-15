@@ -46,8 +46,8 @@ class Dashboard:
             "confidence_trading": config.get("confidence_trading", False),
             "critical_errors": [],  # Track critical errors for display
             "contract_adjustment": None,  # Track contract adjustments (confidence/recovery mode)
-            "fomc_active": False,  # FOMC/economic event block active
-            "fomc_message": "",  # FOMC block message
+            "halt_reason": "",  # Trading halt reason
+            "uptime": 0,  # Bot uptime in seconds
             "maintenance_countdown": "-- h --m",  # Initialize maintenance countdown
             "topstep_connected": True,  # Initialize TopStep connection status
         }
@@ -228,21 +228,7 @@ class Dashboard:
         
         return lines
     
-    def _render_fomc_notification(self) -> List[str]:
-        """Render FOMC/economic event notification if active."""
-        lines = []
-        
-        if self.bot_data.get("fomc_active"):
-            msg = self.bot_data.get("fomc_message", "Economic event - halting new trades")
-            lines.append("")
-            lines.append("⚠️  ECONOMIC EVENT BLOCK ACTIVE:")
-            lines.append(f"  {msg}")
-            lines.append("  No new trades during this period")
-            lines.append("")
-        
-        return lines
-    
-    def _render_contract_adjustment(self) -> List[str]:
+    def _render_contract_adjustments(self) -> List[str]:
         """Render contract adjustment notification if active."""
         lines = []
         
@@ -363,11 +349,8 @@ class Dashboard:
         # Settings
         lines.extend(self._render_settings())
         
-        # FOMC/Economic event notification (if active) - shows before contract adjustments
-        lines.extend(self._render_fomc_notification())
-        
-        # Contract adjustment notification (if active)
-        lines.extend(self._render_contract_adjustment())
+        # Contract adjustments (if any)
+        lines.extend(self._render_contract_adjustments())
         
         # Symbols (only show selected symbols)
         for symbol in self.symbols:

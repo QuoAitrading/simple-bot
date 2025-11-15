@@ -63,7 +63,12 @@ class NeuralConfidenceScorer:
         """Load trained neural network"""
         try:
             self.model = SignalConfidenceNet(input_size=33)
-            self.model.load_state_dict(torch.load(self.model_path, map_location=self.device))
+            checkpoint = torch.load(self.model_path, map_location=self.device)
+            # Handle both checkpoint format and direct state_dict
+            if isinstance(checkpoint, dict) and 'model_state_dict' in checkpoint:
+                self.model.load_state_dict(checkpoint['model_state_dict'])
+            else:
+                self.model.load_state_dict(checkpoint)
             self.model.eval()  # Set to evaluation mode
             logger.info(f"✅ Neural model loaded: {self.model_path}")
         except Exception as e:
