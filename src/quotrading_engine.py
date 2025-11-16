@@ -137,8 +137,17 @@ for logger_name in ["statistics", "statistics.bounded_statistics", "statistics.b
         logging.getLogger(full_name).removeHandler(handler)
 
 # Load configuration from environment and config module
-_bot_config = load_config()
-_bot_config.validate()  # Validate configuration at startup
+# For backtesting, validation happens later with backtest_mode=True
+try:
+    _bot_config = load_config()
+    _bot_config.validate()  # Validate configuration at startup
+except ValueError as e:
+    # If validation fails, it might be due to missing API token
+    # which is OK for backtesting - will be re-initialized with backtest_mode=True
+    if "api_token is required" in str(e):
+        _bot_config = load_config(backtest_mode=True)
+    else:
+        raise
 
 # Convert BotConfiguration to dictionary for backward compatibility with existing code
 CONFIG: Dict[str, Any] = _bot_config.to_dict()
