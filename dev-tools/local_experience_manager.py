@@ -274,6 +274,8 @@ class LocalExperienceManager:
             'minute': minute,  # Minute of hour (0-59)
             'time_to_close': time_to_close,  # Minutes until session close
             'price_mod_50': price_mod_50,  # Distance to round 50-level (0-1)
+            # POSITION SIZING (critical for risk-adjusted learning)
+            'contracts': int(outcome.get('contracts', rl_state.get('contracts', 1))),  # Number of contracts traded
         }
         self.new_signal_experiences.append(experience)
     

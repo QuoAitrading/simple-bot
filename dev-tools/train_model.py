@@ -38,35 +38,65 @@ class TradingDataset(Dataset):
 
 def calculate_shaped_reward(exp, all_experiences):
     """
-    RISK-ADJUSTED REWARD with smoothed scaling: Normalize PnL by ATR to create R-multiples.
-    Uses tanh scaling to compress extreme values smoothly instead of hard clipping.
+    ADVANCED RISK-ADJUSTED REWARD with market context and position sizing awareness.
+    
+    Key improvements over binary classification:
+    1. Normalizes PnL by ATR-based risk (R-multiples)
+    2. Penalizes large losses more heavily (magnitude awareness)
+    3. Accounts for position sizing (multiple contracts increase risk)
+    4. Penalizes choppy/sideways market regimes that cause whipsaw
+    5. Considers volatility conditions
     
     Returns:
-        float: Smoothly scaled R-multiple (-3 to +3, most values -2 to +2)
-               Positive = profitable trade relative to risk
-               Negative = losing trade relative to risk
-               Magnitude matters: +2R is much better than +0.5R
+        float: Context-aware smoothed R-multiple (-3 to +3)
+               Negative values penalize bad setups more based on context
+               Positive values reward good setups accounting for difficulty
     """
     pnl = exp.get('pnl', 0)
     atr = exp.get('atr', 2.0)
     
-    # Calculate R-multiple (PnL per unit of risk)
-    # Risk per contract = ATR * stop_multiplier (typically 3.6)
-    # Use tick_value to convert ATR ticks to dollars
+    # Calculate base R-multiple (PnL per unit of risk)
     tick_value = 12.50  # ES contract value per tick
     stop_multiplier = 3.6  # Standard stop distance
     
     risk_per_contract = atr * stop_multiplier * tick_value
-    
-    # Avoid division by zero
     if risk_per_contract < 1.0:
         risk_per_contract = 1.0
     
-    # Calculate R-multiple
+    # Base R-multiple
     r_multiple = pnl / risk_per_contract
     
+    # === CONTEXTUAL ADJUSTMENTS ===
+    
+    # 1. POSITION SIZING PENALTY
+    # Larger positions magnify mistakes - penalize losses more heavily
+    contracts = exp.get('contracts', 1)
+    if contracts > 1 and r_multiple < 0:
+        # Losing with 2-3 contracts is riskier than losing with 1
+        # Apply 10% extra penalty per additional contract
+        position_penalty = 0.1 * (contracts - 1)
+        r_multiple = r_multiple * (1.0 + position_penalty)
+    
+    # 2. MARKET REGIME PENALTY
+    # Choppy/sideways markets cause whipsaw - penalize losses more
+    market_regime = exp.get('market_regime', 'NORMAL')
+    if market_regime in ['HIGH_VOL_CHOPPY', 'LOW_VOL_RANGING'] and r_multiple < 0:
+        # Trading in choppy conditions that failed - bigger mistake
+        r_multiple = r_multiple * 1.3  # 30% harsher penalty
+    elif market_regime in ['HIGH_VOL_CHOPPY', 'LOW_VOL_RANGING'] and r_multiple > 0:
+        # Win in difficult conditions - extra credit
+        r_multiple = r_multiple * 1.1  # 10% bonus
+    
+    # 3. VOLATILITY SPIKE PENALTY
+    # Trading during volatility expansion is riskier
+    volatility_trend = exp.get('volatility_trend', 0.0)
+    if volatility_trend > 0.3 and r_multiple < 0:  # Vol rising >30%
+        # Lost during vol spike - harsh lesson
+        r_multiple = r_multiple * 1.2  # 20% harsher penalty
+    
+    # === SMOOTH COMPRESSION ===
     # Use tanh for smooth compression: tanh(x/2) maps ±6R → ±0.95, ±2R → ±0.76
-    # Then scale to -3 to +3 range for better gradient flow
+    # Scale to -3 to +3 range for better gradient flow
     smoothed_r = 3.0 * np.tanh(r_multiple / 2.0)
     
     return smoothed_r
@@ -240,7 +270,7 @@ def load_experiences():
     }
     
     for exp in training_experiences:
-        # Extract 31 features (must match neural_confidence_model.py order!)
+        # Extract 32 features (must match neural_confidence_model.py order!)
         # Use pre-calculated features from JSON when available, fallback to calculation for old data
         
         # Get pre-calculated features (or calculate as fallback for old experiences)
@@ -300,7 +330,7 @@ def load_experiences():
             exp.get('commission_cost', 0.0),
             signal_map.get(exp.get('signal', 'LONG'), 0),
             # ADVANCED ML FEATURES
-            regime_map.get(exp.get('market_regime', 'NORMAL'), 0),  # Market regime (0-4)
+            regime_map.get(exp.get('market_regime', 'NORMAL'), 0),  # Market regime (0-5)
             exp.get('recent_volatility_20bar', 2.0),  # Rolling 20-bar price std
             exp.get('volatility_trend', 0.0),  # Is volatility increasing
             exp.get('vwap_std_dev', 2.0),  # VWAP standard deviation
@@ -308,11 +338,12 @@ def load_experiences():
             minute / 60.0,  # Minute of hour (0-1) - PRE-CALCULATED
             time_to_close / 240.0,  # Time to close normalized (0-1, 4hrs max) - PRE-CALCULATED
             price_mod_50,  # Distance to round 50-level (0-1) - PRE-CALCULATED
-            # ADDITIONAL FEATURES (4 features - brings total to 31)
+            # ADDITIONAL FEATURES (5 features - brings total to 32)
             exp.get('price_momentum', 0.0),  # Price momentum indicator
             exp.get('volume_momentum', 1.0),  # Volume momentum
             exp.get('spread_normalized', 0.0),  # Bid-ask spread normalized
             exp.get('liquidity_score', 1.0),  # Market liquidity score
+            exp.get('contracts', 1),  # Position size (1-3 contracts)
         ]
         
         # RISK-ADJUSTED REWARD: Use R-multiple instead of binary win/loss

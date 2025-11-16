@@ -12,19 +12,20 @@ class SignalConfidenceNet(nn.Module):
     Neural network that learns to predict trade reward quality (R-multiple).
     
     Architecture (RISK-ADJUSTED REWARD REGRESSION):
-    - Input: 31 features (RSI, VIX, hour, ATR, volume, market_regime, volatility, price levels, temporal)
+    - Input: 32 features (RSI, VIX, hour, ATR, volume, market_regime, volatility, 
+             price levels, temporal, position sizing)
     - Hidden Layer 1: 64 neurons with ReLU activation
     - Hidden Layer 2: 32 neurons with ReLU activation  
-    - Output: 1 neuron with LINEAR activation (R-multiple prediction -10 to +10, typically -3 to +3)
+    - Output: 1 neuron with LINEAR activation (R-multiple prediction -3 to +3)
     
     Dropout: 0.3 to prevent overfitting
     """
     
-    def __init__(self, input_size=31):
+    def __init__(self, input_size=32):
         super(SignalConfidenceNet, self).__init__()
         
         self.network = nn.Sequential(
-            # Layer 1: 31 → 64
+            # Layer 1: 32 → 64
             nn.Linear(input_size, 64),
             nn.ReLU(),
             nn.Dropout(0.3),
@@ -36,7 +37,7 @@ class SignalConfidenceNet(nn.Module):
             
             # Output: 32 → 1 (LINEAR for R-multiple regression)
             nn.Linear(32, 1)
-            # NO ACTIVATION - outputs raw R-multiple (-10 to +10)
+            # NO ACTIVATION - outputs raw R-multiple (-3 to +3)
         )
     
     def forward(self, x):
@@ -109,7 +110,8 @@ class ConfidencePredictor:
         Predict confidence for a signal using R-multiple regression model.
         
         Args:
-            rl_state: Dict with 31 features (RSI, VIX, hour, market_regime, volatility_clustering, etc.)
+            rl_state: Dict with 32 features (RSI, VIX, hour, market_regime, volatility_clustering, 
+                     position sizing, etc.)
             
         Returns:
             confidence: Float 0-1.0 (converted from predicted R-multiple)
@@ -176,11 +178,12 @@ class ConfidencePredictor:
             minute / 60.0,  # Minute of hour (0-1)
             time_to_close / 240.0,  # Time to close normalized (0-1, 4hrs max)
             price_mod_50,  # Distance to round 50-level (0-1)
-            # ADDITIONAL FEATURES (4 features - brings total to 31, match training)
+            # ADDITIONAL FEATURES (5 features - brings total to 32)
             rl_state.get('price_momentum', 0.0),  # Price momentum indicator
             rl_state.get('volume_momentum', 1.0),  # Volume momentum  
             rl_state.get('spread_normalized', 0.0),  # Bid-ask spread normalized
             rl_state.get('liquidity_score', 1.0),  # Market liquidity score
+            rl_state.get('contracts', 1),  # Position size (1-3 contracts)
         ], dtype=np.float32)
         
         # Normalize features
@@ -271,11 +274,12 @@ class ConfidencePredictor:
                 minute / 60.0,
                 time_to_close / 240.0,
                 price_mod_50,
-                # ADDITIONAL FEATURES
+                # ADDITIONAL FEATURES (5 features - total 32)
                 rl_state.get('price_momentum', 0.0),
                 rl_state.get('volume_momentum', 1.0),
                 rl_state.get('spread_normalized', 0.0),
                 rl_state.get('liquidity_score', 1.0),
+                rl_state.get('contracts', 1),  # Position size
             ], dtype=np.float32)
             features_list.append(features)
         
