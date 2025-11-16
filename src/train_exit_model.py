@@ -10,10 +10,6 @@ Uses ALL 208 features from the JSON:
 Predicts 132 exit_params (what should be used next time)
 """
 
-import torch
-import torch.nn as nn
-import torch.optim as optim
-from torch.utils.data import Dataset, DataLoader, random_split
 import json
 import logging
 import os
@@ -23,25 +19,44 @@ from pathlib import Path
 # Add src to path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__)))
 
-from neural_exit_model import ExitParamsNet
+# Try to import PyTorch
+try:
+    import torch
+    import torch.nn as nn
+    import torch.optim as optim
+    from torch.utils.data import Dataset, DataLoader, random_split
+    TORCH_AVAILABLE = True
+except (ImportError, OSError) as e:
+    logging.warning(f"PyTorch not available: {e}")
+    TORCH_AVAILABLE = False
+
 from exit_feature_extraction import prepare_training_data
+
+# Only import neural model if torch is available
+if TORCH_AVAILABLE:
+    from neural_exit_model import ExitParamsNet
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
 
-class ExitExperienceDataset(Dataset):
-    """PyTorch dataset for exit experiences"""
-    
-    def __init__(self, X, y):
-        self.X = torch.FloatTensor(X)
-        self.y = torch.FloatTensor(y)
-    
-    def __len__(self):
-        return len(self.X)
-    
-    def __getitem__(self, idx):
-        return self.X[idx], self.y[idx]
+if TORCH_AVAILABLE:
+    class ExitExperienceDataset(Dataset):
+        """PyTorch dataset for exit experiences"""
+        
+        def __init__(self, X, y):
+            self.X = torch.FloatTensor(X)
+            self.y = torch.FloatTensor(y)
+        
+        def __len__(self):
+            return len(self.X)
+        
+        def __getitem__(self, idx):
+            return self.X[idx], self.y[idx]
+else:
+    class ExitExperienceDataset:
+        """Dummy class when PyTorch is not available"""
+        pass
 
 
 def train_exit_model(
@@ -66,6 +81,14 @@ def train_exit_model(
     logger.info("="*80)
     logger.info("EXIT MODEL TRAINING")
     logger.info("="*80)
+    
+    if not TORCH_AVAILABLE:
+        logger.error("❌ PyTorch is not available in this environment!")
+        logger.info("\nTo train the model, you need to:")
+        logger.info("  1. Install PyTorch: pip install torch")
+        logger.info("  2. Or run this on a machine with PyTorch installed")
+        logger.info("  3. The feature extraction works fine - only training needs PyTorch")
+        return False
     
     # Load experiences
     logger.info(f"Loading experiences from: {experience_file}")

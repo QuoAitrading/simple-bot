@@ -74,10 +74,10 @@ def extract_all_features_for_training(experience: Dict) -> List[float]:
     
     # If we don't have exactly 132, pad or truncate
     if len(features) < 132:
-        logger.warning(f"Only {len(features)} exit params, expected 132. Padding with zeros.")
+        logger.debug(f"Only {len(features)} exit params, expected 132. Padding with zeros.")
         features.extend([0.0] * (132 - len(features)))
     elif len(features) > 132:
-        logger.warning(f"Got {len(features)} exit params, expected 132. Truncating.")
+        logger.debug(f"Got {len(features)} exit params, expected 132. Truncating.")
         features = features[:132]
     
     # =====================================================
@@ -245,10 +245,10 @@ def extract_all_features_for_training(experience: Dict) -> List[float]:
     current_count = len(features)
     
     if current_count < 208:
-        logger.warning(f"Only extracted {current_count} features, expected 208. Padding with zeros.")
+        logger.debug(f"Only extracted {current_count} features, expected 208. Padding with zeros.")
         features.extend([0.0] * (208 - current_count))
     elif current_count > 208:
-        logger.warning(f"Extracted {current_count} features, expected 208. Truncating.")
+        logger.debug(f"Extracted {current_count} features, expected 208. Truncating.")
         features = features[:208]
     
     return features
