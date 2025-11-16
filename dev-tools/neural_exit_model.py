@@ -120,7 +120,7 @@ class ExitParamsNet(nn.Module):
     def __init__(self, input_size=205, hidden_size=256):
         super(ExitParamsNet, self).__init__()
         
-        # Architecture: 205 inputs → 256 → 256 → 131 outputs
+        # Architecture: 205 inputs → hidden_size → hidden_size → 131 outputs
         # 205 inputs: 10 market_state + 63 outcome + 132 exit_params
         # 131 outputs: comprehensive exit parameters
         self.network = nn.Sequential(
@@ -128,11 +128,11 @@ class ExitParamsNet(nn.Module):
             nn.ReLU(),
             nn.Dropout(0.3),
             
-            nn.Linear(hidden_size, 256),
+            nn.Linear(hidden_size, hidden_size),  # Use hidden_size consistently
             nn.ReLU(),
             nn.Dropout(0.3),
             
-            nn.Linear(256, 131),  # 131 exit parameters
+            nn.Linear(hidden_size, 131),  # 131 exit parameters
             nn.Sigmoid()  # Output 0-1, will denormalize later
         )
     
