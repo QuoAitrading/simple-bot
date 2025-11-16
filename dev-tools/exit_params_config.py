@@ -671,8 +671,8 @@ EXIT_PARAMS = {
     # PROFIT PROTECTION (3 params)
     # -------------------------------------------------------------------------
     'profit_protection_min_r': {
-        'min': 0.5, 'max': 3.0, 'default': 1.0,
-        'description': 'Min R before profit protection kicks in - LEARNS: protect early in choppy, let run in trending',
+        'min': 0.5, 'max': 3.0, 'default': 1.5,
+        'description': 'Min R before profit protection kicks in - LEARNS: protect early in choppy, let run in trending. Default 1.5R allows partial_1 at 1.2R to trigger first.',
         'category': 'profit_protection'
     },
     'profit_lock_activation_r': {
