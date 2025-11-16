@@ -11,7 +11,7 @@ import pytz
 class LocalExperienceManager:
     """Manages local experiences and neural network predictions for backtesting"""
     
-    def __init__(self, use_neural_network=True):
+    def __init__(self, use_neural_network=True, confidence_threshold=None):
         self.signal_experiences = []
         self.exit_experiences = []
         # Use absolute path relative to this file's location
@@ -20,6 +20,9 @@ class LocalExperienceManager:
         self.loaded = False
         self.new_signal_experiences = []  # Track experiences added during backtest
         self.new_exit_experiences = []    # Track exit experiences added during backtest
+        
+        # Confidence threshold (if None, will use learned adaptive threshold)
+        self.confidence_threshold = confidence_threshold
         
         # Neural network support
         self.use_neural_network = use_neural_network
@@ -146,21 +149,26 @@ class LocalExperienceManager:
         # No artificial floor - trust the model's predictions
         return best_threshold
     
-    def get_signal_confidence(self, rl_state: Dict, signal: str) -> tuple:
+    def get_signal_confidence(self, rl_state: Dict, signal: str, exploration_rate: float = 0.0) -> tuple:
         """
         Get ML confidence using neural network ONLY.
         Neural network must be trained - no fallback to pattern matching.
         
+        Args:
+            rl_state: Market state features
+            signal: LONG or SHORT
+            exploration_rate: Probability (0.0-1.0) of taking trade regardless of confidence (for learning)
+        
         Returns: (take_signal, confidence, reason)
         """
-        if not self.loaded:
-            if not self.load_experiences():
-                return (False, 0.0, "Local experiences not loaded")
-        
         # Neural network only - no fallback
         if self.use_neural_network and self.neural_predictor is not None:
+            # Try to load experiences if not loaded (for saving new ones later)
+            if not self.loaded:
+                self.load_experiences()  # Doesn't matter if this fails - we have neural network
+            
             try:
-                return self._get_confidence_neural(rl_state, signal)
+                return self._get_confidence_neural(rl_state, signal, exploration_rate)
             except Exception as e:
                 print(f"❌ Neural network error: {e}")
                 print(f"   Train the model with: python train_model.py")
@@ -179,10 +187,15 @@ class LocalExperienceManager:
         reason = f"random_exploration (NN not trained): {random_confidence:.0%} vs threshold {threshold:.0%}"
         return (take_signal, random_confidence, reason)
     
-    def _get_confidence_neural(self, rl_state: Dict, signal: str) -> tuple:
+    def _get_confidence_neural(self, rl_state: Dict, signal: str, exploration_rate: float = 0.0) -> tuple:
         """
         Get confidence prediction from trained neural network.
-        Neural network uses 22 features to predict win probability.
+        Neural network uses 32 features to predict R-multiple (converted to confidence).
+        
+        Args:
+            rl_state: Market state features
+            signal: LONG or SHORT
+            exploration_rate: Probability (0.0-1.0) of taking trade regardless of confidence (for learning)
         """
         # Signal is already encoded in rl_state (LONG=0, SHORT=1)
         # Don't overwrite it with string
@@ -190,15 +203,28 @@ class LocalExperienceManager:
         # Get prediction from neural network
         confidence = self.neural_predictor.predict(rl_state)
         
-        # Apply learned threshold
-        optimal_threshold = self._get_learned_confidence_threshold()
-        take_signal = confidence >= optimal_threshold
+        # Use configured threshold if provided, otherwise use learned adaptive threshold
+        if self.confidence_threshold is not None:
+            threshold = self.confidence_threshold
+            threshold_source = "configured"
+        else:
+            threshold = self._get_learned_confidence_threshold()
+            threshold_source = "learned"
         
-        # Generate reason string
-        wins = sum(1 for e in self.signal_experiences 
-                  if e.get('took_trade') and e.get('pnl', 0) > 0)
-        total = len([e for e in self.signal_experiences if e.get('took_trade')])
-        reason = f"Neural: {confidence:.0%} confidence (threshold: {optimal_threshold:.0%}, trained on {total} trades)"
+        # Apply exploration: randomly take exploration_rate% of signals regardless of confidence
+        import random
+        explore = random.random() < exploration_rate if exploration_rate > 0 else False
+        
+        if explore:
+            take_signal = True
+            reason = f"🎲 EXPLORATION: {confidence:.0%} confidence (exploration {exploration_rate:.0%})"
+        else:
+            take_signal = confidence >= threshold
+            # Generate reason string
+            wins = sum(1 for e in self.signal_experiences 
+                      if e.get('took_trade') and e.get('pnl', 0) > 0)
+            total = len([e for e in self.signal_experiences if e.get('took_trade')])
+            reason = f"Neural: {confidence:.0%} confidence ({threshold_source} threshold: {threshold:.0%}, trained on {total} trades)"
         
         return (take_signal, confidence, reason)
     
@@ -274,6 +300,8 @@ class LocalExperienceManager:
             'minute': minute,  # Minute of hour (0-59)
             'time_to_close': time_to_close,  # Minutes until session close
             'price_mod_50': price_mod_50,  # Distance to round 50-level (0-1)
+            # POSITION SIZING (critical for risk-adjusted learning)
+            'contracts': int(outcome.get('contracts', rl_state.get('contracts', 1))),  # Number of contracts traded
         }
         self.new_signal_experiences.append(experience)
     
@@ -286,10 +314,12 @@ class LocalExperienceManager:
         # Use V2 file with full structure
         signal_file = os.path.join(self.local_dir, "signal_experiences_v2.json")
         
-        # Load existing
-        with open(signal_file, 'r') as f:
-            data = json.load(f)
-            existing_experiences = data.get('experiences', [])
+        # Load existing (if file exists)
+        existing_experiences = []
+        if os.path.exists(signal_file):
+            with open(signal_file, 'r') as f:
+                data = json.load(f)
+                existing_experiences = data.get('experiences', [])
         
         # Add new ones
         all_experiences = existing_experiences + self.new_signal_experiences
@@ -326,5 +356,5 @@ class LocalExperienceManager:
             'total': len(self.signal_experiences) + len(self.exit_experiences)
         }
 
-# Global instance
-local_manager = LocalExperienceManager()
+# Global instance - threshold will be set from full_backtest CONFIG
+local_manager = LocalExperienceManager(confidence_threshold=0.10)  # Default 10%, will be overridden by CONFIG

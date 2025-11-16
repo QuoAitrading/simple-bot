@@ -47,8 +47,8 @@ CONFIG = {
     "tick_value": 12.50,  # ES full contract = $12.50 per tick (MATCHES LIVE BOT)
     "max_contracts": 3,
     "local_mode": True,  # Use local experiences (3,754 saved experiences)
-    "rl_confidence_threshold": 0.70,  # Only take trades above 70% confidence
-    "exploration_rate": 0.05,  # 5% exploration rate
+    "rl_confidence_threshold": 0.10,  # Only take trades above 10% confidence (exploration mode)
+    "exploration_rate": 0.30,  # 30% exploration rate (HIGH - for testing and building dataset)
     
     # REALISTIC TRADING COSTS (TopStep/Prop Firm)
     "slippage_ticks": 0.5,  # 0.5 tick slippage per side (entry + exit = 1 tick total = $12.50)
@@ -93,13 +93,17 @@ CONFIG = {
 
 from local_experience_manager import local_manager
 
+# Update local_manager threshold from CONFIG
+local_manager.confidence_threshold = CONFIG['rl_confidence_threshold']
+
 def get_rl_confidence(rl_state: Dict, side: str) -> Tuple[bool, float, str]:
     """
     Get ML confidence from LOCAL pattern matching only.
     Uses local_experience_manager.py to match against saved experiences.
     NO cloud API calls - 100% offline backtesting.
     """
-    return local_manager.get_signal_confidence(rl_state, side.upper())
+    exploration_rate = CONFIG.get('exploration_rate', 0.0)
+    return local_manager.get_signal_confidence(rl_state, side.upper(), exploration_rate)
 
 
 # ========================================
@@ -1109,10 +1113,11 @@ class ShadowTrade:
             'bars_until_breakeven': self.bars_until_breakeven if self.bars_until_breakeven else 0,
             'bars_until_trailing': self.bars_until_trailing if self.bars_until_trailing else 0,
             
-            # Partial exits
+            # Partial exits (GHOST TRADES TRACK THESE TOO)
             'partial_exit_1_completed': self.partial_1_done,
             'partial_exit_2_completed': self.partial_2_done,
             'partial_exit_3_completed': self.partial_3_done,
+            'partial_exits_history': self.partial_exits,  # Full history of when partials were taken
             
             # Entry context
             'entry_confidence': self.confidence,
@@ -1283,7 +1288,12 @@ class ShadowTrade:
                 'lowest_price': self.lowest_price,
                 'breakeven_active': self.breakeven_active,
                 'trailing_active': self.trailing_active,
-                'remaining_quantity': self.remaining_quantity
+                'remaining_quantity': self.remaining_quantity,
+                # CRITICAL: Pass partial exit states so checker knows what's already done
+                'partial_1_done': self.partial_1_done,
+                'partial_2_done': self.partial_2_done,
+                'partial_3_done': self.partial_3_done,
+                'partial_exits': self.partial_exits
             }
             
             ghost_checker = ComprehensiveExitChecker(trade_context)
@@ -1296,6 +1306,10 @@ class ShadowTrade:
             ghost_checker.trade['trailing_active'] = self.trailing_active
             ghost_checker.trade['stop_price'] = self.stop_price
             ghost_checker.trade['remaining_quantity'] = self.remaining_quantity
+            ghost_checker.trade['partial_1_done'] = self.partial_1_done
+            ghost_checker.trade['partial_2_done'] = self.partial_2_done
+            ghost_checker.trade['partial_3_done'] = self.partial_3_done
+            ghost_checker.trade['partial_exits'] = self.partial_exits
             
             # Check ALL exit conditions using comprehensive logic
             comprehensive_exit = ghost_checker.check_all_exits(
@@ -1348,6 +1362,38 @@ class ShadowTrade:
                 if self.trailing_active and not was_trailing:
                     self.trailing_activation_bar = self.bars_in_trade
                     self.bars_until_trailing = self.bars_in_trade
+            
+            # CRITICAL: Update partial exit states from comprehensive checker
+            # This ensures ghost trades track partial exits just like real trades
+            if 'partial_1_done' in ghost_checker.trade:
+                if ghost_checker.trade['partial_1_done'] and not self.partial_1_done:
+                    self.partial_1_done = True
+                    # Record the partial exit in history
+                    self.partial_exits.append({
+                        'type': 'partial_1',
+                        'bar': self.bars_in_trade,
+                        'r_multiple': current_r
+                    })
+            if 'partial_2_done' in ghost_checker.trade:
+                if ghost_checker.trade['partial_2_done'] and not self.partial_2_done:
+                    self.partial_2_done = True
+                    self.partial_exits.append({
+                        'type': 'partial_2',
+                        'bar': self.bars_in_trade,
+                        'r_multiple': current_r
+                    })
+            if 'partial_3_done' in ghost_checker.trade:
+                if ghost_checker.trade['partial_3_done'] and not self.partial_3_done:
+                    self.partial_3_done = True
+                    self.partial_exits.append({
+                        'type': 'partial_3',
+                        'bar': self.bars_in_trade,
+                        'r_multiple': current_r
+                    })
+            
+            # Update remaining quantity if partials were taken
+            if 'remaining_quantity' in ghost_checker.trade:
+                self.remaining_quantity = ghost_checker.trade['remaining_quantity']
             
         except Exception as e:
             # Fallback to basic logic if comprehensive checker fails
@@ -1811,9 +1857,9 @@ def run_full_backtest(csv_file: str, days: int = 15):
                     CONFIG['exploration_rate'] = 0.05  # LOW: Test learned strategy, keep adaptability
                     print(f"   🔍 Adaptive Exploration: 5% (rich data: {total_exps} experiences)")
         else:
-            print(f"   ❌ Failed to load local experiences - switching to cloud mode")
-            CONFIG['local_mode'] = False
-            signal_manager_for_vwap = None
+            print(f"   ⚠️  No existing local experiences found - will create new files")
+            print(f"   🎯 Starting fresh - will collect experiences during this backtest")
+            signal_manager_for_vwap = local_manager  # Still use local_manager for saving
         print()
     else:
         signal_manager_for_vwap = None
@@ -2501,6 +2547,8 @@ def run_full_backtest(csv_file: str, days: int = 15):
                     'minute': minute,
                     'time_to_close': time_to_close,
                     'price_mod_50': price_mod_50,  # Distance to round 50-level
+                    # POSITION SIZING (default 1 contract for prediction, will be overridden after)
+                    'contracts': 1,  # Default for neural network prediction
                 }
                 
                 # Get RL confidence from local neural network
@@ -2639,7 +2687,6 @@ def run_full_backtest(csv_file: str, days: int = 15):
                 rl_state = {
                     'symbol': 'ES',  # Backtest symbol
                     'entry_price': bar['close'],
-                    'entry_bar': idx,  # NEW: Bar index at signal
                     'vwap': vwap_bands['vwap'],
                     'rsi': rsi,
                     'atr': atr,
@@ -2676,6 +2723,8 @@ def run_full_backtest(csv_file: str, days: int = 15):
                     'minute': minute,
                     'time_to_close': time_to_close,
                     'price_mod_50': price_mod_50,  # Distance to round 50-level
+                    # POSITION SIZING (default 1 contract for prediction, will be overridden after)
+                    'contracts': 1,  # Default for neural network prediction
                 }
                 
                 # Get RL confidence from local neural network
@@ -3028,6 +3077,7 @@ if __name__ == "__main__":
         # Update CONFIG with command-line overrides
         if confidence_threshold is not None:
             CONFIG['rl_confidence_threshold'] = confidence_threshold
+            local_manager.confidence_threshold = confidence_threshold  # Update local_manager too
         if max_contracts is not None:
             CONFIG['max_contracts'] = max_contracts
         

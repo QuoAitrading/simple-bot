@@ -38,14 +38,68 @@ class TradingDataset(Dataset):
 
 def calculate_shaped_reward(exp, all_experiences):
     """
-    BINARY CLASSIFICATION: Predict win (1.0) or loss (0.0).
-    This is the simplest learnable target - just predict if trade will be profitable.
+    ADVANCED RISK-ADJUSTED REWARD with market context and position sizing awareness.
+    
+    Key improvements over binary classification:
+    1. Normalizes PnL by ATR-based risk (R-multiples)
+    2. Penalizes large losses more heavily (magnitude awareness)
+    3. Accounts for position sizing (multiple contracts increase risk)
+    4. Penalizes choppy/sideways market regimes that cause whipsaw
+    5. Considers volatility conditions
     
     Returns:
-        float: 1.0 for wins, 0.0 for losses
+        float: Context-aware smoothed R-multiple (-3 to +3)
+               Negative values penalize bad setups more based on context
+               Positive values reward good setups accounting for difficulty
     """
     pnl = exp.get('pnl', 0)
-    return 1.0 if pnl > 0 else 0.0
+    atr = exp.get('atr', 2.0)
+    
+    # Calculate base R-multiple (PnL per unit of risk)
+    tick_value = 12.50  # ES contract value per tick
+    stop_multiplier = 3.6  # Standard stop distance
+    
+    risk_per_contract = atr * stop_multiplier * tick_value
+    if risk_per_contract < 1.0:
+        risk_per_contract = 1.0
+    
+    # Base R-multiple
+    r_multiple = pnl / risk_per_contract
+    
+    # === CONTEXTUAL ADJUSTMENTS ===
+    
+    # 1. POSITION SIZING PENALTY
+    # Larger positions magnify mistakes - penalize losses more heavily
+    contracts = exp.get('contracts', 1)
+    if contracts > 1 and r_multiple < 0:
+        # Losing with 2-3 contracts is riskier than losing with 1
+        # Apply 10% extra penalty per additional contract
+        position_penalty = 0.1 * (contracts - 1)
+        r_multiple = r_multiple * (1.0 + position_penalty)
+    
+    # 2. MARKET REGIME PENALTY
+    # Choppy/sideways markets cause whipsaw - penalize losses more
+    market_regime = exp.get('market_regime', 'NORMAL')
+    if market_regime in ['HIGH_VOL_CHOPPY', 'LOW_VOL_RANGING'] and r_multiple < 0:
+        # Trading in choppy conditions that failed - bigger mistake
+        r_multiple = r_multiple * 1.3  # 30% harsher penalty
+    elif market_regime in ['HIGH_VOL_CHOPPY', 'LOW_VOL_RANGING'] and r_multiple > 0:
+        # Win in difficult conditions - extra credit
+        r_multiple = r_multiple * 1.1  # 10% bonus
+    
+    # 3. VOLATILITY SPIKE PENALTY
+    # Trading during volatility expansion is riskier
+    volatility_trend = exp.get('volatility_trend', 0.0)
+    if volatility_trend > 0.3 and r_multiple < 0:  # Vol rising >30%
+        # Lost during vol spike - harsh lesson
+        r_multiple = r_multiple * 1.2  # 20% harsher penalty
+    
+    # === SMOOTH COMPRESSION ===
+    # Use tanh for smooth compression: tanh(x/2) maps ±6R → ±0.95, ±2R → ±0.76
+    # Scale to -3 to +3 range for better gradient flow
+    smoothed_r = 3.0 * np.tanh(r_multiple / 2.0)
+    
+    return smoothed_r
     
 def calculate_shaped_reward_OLD_COMPLEX(exp, all_experiences):
     """
@@ -186,14 +240,36 @@ def load_experiences():
     experiences = data['experiences']
     
     # Include ALL experiences (both taken trades AND ghost trades)
-    # Ghost trades teach the AI what it SHOULD have done
+    # GHOST TRADES are critical for learning:
+    # - Teach the model what happens when it says NO to a signal
+    # - If ghost wins → model learns it was TOO CONSERVATIVE
+    # - If ghost loses → model learns it was CORRECTLY SELECTIVE
+    # - With R-multiple rewards, model learns MAGNITUDE of missed/avoided outcomes
+    # - Typically 70-80% of all training data comes from ghost trades
     print(f"Total experiences: {len(experiences):,}")
-    taken_trades = [e for e in experiences if e.get('took_trade', True)]  # Include ghosts
+    taken_trades = [e for e in experiences if e.get('took_trade', True)]
     ghost_trades = [e for e in experiences if not e.get('took_trade', True)]
     print(f"Taken trades: {len(taken_trades):,}")
     print(f"Ghost trades (learning from rejections): {len(ghost_trades):,}")
     
+    # Calculate ghost trade performance to show learning impact
+    if len(ghost_trades) > 0:
+        ghost_winners = sum(1 for g in ghost_trades if g.get('pnl', 0) > 0)
+        ghost_losers = len(ghost_trades) - ghost_winners
+        total_missed_profit = sum(g.get('pnl', 0) for g in ghost_trades if g.get('pnl', 0) > 0)
+        total_avoided_loss = abs(sum(g.get('pnl', 0) for g in ghost_trades if g.get('pnl', 0) < 0))
+        net_benefit = total_avoided_loss - total_missed_profit
+        
+        print(f"  Ghost trade performance:")
+        print(f"    Missed opportunities: {ghost_winners:,} winning signals rejected")
+        print(f"    Correct rejections: {ghost_losers:,} losing signals avoided")
+        print(f"    Total avoided loss: ${total_avoided_loss:,.2f}")
+        print(f"    Total missed profit: ${total_missed_profit:,.2f}")
+        print(f"    Net benefit from selectivity: ${net_benefit:,.2f}")
+        print()
+    
     # Use ALL experiences for training (ghosts + taken)
+    # This teaches the model both what TO do and what NOT to do
     training_experiences = experiences  # Train on everything!
 
     
@@ -216,7 +292,7 @@ def load_experiences():
     }
     
     for exp in training_experiences:
-        # Extract 31 features (must match neural_confidence_model.py order!)
+        # Extract 32 features (must match neural_confidence_model.py order!)
         # Use pre-calculated features from JSON when available, fallback to calculation for old data
         
         # Get pre-calculated features (or calculate as fallback for old experiences)
@@ -276,7 +352,7 @@ def load_experiences():
             exp.get('commission_cost', 0.0),
             signal_map.get(exp.get('signal', 'LONG'), 0),
             # ADVANCED ML FEATURES
-            regime_map.get(exp.get('market_regime', 'NORMAL'), 0),  # Market regime (0-4)
+            regime_map.get(exp.get('market_regime', 'NORMAL'), 0),  # Market regime (0-5)
             exp.get('recent_volatility_20bar', 2.0),  # Rolling 20-bar price std
             exp.get('volatility_trend', 0.0),  # Is volatility increasing
             exp.get('vwap_std_dev', 2.0),  # VWAP standard deviation
@@ -284,16 +360,16 @@ def load_experiences():
             minute / 60.0,  # Minute of hour (0-1) - PRE-CALCULATED
             time_to_close / 240.0,  # Time to close normalized (0-1, 4hrs max) - PRE-CALCULATED
             price_mod_50,  # Distance to round 50-level (0-1) - PRE-CALCULATED
-            # ADDITIONAL FEATURES (4 features - brings total to 31)
+            # ADDITIONAL FEATURES (5 features - brings total to 32)
             exp.get('price_momentum', 0.0),  # Price momentum indicator
             exp.get('volume_momentum', 1.0),  # Volume momentum
             exp.get('spread_normalized', 0.0),  # Bid-ask spread normalized
             exp.get('liquidity_score', 1.0),  # Market liquidity score
+            exp.get('contracts', 1),  # Position size (1-3 contracts)
         ]
         
-        # BINARY SUCCESS: 1.0 if winning trade, 0.0 if losing trade
-        pnl = exp.get('pnl', 0)
-        label = 1.0 if pnl > 0 else 0.0
+        # RISK-ADJUSTED REWARD: Use R-multiple instead of binary win/loss
+        label = calculate_shaped_reward(exp, training_experiences)
         
         features.append(feature_vec)
         labels.append(label)
@@ -301,11 +377,20 @@ def load_experiences():
     features = np.array(features, dtype=np.float32)
     labels = np.array(labels, dtype=np.float32)
     
-    # Calculate win rate statistics
-    win_rate = labels.mean() * 100
-    total_trades = len(labels)
-    winning_trades = labels.sum()
-    print(f"Win Rate: {win_rate:.1f}% ({int(winning_trades)}/{total_trades} trades)")
+    # Calculate R-multiple statistics
+    positive_r = sum(1 for r in labels if r > 0)
+    negative_r = sum(1 for r in labels if r <= 0)
+    avg_r = labels.mean()
+    max_r = labels.max()
+    min_r = labels.min()
+    
+    print(f"R-Multiple Statistics:")
+    print(f"  Total trades: {len(labels):,}")
+    print(f"  Positive R: {positive_r:,} ({positive_r/len(labels)*100:.1f}%)")
+    print(f"  Negative R: {negative_r:,} ({negative_r/len(labels)*100:.1f}%)")
+    print(f"  Average R: {avg_r:.2f}R")
+    print(f"  Max R: {max_r:.2f}R")
+    print(f"  Min R: {min_r:.2f}R")
     print()
     
     return features, labels, taken_trades
@@ -359,7 +444,7 @@ def train_model(epochs=150, batch_size=32, learning_rate=0.001):
     model.to(device)
     
     # Loss and optimizer
-    criterion = nn.BCELoss()  # Binary cross-entropy for success probability (0 or 1)
+    criterion = nn.MSELoss()  # Mean squared error for R-multiple regression
     optimizer = optim.Adam(model.parameters(), lr=learning_rate)
     
     # Training loop
@@ -383,15 +468,6 @@ def train_model(epochs=150, batch_size=32, learning_rate=0.001):
             
             # Forward pass
             outputs = model(features_batch)
-            
-            # DEBUG: Check output range
-            if torch.isnan(outputs).any() or (outputs < 0).any() or (outputs > 1).any():
-                print(f"❌ Invalid outputs detected!")
-                print(f"   Min: {outputs.min().item():.4f}, Max: {outputs.max().item():.4f}")
-                print(f"   NaN count: {torch.isnan(outputs).sum().item()}")
-                print(f"   Model output layer: {list(model.network.children())[-1]}")
-                raise RuntimeError("Model outputs are outside [0,1] range - sigmoid not working!")
-            
             loss = criterion(outputs, labels_batch)
             
             # Backward pass
@@ -429,12 +505,12 @@ def train_model(epochs=150, batch_size=32, learning_rate=0.001):
         # Print progress every 10 epochs
         if (epoch + 1) % 10 == 0:
             print(f"Epoch {epoch+1}/{epochs}")
-            print(f"  Train Loss: {train_loss/len(train_loader):.4f} | Train MAE: {train_mae:.2f}")
-            print(f"  Val Loss: {val_loss/len(val_loader):.4f} | Val MAE: {val_mae:.2f}")
+            print(f"  Train Loss: {train_loss/len(train_loader):.4f} | Train MAE: {train_mae:.3f}R")
+            print(f"  Val Loss: {val_loss/len(val_loader):.4f} | Val MAE: {val_mae:.3f}R")
             print()
         
-        # Early stopping (lower MAE is better for regression)
-        if val_mae < best_val_acc or best_val_acc == 0.0:  # Reusing variable for MAE
+        # Early stopping (lower MAE is better)
+        if val_mae < best_val_acc or best_val_acc == 0.0:
             best_val_acc = val_mae
             patience_counter = 0
             
@@ -539,7 +615,7 @@ def train_model(epochs=150, batch_size=32, learning_rate=0.001):
     print("=" * 80)
     print("TRAINING COMPLETE")
     print("=" * 80)
-    print(f"Best validation accuracy: {best_val_acc:.2f}%")
+    print(f"Best validation MAE: {best_val_acc:.3f}R")
     print(f"Model saved to: data/neural_model.pth")
     print()
     print("Next steps:")
