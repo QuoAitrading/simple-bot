@@ -9,13 +9,13 @@ import os
 
 class SignalConfidenceNet(nn.Module):
     """
-    Neural network that learns to predict trade reward quality.
+    Neural network that learns to predict trade reward quality (R-multiple).
     
-    Architecture (REWARD SHAPING):
-    - Input: 33 features (RSI, VIX, hour, ATR, volume, market_regime, volatility, price levels, temporal)
+    Architecture (RISK-ADJUSTED REWARD REGRESSION):
+    - Input: 31 features (RSI, VIX, hour, ATR, volume, market_regime, volatility, price levels, temporal)
     - Hidden Layer 1: 64 neurons with ReLU activation
     - Hidden Layer 2: 32 neurons with ReLU activation  
-    - Output: 1 neuron with LINEAR activation (reward prediction -10 to +10)
+    - Output: 1 neuron with LINEAR activation (R-multiple prediction -10 to +10, typically -3 to +3)
     
     Dropout: 0.3 to prevent overfitting
     """
@@ -34,9 +34,9 @@ class SignalConfidenceNet(nn.Module):
             nn.ReLU(),
             nn.Dropout(0.3),
             
-            # Output: 32 → 1 (LINEAR for reward regression)
+            # Output: 32 → 1 (LINEAR for R-multiple regression)
             nn.Linear(32, 1)
-            # NO SIGMOID - outputs raw reward (-10 to +10)
+            # NO ACTIVATION - outputs raw R-multiple (-10 to +10)
         )
     
     def forward(self, x):
@@ -84,8 +84,8 @@ class ConfidencePredictor:
             self.temperature = checkpoint.get('temperature', 1.5)
             
             print(f"✅ Neural network loaded from {self.model_path}")
-            print(f"   Training MAE: {checkpoint.get('train_mae', 0):.2f}")
-            print(f"   Validation MAE: {checkpoint.get('val_mae', 0):.2f}")
+            print(f"   Training MAE: {checkpoint.get('train_mae', 0):.3f}R")
+            print(f"   Validation MAE: {checkpoint.get('val_mae', 0):.3f}R")
             
             return True
             
@@ -106,13 +106,16 @@ class ConfidencePredictor:
     
     def predict(self, rl_state):
         """
-        Predict confidence for a signal using reward shaping model.
+        Predict confidence for a signal using R-multiple regression model.
         
         Args:
-            rl_state: Dict with 26 features (RSI, VIX, hour, market_regime, volatility_clustering, etc.)
+            rl_state: Dict with 31 features (RSI, VIX, hour, market_regime, volatility_clustering, etc.)
             
         Returns:
-            confidence: Float 0-1.0 (converted from predicted reward -10 to +10)
+            confidence: Float 0-1.0 (converted from predicted R-multiple)
+                       R > 0 → confidence > 0.5 (profitable expected)
+                       R < 0 → confidence < 0.5 (losing expected)
+                       R = 0 → confidence = 0.5 (break-even)
         """
         if self.model is None:
             # Fallback to 50% if model not loaded
@@ -186,13 +189,17 @@ class ConfidencePredictor:
         # Convert to tensor
         x = torch.FloatTensor(features).unsqueeze(0).to(self.device)
         
-        # Predict win probability (0.0 to 1.0)
+        # Predict R-multiple
         with torch.no_grad():
-            win_prob = self.model(x).item()
+            r_multiple = self.model(x).item()
         
-        # Model directly outputs win probability - no conversion needed!
-        # Just clip to valid range
-        confidence = np.clip(win_prob, 0.01, 0.99)
+        # Convert R-multiple to confidence (0-1 scale)
+        # Use sigmoid-like transformation: confidence = 1 / (1 + exp(-r_multiple))
+        # This maps: R=-3 → 5%, R=-1 → 27%, R=0 → 50%, R=+1 → 73%, R=+3 → 95%
+        confidence = 1.0 / (1.0 + np.exp(-r_multiple))
+        
+        # Clip to valid range
+        confidence = np.clip(confidence, 0.01, 0.99)
         
         return confidence
     
@@ -204,7 +211,7 @@ class ConfidencePredictor:
             rl_states: List of rl_state dicts
             
         Returns:
-            confidences: List of floats 0-1.0 (converted from predicted rewards)
+            confidences: List of floats 0-1.0 (converted from predicted R-multiples)
         """
         if self.model is None:
             return [0.50] * len(rl_states)
@@ -260,14 +267,15 @@ class ConfidencePredictor:
                 rl_state.get('recent_volatility_20bar', 2.0),
                 rl_state.get('volatility_trend', 0.0),
                 rl_state.get('vwap_std_dev', 2.0),
-                # NEW TEMPORAL/PRICE FEATURES (7 features)
-                rl_state.get('confidence', 0.5),
-                price / 10000.0,
-                rl_state.get('entry_price', price) / 10000.0,
-                rl_state.get('vwap', 6500.0) / 10000.0,
+                # TEMPORAL/PRICE FEATURES
                 minute / 60.0,
                 time_to_close / 240.0,
                 price_mod_50,
+                # ADDITIONAL FEATURES
+                rl_state.get('price_momentum', 0.0),
+                rl_state.get('volume_momentum', 1.0),
+                rl_state.get('spread_normalized', 0.0),
+                rl_state.get('liquidity_score', 1.0),
             ], dtype=np.float32)
             features_list.append(features)
         
@@ -278,12 +286,13 @@ class ConfidencePredictor:
         # Convert to tensor
         x = torch.FloatTensor(features_batch).to(self.device)
         
-        # Predict win probabilities (0.0 to 1.0 directly)
+        # Predict R-multiples
         with torch.no_grad():
-            win_probs = self.model(x).squeeze().cpu().numpy()
+            r_multiples = self.model(x).squeeze().cpu().numpy()
         
-        # Model outputs win probability - just clip to valid range
-        confidences = np.clip(win_probs, 0.01, 0.99)
+        # Convert R-multiples to confidences using sigmoid transformation
+        confidences = 1.0 / (1.0 + np.exp(-r_multiples))
+        confidences = np.clip(confidences, 0.01, 0.99)
         
         # Handle single prediction case
         if len(rl_states) == 1:
