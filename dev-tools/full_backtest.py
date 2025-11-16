@@ -48,7 +48,7 @@ CONFIG = {
     "max_contracts": 3,
     "local_mode": True,  # Use local experiences (3,754 saved experiences)
     "rl_confidence_threshold": 0.10,  # Only take trades above 10% confidence (exploration mode)
-    "exploration_rate": 0.05,  # 5% exploration rate
+    "exploration_rate": 0.30,  # 30% exploration rate (HIGH - for testing and building dataset)
     
     # REALISTIC TRADING COSTS (TopStep/Prop Firm)
     "slippage_ticks": 0.5,  # 0.5 tick slippage per side (entry + exit = 1 tick total = $12.50)

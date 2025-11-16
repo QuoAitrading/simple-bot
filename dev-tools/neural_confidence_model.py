@@ -203,6 +203,9 @@ class ConfidencePredictor:
         # Clip to valid range
         confidence = np.clip(confidence, 0.01, 0.99)
         
+        # DETAILED LOGGING for debugging
+        print(f"  🧠 Neural prediction: R-multiple={r_multiple:.3f} → confidence={confidence:.1%}")
+        
         return confidence
     
     def predict_batch(self, rl_states):
