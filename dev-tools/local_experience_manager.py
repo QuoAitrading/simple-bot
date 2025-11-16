@@ -11,7 +11,7 @@ import pytz
 class LocalExperienceManager:
     """Manages local experiences and neural network predictions for backtesting"""
     
-    def __init__(self, use_neural_network=True):
+    def __init__(self, use_neural_network=True, confidence_threshold=None):
         self.signal_experiences = []
         self.exit_experiences = []
         # Use absolute path relative to this file's location
@@ -20,6 +20,9 @@ class LocalExperienceManager:
         self.loaded = False
         self.new_signal_experiences = []  # Track experiences added during backtest
         self.new_exit_experiences = []    # Track exit experiences added during backtest
+        
+        # Confidence threshold (if None, will use learned adaptive threshold)
+        self.confidence_threshold = confidence_threshold
         
         # Neural network support
         self.use_neural_network = use_neural_network
@@ -182,7 +185,7 @@ class LocalExperienceManager:
     def _get_confidence_neural(self, rl_state: Dict, signal: str) -> tuple:
         """
         Get confidence prediction from trained neural network.
-        Neural network uses 22 features to predict win probability.
+        Neural network uses 32 features to predict R-multiple (converted to confidence).
         """
         # Signal is already encoded in rl_state (LONG=0, SHORT=1)
         # Don't overwrite it with string
@@ -190,15 +193,21 @@ class LocalExperienceManager:
         # Get prediction from neural network
         confidence = self.neural_predictor.predict(rl_state)
         
-        # Apply learned threshold
-        optimal_threshold = self._get_learned_confidence_threshold()
-        take_signal = confidence >= optimal_threshold
+        # Use configured threshold if provided, otherwise use learned adaptive threshold
+        if self.confidence_threshold is not None:
+            threshold = self.confidence_threshold
+            threshold_source = "configured"
+        else:
+            threshold = self._get_learned_confidence_threshold()
+            threshold_source = "learned"
+        
+        take_signal = confidence >= threshold
         
         # Generate reason string
         wins = sum(1 for e in self.signal_experiences 
                   if e.get('took_trade') and e.get('pnl', 0) > 0)
         total = len([e for e in self.signal_experiences if e.get('took_trade')])
-        reason = f"Neural: {confidence:.0%} confidence (threshold: {optimal_threshold:.0%}, trained on {total} trades)"
+        reason = f"Neural: {confidence:.0%} confidence ({threshold_source} threshold: {threshold:.0%}, trained on {total} trades)"
         
         return (take_signal, confidence, reason)
     
@@ -328,5 +337,5 @@ class LocalExperienceManager:
             'total': len(self.signal_experiences) + len(self.exit_experiences)
         }
 
-# Global instance
-local_manager = LocalExperienceManager()
+# Global instance - threshold will be set from full_backtest CONFIG
+local_manager = LocalExperienceManager(confidence_threshold=0.10)  # Default 10%, will be overridden by CONFIG

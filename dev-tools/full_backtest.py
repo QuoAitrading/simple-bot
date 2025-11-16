@@ -47,7 +47,7 @@ CONFIG = {
     "tick_value": 12.50,  # ES full contract = $12.50 per tick (MATCHES LIVE BOT)
     "max_contracts": 3,
     "local_mode": True,  # Use local experiences (3,754 saved experiences)
-    "rl_confidence_threshold": 0.70,  # Only take trades above 70% confidence
+    "rl_confidence_threshold": 0.10,  # Only take trades above 10% confidence (exploration mode)
     "exploration_rate": 0.05,  # 5% exploration rate
     
     # REALISTIC TRADING COSTS (TopStep/Prop Firm)
@@ -92,6 +92,9 @@ CONFIG = {
 # ========================================
 
 from local_experience_manager import local_manager
+
+# Update local_manager threshold from CONFIG
+local_manager.confidence_threshold = CONFIG['rl_confidence_threshold']
 
 def get_rl_confidence(rl_state: Dict, side: str) -> Tuple[bool, float, str]:
     """
@@ -3073,6 +3076,7 @@ if __name__ == "__main__":
         # Update CONFIG with command-line overrides
         if confidence_threshold is not None:
             CONFIG['rl_confidence_threshold'] = confidence_threshold
+            local_manager.confidence_threshold = confidence_threshold  # Update local_manager too
         if max_contracts is not None:
             CONFIG['max_contracts'] = max_contracts
         
