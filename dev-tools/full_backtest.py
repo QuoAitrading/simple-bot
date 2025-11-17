@@ -124,7 +124,7 @@ def encode_signal(signal_str: str) -> int:
     """Convert signal string to numeric code for neural network."""
     return 0 if signal_str.upper() == 'LONG' else 1
 
-def calculate_position_size(confidence: float, account_size: float = 50000.0) -> int:
+def calculate_position_size(confidence: float, is_exploration: bool = False, account_size: float = 50000.0) -> int:
     """
     Scale position size based on ML confidence.
     Higher confidence = more contracts (up to max).
@@ -132,6 +132,10 @@ def calculate_position_size(confidence: float, account_size: float = 50000.0) ->
     DYNAMIC SCALING based on your confidence threshold:
     - Divides range from threshold to 100% into equal tiers
     - Each tier gets 1 more contract
+    
+    For EXPLORATION trades:
+    - Always use 1 contract (minimum size for learning)
+    - Bypasses threshold check since exploration is for learning
     
     Example with threshold=50%, max=3:
       50-66% → 1 contract
@@ -145,6 +149,11 @@ def calculate_position_size(confidence: float, account_size: float = 50000.0) ->
     """
     max_contracts = CONFIG['max_contracts']
     threshold = CONFIG['rl_confidence_threshold']
+    
+    # EXPLORATION TRADES: Always 1 contract (bypass threshold check)
+    # Exploration is for learning, so we take the trade regardless of confidence
+    if is_exploration:
+        return 1  # Minimum size for exploration/learning
     
     # Handle adaptive threshold (default to 0.50)
     if threshold == "adaptive":
@@ -2558,7 +2567,9 @@ def run_full_backtest(csv_file: str, days: int = 15):
                 # Trust the signal confidence manager's decision (no duplicate exploration)
                 
                 if take_signal:
-                    contracts = calculate_position_size(confidence)
+                    # Check if this is an exploration trade (for position sizing)
+                    is_exploration = "EXPLORATION" in reason
+                    contracts = calculate_position_size(confidence, is_exploration)
                     
                     # Skip trade if below confidence threshold (contracts = 0)
                     if contracts == 0:
@@ -2734,7 +2745,9 @@ def run_full_backtest(csv_file: str, days: int = 15):
                 # Trust the signal confidence manager's decision (no duplicate exploration)
                 
                 if take_signal:
-                    contracts = calculate_position_size(confidence)
+                    # Check if this is an exploration trade (for position sizing)
+                    is_exploration = "EXPLORATION" in reason
+                    contracts = calculate_position_size(confidence, is_exploration)
                     
                     # Skip trade if below confidence threshold (contracts = 0)
                     if contracts == 0:
