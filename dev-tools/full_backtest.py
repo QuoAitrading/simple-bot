@@ -1,10 +1,11 @@
 # -*- coding: utf-8 -*-
 """
-COMPLETE TRADING SYSTEM BACKTEST - 100% LOCAL ONLY
-===================================================
+COMPLETE TRADING SYSTEM BACKTEST - NEURAL NETWORK REQUIRED
+===========================================================
 Full simulation of QuoTrading bot with ALL features:
-- LOCAL pattern matching (no cloud API calls)
-- Adaptive exits with local RL learning
+- Neural network for signal confidence (REQUIRED - trained on thousands of experiences)
+- Neural network for exit parameters (REQUIRED - predicts all 131 parameters)
+- Adaptive exits with RL learning from JSON experience files
 - Partial exits (runners at 2R, 3R, 5R)
 - Breakeven protection
 - Trailing stops
@@ -12,7 +13,7 @@ Full simulation of QuoTrading bot with ALL features:
 - Position sizing based on confidence
 - ATR-based stops
 - VWAP bounce strategy
-- 100% OFFLINE - uses local_experience_manager.py only
+- Loads models trained on thousands of experiences from JSON files
 """
 
 import pandas as pd
@@ -57,9 +58,9 @@ CONFIG = {
     # DAILY LOSS LIMIT (matches live bot - user configurable)
     "daily_loss_limit": 1000.0,  # FAIL if down $1000 in a day - backtest auto-stops (prop firm rule simulation)
     
-    # NEURAL NETWORK BASELINES - Only used if neural network prediction fails
-    "breakeven_threshold_ticks": 9,  # Fallback baseline (neural network predicts actual value)
-    "trailing_distance_ticks": 12,   # Fallback baseline (neural network predicts actual value)
+    # NEURAL NETWORK PARAMETERS - Models trained on thousands of experiences
+    "breakeven_threshold_ticks": 9,  # Baseline (neural network predicts actual value per trade)
+    "trailing_distance_ticks": 12,   # Baseline (neural network predicts actual value per trade)
     
     # Partial exits (runners) - Neural network baseline
     "partial_exit_1_r_multiple": 2.0,
