@@ -24,7 +24,7 @@ class LocalExperienceManager:
         # Confidence threshold (if None, will use learned adaptive threshold)
         self.confidence_threshold = confidence_threshold
         
-        # Neural network support
+        # Neural network support (REQUIRED!)
         self.use_neural_network = use_neural_network
         self.neural_predictor = None
         if use_neural_network:
@@ -35,14 +35,20 @@ class LocalExperienceManager:
                 model_path = os.path.abspath(model_path)
                 self.neural_predictor = ConfidencePredictor(model_path=model_path)
                 if self.neural_predictor.load_model():
-                    print("🧠 Neural network loaded - using AI for confidence prediction")
+                    print("🧠 Neural network loaded - using AI trained on thousands of experiences")
+                    print(f"   Model path: {model_path}")
                 else:
-                    print("⚠️  Neural network not found - train with: python train_model.py")
-                    self.use_neural_network = False
+                    print(f"❌ Neural network model not found at {model_path}")
+                    print("   Neural network is REQUIRED. Please train the model first:")
+                    print("   python dev-tools/train_model.py")
+                    raise RuntimeError("Neural network model required but not found")
+            except RuntimeError:
+                raise  # Re-raise RuntimeError for missing model
             except Exception as e:
-                print(f"⚠️  Could not load neural network: {e}")
-                print("   Train with: python train_model.py")
-                self.use_neural_network = False
+                print(f"❌ Could not load neural network: {e}")
+                print("   Neural network is REQUIRED. Please train the model:")
+                print("   python dev-tools/train_model.py")
+                raise RuntimeError(f"Failed to load required neural network: {e}")
         
     def load_experiences(self) -> bool:
         """Load experiences from local JSON files (v2 format with full structure)"""
@@ -152,7 +158,7 @@ class LocalExperienceManager:
     def get_signal_confidence(self, rl_state: Dict, signal: str, exploration_rate: float = 0.0) -> tuple:
         """
         Get ML confidence using neural network ONLY.
-        Neural network must be trained - no fallback to pattern matching.
+        Neural network is REQUIRED - no fallback to pattern matching.
         
         Args:
             rl_state: Market state features
@@ -162,30 +168,19 @@ class LocalExperienceManager:
         Returns: (take_signal, confidence, reason)
         """
         # Neural network only - no fallback
-        if self.use_neural_network and self.neural_predictor is not None:
-            # Try to load experiences if not loaded (for saving new ones later)
-            if not self.loaded:
-                self.load_experiences()  # Doesn't matter if this fails - we have neural network
-            
-            try:
-                return self._get_confidence_neural(rl_state, signal, exploration_rate)
-            except Exception as e:
-                print(f"❌ Neural network error: {e}")
-                print(f"   Train the model with: python train_model.py")
-                return (False, 0.0, "Neural network failed - train model first")
+        if not self.use_neural_network or self.neural_predictor is None:
+            raise RuntimeError("Neural network is required but not available")
         
-        # No neural network available - return random confidence for initial data collection
-        # Use full range (0-100%) for true exploration, then apply threshold
-        import random
-        random_confidence = random.uniform(0.30, 0.95)  # Random between 30-95% for exploration
+        # Try to load experiences if not loaded (for saving new ones later)
+        if not self.loaded:
+            self.load_experiences()  # Doesn't matter if this fails - we have neural network
         
-        # Apply the configured confidence threshold (from CONFIG or default 0.70)
-        # This ensures some signals get rejected even without neural network
-        threshold = 0.70  # Default threshold when no NN trained
-        take_signal = random_confidence >= threshold
-        
-        reason = f"random_exploration (NN not trained): {random_confidence:.0%} vs threshold {threshold:.0%}"
-        return (take_signal, random_confidence, reason)
+        try:
+            return self._get_confidence_neural(rl_state, signal, exploration_rate)
+        except Exception as e:
+            print(f"❌ Neural network error: {e}")
+            print(f"   Train the model with: python train_model.py")
+            raise RuntimeError(f"Neural network prediction failed: {e}")
     
     def _get_confidence_neural(self, rl_state: Dict, signal: str, exploration_rate: float = 0.0) -> tuple:
         """
@@ -305,6 +300,42 @@ class LocalExperienceManager:
         }
         self.new_signal_experiences.append(experience)
     
+    def _create_backup(self, filepath: str):
+        """Create automatic backup of experience file before overwriting"""
+        if os.path.exists(filepath):
+            import shutil
+            from datetime import datetime
+            # Create backup with timestamp
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            backup_dir = os.path.join(os.path.dirname(filepath), "backups")
+            os.makedirs(backup_dir, exist_ok=True)
+            
+            filename = os.path.basename(filepath)
+            backup_path = os.path.join(backup_dir, f"{filename}.{timestamp}.backup")
+            
+            try:
+                shutil.copy2(filepath, backup_path)
+                print(f"   📦 Backup created: {backup_path}")
+                
+                # Keep only last 10 backups to save space
+                self._cleanup_old_backups(backup_dir, filename)
+            except Exception as e:
+                print(f"   ⚠️  Backup failed (continuing anyway): {e}")
+    
+    def _cleanup_old_backups(self, backup_dir: str, filename: str):
+        """Keep only the 10 most recent backups"""
+        import glob
+        pattern = os.path.join(backup_dir, f"{filename}.*.backup")
+        backups = sorted(glob.glob(pattern), reverse=True)
+        
+        # Remove backups beyond the 10 most recent
+        for old_backup in backups[10:]:
+            try:
+                os.remove(old_backup)
+                print(f"   🗑️  Removed old backup: {os.path.basename(old_backup)}")
+            except Exception as e:
+                print(f"   ⚠️  Failed to remove old backup: {e}")
+    
     def save_new_experiences_to_file(self):
         """Save new experiences accumulated during backtest to local JSON files (v2 format)"""
         if len(self.new_signal_experiences) == 0:
@@ -313,6 +344,9 @@ class LocalExperienceManager:
         
         # Use V2 file with full structure
         signal_file = os.path.join(self.local_dir, "signal_experiences_v2.json")
+        
+        # Create automatic backup before overwriting
+        self._create_backup(signal_file)
         
         # Load existing (if file exists)
         existing_experiences = []

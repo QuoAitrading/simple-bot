@@ -756,6 +756,42 @@ class LocalExitManager:
         if len(self.new_exit_experiences) % 10 == 0:
             print(f"   📊 Exit experiences collected: {len(self.new_exit_experiences)}")
     
+    def _create_backup(self, filepath: str):
+        """Create automatic backup of experience file before overwriting"""
+        if os.path.exists(filepath):
+            import shutil
+            from datetime import datetime
+            # Create backup with timestamp
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            backup_dir = os.path.join(os.path.dirname(filepath), "backups")
+            os.makedirs(backup_dir, exist_ok=True)
+            
+            filename = os.path.basename(filepath)
+            backup_path = os.path.join(backup_dir, f"{filename}.{timestamp}.backup")
+            
+            try:
+                shutil.copy2(filepath, backup_path)
+                print(f"   📦 Backup created: {backup_path}")
+                
+                # Keep only last 10 backups to save space
+                self._cleanup_old_backups(backup_dir, filename)
+            except Exception as e:
+                print(f"   ⚠️  Backup failed (continuing anyway): {e}")
+    
+    def _cleanup_old_backups(self, backup_dir: str, filename: str):
+        """Keep only the 10 most recent backups"""
+        import glob
+        pattern = os.path.join(backup_dir, f"{filename}.*.backup")
+        backups = sorted(glob.glob(pattern), reverse=True)
+        
+        # Remove backups beyond the 10 most recent
+        for old_backup in backups[10:]:
+            try:
+                os.remove(old_backup)
+                print(f"   🗑️  Removed old backup: {os.path.basename(old_backup)}")
+            except Exception as e:
+                print(f"   ⚠️  Failed to remove old backup: {e}")
+    
     def save_new_experiences_to_file(self):
         """Save new exit experiences accumulated during backtest to local JSON file (v2 format)"""
         if len(self.new_exit_experiences) == 0:
@@ -764,6 +800,9 @@ class LocalExitManager:
         
         # Use V2 file with full structure
         exit_file = os.path.join(self.local_dir, "exit_experiences_v2.json")
+        
+        # Create automatic backup before overwriting
+        self._create_backup(exit_file)
         
         # Load existing (if file exists)
         existing_experiences = []
