@@ -265,8 +265,8 @@ EXIT_PARAMS = {
         'category': 'adverse'
     },
     'profit_drawdown_pct': {
-        'min': 0.10, 'max': 0.35, 'default': 0.15,
-        'description': 'Max profit drawdown % before exit - LEARNS: tighter in choppy, looser in trending',
+        'min': 0.10, 'max': 0.50, 'default': 0.35,
+        'description': 'Max profit drawdown % before exit - LEARNS: tighter in choppy, looser in trending - INCREASED to let winners run',
         'category': 'adverse'
     },
     'dead_trade_threshold_bars': {
@@ -671,8 +671,8 @@ EXIT_PARAMS = {
     # PROFIT PROTECTION (3 params)
     # -------------------------------------------------------------------------
     'profit_protection_min_r': {
-        'min': 0.5, 'max': 3.0, 'default': 1.0,
-        'description': 'Min R before profit protection kicks in - LEARNS: protect early in choppy, let run in trending',
+        'min': 0.5, 'max': 3.0, 'default': 2.0,
+        'description': 'Min R before profit protection kicks in - INCREASED to allow partials to trigger - LEARNS: protect early in choppy, let run in trending',
         'category': 'profit_protection'
     },
     'profit_lock_activation_r': {
