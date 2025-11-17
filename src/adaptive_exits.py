@@ -1935,6 +1935,42 @@ class AdaptiveExitManager:
         return False
     
     
+    def _create_backup(self, filepath: str):
+        """Create automatic backup of experience file before overwriting"""
+        if os.path.exists(filepath):
+            import shutil
+            from datetime import datetime
+            # Create backup with timestamp
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            backup_dir = os.path.join(os.path.dirname(filepath), "backups")
+            os.makedirs(backup_dir, exist_ok=True)
+            
+            filename = os.path.basename(filepath)
+            backup_path = os.path.join(backup_dir, f"{filename}.{timestamp}.backup")
+            
+            try:
+                shutil.copy2(filepath, backup_path)
+                logger.info(f"Backup created: {backup_path}")
+                
+                # Keep only last 10 backups to save space
+                self._cleanup_old_backups(backup_dir, filename)
+            except Exception as e:
+                logger.warning(f"Backup failed (continuing anyway): {e}")
+    
+    def _cleanup_old_backups(self, backup_dir: str, filename: str):
+        """Keep only the 10 most recent backups"""
+        import glob
+        pattern = os.path.join(backup_dir, f"{filename}.*.backup")
+        backups = sorted(glob.glob(pattern), reverse=True)
+        
+        # Remove backups beyond the 10 most recent
+        for old_backup in backups[10:]:
+            try:
+                os.remove(old_backup)
+                logger.info(f"Removed old backup: {os.path.basename(old_backup)}")
+            except Exception as e:
+                logger.warning(f"Failed to remove old backup: {e}")
+    
     def save_experiences(self):
         """
         Save exit experiences to v2 format (shared with backtest) AND cloud API.
@@ -1946,6 +1982,9 @@ class AdaptiveExitManager:
             v2_dir = "data/local_experiences"
             os.makedirs(v2_dir, exist_ok=True)
             v2_file = os.path.join(v2_dir, "exit_experiences_v2.json")
+            
+            # Create automatic backup before overwriting
+            self._create_backup(v2_file)
             
             with open(v2_file, 'w') as f:
                 json.dump({
@@ -1966,6 +2005,7 @@ class AdaptiveExitManager:
             logger.info(f"[CLOUD] ✅ {len(self.exit_experiences)} exit experiences saved to cloud API individually")
         else:
             logger.debug(f"[INFO] Cloud API not configured - using local v2 format only (dev mode)")
+
 
 
 def detect_market_regime(bars: list, current_atr: float) -> str:
