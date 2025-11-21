@@ -225,7 +225,9 @@ state: Dict[str, Any] = {}
 
 # Backtest mode tracking
 # When True, runs in backtest mode using historical data (no broker/cloud connections)
-# Global variable to track simulation time during backtesting
+# Global variable to track simulation time during backtesting.
+# When None, get_current_time() uses real datetime.now()
+# When set (by handle_tick_event), get_current_time() uses this historical timestamp
 backtest_current_time: Optional[datetime] = None
 
 # Global tracking for safety mechanisms (Phase 12)
