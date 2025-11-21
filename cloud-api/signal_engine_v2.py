@@ -1685,7 +1685,7 @@ async def create_checkout_session():
         raise HTTPException(status_code=500, detail=str(e))
 
 # ============================================================================
-# ECONOMIC CALENDAR - FOMC AUTO-SCRAPER
+# ECONOMIC CALENDAR - Predictable Events (NFP, CPI, PPI)
 # ============================================================================
 
 import asyncio
@@ -1698,77 +1698,8 @@ economic_calendar = {
     "events": [],
     "last_updated": None,
     "next_update": None,
-    "source": "Federal Reserve + Manual"
+    "source": "Predictable Events (NFP/CPI/PPI)"
 }
-
-def scrape_fomc_dates() -> List[Dict]:
-    """
-    Scrape FOMC meeting dates from Federal Reserve website
-    Returns list of FOMC events
-    """
-    fomc_events = []
-    
-    try:
-        logger.info("📅 Fetching FOMC dates from federalreserve.gov...")
-        
-        # Fetch Federal Reserve calendar page
-        url = "https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm"
-        response = req_lib.get(url, timeout=10)
-        response.raise_for_status()
-        
-        soup = BeautifulSoup(response.text, 'html.parser')
-        
-        # Find FOMC meeting dates in the page
-        # The structure typically has dates in specific div/table elements
-        # This is a simplified parser - may need adjustment if Fed changes format
-        
-        # Look for date patterns (MM/DD/YYYY or Month DD, YYYY)
-        import re
-        date_pattern = r'(\d{1,2}/\d{1,2}/\d{4}|\w+ \d{1,2}, \d{4})'
-        
-        # Find all text containing potential dates
-        page_text = soup.get_text()
-        potential_dates = re.findall(date_pattern, page_text)
-        
-        logger.info(f"Found {len(potential_dates)} potential FOMC dates on Fed website")
-        
-        # Parse and format dates
-        from dateutil import parser as date_parser
-        
-        for date_str in potential_dates[:20]:  # Limit to next 20 meetings (years ahead)
-            try:
-                parsed_date = date_parser.parse(date_str)
-                
-                # Only include future dates
-                if parsed_date.date() > datetime.now().date():
-                    # Add FOMC Statement (2 PM ET)
-                    fomc_events.append({
-                        "date": parsed_date.strftime("%Y-%m-%d"),
-                        "time": "2:00pm",
-                        "currency": "USD",
-                        "event": "FOMC Statement",
-                        "impact": "high"
-                    })
-                    
-                    # Add FOMC Press Conference (2:30 PM ET)
-                    fomc_events.append({
-                        "date": parsed_date.strftime("%Y-%m-%d"),
-                        "time": "2:30pm",
-                        "currency": "USD",
-                        "event": "FOMC Press Conference",
-                        "impact": "high"
-                    })
-            except Exception as e:
-                logger.debug(f"Could not parse date: {date_str}")
-                continue
-        
-        logger.info(f"✅ Scraped {len(fomc_events)} FOMC events from Federal Reserve")
-        
-    except Exception as e:
-        logger.error(f"❌ Failed to scrape FOMC dates: {e}")
-        logger.info("Will use manual FOMC dates as fallback")
-    
-    return fomc_events
 
 def generate_predictable_events() -> List[Dict]:
     """
@@ -1823,26 +1754,22 @@ def generate_predictable_events() -> List[Dict]:
 
 def update_calendar():
     """
-    Update economic calendar with latest FOMC + predictable events
+    Update economic calendar with predictable events (NFP, CPI, PPI)
     Runs daily at 5 PM ET (Sunday-Friday)
     """
     try:
         logger.info("📅 Updating economic calendar...")
         
-        # Scrape FOMC dates from Federal Reserve
-        fomc_events = scrape_fomc_dates()
-        
         # Generate predictable events
         predictable_events = generate_predictable_events()
         
-        # Combine and sort by date
-        all_events = fomc_events + predictable_events
-        all_events.sort(key=lambda x: x["date"])
+        # Sort by date
+        predictable_events.sort(key=lambda x: x["date"])
         
         # Remove duplicates (keep first occurrence)
         seen_dates = set()
         unique_events = []
-        for event in all_events:
+        for event in predictable_events:
             event_key = (event["date"], event["event"])
             if event_key not in seen_dates:
                 seen_dates.add(event_key)
@@ -1853,7 +1780,7 @@ def update_calendar():
         economic_calendar["last_updated"] = datetime.utcnow().isoformat()
         economic_calendar["next_update"] = get_next_update_time().isoformat()
         
-        logger.info(f"✅ Calendar updated: {len(unique_events)} events ({len(fomc_events)} FOMC + {len(predictable_events)} NFP/CPI/PPI)")
+        logger.info(f"✅ Calendar updated: {len(unique_events)} events (NFP/CPI/PPI)")
         
     except Exception as e:
         logger.error(f"❌ Calendar update failed: {e}")
@@ -1948,7 +1875,6 @@ async def get_todays_events():
         if event["date"] == today and event["impact"] == "high"
     ]
     
-    has_fomc = any("FOMC" in event["event"] for event in todays_events)
     has_nfp = any("Non-Farm" in event["event"] for event in todays_events)
     has_cpi = any("CPI" in event["event"] for event in todays_events)
     
@@ -1956,7 +1882,6 @@ async def get_todays_events():
         "date": today,
         "events": todays_events,
         "count": len(todays_events),
-        "has_fomc": has_fomc,
         "has_nfp": has_nfp,
         "has_cpi": has_cpi,
         "trading_recommended": len(todays_events) == 0
@@ -2190,7 +2115,7 @@ async def get_simple_time():
     For bots that need quick checks without full details
     
     Checks:
-    - Economic events (FOMC/NFP/CPI)
+    - Economic events (NFP/CPI)
     - Maintenance windows (Mon-Thu 5-6 PM, Fri 5 PM - Sun 6 PM)
     - Weekend closure
     """

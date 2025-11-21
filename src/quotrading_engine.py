@@ -706,11 +706,11 @@ def check_azure_time_service() -> str:
     - Current ET time (timezone-accurate)
     - Market hours status
     - Maintenance windows (Mon-Thu 5-6 PM, Fri 5 PM - Sun 6 PM)
-    - Economic events (FOMC/NFP/CPI blocking)
+    - Economic events (NFP/CPI information - user decides)
     - Trading permission (go/no-go flag)
     
     Returns:
-        Trading state: 'entry_window', 'flatten_mode', 'closed', or 'event_block'
+        Trading state: 'entry_window', 'flatten_mode', or 'closed'
     """
     try:
         import requests
@@ -737,22 +737,11 @@ def check_azure_time_service() -> str:
             if not trading_allowed:
                 if "maintenance" in halt_reason.lower():
                     state = "closed"  # Maintenance window
-                elif "event" in halt_reason.lower() or "fomc" in halt_reason.lower() or "nfp" in halt_reason.lower():
-                    # Check if FOMC blocking is enabled in config
-                    fomc_enabled = CONFIG.get("fomc_block_enabled", True)
-                    if fomc_enabled:
-                        state = "event_block"  # Economic event blocking
-                        # Log FOMC block (only once when it activates)
-                        if not bot_status.get("event_block_active", False):
-                            logger.warning("=" * 80)
-                            logger.warning(f"📅 ECONOMIC EVENT BLOCK ACTIVATED: {halt_reason}")
-                            logger.warning("  Trading halted 30 min before to 1 hour after event")
-                            logger.warning("  Will auto-resume when event window closes")
-                            logger.warning("=" * 80)
-                            bot_status["event_block_active"] = True
-                    else:
-                        logger.info(f"[TIME SERVICE] Economic event active but FOMC blocking disabled: {halt_reason}")
-                        state = "entry_window"  # User disabled event blocking
+                elif "event" in halt_reason.lower() or "nfp" in halt_reason.lower() or "cpi" in halt_reason.lower():
+                    # Economic event detected - let user decide whether to trade
+                    logger.info(f"[TIME SERVICE] Economic event active: {halt_reason}")
+                    logger.info(f"[TIME SERVICE] User has full control - trading allowed")
+                    state = "entry_window"  # User decides whether to trade during events
                 elif "weekend" in halt_reason.lower() or "closed" in halt_reason.lower():
                     state = "closed"  # Weekend or market closed
                 else:
@@ -2232,12 +2221,6 @@ def validate_signal_requirements(symbol: str, bar_time: datetime) -> Tuple[bool,
     if trading_state == "closed":
         logger.debug(f"Market closed, skipping signal check")
         return False, f"Market closed"
-    
-    if trading_state == "event_block":
-        # FOMC/NFP/CPI event blocking (if enabled in config)
-        halt_reason = bot_status.get("halt_reason", "Economic event")
-        logger.debug(f"Event block active: {halt_reason}")
-        return False, f"Economic event block: {halt_reason}"
     
     if trading_state == "flatten_mode":
         logger.debug(f"Flatten mode active (4:45-5:00 PM), no new entries")
@@ -4576,47 +4559,6 @@ def check_exit_conditions(symbol: str) -> None:
         logger.info("Position flattened - bot will continue running and auto-resume when market opens")
         return
     
-    # ECONOMIC EVENT: Force close ONLY if user enabled it
-    if trading_state == "event_block" and position["active"]:
-        fomc_force_close = CONFIG.get("fomc_force_close", False)
-        
-        if fomc_force_close:
-            # User wants to force close during economic events
-            event_reason = bot_status.get('halt_reason', 'Economic event active')
-            
-            logger.critical(SEPARATOR_LINE)
-            logger.critical(f"ECONOMIC EVENT - AUTO-FLATTENING POSITION")
-            logger.critical(f"Event: {event_reason}")
-            logger.critical(f"Time: {bar_time.strftime('%H:%M:%S %Z')}")
-            logger.critical(f"Position: {side.upper()} {position['quantity']} @ ${entry_price:.2f}")
-            logger.critical("(User enabled 'Force Close During FOMC')")
-            logger.critical(SEPARATOR_LINE)
-            
-            # Force close immediately
-            flatten_price = get_flatten_price(symbol, side, current_bar["close"])
-            
-            log_time_based_action(
-                "event_flatten",
-                f"{event_reason} - auto-flattening position per user preference",
-                {
-                    "side": side,
-                    "quantity": position["quantity"],
-                    "entry_price": f"${entry_price:.2f}",
-                    "exit_price": f"${flatten_price:.2f}",
-                    "time": bar_time.strftime('%H:%M:%S %Z'),
-                    "reason": event_reason
-                }
-            )
-            
-            # Execute close order
-            handle_exit_orders(symbol, position, flatten_price, "event_flatten")
-            logger.info("Position flattened for economic event - will auto-resume after event window")
-            return
-        else:
-            # User wants to keep position during events, just block new entries
-            logger.info(f"📅 Economic event active: {bot_status.get('halt_reason', 'Event')}")
-            logger.info("  Keeping existing position (Force Close disabled)")
-            logger.info("  New entries blocked until event window closes")
     
     # AUTO-RESUME: Reset flatten mode when market reopens
     if trading_state == "entry_window" and bot_status["flatten_mode"]:
@@ -6410,7 +6352,7 @@ def get_trading_state(dt: datetime = None) -> str:
     
     **AZURE-FIRST DESIGN**: Checks Azure time service first for:
     - Maintenance windows (Mon-Thu 5-6 PM, Fri 5 PM - Sun 6 PM)
-    - Economic events (FOMC/NFP/CPI blocking)
+    - Economic events (NFP/CPI information - user decides)
     - Single source of truth for all time-based decisions
     
     Falls back to local time logic if Azure unreachable.
@@ -6424,7 +6366,6 @@ def get_trading_state(dt: datetime = None) -> str:
         - 'entry_window': Market open, ready to trade
         - 'flatten_mode': 4:45-5:00 PM ET, close positions before maintenance
         - 'closed': Market closed (flatten all positions immediately)
-        - 'event_block': Economic event active (FOMC/NFP/CPI)
     """
     # AZURE-FIRST: Try cloud time service (unless in backtest mode)
     if backtest_current_time is None:  # Live mode only
