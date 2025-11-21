@@ -397,11 +397,33 @@ def main():
     
     logger.setLevel(log_level)
     
-    # Suppress verbose logging from all loggers during backtest
+    # Suppress verbose logging from most loggers during backtest
     logging.getLogger('quotrading_engine').setLevel(logging.WARNING)
     logging.getLogger('backtesting').setLevel(logging.WARNING)
     logging.getLogger('vwap_bot').setLevel(logging.ERROR)
     logging.getLogger('backtest').setLevel(logging.WARNING)
+    
+    # Create a custom filter to allow regime change messages through
+    class RegimeChangeFilter(logging.Filter):
+        def filter(self, record):
+            # Allow messages containing regime change info
+            msg = record.getMessage()
+            if any(keyword in msg for keyword in [
+                'REGIME CHANGE',
+                'Transition:',
+                'Stop Multiplier:',
+                'Breakeven Mult:',
+                'Trailing Mult:',
+                'Timeouts Changed:',
+                'Entry Regime:'
+            ]):
+                return True
+            # Allow WARNING and above
+            return record.levelno >= logging.WARNING
+    
+    # Add filter to quotrading_engine logger
+    qte_logger = logging.getLogger('quotrading_engine')
+    qte_logger.addFilter(RegimeChangeFilter())
     
     # Initialize clean reporter
     reporter = reset_reporter(starting_balance=args.initial_equity)
