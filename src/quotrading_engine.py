@@ -2811,9 +2811,11 @@ def check_for_signals(symbol: str) -> None:
                 return
         
         if not take_signal:
-            logger.info(f" RL REJECTED LONG signal: {reason} (confidence: {confidence:.1%})")
-            logger.info(f"   RSI: {rl_state['rsi']:.1f}, VWAP dist: {rl_state['vwap_distance']:.2f}, "
-                      f"Vol ratio: {rl_state['volume_ratio']:.2f}x")
+            logger.info(f"❌ RL REJECTED LONG: {reason} (conf: {confidence:.0%})")
+            if not is_backtest_mode():
+                # Only show details in live mode
+                logger.info(f"   RSI: {rl_state['rsi']:.1f}, VWAP dist: {rl_state['vwap_distance']:.2f}, "
+                          f"Vol ratio: {rl_state['volume_ratio']:.2f}x")
             # Store the rejected signal state for potential future learning
             state[symbol]["last_rejected_signal"] = {
                 "time": get_current_time(),
@@ -2826,9 +2828,11 @@ def check_for_signals(symbol: str) -> None:
         
         # RL approved - adjust position size based on confidence
         regime = rl_state.get('regime', 'NORMAL')
-        logger.info(f" RL APPROVED LONG signal: {reason} (confidence: {confidence:.1%}) | Regime: {regime}")
-        logger.info(f"   RSI: {rl_state['rsi']:.1f}, VWAP dist: {rl_state['vwap_distance']:.2f}, "
-                  f"Vol ratio: {rl_state['volume_ratio']:.2f}x, Streak: {rl_state['streak']:+d}")
+        logger.info(f"✅ RL APPROVED LONG: {reason} (conf: {confidence:.0%}) | {regime}")
+        if not is_backtest_mode():
+            # Only show details in live mode
+            logger.info(f"   RSI: {rl_state['rsi']:.1f}, VWAP dist: {rl_state['vwap_distance']:.2f}, "
+                      f"Vol ratio: {rl_state['volume_ratio']:.2f}x, Streak: {rl_state['streak']:+d}")
         
         # Store the state for outcome recording after trade
         state[symbol]["entry_rl_state"] = rl_state
@@ -2862,9 +2866,11 @@ def check_for_signals(symbol: str) -> None:
                 return
         
         if not take_signal:
-            logger.info(f" RL REJECTED SHORT signal: {reason} (confidence: {confidence:.1%})")
-            logger.info(f"   RSI: {rl_state['rsi']:.1f}, VWAP dist: {rl_state['vwap_distance']:.2f}, "
-                      f"Vol ratio: {rl_state['volume_ratio']:.2f}x")
+            logger.info(f"❌ RL REJECTED SHORT: {reason} (conf: {confidence:.0%})")
+            if not is_backtest_mode():
+                # Only show details in live mode
+                logger.info(f"   RSI: {rl_state['rsi']:.1f}, VWAP dist: {rl_state['vwap_distance']:.2f}, "
+                          f"Vol ratio: {rl_state['volume_ratio']:.2f}x")
             # Store the rejected signal state for potential future learning
             state[symbol]["last_rejected_signal"] = {
                 "time": get_current_time(),
@@ -2877,9 +2883,11 @@ def check_for_signals(symbol: str) -> None:
         
         # RL approved - adjust position size based on confidence
         regime = rl_state.get('regime', 'NORMAL')
-        logger.info(f" RL APPROVED SHORT signal: {reason} (confidence: {confidence:.1%}) | Regime: {regime}")
-        logger.info(f"   RSI: {rl_state['rsi']:.1f}, VWAP dist: {rl_state['vwap_distance']:.2f}, "
-                  f"Vol ratio: {rl_state['volume_ratio']:.2f}x, Streak: {rl_state['streak']:+d}")
+        logger.info(f"✅ RL APPROVED SHORT: {reason} (conf: {confidence:.0%}) | {regime}")
+        if not is_backtest_mode():
+            # Only show details in live mode
+            logger.info(f"   RSI: {rl_state['rsi']:.1f}, VWAP dist: {rl_state['vwap_distance']:.2f}, "
+                      f"Vol ratio: {rl_state['volume_ratio']:.2f}x, Streak: {rl_state['streak']:+d}")
         
         # Store the state for outcome recording after trade
         state[symbol]["entry_rl_state"] = rl_state

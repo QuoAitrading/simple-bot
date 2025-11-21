@@ -64,10 +64,10 @@ class SignalConfidenceRL:
         if not backtest_mode and confidence_threshold is None:
             # LIVE/SHADOW mode with no user config - use safe default of 50%
             self.user_threshold = 0.5
-            logger.info(" LIVE MODE: No threshold configured, using default 50%")
+            logger.debug(" LIVE MODE: No threshold configured, using default 50%")
         else:
             self.user_threshold = confidence_threshold
-            logger.info(f" RL BRAIN CONFIG: threshold={confidence_threshold}, exploration={exploration_rate}, backtest_mode={backtest_mode}")
+            logger.debug(f" RL BRAIN CONFIG: threshold={confidence_threshold}, exploration={exploration_rate}, backtest_mode={backtest_mode}")
         
         # Cached optimal threshold (only used in backtest mode when user_threshold is None)
         self.cached_threshold = None
@@ -93,23 +93,23 @@ class SignalConfidenceRL:
         }
         
         self.load_experience()
-        logger.info(f" Signal Confidence RL initialized: {len(self.experiences)} past experiences")
+        logger.debug(f" Signal Confidence RL initialized: {len(self.experiences)} past experiences")
         
         # Log threshold configuration
         if self.user_threshold is not None:
             if self.backtest_mode:
-                logger.info(f" CONFIDENCE THRESHOLD: {self.user_threshold:.1%} (USER CONFIGURED for backtest)")
+                logger.debug(f" CONFIDENCE THRESHOLD: {self.user_threshold:.1%} (USER CONFIGURED for backtest)")
             else:
-                logger.info(f" CONFIDENCE THRESHOLD: {self.user_threshold:.1%} (LIVE/SHADOW MODE - User Setting)")
+                logger.debug(f" CONFIDENCE THRESHOLD: {self.user_threshold:.1%} (LIVE/SHADOW MODE - User Setting)")
         else:
             # Only happens in backtest mode now
-            logger.info(f" CONFIDENCE THRESHOLD: Will be calculated from experiences (BACKTEST - ADAPTIVE)")
+            logger.debug(f" CONFIDENCE THRESHOLD: Will be calculated from experiences (BACKTEST - ADAPTIVE)")
         
         # Log exploration mode
         if self.backtest_mode:
-            logger.info(f" BACKTEST MODE: {self.exploration_rate*100:.1f}% exploration enabled (learning mode)")
+            logger.debug(f" BACKTEST MODE: {self.exploration_rate*100:.1f}% exploration enabled (learning mode)")
         else:
-            logger.info(f" LIVE MODE: 0% exploration (pure exploitation - NO RANDOM TRADES!)")
+            logger.debug(f" LIVE MODE: 0% exploration (pure exploitation - NO RANDOM TRADES!)")
     
     def capture_signal_state(self, rsi: float, vwap_distance: float, 
                             atr: float, volume_ratio: float,
@@ -373,7 +373,7 @@ class SignalConfidenceRL:
         
         if not valid_thresholds:
             # No threshold meets criteria - use conservative default (50% minimum)
-            logger.info("No valid thresholds found, using default 50%")
+            logger.debug("No valid thresholds found, using default 50%")
             return 0.50
         
         # Choose threshold that maximizes AVERAGE PROFIT PER TRADE (not total profit)
@@ -385,8 +385,8 @@ class SignalConfidenceRL:
         best_result = valid_thresholds[best_threshold]
         
         total_profit_potential = best_result['avg_profit'] * best_result['trades']
-        logger.info(f"LEARNED OPTIMAL THRESHOLD: {best_threshold*100:.0f}%")
-        logger.info(f"   Expected: {best_result['trades']} trades, {best_result['win_rate']*100:.1f}% WR, ${best_result['avg_profit']:.0f} avg, ${total_profit_potential:.0f} total potential")
+        logger.debug(f"LEARNED OPTIMAL THRESHOLD: {best_threshold*100:.0f}%")
+        logger.debug(f"   Expected: {best_result['trades']} trades, {best_result['win_rate']*100:.1f}% WR, ${best_result['avg_profit']:.0f} avg, ${total_profit_potential:.0f} total potential")
         
         return best_threshold
     
@@ -528,24 +528,24 @@ class SignalConfidenceRL:
     
     def load_experience(self):
         """Load past experiences from file."""
-        logger.info(f"[DEBUG] Attempting to load experiences from: {self.experience_file}")
-        logger.info(f"[DEBUG] File exists check: {os.path.exists(self.experience_file)}")
+        logger.debug(f"[DEBUG] Attempting to load experiences from: {self.experience_file}")
+        logger.debug(f"[DEBUG] File exists check: {os.path.exists(self.experience_file)}")
         
         if os.path.exists(self.experience_file):
             try:
-                logger.info(f"[DEBUG] Opening file...")
+                logger.debug(f"[DEBUG] Opening file...")
                 with open(self.experience_file, 'r') as f:
-                    logger.info(f"[DEBUG] Loading JSON...")
+                    logger.debug(f"[DEBUG] Loading JSON...")
                     data = json.load(f)
-                    logger.info(f"[DEBUG] JSON loaded successfully. Keys: {list(data.keys())}")
+                    logger.debug(f"[DEBUG] JSON loaded successfully. Keys: {list(data.keys())}")
                     self.experiences = data.get('experiences', [])
-                    logger.info(f" Loaded {len(self.experiences)} past signal experiences")
+                    logger.debug(f" Loaded {len(self.experiences)} past signal experiences")
             except Exception as e:
                 logger.error(f"Failed to load experiences: {e}")
                 import traceback
                 logger.error(traceback.format_exc())
         else:
-            logger.warning(f"[DEBUG] Experience file not found: {self.experience_file}")
+            logger.debug(f"[DEBUG] Experience file not found: {self.experience_file}")
     
     def save_experience(self):
         """Save experiences to file."""
