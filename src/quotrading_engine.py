@@ -6257,8 +6257,8 @@ def check_trade_limits(current_time: datetime) -> Tuple[bool, Optional[str]]:
     
     # Check for futures maintenance window (5:00-6:00 PM ET Monday-Friday)
     if eastern_time.weekday() < 5:  # Monday through Friday only
-        maintenance_start = datetime_time(17, 0
-        maintenance_end = datetime_time(18, 0
+        maintenance_start = datetime_time(17, 0)  # 5:00 PM ET
+        maintenance_end = datetime_time(18, 0)    # 6:00 PM ET
         if maintenance_start <= eastern_time.time() < maintenance_end:
             if bot_status["trading_enabled"]:
                 logger.debug(f"Maintenance window - disabling trading")
@@ -6886,8 +6886,8 @@ def get_trading_state(dt: datetime = None) -> str:
         return 'closed'
     
     # Get configured trading times from CONFIG (CME Eastern schedule)
-    flatten_time = CONFIG.get("flatten_time", datetime_time(16, 45
-    forced_flatten_time = CONFIG.get("forced_flatten_time", datetime_time(17, 0
+    flatten_time = CONFIG.get("flatten_time", datetime_time(16, 45))  # 4:45 PM ET
+    forced_flatten_time = CONFIG.get("forced_flatten_time", datetime_time(17, 0))  # 5:00 PM ET
     
     # CLOSED: Daily maintenance (5:00-6:00 PM ET, Monday-Thursday)
     if weekday < 4:  # Monday-Thursday
