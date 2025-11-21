@@ -1912,7 +1912,7 @@ def calculate_macd(prices: List[float], fast_period: int = 12,
 
 def calculate_atr(symbol: str, period: int = 14) -> Optional[float]:
     """
-    Calculate Average True Range (ATR) for volatility measurement.
+    Calculate Average True Range (ATR) for volatility measurement using 15-minute bars.
     
     Args:
         symbol: Instrument symbol
@@ -1922,6 +1922,55 @@ def calculate_atr(symbol: str, period: int = 14) -> Optional[float]:
         ATR value in price units, or None if not enough data
     """
     bars = state[symbol]["bars_15min"]
+    
+    if len(bars) < 2:
+        return None
+    
+    true_ranges = []
+    for i in range(1, len(bars)):
+        high = bars[i]["high"]
+        low = bars[i]["low"]
+        prev_close = bars[i-1]["close"]
+        
+        # True Range is the maximum of:
+        # 1. Current High - Current Low
+        # 2. abs(Current High - Previous Close)
+        # 3. abs(Current Low - Previous Close)
+        tr = max(
+            high - low,
+            abs(high - prev_close),
+            abs(low - prev_close)
+        )
+        true_ranges.append(tr)
+    
+    if not true_ranges:
+        return None
+    
+    # Calculate ATR (simple moving average of TR)
+    if len(true_ranges) >= period:
+        atr = sum(true_ranges[-period:]) / period
+    else:
+        atr = sum(true_ranges) / len(true_ranges)
+    
+    return atr
+
+
+def calculate_atr_1min(symbol: str, period: int = 14) -> Optional[float]:
+    """
+    Calculate Average True Range (ATR) using 1-minute bars for regime detection.
+    
+    This function uses 1-minute bars to provide higher-resolution volatility data
+    for accurate regime detection. The regime detector needs ATR calculated from
+    the same timeframe as the bars it analyzes (1-minute bars).
+    
+    Args:
+        symbol: Instrument symbol
+        period: ATR period (default 14)
+    
+    Returns:
+        ATR value in price units, or None if not enough data
+    """
+    bars = state[symbol]["bars_1min"]
     
     if len(bars) < 2:
         return None
@@ -2745,7 +2794,7 @@ def calculate_position_size(symbol: str, side: str, entry_price: float, rl_confi
     # Detect current regime for entry
     regime_detector = get_regime_detector()
     bars = state[symbol]["bars_1min"]
-    atr = calculate_atr(symbol, CONFIG.get("atr_period", 14))
+    atr = calculate_atr_1min(symbol, CONFIG.get("atr_period", 14))
     
     if atr is None:
         # Fallback to fixed stops if ATR can't be calculated
@@ -3598,7 +3647,7 @@ def execute_entry(symbol: str, side: str, entry_price: float) -> None:
     # Detect entry regime
     regime_detector = get_regime_detector()
     bars = state[symbol]["bars_1min"]
-    atr = calculate_atr(symbol, CONFIG.get("atr_period", 14))
+    atr = calculate_atr_1min(symbol, CONFIG.get("atr_period", 14))
     if atr is None:
         atr = DEFAULT_FALLBACK_ATR  # Use constant instead of magic number
         logger.warning(f"ATR not calculable, using fallback value: {DEFAULT_FALLBACK_ATR}")
@@ -4565,7 +4614,7 @@ def check_regime_change(symbol: str, current_price: float) -> None:
     # Detect current regime
     regime_detector = get_regime_detector()
     bars = state[symbol]["bars_1min"]
-    current_atr = calculate_atr(symbol, CONFIG.get("atr_period", 14))
+    current_atr = calculate_atr_1min(symbol, CONFIG.get("atr_period", 14))
     
     if current_atr is None:
         logger.debug("ATR not calculable, skipping regime change check")
