@@ -706,7 +706,6 @@ def check_azure_time_service() -> str:
     - Current ET time (timezone-accurate)
     - Market hours status
     - Maintenance windows (Mon-Thu 5-6 PM, Fri 5 PM - Sun 6 PM)
-    - Economic events (NFP/CPI information - user decides)
     - Trading permission (go/no-go flag)
     
     Returns:
@@ -737,11 +736,6 @@ def check_azure_time_service() -> str:
             if not trading_allowed:
                 if "maintenance" in halt_reason.lower():
                     state = "closed"  # Maintenance window
-                elif "event" in halt_reason.lower() or "nfp" in halt_reason.lower() or "cpi" in halt_reason.lower():
-                    # Economic event detected - let user decide whether to trade
-                    logger.info(f"[TIME SERVICE] Economic event active: {halt_reason}")
-                    logger.info(f"[TIME SERVICE] User has full control - trading allowed")
-                    state = "entry_window"  # User decides whether to trade during events
                 elif "weekend" in halt_reason.lower() or "closed" in halt_reason.lower():
                     state = "closed"  # Weekend or market closed
                 else:
@@ -6343,7 +6337,6 @@ def get_trading_state(dt: datetime = None) -> str:
     
     **AZURE-FIRST DESIGN**: Checks Azure time service first for:
     - Maintenance windows (Mon-Thu 5-6 PM, Fri 5 PM - Sun 6 PM)
-    - Economic events (NFP/CPI information - user decides)
     - Single source of truth for all time-based decisions
     
     Falls back to local time logic if Azure unreachable.

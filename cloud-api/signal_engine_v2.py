@@ -169,9 +169,8 @@ async def root():
         "endpoints": {
             "ml": "/api/ml/get_confidence, /api/ml/save_trade, /api/ml/stats",
             "license": "/api/license/validate, /api/license/activate",
-            "calendar": "/api/calendar/today, /api/calendar/events",
             "time": "/api/time, /api/time/simple",
-            "admin": "/api/admin/kill_switch, /api/admin/refresh_calendar"
+            "admin": "/api/admin/kill_switch"
         }
     }
 
@@ -1685,226 +1684,6 @@ async def create_checkout_session():
         raise HTTPException(status_code=500, detail=str(e))
 
 # ============================================================================
-# ECONOMIC CALENDAR - Predictable Events (NFP, CPI, PPI)
-# ============================================================================
-
-import asyncio
-import threading
-from bs4 import BeautifulSoup
-import requests as req_lib
-
-# Global calendar state
-economic_calendar = {
-    "events": [],
-    "last_updated": None,
-    "next_update": None,
-    "source": "Predictable Events (NFP/CPI/PPI)"
-}
-
-def generate_predictable_events() -> List[Dict]:
-    """
-    Generate predictable economic events (NFP, CPI, PPI)
-    These follow consistent schedules
-    """
-    events = []
-    current_date = datetime.now().date()
-    
-    # Generate 12 months of events
-    for month_offset in range(12):
-        year = current_date.year + (current_date.month + month_offset - 1) // 12
-        month = (current_date.month + month_offset - 1) % 12 + 1
-        
-        # NFP - First Friday of month at 8:30 AM ET
-        first_day = datetime(year, month, 1).date()
-        days_until_friday = (4 - first_day.weekday()) % 7
-        first_friday = first_day + timedelta(days=days_until_friday)
-        
-        if first_friday > current_date:
-            events.append({
-                "date": first_friday.strftime("%Y-%m-%d"),
-                "time": "8:30am",
-                "currency": "USD",
-                "event": "Non-Farm Employment Change",
-                "impact": "high"
-            })
-        
-        # CPI - Typically around 13th of month at 8:30 AM ET
-        cpi_date = datetime(year, month, 13).date()
-        if cpi_date > current_date:
-            events.append({
-                "date": cpi_date.strftime("%Y-%m-%d"),
-                "time": "8:30am",
-                "currency": "USD",
-                "event": "Core CPI m/m",
-                "impact": "high"
-            })
-        
-        # PPI - Typically around 14th of month at 8:30 AM ET
-        ppi_date = datetime(year, month, 14).date()
-        if ppi_date > current_date:
-            events.append({
-                "date": ppi_date.strftime("%Y-%m-%d"),
-                "time": "8:30am",
-                "currency": "USD",
-                "event": "Core PPI m/m",
-                "impact": "high"
-            })
-    
-    return events
-
-def update_calendar():
-    """
-    Update economic calendar with predictable events (NFP, CPI, PPI)
-    Runs daily at 5 PM ET (Sunday-Friday)
-    """
-    try:
-        logger.info("📅 Updating economic calendar...")
-        
-        # Generate predictable events
-        predictable_events = generate_predictable_events()
-        
-        # Sort by date
-        predictable_events.sort(key=lambda x: x["date"])
-        
-        # Remove duplicates (keep first occurrence)
-        seen_dates = set()
-        unique_events = []
-        for event in predictable_events:
-            event_key = (event["date"], event["event"])
-            if event_key not in seen_dates:
-                seen_dates.add(event_key)
-                unique_events.append(event)
-        
-        # Update global calendar
-        economic_calendar["events"] = unique_events
-        economic_calendar["last_updated"] = datetime.utcnow().isoformat()
-        economic_calendar["next_update"] = get_next_update_time().isoformat()
-        
-        logger.info(f"✅ Calendar updated: {len(unique_events)} events (NFP/CPI/PPI)")
-        
-    except Exception as e:
-        logger.error(f"❌ Calendar update failed: {e}")
-
-def get_next_update_time() -> datetime:
-    """
-    Calculate next update time: 1st of every month at 5 PM ET
-    """
-    et_tz = pytz.timezone("America/New_York")
-    now_et = datetime.now(et_tz)
-    
-    # Target: 1st of next month at 5 PM ET
-    if now_et.day == 1 and now_et.hour < 17:
-        # It's the 1st and before 5 PM - update today at 5 PM
-        target_time = now_et.replace(hour=17, minute=0, second=0, microsecond=0)
-    else:
-        # Schedule for 1st of next month at 5 PM
-        if now_et.month == 12:
-            next_month = now_et.replace(year=now_et.year + 1, month=1, day=1, hour=17, minute=0, second=0, microsecond=0)
-        else:
-            next_month = now_et.replace(month=now_et.month + 1, day=1, hour=17, minute=0, second=0, microsecond=0)
-        target_time = next_month
-    
-    return target_time
-
-async def calendar_update_loop():
-    """
-    Background task that updates calendar daily at 5 PM ET (Sunday-Friday)
-    """
-    while True:
-        try:
-            next_update = get_next_update_time()
-            now = datetime.now(pytz.timezone("America/New_York"))
-            sleep_seconds = (next_update - now).total_seconds()
-            
-            logger.info(f"📅 Next calendar update: {next_update.strftime('%Y-%m-%d %I:%M %p ET')} ({sleep_seconds/3600:.1f} hours)")
-            
-            await asyncio.sleep(sleep_seconds)
-            
-            # Update calendar
-            update_calendar()
-            
-        except Exception as e:
-            logger.error(f"❌ Calendar update loop error: {e}")
-            # Wait 1 hour and retry
-            await asyncio.sleep(3600)
-
-def start_calendar_updater():
-    """Start background calendar updater in separate thread"""
-    def run_loop():
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        loop.run_until_complete(calendar_update_loop())
-    
-    thread = threading.Thread(target=run_loop, daemon=True)
-    thread.start()
-    logger.info("📅 Calendar updater started (1st of month at 5 PM ET)")
-
-@app.get("/api/calendar/events")
-async def get_calendar_events(days: int = 7):
-    """
-    Get upcoming economic events for next N days
-    
-    Query params:
-        days: Number of days ahead to fetch (default 7)
-    """
-    today = datetime.now().date()
-    end_date = today + timedelta(days=days)
-    
-    upcoming_events = [
-        event for event in economic_calendar["events"]
-        if today <= datetime.strptime(event["date"], "%Y-%m-%d").date() <= end_date
-    ]
-    
-    return {
-        "events": upcoming_events,
-        "count": len(upcoming_events),
-        "last_updated": economic_calendar["last_updated"],
-        "next_update": economic_calendar["next_update"]
-    }
-
-@app.get("/api/calendar/today")
-async def get_todays_events():
-    """
-    Get today's high-impact economic events
-    Bots check this before placing trades
-    """
-    today = datetime.now().date().strftime("%Y-%m-%d")
-    
-    todays_events = [
-        event for event in economic_calendar["events"]
-        if event["date"] == today and event["impact"] == "high"
-    ]
-    
-    has_nfp = any("Non-Farm" in event["event"] for event in todays_events)
-    has_cpi = any("CPI" in event["event"] for event in todays_events)
-    
-    return {
-        "date": today,
-        "events": todays_events,
-        "count": len(todays_events),
-        "has_nfp": has_nfp,
-        "has_cpi": has_cpi,
-        "trading_recommended": len(todays_events) == 0
-    }
-
-@app.post("/api/admin/refresh_calendar")
-async def refresh_calendar(data: dict):
-    """
-    ADMIN ONLY: Manually trigger calendar refresh
-    """
-    admin_key = data.get("admin_key")
-    if admin_key != "QUOTRADING_ADMIN_2025":
-        raise HTTPException(status_code=403, detail="Invalid admin key")
-    
-    update_calendar()
-    
-    return {
-        "status": "refreshed",
-        "events_count": len(economic_calendar["events"]),
-        "last_updated": economic_calendar["last_updated"]
-    }
-
-# ============================================================================
 # TIME SERVICE - SINGLE SOURCE OF TRUTH
 # ============================================================================
 
@@ -1998,43 +1777,6 @@ def get_trading_session(now_et: datetime) -> str:
     else:
         return "asian"
 
-def check_if_event_active(events: List[Dict], now_et: datetime) -> tuple:
-    """
-    Check if any high-impact economic event is currently active
-    
-    Returns: (is_active, event_name, event_window)
-    """
-    today_str = now_et.date().strftime("%Y-%m-%d")
-    current_time = now_et.time()
-    
-    # Filter today's events
-    todays_events = [e for e in events if e["date"] == today_str and e["impact"] == "high"]
-    
-    for event in todays_events:
-        event_time_str = event["time"]
-        
-        # Parse event time (e.g., "8:30am" or "2:00pm")
-        event_time_str = event_time_str.lower().replace("am", "").replace("pm", "").strip()
-        hour, minute = map(int, event_time_str.split(":"))
-        
-        # Adjust for PM
-        if "pm" in event["time"].lower() and hour != 12:
-            hour += 12
-        elif "am" in event["time"].lower() and hour == 12:
-            hour = 0
-        
-        event_time = datetime_time(hour, minute)
-        
-        # Event window: 30 minutes before to 1 hour after
-        event_start = (datetime.combine(now_et.date(), event_time) - timedelta(minutes=30)).time()
-        event_end = (datetime.combine(now_et.date(), event_time) + timedelta(hours=1)).time()
-        
-        # Check if we're in the event window
-        if event_start <= current_time <= event_end:
-            window = f"{event_start.strftime('%I:%M %p')} - {event_end.strftime('%I:%M %p')}"
-            return (True, event["event"], window)
-    
-    return (False, None, None)
 
 @app.get("/api/time")
 async def get_time_service():
@@ -2045,7 +1787,6 @@ async def get_time_service():
     - Current ET time
     - Market hours status
     - Trading session
-    - Economic event awareness
     - Trading permission
     
     Bots should call this every 30-60 seconds to stay synchronized
@@ -2058,28 +1799,9 @@ async def get_time_service():
     market_status = get_market_hours_status(now_et)
     session = get_trading_session(now_et)
     
-    # Check for active economic events
-    event_active, event_name, event_window = check_if_event_active(economic_calendar["events"], now_et)
-    
-    # Determine if trading is allowed
+    # Determine if trading is allowed (no event blocking)
     trading_allowed = True
     halt_reason = None
-    
-    if event_active:
-        trading_allowed = False
-        halt_reason = f"{event_name} in progress ({event_window})"
-    
-    # Get today's upcoming events
-    today_str = now_et.date().strftime("%Y-%m-%d")
-    todays_events = [
-        {
-            "event": e["event"],
-            "time": e["time"],
-            "impact": e["impact"]
-        }
-        for e in economic_calendar["events"]
-        if e["date"] == today_str and e["impact"] == "high"
-    ]
     
     return {
         # Time information
@@ -2092,20 +1814,9 @@ async def get_time_service():
         "trading_session": session,
         "weekday": now_et.strftime("%A"),
         
-        # Economic events
-        "event_active": event_active,
-        "active_event": event_name if event_active else None,
-        "event_window": event_window if event_active else None,
-        "events_today": todays_events,
-        "events_count": len(todays_events),
-        
-        # Trading permission
+        # Trading permission (no event blocking)
         "trading_allowed": trading_allowed,
-        "halt_reason": halt_reason,
-        
-        # Calendar info
-        "calendar_last_updated": economic_calendar.get("last_updated"),
-        "calendar_next_update": economic_calendar.get("next_update")
+        "halt_reason": halt_reason
     }
 
 @app.get("/api/time/simple")
@@ -2115,7 +1826,6 @@ async def get_simple_time():
     For bots that need quick checks without full details
     
     Checks:
-    - Economic events (NFP/CPI)
     - Maintenance windows (Mon-Thu 5-6 PM, Fri 5 PM - Sun 6 PM)
     - Weekend closure
     """
@@ -2125,22 +1835,15 @@ async def get_simple_time():
     # Get market status
     market_status = get_market_hours_status(now_et)
     
-    # Check for active events
-    event_active, event_name, event_window = check_if_event_active(economic_calendar["events"], now_et)
-    
-    # Determine if trading is allowed
+    # Determine if trading is allowed (no event blocking)
     trading_allowed = True
     halt_reason = None
     
-    # Priority 1: Economic events
-    if event_active:
-        trading_allowed = False
-        halt_reason = f"{event_name} ({event_window})"
-    # Priority 2: Maintenance windows
-    elif market_status == "maintenance":
+    # Priority 1: Maintenance windows
+    if market_status == "maintenance":
         trading_allowed = False
         halt_reason = "Daily maintenance (5-6 PM ET)"
-    # Priority 3: Weekend closure
+    # Priority 2: Weekend closure
     elif market_status == "weekend_closed":
         trading_allowed = False
         weekday = now_et.weekday()
@@ -2171,7 +1874,7 @@ async def startup_event():
     logger.info("QuoTrading Signal Engine v2.1 - STARTING")
     logger.info("=" * 60)
     logger.info("Multi-instrument support: ES, NQ, YM, RTY")
-    logger.info("Features: ML/RL signals, licensing, economic calendar, user management")
+    logger.info("Features: ML/RL signals, licensing, user management")
     logger.info("=" * 60)
     
     # Initialize Database
@@ -2202,10 +1905,6 @@ async def startup_event():
         logger.info("� Using in-memory fallback for rate limiting")
         redis_manager = RedisManager(fallback_to_memory=True)
     
-    # Initialize economic calendar
-    logger.info("�📅 Initializing economic calendar...")
-    update_calendar()  # Initial fetch
-    start_calendar_updater()  # Start background updater
     
     # Load RL experiences (baseline from JSON + new from database)
     logger.info("🧠 Loading RL experiences for pattern matching...")
