@@ -1289,27 +1289,8 @@ async def save_trade_experience(trade: Dict, db: Session = Depends(get_db)):
                 )
                 db.add(signal_exp)
                 
-                # Exit experience (exit decision) WITH CONTEXT
-                exit_exp = RLExperience(
-                    user_id=user.id,
-                    account_id=user_id,
-                    experience_type='EXIT',
-                    symbol=symbol,
-                    signal_type=trade['side'],
-                    outcome=outcome,
-                    pnl=pnl,
-                    confidence_score=trade.get('confidence', 0.0),
-                    quality_score=min(abs(pnl) / 100, 1.0),
-                    rsi=rsi,
-                    vwap_distance=vwap_distance,
-                    vix=vix,
-                    day_of_week=day_of_week,
-                    hour_of_day=hour_of_day
-                )
-                db.add(exit_exp)
-                
                 db.commit()
-                logger.debug(f"✅ Trade & RL experiences (with context) saved to database for {user_id}")
+                logger.debug(f"✅ Trade & signal RL experience saved to database for {user_id}")
         except Exception as db_error:
             logger.warning(f"Failed to save trade to database: {db_error}")
             # Don't fail the entire request if database save fails

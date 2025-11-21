@@ -128,7 +128,7 @@ class TradeHistory(Base):
 
 
 class RLExperience(Base):
-    """Track RL/ML experiences for signal and exit learning with full context"""
+    """Track RL/ML experiences for signal learning with full context"""
     __tablename__ = 'rl_experiences'
     
     id = Column(Integer, primary_key=True, autoincrement=True)

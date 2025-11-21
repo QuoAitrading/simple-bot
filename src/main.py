@@ -326,8 +326,7 @@ def run_backtest_with_params(
                 timestamp_et = timestamp.astimezone(et)
                 check_daily_reset(symbol, timestamp_et)
                 
-                # CRITICAL FIX: Inject complete OHLCV bar to preserve high/low ranges for ATR
-                # This is necessary for adaptive exits to calculate volatility correctly
+                # CRITICAL FIX: Inject complete OHLCV bar to preserve high/low ranges for ATR calculation
                 from vwap_bounce_bot import inject_complete_bar
                 inject_complete_bar(symbol, bar)
                 

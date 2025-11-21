@@ -1,7 +1,7 @@
 """
 VWAP Bounce Bot - Core Trading Module
 
-A sophisticated VWAP-based mean reversion trading bot with adaptive exits.
+A sophisticated VWAP-based mean reversion trading bot.
 """
 
 __version__ = "1.0.0"

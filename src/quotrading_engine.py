@@ -5261,8 +5261,6 @@ def execute_exit(symbol: str, exit_price: float, reason: str) -> None:
     except Exception as e:
         logger.debug(f"RL outcome recording failed: {e}")
     
-    # ADAPTIVE EXIT LEARNING - Record exit parameters and outcome
-    
     # Log time-based exits with detailed audit trail
     time_based_reasons = [
         "flatten_mode_exit", "time_based_profit_take", "time_based_loss_cut",
@@ -6829,7 +6827,7 @@ def main(symbol_override: str = None) -> None:
             logger.warning(f"Failed to subscribe to quotes: {e}")
             logger.warning("Continuing without bid/ask quote data")
     
-    # RL and Adaptive Exits are CLOUD-ONLY - no local RL components
+    # RL is CLOUD-ONLY - no local RL components
     # Users get confidence from cloud, contribute to cloud hive mind
     # Only the dev (Kevin) gets the experience data saved to cloud
     logger.info("Cloud RL Mode: All learning goes to shared hive mind")

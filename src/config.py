@@ -282,11 +282,7 @@ class BotConfiguration:
     commission_per_contract: float = 2.50  # Commission per contract round-turn
     
     # Advanced Exit Management Parameters
-    # ADAPTIVE EXIT MANAGEMENT - ENABLED for intelligent exit management
-    adaptive_exits_enabled: bool = True  # ENABLED - Using adaptive intelligent exits
-    adaptive_volatility_scaling: bool = True  # Scale parameters based on ATR
-    adaptive_regime_detection: bool = True  # Adjust for trending vs choppy markets
-    adaptive_performance_based: bool = True  # Adapt based on trade performance
+    # Static exit management using config values
     
     # Breakeven Protection - ITERATION 3 (PROVEN WINNER!)
     breakeven_enabled: bool = True  # ENABLED - Adaptive system will adjust dynamically
@@ -451,11 +447,6 @@ class BotConfiguration:
             "tick_value": self.tick_value,
             "shadow_mode": self.shadow_mode,
             "max_bars_storage": self.max_bars_storage,
-            # Adaptive Exit Management
-            "adaptive_exits_enabled": self.adaptive_exits_enabled,
-            "adaptive_volatility_scaling": self.adaptive_volatility_scaling,
-            "adaptive_regime_detection": self.adaptive_regime_detection,
-            "adaptive_performance_based": self.adaptive_performance_based,
             # Advanced Exit Management (baseline parameters)
             "breakeven_enabled": self.breakeven_enabled,
             "breakeven_profit_threshold_ticks": self.breakeven_profit_threshold_ticks,
