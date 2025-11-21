@@ -17,6 +17,8 @@ class BacktestReporter:
         self.daily_pnl: Dict[str, float] = {}
         self.total_bars = 0
         self.signals_count = 0
+        self.signals_approved = 0
+        self.signals_rejected = 0
         self.trades_count = 0
         self.active_position = None
         
@@ -35,6 +37,14 @@ class BacktestReporter:
             # Show progress bar
             progress = bars_processed / total_bars * 100
             print(f"\rProcessing {bars_processed:,}/{total_bars:,} bars... ({progress:.1f}%)", end='', flush=True)
+    
+    def record_signal(self, approved: bool):
+        """Record a signal from RL (approved or rejected)"""
+        self.signals_count += 1
+        if approved:
+            self.signals_approved += 1
+        else:
+            self.signals_rejected += 1
             
     def record_trade(self, trade_data: Dict[str, Any]):
         """Record a completed trade"""
@@ -128,7 +138,9 @@ class BacktestReporter:
         print(f"Profit Factor:    {profit_factor:.2f}")
         print(f"-" * 100)
         print(f"Bars Processed:   {self.total_bars:,}")
-        print(f"Signals:          {self.signals_count}")
+        print(f"RL Signals:       {self.signals_count} total")
+        print(f"  Approved:       {self.signals_approved} ({self.signals_approved/self.signals_count*100 if self.signals_count > 0 else 0:.1f}%)")
+        print(f"  Rejected:       {self.signals_rejected} ({self.signals_rejected/self.signals_count*100 if self.signals_count > 0 else 0:.1f}%)")
         print("="*100 + "\n")
 
 

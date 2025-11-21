@@ -376,6 +376,16 @@ def run_backtest(args: argparse.Namespace) -> Dict[str, Any]:
     # Print clean summary
     reporter.print_summary()
     
+    # Save RL experiences at the end
+    print("Saving RL experiences...")
+    if rl_brain is not None and hasattr(rl_brain, 'save_experience'):
+        rl_brain.save_experience()
+        print(f"✅ Signal RL experiences saved to data/signal_experience.json")
+        print(f"   Total experiences: {len(rl_brain.experiences)}")
+        print(f"   New experiences this backtest: {len([e for e in rl_brain.experiences if hasattr(e, 'timestamp')])}")
+    else:
+        print("⚠️  No RL brain to save")
+    
     # Return results
     return results
 
@@ -406,7 +416,7 @@ def main():
     # Create a custom filter to allow regime change messages through
     class RegimeChangeFilter(logging.Filter):
         def filter(self, record):
-            # Allow messages containing regime change info
+            # Allow messages containing regime change info or RL decisions
             msg = record.getMessage()
             if any(keyword in msg for keyword in [
                 'REGIME CHANGE',
@@ -415,7 +425,9 @@ def main():
                 'Breakeven Mult:',
                 'Trailing Mult:',
                 'Timeouts Changed:',
-                'Entry Regime:'
+                'Entry Regime:',
+                'RL APPROVED',
+                'RL REJECTED'
             ]):
                 return True
             # Allow WARNING and above
