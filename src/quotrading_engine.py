@@ -1363,6 +1363,7 @@ def initialize_state(symbol: str) -> None:
             "entry_regime": None,  # Regime at entry
             "current_regime": None,  # Current regime (updated on each tick)
             "regime_change_time": None,  # When regime last changed
+            "regime_history": [],  # List of regime transitions with timestamps
             "entry_atr": None,  # ATR at entry
             # Advanced Exit Management - Breakeven State
             "breakeven_active": False,
@@ -3678,6 +3679,7 @@ def execute_entry(symbol: str, side: str, entry_price: float) -> None:
         "entry_regime": entry_regime.name,  # Regime at entry
         "current_regime": entry_regime.name,  # Current regime (updated on each tick)
         "regime_change_time": None,  # When regime last changed
+        "regime_history": [],  # List of regime transitions with timestamps
         "entry_atr": atr,  # ATR at entry
         # Advanced Exit Management - Breakeven State
         "breakeven_active": False,
@@ -4631,8 +4633,21 @@ def check_regime_change(symbol: str, current_price: float) -> None:
         return  # No regime change
     
     # Update position tracking with new regime
+    change_time = get_current_time()
     position["current_regime"] = current_regime.name
-    position["regime_change_time"] = get_current_time()
+    position["regime_change_time"] = change_time
+    
+    # Record regime transition in history
+    if "regime_history" not in position:
+        position["regime_history"] = []
+    
+    position["regime_history"].append({
+        "from_regime": entry_regime_name,
+        "to_regime": current_regime.name,
+        "timestamp": change_time,
+        "stop_mult_change": f"{REGIME_DEFINITIONS[entry_regime_name].stop_mult:.2f}x → {current_regime.stop_mult:.2f}x",
+        "trailing_mult_change": f"{REGIME_DEFINITIONS[entry_regime_name].trailing_mult:.2f}x → {current_regime.trailing_mult:.2f}x"
+    })
     
     # Calculate new stop distance based on new regime
     side = position["side"]
@@ -4673,29 +4688,64 @@ def check_regime_change(symbol: str, current_price: float) -> None:
             if new_stop_order.get("order_id"):
                 position["stop_order_id"] = new_stop_order.get("order_id")
             
+            # Get old regime parameters for comparison
+            old_regime = REGIME_DEFINITIONS[entry_regime_name]
+            
             logger.info("=" * 60)
-            logger.info(f"REGIME CHANGE - STOP ADJUSTED")
+            logger.info(f"REGIME CHANGE - PARAMETERS UPDATED")
             logger.info("=" * 60)
-            logger.info(f"  {entry_regime_name} → {current_regime.name}")
-            logger.info(f"  Old Stop: ${old_stop:.2f}")
-            logger.info(f"  New Stop: ${new_stop_price:.2f}")
-            logger.info(f"  New Stop Mult: {adjusted_stop_mult:.2f}x ATR")
-            logger.info(f"  New Trail Mult: {adjusted_trailing_mult:.2f}x")
-            logger.info(f"  Confidence: {rl_confidence:.2f}")
+            logger.info(f"  Transition: {entry_regime_name} → {current_regime.name}")
+            logger.info(f"  Timestamp: {get_current_time().strftime('%H:%M:%S')}")
+            logger.info(f"")
+            logger.info(f"  Stop Multiplier: {old_regime.stop_mult:.2f}x → {current_regime.stop_mult:.2f}x (adjusted: {adjusted_stop_mult:.2f}x)")
+            logger.info(f"  Old Stop: ${old_stop:.2f} → New Stop: ${new_stop_price:.2f}")
+            logger.info(f"")
+            logger.info(f"  Breakeven Mult: {old_regime.breakeven_mult:.2f}x → {current_regime.breakeven_mult:.2f}x")
+            logger.info(f"  Trailing Mult: {old_regime.trailing_mult:.2f}x → {current_regime.trailing_mult:.2f}x (adjusted: {adjusted_trailing_mult:.2f}x)")
+            logger.info(f"")
+            logger.info(f"  Timeouts Changed:")
+            logger.info(f"    Sideways: {old_regime.sideways_timeout}min → {current_regime.sideways_timeout}min")
+            logger.info(f"    Underwater: {old_regime.underwater_timeout}min → {current_regime.underwater_timeout}min")
+            logger.info(f"    (Clocks reset from regime change time)")
+            logger.info(f"")
+            logger.info(f"  Signal Confidence: {rl_confidence:.2f}")
+            
+            # Calculate trailing distance impact
+            base_trailing_ticks = CONFIG.get("trailing_stop_distance_ticks", 8)
+            old_trailing_distance = base_trailing_ticks * old_regime.trailing_mult
+            new_trailing_distance = base_trailing_ticks * adjusted_trailing_mult
+            logger.info(f"")
+            logger.info(f"  Trailing Distance: {old_trailing_distance:.1f} → {new_trailing_distance:.1f} ticks")
+            logger.info(f"    (Affects future trailing movements only)")
             logger.info("=" * 60)
         else:
             logger.error("Failed to update stop after regime change")
     else:
         # Stop would move backward - log but don't update
-        logger.info(f"Regime change detected ({entry_regime_name} → {current_regime.name}) "
-                   f"but stop not updated (would move backward: ${current_stop:.2f} → ${new_stop_price:.2f})")
+        old_regime = REGIME_DEFINITIONS[entry_regime_name]
+        logger.info("=" * 60)
+        logger.info(f"REGIME CHANGE DETECTED - STOP NOT ADJUSTED")
+        logger.info("=" * 60)
+        logger.info(f"  Transition: {entry_regime_name} → {current_regime.name}")
+        logger.info(f"  Stop would move backward: ${current_stop:.2f} → ${new_stop_price:.2f}")
+        logger.info(f"  Stop remains at: ${current_stop:.2f}")
+        logger.info(f"")
+        logger.info(f"  Other parameters still updated:")
+        logger.info(f"    Breakeven Mult: {old_regime.breakeven_mult:.2f}x → {current_regime.breakeven_mult:.2f}x")
+        logger.info(f"    Trailing Mult: {old_regime.trailing_mult:.2f}x → {adjusted_trailing_mult:.2f}x")
+        logger.info(f"    Timeouts: Sideways {old_regime.sideways_timeout}→{current_regime.sideways_timeout}min, "
+                   f"Underwater {old_regime.underwater_timeout}→{current_regime.underwater_timeout}min")
+        logger.info("=" * 60)
     
     # Update breakeven threshold based on new regime (if not already active)
     if not position["breakeven_active"]:
+        old_regime = REGIME_DEFINITIONS[entry_regime_name]
         base_threshold_ticks = CONFIG.get("breakeven_profit_threshold_ticks", 8)
+        old_breakeven_threshold = base_threshold_ticks * old_regime.breakeven_mult
         new_breakeven_threshold = base_threshold_ticks * current_regime.breakeven_mult
-        logger.info(f"  New breakeven threshold: {new_breakeven_threshold:.1f} ticks "
-                   f"(was {base_threshold_ticks * REGIME_DEFINITIONS[entry_regime_name].breakeven_mult:.1f})")
+        logger.info(f"  Breakeven threshold updated: {old_breakeven_threshold:.1f} → {new_breakeven_threshold:.1f} ticks")
+    else:
+        logger.info(f"  Breakeven already active - threshold change does not apply")
 
 
 def check_exit_conditions(symbol: str) -> None:
