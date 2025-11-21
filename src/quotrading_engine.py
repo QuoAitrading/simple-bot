@@ -108,6 +108,7 @@ from error_recovery import ErrorRecoveryManager, ErrorType as RecoveryErrorType
 from bid_ask_manager import BidAskManager, BidAskQuote
 from notifications import get_notifier
 from signal_confidence import SignalConfidenceRL
+from regime_detector import get_regime_detector
 
 # Conditionally import broker (only needed for live trading, not backtesting)
 try:
@@ -2600,12 +2601,31 @@ def check_for_signals(symbol: str) -> None:
     
     # Check for long signal
     if check_long_signal_conditions(symbol, prev_bar, current_bar):
+        # REGIME DETECTION - Detect current market regime and apply filters
+        regime_detector = get_regime_detector()
+        current_regime = regime_detector.detect_regime(state[symbol]["bars_1min"], symbol)
+        
+        # Check if signal should be filtered based on regime rules
+        rsi = state[symbol].get("rsi", 50)
+        should_filter, filter_reason = regime_detector.should_filter_signal(rsi, "long", current_regime)
+        if should_filter:
+            logger.info(f"⚠ REGIME FILTER REJECTED LONG signal: {filter_reason}")
+            return
+        
         # REINFORCEMENT LEARNING - Get confidence from cloud API (shared learning pool)
         # Capture market state
         rl_state = capture_rl_state(symbol, "long", current_bar["close"])
         
         # Ask cloud RL API for decision (or local RL as fallback)
         take_signal, confidence, reason = get_ml_confidence(rl_state, "long")
+        
+        # Apply regime-based confidence threshold adjustment
+        base_threshold = CONFIG.get("rl_confidence_threshold", 0.65)
+        adjusted_threshold = regime_detector.adjust_confidence_threshold(base_threshold, current_regime)
+        if take_signal and confidence < adjusted_threshold:
+            logger.info(f"⚠ REGIME CONFIDENCE FILTER: {confidence:.1%} < {adjusted_threshold:.1%} for {current_regime}")
+            take_signal = False
+            reason = f"Below regime-adjusted threshold ({adjusted_threshold:.1%})"
         
         # Check if in recovery mode and need higher confidence
         if take_signal and bot_status.get("recovery_confidence_threshold"):
@@ -2650,12 +2670,31 @@ def check_for_signals(symbol: str) -> None:
     
     # Check for short signal
     if check_short_signal_conditions(symbol, prev_bar, current_bar):
+        # REGIME DETECTION - Detect current market regime and apply filters
+        regime_detector = get_regime_detector()
+        current_regime = regime_detector.detect_regime(state[symbol]["bars_1min"], symbol)
+        
+        # Check if signal should be filtered based on regime rules
+        rsi = state[symbol].get("rsi", 50)
+        should_filter, filter_reason = regime_detector.should_filter_signal(rsi, "short", current_regime)
+        if should_filter:
+            logger.info(f"⚠ REGIME FILTER REJECTED SHORT signal: {filter_reason}")
+            return
+        
         # REINFORCEMENT LEARNING - Get confidence from cloud API (shared learning pool)
         # Capture market state
         rl_state = capture_rl_state(symbol, "short", current_bar["close"])
         
         # Ask cloud RL API for decision (or local RL as fallback)
         take_signal, confidence, reason = get_ml_confidence(rl_state, "short")
+        
+        # Apply regime-based confidence threshold adjustment
+        base_threshold = CONFIG.get("rl_confidence_threshold", 0.65)
+        adjusted_threshold = regime_detector.adjust_confidence_threshold(base_threshold, current_regime)
+        if take_signal and confidence < adjusted_threshold:
+            logger.info(f"⚠ REGIME CONFIDENCE FILTER: {confidence:.1%} < {adjusted_threshold:.1%} for {current_regime}")
+            take_signal = False
+            reason = f"Below regime-adjusted threshold ({adjusted_threshold:.1%})"
         
         # Check if in recovery mode and need higher confidence
         if take_signal and bot_status.get("recovery_confidence_threshold"):
@@ -2721,6 +2760,10 @@ def calculate_position_size(symbol: str, side: str, entry_price: float, rl_confi
     Returns:
         Tuple of (contracts, stop_price, target_price)
     """
+    # Get regime detector and current regime
+    regime_detector = get_regime_detector()
+    current_regime = regime_detector.detect_regime(state[symbol]["bars_1min"], symbol)
+    
     # Get account equity
     equity = get_account_equity()
     
@@ -2742,6 +2785,10 @@ def calculate_position_size(symbol: str, side: str, entry_price: float, rl_confi
             # Use ATR multipliers from ITERATION 3
             stop_multiplier = CONFIG.get("stop_loss_atr_multiplier", 3.6)  # Iteration 3
             target_multiplier = CONFIG.get("profit_target_atr_multiplier", 4.75)  # Iteration 3
+            
+            # Apply regime-based adjustments to stops and targets
+            stop_multiplier = regime_detector.apply_regime_stops(stop_multiplier, current_regime) / stop_multiplier * stop_multiplier
+            target_multiplier = regime_detector.apply_regime_targets(target_multiplier, current_regime) / target_multiplier * target_multiplier
             
             if side == "long":
                 stop_price = entry_price - (atr * stop_multiplier)
@@ -2767,17 +2814,22 @@ def calculate_position_size(symbol: str, side: str, entry_price: float, rl_confi
         # Use fixed stops (original logic)
         max_stop_ticks = 11  # Optimized to 11 ticks
         
+        # Apply regime-based stop adjustment
+        base_stop_distance = max_stop_ticks * tick_size
+        adjusted_stop_distance = regime_detector.apply_regime_stops(base_stop_distance, current_regime)
+        adjusted_stop_ticks = int(adjusted_stop_distance / tick_size)
+        
         if side == "long":
             # Stop 11 ticks below entry (or at lower band 3, whichever is tighter)
             band_stop = vwap_bands["lower_3"] - (2 * tick_size)  # 2 tick buffer
-            tight_stop = entry_price - (max_stop_ticks * tick_size)
+            tight_stop = entry_price - (adjusted_stop_ticks * tick_size)
             stop_price = max(tight_stop, band_stop)  # Use tighter of the two
             # Target at upper band
             target_price = vwap_bands["upper_3"]
         else:  # short
             # Stop 11 ticks above entry (or at upper band 3, whichever is tighter)
             band_stop = vwap_bands["upper_3"] + (2 * tick_size)  # 2 tick buffer
-            tight_stop = entry_price + (max_stop_ticks * tick_size)
+            tight_stop = entry_price + (adjusted_stop_ticks * tick_size)
             stop_price = min(tight_stop, band_stop)  # Use tighter of the two
             # Target at lower band
             target_price = vwap_bands["lower_3"]
@@ -2847,6 +2899,13 @@ def calculate_position_size(symbol: str, side: str, entry_price: float, rl_confi
             if not hasattr(calculate_position_size, '_logged_fixed_mode'):
                 logger.info(f"[FIXED CONTRACTS] Using fixed max of {user_max_contracts} contracts (dynamic contracts disabled)")
                 calculate_position_size._logged_fixed_mode = True
+    
+    # REGIME-BASED POSITION SIZING: Apply regime multiplier (NON-CONFIGURABLE)
+    # This is applied after RL sizing but before recovery mode
+    original_contracts = contracts
+    contracts = regime_detector.apply_regime_position_sizing(contracts, current_regime)
+    if contracts != original_contracts:
+        logger.info(f"[REGIME SIZING] {current_regime}: {original_contracts} → {contracts} contracts")
     
     # RECOVERY MODE: Further reduce position size when approaching limits
     if bot_status.get("recovery_confidence_threshold") is not None:
