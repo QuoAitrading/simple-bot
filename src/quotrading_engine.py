@@ -5475,22 +5475,46 @@ def update_position_statistics(symbol: str, position: Dict[str, Any], exit_time:
     if position["entry_time"] is None:
         return
     
-    duration_seconds = (exit_time - position["entry_time"]).total_seconds()
-    duration_minutes = duration_seconds / 60.0
-    state[symbol]["session_stats"]["trade_durations"].append(duration_minutes)
+    # Ensure both timestamps are timezone-aware for accurate duration calculation
+    entry_time = position["entry_time"]
+    
+    # Calculate duration
+    try:
+        duration_seconds = (exit_time - entry_time).total_seconds()
+        duration_minutes = duration_seconds / 60.0
+        
+        # Sanity check - if duration is negative or absurdly large, log error
+        if duration_minutes < 0:
+            logger.error(f"Invalid duration: {duration_minutes:.1f} min (negative)")
+            logger.error(f"  Entry: {entry_time}")
+            logger.error(f"  Exit: {exit_time}")
+            return
+        elif duration_minutes > 10000:  # More than ~7 days
+            logger.error(f"Invalid duration: {duration_minutes:.1f} min (too large - over 7 days)")
+            logger.error(f"  Entry time: {entry_time}")
+            logger.error(f"  Exit time: {exit_time}")
+            logger.error(f"  Entry TZ: {entry_time.tzinfo}, Exit TZ: {exit_time.tzinfo}")
+            return
+            
+        state[symbol]["session_stats"]["trade_durations"].append(duration_minutes)
+        logger.info(f"  Position Duration: {duration_minutes:.1f} minutes")
+        
+    except Exception as e:
+        logger.error(f"Error calculating trade duration: {e}")
+        logger.error(f"  Entry: {entry_time} (type: {type(entry_time)})")
+        logger.error(f"  Exit: {exit_time} (type: {type(exit_time)})")
+        return
     
     # Track if this was a forced flatten due to time
     if reason in time_based_reasons:
         state[symbol]["session_stats"]["force_flattened_count"] += 1
     
     # Track after-noon entries
-    entry_hour = position["entry_time"].hour
+    entry_hour = entry_time.hour
     if entry_hour >= 12:
         state[symbol]["session_stats"]["after_noon_entries"] += 1
         if reason in time_based_reasons:
             state[symbol]["session_stats"]["after_noon_force_flattened"] += 1
-    
-    logger.info(f"  Position Duration: {duration_minutes:.1f} minutes")
 
 
 def handle_exit_orders(symbol: str, position: Dict[str, Any], exit_price: float, reason: str) -> None:
@@ -5697,7 +5721,7 @@ def execute_exit(symbol: str, exit_price: float, reason: str) -> None:
     if not position["active"]:
         return
     
-    exit_time = datetime.now(pytz.timezone(CONFIG["timezone"]))
+    exit_time = get_current_time()  # Use get_current_time() for backtest compatibility
     
     logger.info(SEPARATOR_LINE)
     logger.info(f"EXITING {position['side'].upper()} POSITION")
