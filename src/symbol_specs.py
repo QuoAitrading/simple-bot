@@ -24,11 +24,11 @@ class SymbolSpec:
     tick_value: float         # Dollar value per tick (e.g., $12.50 for ES)
     point_value: float        # Dollar value per point (e.g., $50 for ES = 1 point = 4 ticks)
     
-    # Trading hours (all times in ET)
-    session_start: time       # When trading session starts
-    session_end: time         # When to stop taking new entries
-    maintenance_start: time   # Maintenance window start
-    maintenance_end: time     # Maintenance window end
+    # Trading hours (all times in UTC - CME futures schedule)
+    session_start: time       # When trading session starts (23:00 UTC)
+    session_end: time         # When to stop taking new entries (21:40 UTC)
+    maintenance_start: time   # Maintenance window start (22:00 UTC)
+    maintenance_end: time     # Maintenance window end (23:00 UTC)
     
     # Risk characteristics
     typical_slippage_ticks: float   # Expected slippage in ticks
@@ -60,10 +60,10 @@ SYMBOL_SPECS: Dict[str, SymbolSpec] = {
         tick_size=0.25,
         tick_value=12.50,
         point_value=50.0,
-        session_start=time(18, 0),    # 6:00 PM ET (Sunday - Friday)
-        session_end=time(16, 55),      # 4:55 PM ET (stop new entries)
-        maintenance_start=time(17, 0), # 5:00 PM ET
-        maintenance_end=time(18, 0),   # 6:00 PM ET
+        session_start=time(18, 0),     # 23:00 UTC (market opens)
+        session_end=time(16, 40),      # 21:40 UTC (stop new entries, 5 min before flatten)
+        maintenance_start=time(17, 0), # 22:00 UTC (maintenance starts)
+        maintenance_end=time(18, 0),   # 23:00 UTC (maintenance ends)
         typical_slippage_ticks=1.5,
         typical_spread_ticks=1.0,
         volatility_factor=1.0,         # Baseline
@@ -82,7 +82,7 @@ SYMBOL_SPECS: Dict[str, SymbolSpec] = {
         tick_value=1.25,               # 1/10th of ES
         point_value=5.0,
         session_start=time(18, 0),
-        session_end=time(16, 55),
+        session_end=time(16, 40),
         maintenance_start=time(17, 0),
         maintenance_end=time(18, 0),
         typical_slippage_ticks=2.0,    # Slightly more due to lower volume
@@ -103,7 +103,7 @@ SYMBOL_SPECS: Dict[str, SymbolSpec] = {
         tick_value=5.00,
         point_value=20.0,
         session_start=time(18, 0),
-        session_end=time(16, 55),
+        session_end=time(16, 40),
         maintenance_start=time(17, 0),
         maintenance_end=time(18, 0),
         typical_slippage_ticks=2.0,    # More volatile than ES
@@ -124,7 +124,7 @@ SYMBOL_SPECS: Dict[str, SymbolSpec] = {
         tick_value=0.50,               # 1/10th of NQ
         point_value=2.0,
         session_start=time(18, 0),
-        session_end=time(16, 55),
+        session_end=time(16, 40),
         maintenance_start=time(17, 0),
         maintenance_end=time(18, 0),
         typical_slippage_ticks=2.5,
@@ -145,7 +145,7 @@ SYMBOL_SPECS: Dict[str, SymbolSpec] = {
         tick_value=5.00,
         point_value=5.0,
         session_start=time(18, 0),
-        session_end=time(16, 55),
+        session_end=time(16, 40),
         maintenance_start=time(17, 0),
         maintenance_end=time(18, 0),
         typical_slippage_ticks=1.5,
@@ -166,7 +166,7 @@ SYMBOL_SPECS: Dict[str, SymbolSpec] = {
         tick_value=5.00,
         point_value=50.0,
         session_start=time(18, 0),
-        session_end=time(16, 55),
+        session_end=time(16, 40),
         maintenance_start=time(17, 0),
         maintenance_end=time(18, 0),
         typical_slippage_ticks=2.0,
@@ -189,7 +189,7 @@ SYMBOL_SPECS: Dict[str, SymbolSpec] = {
         tick_value=10.00,
         point_value=1000.0,
         session_start=time(18, 0),
-        session_end=time(16, 55),
+        session_end=time(16, 40),
         maintenance_start=time(17, 0),
         maintenance_end=time(18, 0),
         typical_slippage_ticks=3.0,    # Very volatile
@@ -210,7 +210,7 @@ SYMBOL_SPECS: Dict[str, SymbolSpec] = {
         tick_value=10.00,
         point_value=100.0,
         session_start=time(18, 0),
-        session_end=time(16, 55),
+        session_end=time(16, 40),
         maintenance_start=time(17, 0),
         maintenance_end=time(18, 0),
         typical_slippage_ticks=2.0,
@@ -231,7 +231,7 @@ SYMBOL_SPECS: Dict[str, SymbolSpec] = {
         tick_value=10.00,
         point_value=10000.0,
         session_start=time(18, 0),
-        session_end=time(16, 55),
+        session_end=time(16, 40),
         maintenance_start=time(17, 0),
         maintenance_end=time(18, 0),
         typical_slippage_ticks=3.0,    # Very volatile

@@ -278,7 +278,7 @@ def run_backtest_with_params(
     
     try:
         # Calculate date range
-        tz = pytz.timezone('America/New_York')
+        tz = pytz.timezone("US/Eastern")  # Use UTC for CME futures
         end_date = datetime.now(tz)
         start_date = end_date - timedelta(days=days)
         
@@ -499,8 +499,8 @@ def run_backtest(args: argparse.Namespace, bot_config: Any) -> Dict[str, Any]:
     bot_ref = BotRLReferences()
     engine.set_bot_instance(bot_ref)
     
-    # Get ET timezone for daily reset checks
-    et = pytz.timezone('US/Eastern')
+    # Use UTC timezone for daily reset checks
+    utc_tz = pytz.timezone("US/Eastern")
     
     def vwap_strategy_backtest(bars_1min: List[Dict[str, Any]], bars_15min: List[Dict[str, Any]]) -> None:
         """
@@ -514,9 +514,9 @@ def run_backtest(args: argparse.Namespace, bot_config: Any) -> Dict[str, Any]:
             volume = bar['volume']
             timestamp_ms = int(timestamp.timestamp() * 1000)
             
-            # Check for new trading day (resets daily counters at 6 PM ET)
-            timestamp_et = timestamp.astimezone(et)
-            check_daily_reset(symbol, timestamp_et)
+            # Check for new trading day (resets daily counters at 23:00 UTC)
+            timestamp_eastern = timestamp.astimezone(utc_tz)
+            check_daily_reset(symbol, timestamp_eastern)
             
             # Process tick through actual bot logic
             on_tick(symbol, price, volume, timestamp_ms)

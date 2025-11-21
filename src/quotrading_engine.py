@@ -3,33 +3,46 @@ VWAP Bounce Bot - Mean Reversion Trading Strategy
 Event-driven bot that trades bounces off VWAP standard deviation bands
 
 ========================================================================
-24/7 MULTI-USER READY ARCHITECTURE
+24/7 MULTI-USER READY ARCHITECTURE - US EASTERN TIME (DST-AWARE)
 ========================================================================
 
-This bot is designed to run continuously and support global users:
+This bot is designed to run continuously using US Eastern wall-clock time:
 
-✅ UTC-FIRST DESIGN: All times converted to UTC first, then to exchange timezone
+✅ US EASTERN TIME: Uses US/Eastern timezone (handles EST/EDT automatically via pytz)
 ✅ AUTO-FLATTEN: Automatically closes positions at 4:45 PM ET (15 min before maintenance)
-✅ AUTO-RESUME: Automatically resumes trading when market reopens (6 PM Sunday ET)
+✅ AUTO-RESUME: Automatically resumes trading when market reopens (6:00 PM ET)
 ✅ NO MANUAL SHUTDOWN: Bot runs 24/7, just pauses trading when market closed
-✅ TIMEZONE SAFE: Works for users in any timezone (UTC → Exchange → User Display)
+✅ DST-AWARE: pytz automatically handles daylight saving time transitions
 
-Trading Hours (ES Futures - Eastern Time):
-- OPEN: Sunday 6:00 PM → Friday 5:00 PM
-- MAINTENANCE: 5:00-6:00 PM ET daily (Monday-Thursday)
-- FLATTEN: 4:45 PM ET (15 min before maintenance)
-- WEEKEND: Friday 5:00 PM → Sunday 6:00 PM
+CME Futures Trading Schedule (US Eastern Wall-Clock):
+- MAIN SESSION OPENS: 6:00 PM Eastern (market resumes after maintenance)
+- ENTRY CUTOFF: 4:00 PM Eastern (no new positions after this time)
+- FLATTEN POSITIONS: 4:45 PM Eastern (close existing positions, 15 min before maintenance)
+- DAILY MAINTENANCE: 5:00-6:00 PM Eastern (60-min daily break)
+- SUNDAY OPEN: 6:00 PM Eastern Sunday (weekly start)
+- FRIDAY CLOSE: 5:00 PM Eastern (weekly close, same as daily maintenance start)
+
+IMPORTANT ENTRY/EXIT RULES:
+- Bot can OPEN new positions: 6:00 PM - 4:00 PM next day
+- Bot can HOLD existing positions: Until 4:45 PM (flatten time)
+- Gap between 4:00 PM - 4:45 PM: Can hold positions but cannot open new ones
+
+NOTE: These times NEVER change - always same wall-clock time regardless of DST.
+pytz handles EST (UTC-5) and EDT (UTC-4) conversions automatically.
 
 Bot States:
-- entry_window: Market open, trading allowed (6 PM - 4:45 PM)
-- flatten_mode: 4:45-5:00 PM, aggressively close positions (15 min before maintenance)
-- closed: During maintenance (5-6 PM Mon-Thu) or weekend, auto-flatten positions
+- entry_window: Market open, can trade (6:00 PM - 4:00 PM for new entries)
+- flatten_mode: 4:45-5:00 PM ET, aggressively close positions (15 min before maintenance)
+- closed: During maintenance (5:00-6:00 PM ET) or weekend, auto-flatten positions
+
+Friday Special Rules:
+- Trading ends at 5:00 PM ET (same as daily maintenance start)
+- No flatten logic needed on Friday, market just closes at maintenance time
 
 For Multi-User Subscriptions:
-- Add user_id to state dictionary for data isolation
+- All users see US Eastern times (CME standard)
+- Bot uses Eastern Time, can display in user's local timezone if needed
 - Each user gets their own position/RL/VWAP state
-- Display times in user's local timezone (UTC → User TZ conversion)
-- Bot continues running for all users regardless of individual timezone
 
 """
 
@@ -707,9 +720,9 @@ def check_azure_time_service() -> str:
     Called every 30 seconds alongside kill switch check.
     
     Azure provides single source of truth for:
-    - Current ET time (timezone-accurate)
+    - Current UTC time (timezone-accurate)
     - Market hours status
-    - Maintenance windows (Mon-Thu 5-6 PM, Fri 5 PM - Sun 6 PM)
+    - Maintenance windows (22:00-6:00 PM ET daily)
     - Trading permission (go/no-go flag)
     
     Returns:
@@ -729,10 +742,10 @@ def check_azure_time_service() -> str:
             data = response.json()
             trading_allowed = data.get("trading_allowed", False)
             halt_reason = data.get("halt_reason", "")
-            current_et = data.get("current_et", "")
+            current_time_str = data.get("current_utc", data.get("current_et", ""))
             
             # Store Azure time for bot awareness
-            bot_status["azure_time"] = current_et
+            bot_status["azure_time"] = current_time_str
             bot_status["trading_allowed"] = trading_allowed
             bot_status["halt_reason"] = halt_reason
             
@@ -747,17 +760,17 @@ def check_azure_time_service() -> str:
             else:
                 # Trading allowed - check if we're approaching maintenance (flatten mode)
                 # Azure doesn't send flatten mode, so we check local time
-                # If current ET time is 4:45-5:00 PM, enter flatten mode
+                # If current UTC time is 21:45-22:00, enter flatten mode
                 try:
                     from datetime import datetime as dt_class
-                    et_time = dt_class.fromisoformat(current_et.replace('Z', '+00:00'))
-                    et_hour = et_time.hour
-                    et_minute = et_time.minute
+                    time_obj = dt_class.fromisoformat(current_time_str.replace('Z', '+00:00'))
+                    time_hour = time_obj.hour
+                    time_minute = time_obj.minute
                     
-                    # Flatten mode: 4:45-5:00 PM (16:45-17:00)
-                    if et_hour == 16 and et_minute >= 45:
+                    # Flatten mode: 21:45-5:00 PM ET (15 min before maintenance)
+                    if time_hour == 21 and time_minute >= 45:
                         state = "flatten_mode"
-                    elif et_hour == 17 and et_minute == 0:
+                    elif time_hour == 22 and time_minute == 0:
                         state = "flatten_mode"
                     else:
                         state = "entry_window"
@@ -808,11 +821,18 @@ def check_broker_connection() -> None:
     if trading_state == "closed" and not bot_status.get("maintenance_idle", False):
         halt_reason = bot_status.get("halt_reason", "")
         
+        # Ensure time is in Eastern
+        eastern_tz = pytz.timezone('US/Eastern')
+        if current_time.tzinfo is None:
+            current_time = eastern_tz.localize(current_time)
+        eastern_time = current_time.astimezone(eastern_tz)
+        
         # Only go idle during maintenance, not weekend
-        if "maintenance" in halt_reason.lower() or (current_time.weekday() < 5 and current_time.time() >= datetime_time(17, 0) and current_time.time() < datetime_time(18, 0)):
+        # Maintenance is 5:00-6:00 PM ET on weekdays (Mon-Fri)
+        if "maintenance" in halt_reason.lower() or (eastern_time.weekday() < 5 and eastern_time.time() >= datetime_time(17, 0) and eastern_time.time() < datetime_time(18, 0)):
             logger.critical(SEPARATOR_LINE)
             logger.critical("🔧 MAINTENANCE WINDOW - GOING IDLE")
-            logger.critical(f"Time: {current_time.strftime('%H:%M:%S %Z')}")
+            logger.critical(f"Time: {eastern_time.strftime('%H:%M:%S %Z')}")
             logger.critical("  Disconnecting broker to save resources during maintenance")
             logger.critical("  Will auto-reconnect at 6:00 PM ET when market reopens")
             logger.critical(SEPARATOR_LINE)
@@ -830,7 +850,7 @@ def check_broker_connection() -> None:
             logger.critical("  Bot will check every 30s for market reopen...")
             return  # Skip broker health check since we just disconnected
     
-    # AUTO-RECONNECT: Reconnect broker when market reopens at 6 PM
+    # AUTO-RECONNECT: Reconnect broker when market reopens at 6:00 PM ET
     elif trading_state == "entry_window" and bot_status.get("maintenance_idle", False):
         logger.critical(SEPARATOR_LINE)
         logger.critical("✅ MARKET REOPENED - AUTO-RECONNECTING")
@@ -2269,10 +2289,21 @@ def validate_signal_requirements(symbol: str, bar_time: datetime) -> Tuple[bool,
         return False, f"Market closed"
     
     if trading_state == "flatten_mode":
-        logger.debug(f"Flatten mode active (4:45-5:00 PM), no new entries")
+        logger.debug(f"Flatten mode active (21:45-5:00 PM ET), no new entries")
         return False, f"Flatten mode - close positions only"
     
     # Trading state is "entry_window" - market is open, proceed with checks
+    
+    # Daily entry cutoff - no new positions after 4:00 PM ET (can hold until 4:45 PM flatten)
+    # Bot can hold existing positions past 4 PM until flatten at 4:45 PM, but cannot open new ones
+    if current_time.time() >= datetime_time(16, 0):  # 4:00 PM ET
+        log_time_based_action(
+            "daily_entry_blocked",
+            f"After 4:00 PM ET, no new trades (can hold positions until 4:45 PM flatten)",
+            {"time": current_time.strftime('%H:%M:%S')}
+        )
+        logger.debug(f"After 4:00 PM ET - no new entries (existing positions can be held until 4:45 PM)")
+        return False, "Daily entry cutoff (4:00 PM ET)"
     
     # Friday restriction - close before weekend (use current time, not bar time)
     if current_time.weekday() == 4 and current_time.time() >= CONFIG["friday_entry_cutoff"]:
@@ -5907,36 +5938,36 @@ def execute_flatten_with_limit_orders(symbol: str, order_side: str, contracts: i
 
 def check_vwap_reset(symbol: str, current_time: datetime) -> None:
     """
-    Check if VWAP should reset at 6 PM ET (futures market day start).
-    For 24/5 trading: VWAP resets at 6 PM when futures trading day begins.
+    Check if VWAP should reset at 6:00 PM ET (futures market day start).
+    For 24/5 trading: VWAP resets at 6:00 PM ET when futures trading day begins.
     
     Args:
         symbol: Instrument symbol
         current_time: Current datetime in Eastern Time
     """
     current_date = current_time.date()
-    vwap_reset_time = datetime_time(18, 0)  # 6 PM ET - futures trading day starts
+    vwap_reset_time = datetime_time(18, 0)  # 6:00 PM ET - futures trading day starts
     
-    # Check if we've crossed 6 PM on a new day
+    # Check if we've crossed 6:00 PM ET on a new day
     if state[symbol]["vwap_day"] is None:
         # First run - initialize VWAP day
         state[symbol]["vwap_day"] = current_date
         logger.info(f"Trading day initialized: {current_date}")
         return
     
-    # If it's a new day and we're past 6 PM, reset VWAP
-    # OR if it's the same calendar day but we just crossed 6 PM
+    # If it's a new day and we're past 6:00 PM ET, reset VWAP
+    # OR if it's the same calendar day but we just crossed 6:00 PM ET
     last_reset_date = state[symbol]["vwap_day"]
     crossed_reset_time = current_time.time() >= vwap_reset_time
     
-    # New trading day starts at 6 PM, so check if we've moved to a new VWAP session
+    # New trading day starts at 6:00 PM ET, so check if we've moved to a new VWAP session
     if crossed_reset_time and last_reset_date != current_date:
         perform_vwap_reset(symbol, current_date, current_time)
 
 
 def perform_vwap_reset(symbol: str, new_date: Any, reset_time: datetime) -> None:
     """
-    Perform VWAP reset at 6 PM ET daily (futures trading day start).
+    Perform VWAP reset at 6:00 PM ET daily (futures trading day start).
     
     Args:
         symbol: Instrument symbol
@@ -5945,7 +5976,7 @@ def perform_vwap_reset(symbol: str, new_date: Any, reset_time: datetime) -> None
     """
     logger.info(SEPARATOR_LINE)
     logger.info(f"DAILY RESET at {reset_time.strftime('%Y-%m-%d %H:%M:%S %Z')}")
-    logger.info(f"Futures trading day start (6 PM ET) - New trading day: {new_date}")
+    logger.info(f"Futures trading day start (6:00 PM ET) - New trading day: {new_date}")
     logger.info(SEPARATOR_LINE)
     
     # Clear accumulated 1-minute bars for VWAP calculation
@@ -5973,19 +6004,19 @@ def perform_vwap_reset(symbol: str, new_date: Any, reset_time: datetime) -> None
 def check_daily_reset(symbol: str, current_time: datetime) -> None:
     """
     Check if we've crossed into a new trading day and reset daily counters.
-    For 24/5 trading: Resets at 6 PM ET (futures trading day start).
+    For 24/5 trading: Resets at 6:00 PM ET (futures trading day start).
     
     Args:
         symbol: Instrument symbol
         current_time: Current datetime in Eastern Time
     """
     current_date = current_time.date()
-    vwap_reset_time = datetime_time(18, 0)  # 6 PM ET - futures trading day starts
+    vwap_reset_time = datetime_time(18, 0)  # 6:00 PM ET - futures trading day starts
     
     # If we have a trading day stored and it's different from current date
     if state[symbol]["trading_day"] is not None:
         if state[symbol]["trading_day"] != current_date:
-            # Reset daily counters at 6 PM (same as VWAP reset)
+            # Reset daily counters at 6:00 PM ET (same as VWAP reset)
             if current_time.time() >= vwap_reset_time:
                 perform_daily_reset(symbol, current_date)
     else:
@@ -6044,7 +6075,7 @@ def perform_daily_reset(symbol: str, new_date: Any) -> None:
     bot_status["flatten_mode"] = False
     
     logger.info("Daily reset complete - Ready for trading")
-    logger.info("(VWAP reset handled separately at 9:30 AM)")
+    logger.info("(VWAP reset handled at market open 6:00 PM ET / 6 PM EST)")
     logger.info(SEPARATOR_LINE)
 
 
@@ -6190,7 +6221,7 @@ def check_tick_timeout(current_time: datetime) -> Tuple[bool, Optional[str]]:
 def check_trade_limits(current_time: datetime) -> Tuple[bool, Optional[str]]:
     """
     Check emergency stop and trading enabled status.
-    24/5 trading - only stop for maintenance window and weekends.
+    CME Futures trading - uses US Eastern wall-clock time (DST-aware).
     
     Args:
         current_time: Current datetime in Eastern Time
@@ -6202,36 +6233,42 @@ def check_trade_limits(current_time: datetime) -> Tuple[bool, Optional[str]]:
     if bot_status["emergency_stop"]:
         return False, f"Emergency stop active: {bot_status['stop_reason']}"
     
-    # Check for weekend (Saturday + Sunday before 6 PM)
-    if current_time.weekday() == 5:  # Saturday - always closed
+    # Ensure current_time is in Eastern
+    eastern_tz = pytz.timezone('US/Eastern')
+    if current_time.tzinfo is None:
+        current_time = eastern_tz.localize(current_time)
+    eastern_time = current_time.astimezone(eastern_tz)
+    
+    # Check for weekend (Saturday + Sunday before 6:00 PM ET)
+    if eastern_time.weekday() == 5:  # Saturday - always closed
         if bot_status["trading_enabled"]:
             logger.debug(f"Saturday detected - market closed")
             bot_status["trading_enabled"] = False
             bot_status["stop_reason"] = "weekend"
         return False, "Weekend - market closed"
     
-    if current_time.weekday() == 6:  # Sunday
-        if current_time.time() < datetime_time(18, 0):  # Before 6 PM Sunday
+    if eastern_time.weekday() == 6:  # Sunday
+        if eastern_time.time() < datetime_time(18, 0):  # Before 6:00 PM ET Sunday
             if bot_status["trading_enabled"]:
-                logger.debug(f"Sunday before 6 PM - market closed")
+                logger.debug(f"Sunday before 6:00 PM ET - market closed")
                 bot_status["trading_enabled"] = False
                 bot_status["stop_reason"] = "weekend"
-            return False, "Weekend - market closed (opens 6 PM)"
+            return False, "Weekend - market closed (opens 6:00 PM ET)"
     
-    # Check for futures maintenance window (5:00 PM - 6:00 PM ET Monday-Friday)
-    if current_time.weekday() < 5:  # Monday through Friday only
-        maintenance_start = datetime_time(17, 0)  # 5 PM
-        maintenance_end = datetime_time(18, 0)    # 6 PM
-        if maintenance_start <= current_time.time() < maintenance_end:
+    # Check for futures maintenance window (5:00-6:00 PM ET Monday-Friday)
+    if eastern_time.weekday() < 5:  # Monday through Friday only
+        maintenance_start = datetime_time(17, 0)  # 5:00 PM ET
+        maintenance_end = datetime_time(18, 0)    # 6:00 PM ET
+        if maintenance_start <= eastern_time.time() < maintenance_end:
             if bot_status["trading_enabled"]:
                 logger.debug(f"Maintenance window - disabling trading")
                 bot_status["trading_enabled"] = False
                 bot_status["stop_reason"] = "maintenance"
-            return False, "Maintenance window"
+            return False, "Maintenance window (5:00-6:00 PM ET)"
     
     # Re-enable trading after maintenance/weekend
     if not bot_status["trading_enabled"]:
-        logger.debug(f"Re-enabling trading - market open at {current_time}")
+        logger.debug(f"Re-enabling trading - market open at {eastern_time}")
         bot_status["trading_enabled"] = True
         bot_status["stop_reason"] = None
     
@@ -6452,8 +6489,8 @@ def check_safety_conditions(symbol: str) -> Tuple[bool, Optional[str]]:
 
 def check_no_overnight_positions(symbol: str) -> None:
     """
-    Phase Eleven: Critical safety check - ensure NO positions past 5 PM.
-    This prevents gap risk and TopStep evaluation issues.
+    Critical safety check - ensure NO positions past 5:00 PM ET (maintenance start).
+    This prevents gap risk and prop firm evaluation issues.
     
     Args:
         symbol: Instrument symbol
@@ -6461,13 +6498,13 @@ def check_no_overnight_positions(symbol: str) -> None:
     if not state[symbol]["position"]["active"]:
         return  # No position, all good
     
-    tz = pytz.timezone(CONFIG["timezone"])
-    current_time = datetime.now(tz)
+    eastern_tz = pytz.timezone('US/Eastern')
+    current_time = datetime.now(eastern_tz)
     
-    # Critical: If it's past 5 PM and we still have a position, this is a SERIOUS ERROR
+    # Critical: If it's past 5:00 PM ET and we still have a position, this is a SERIOUS ERROR
     if current_time.time() >= CONFIG["shutdown_time"]:
         logger.critical("=" * 70)
-        logger.critical("CRITICAL ERROR: POSITION DETECTED PAST 5 PM ET")
+        logger.critical("CRITICAL ERROR: POSITION DETECTED PAST 5:00 PM ET")
         logger.critical("OVERNIGHT POSITION RISK - IMMEDIATE EMERGENCY CLOSE REQUIRED")
         logger.critical("=" * 70)
         logger.critical(f"Position: {state[symbol]['position']['side']} "
@@ -6784,23 +6821,30 @@ def get_current_time() -> datetime:
 def get_trading_state(dt: datetime = None) -> str:
     """
     Centralized time checking function that returns current trading state.
-    24/5 trading - supports multi-user global operation with UTC-first approach.
+    CME Futures trading - uses US Eastern wall-clock time (DST-aware).
     
     **AZURE-FIRST DESIGN**: Checks Azure time service first for:
-    - Maintenance windows (Mon-Thu 5-6 PM, Fri 5 PM - Sun 6 PM)
+    - Maintenance windows (5:00-6:00 PM ET daily)
     - Single source of truth for all time-based decisions
     
-    Falls back to local time logic if Azure unreachable.
+    Falls back to local Eastern time logic if Azure unreachable.
     
     Args:
         dt: Datetime to check (defaults to current time - live or backtest)
-            Can be UTC or timezone-aware. Will convert to exchange timezone.
+            Should be timezone-aware.
     
     Returns:
         Trading state:
-        - 'entry_window': Market open, ready to trade
-        - 'flatten_mode': 4:45-5:00 PM ET, close positions before maintenance
+        - 'entry_window': Market open, ready to trade (6:00 PM - 4:45 PM next day)
+        - 'flatten_mode': 4:45-5:00 PM ET, close positions before maintenance  
         - 'closed': Market closed (flatten all positions immediately)
+    
+    CME Futures Schedule (US Eastern Wall-Clock - NEVER changes with DST):
+    - Market opens: 6:00 PM Eastern (Sunday-Thursday)
+    - Flatten time: 4:45 PM Eastern daily (Mon-Fri) - 15 min before maintenance
+    - Maintenance: 5:00-6:00 PM Eastern (60-min daily break)
+    - Friday close: 5:00 PM Eastern (market closes at maintenance start)
+    - Sunday open: 6:00 PM Eastern Sunday (weekly start)
     """
     # AZURE-FIRST: Try cloud time service (unless in backtest mode)
     if backtest_current_time is None:  # Live mode only
@@ -6809,59 +6853,56 @@ def get_trading_state(dt: datetime = None) -> str:
             # Use cached Azure state (updated every 30s by check_azure_time_service)
             return azure_state
     
-    # FALLBACK: Local time logic (backtest mode or Azure unreachable)
-    # Get current time (UTC-first for multi-user)
+    # FALLBACK: Local Eastern time logic (backtest mode or Azure unreachable)
+    # Get current time in Eastern
     if dt is None:
         dt = get_current_time()
     
-    # Convert to UTC first (standardize)
+    # Ensure we're working in Eastern Time
+    eastern_tz = pytz.timezone('US/Eastern')
     if dt.tzinfo is None:
-        # If naive datetime, assume it's Eastern time (legacy compatibility)
-        tz = pytz.timezone(CONFIG["timezone"])
-        dt = tz.localize(dt)
+        # If naive datetime, localize to Eastern
+        dt = eastern_tz.localize(dt)
     
-    # Convert to UTC, then to exchange timezone (Eastern Time for ES)
-    utc_time = dt.astimezone(pytz.UTC)
-    exchange_tz = pytz.timezone(CONFIG["timezone"])  # Eastern Time for ES
-    local_time = utc_time.astimezone(exchange_tz)
+    # Convert to Eastern if not already
+    eastern_time = dt.astimezone(eastern_tz)
     
-    weekday = local_time.weekday()  # 0=Monday, 6=Sunday
-    current_time = local_time.time()
+    weekday = eastern_time.weekday()  # 0=Monday, 6=Sunday
+    current_time = eastern_time.time()
     
-    # ES Futures Hours (Eastern Time):
-    # Sunday 6:00 PM - Friday 5:00 PM (with daily 5-6 PM maintenance Mon-Thu)
+    # CME Futures Hours (US Eastern - wall-clock time):
+    # Sunday 6:00 PM - Friday 5:00 PM (with daily 5:00-6:00 PM maintenance Mon-Thu)
     
-    # CLOSED: Saturday (all day)
+    # CLOSED: Saturday (all day) - Market is closed
     if weekday == 5:  # Saturday
         return 'closed'
     
-    # CLOSED: Sunday before 6:00 PM ET (opens AT 6:00 PM exactly)
+    # CLOSED: Sunday before 6:00 PM ET (opens AT 6:00 PM - weekly open)
     if weekday == 6 and current_time < datetime_time(18, 0):
         return 'closed'
     
-    # CLOSED: Friday at/after 5:00 PM ET (closes AT 5:00 PM exactly - weekend starts)
+    # FRIDAY SPECIAL: Market closes at 5:00 PM ET (same as maintenance start)
     if weekday == 4 and current_time >= datetime_time(17, 0):
         return 'closed'
     
-    # Get configured trading times from CONFIG (supports 24/5 futures)
-    flatten_time = CONFIG.get("flatten_time", datetime_time(16, 45))
-    forced_flatten_time = CONFIG.get("forced_flatten_time", datetime_time(17, 0))
+    # Get configured trading times from CONFIG (CME Eastern schedule)
+    flatten_time = CONFIG.get("flatten_time", datetime_time(16, 45))  # 4:45 PM ET
+    forced_flatten_time = CONFIG.get("forced_flatten_time", datetime_time(17, 0))  # 5:00 PM ET
     
     # CLOSED: Daily maintenance (5:00-6:00 PM ET, Monday-Thursday)
     if weekday < 4:  # Monday-Thursday
         if forced_flatten_time <= current_time < datetime_time(18, 0):
-            return 'closed'  # Daily settlement period
+            return 'closed'  # Daily maintenance period
     
-    # FLATTEN MODE: 15 minutes before daily maintenance
-    # Only flatten between 4:45-5:00 PM (15 min before maintenance)
-    # Not after 6:00 PM (that's when the next session starts!)
+    # FLATTEN MODE: 4:45-5:00 PM ET daily (15 min before maintenance)
+    # This applies Monday-Friday (not Saturday/Sunday which are already handled above)
     if flatten_time <= current_time < forced_flatten_time:
         return 'flatten_mode'
     
     # ENTRY WINDOW: Market open, ready to trade
-    # For 24/5 futures, we're in entry window if:
+    # We're in entry window if:
     # - Between 6:00 PM and 4:45 PM next day (Mon-Thu)
-    # - Between 6:00 PM and 5:00 PM Friday
+    # - Between 6:00 PM Sunday and 5:00 PM Friday
     # - NOT in closed/flatten periods above
     return 'entry_window'
 
@@ -6872,39 +6913,32 @@ def get_trading_state(dt: datetime = None) -> str:
 
 def validate_timezone_configuration() -> None:
     """
-    Phase Fifteen: Validate timezone configuration on bot startup.
-    Ensures pytz is working correctly and DST is handled properly.
+    Validate timezone configuration on bot startup.
+    CME Futures use US Eastern wall-clock time - pytz handles DST automatically.
     """
-    tz = pytz.timezone(CONFIG["timezone"])
+    tz = pytz.timezone('US/Eastern')
     current_time = datetime.now(tz)
     
     logger.info(SEPARATOR_LINE)
     logger.info("TIMEZONE CONFIGURATION VALIDATION")
     logger.info(SEPARATOR_LINE)
-    logger.info(f"Configured Timezone: {CONFIG['timezone']}")
+    logger.info(f"Configured Timezone: US/Eastern (CME Futures Standard)")
     logger.info(f"Current Time (ET): {current_time.strftime('%Y-%m-%d %H:%M:%S %Z')}")
     logger.info(f"UTC Offset: {current_time.strftime('%z')}")
     logger.info(f"DST Active: {bool(current_time.dst())}")
-    
-    # Check if DST transition is near
-    tomorrow = current_time + timedelta(days=1)
-    if current_time.dst() != tomorrow.dst():
-        logger.warning("DST TRANSITION DETECTED - Clock changes within 24 hours")
-        logger.warning("Bot has been tested for DST transitions")
-    
-    # Warn if system local time differs significantly from ET
-    system_time = datetime.now()
-    if abs((current_time.replace(tzinfo=None) - system_time).total_seconds()) > 3600:
-        logger.warning("System local time differs from ET by >1 hour")
-        logger.warning(f"System: {system_time.strftime('%H:%M:%S')}, ET: {current_time.strftime('%H:%M:%S')}")
-        logger.warning("All trading decisions use ET - system time is informational only")
-    
+    logger.info(f"CME Futures Schedule (Wall-Clock Times - Never Change):")
+    logger.info(f"  - Market Open: 6:00 PM Eastern")
+    logger.info(f"  - Flatten Time: 4:45 PM Eastern daily")
+    logger.info(f"  - Maintenance: 5:00-6:00 PM Eastern")
+    logger.info(f"  - Friday Close: 5:00 PM Eastern")
+    logger.info(f"  - Sunday Open: 6:00 PM Eastern")
+    logger.info(f"NOTE: pytz handles EST/EDT automatically - same wall-clock times year-round")
     logger.info(SEPARATOR_LINE)
 
 
 def log_time_based_action(action: str, reason: str, details: Optional[Dict[str, Any]] = None) -> None:
     """
-    Phase Sixteen: Log all time-based actions with timestamp and reason.
+    Log all time-based actions with timestamp and reason.
     Creates audit trail for reviewing time-based rule performance.
     
     Args:
@@ -6912,8 +6946,8 @@ def log_time_based_action(action: str, reason: str, details: Optional[Dict[str, 
         reason: Human-readable reason for the action
         details: Optional dictionary of additional details
     """
-    tz = pytz.timezone(CONFIG["timezone"])
-    timestamp = datetime.now(tz)
+    eastern_tz = pytz.timezone('US/Eastern')
+    timestamp = datetime.now(eastern_tz)
     
     log_msg = f"TIME-BASED ACTION: {action}"
     log_msg += f" | Timestamp: {timestamp.strftime('%Y-%m-%d %H:%M:%S %Z')}"
@@ -7047,41 +7081,41 @@ TIME WINDOWS (All times Eastern Time - 24/5 Futures Trading):
 - Sunday before 6:00 PM: CLOSED - Waiting for futures open
 - Sunday 6:00 PM: MARKET OPEN - Trading resumes for the week
 - 6:00 PM - 4:45 PM (next day): ENTRY WINDOW - Full trading allowed 24 hours (Mon-Thu)
-- 4:45 PM - 5:00 PM: FLATTEN MODE - Close positions (15 min before maintenance)
-- 5:00 PM - 6:00 PM: MAINTENANCE - Daily settlement (Mon-Thu), market closed
-- Friday 4:45 PM - 5:00 PM: FLATTEN MODE - Close before weekend
-- Friday 5:00 PM onwards: WEEKEND - Market closed until Sunday 6:00 PM
+- 21:45 - 5:00 PM ET: FLATTEN MODE - Close positions (15 min before maintenance)
+- 22:00 - 6:00 PM ET: MAINTENANCE - Daily settlement (Mon-Thu), market closed
+- Friday 5:00 PM ET onwards: WEEKEND - Market closes early before weekend
+- Saturday: WEEKEND - Market closed
+- Sunday before 5:00 PM ET: WEEKEND - Market closed until Sunday 5:00 PM ET
 
-FLATTEN SCHEDULE (preserves 24-hour trading):
-- Monday-Thursday: Flatten 4:45-5:00 PM (15 min before daily maintenance)
-- Friday: Flatten 4:45-5:00 PM (before weekend close)
+FLATTEN SCHEDULE (UTC - CME Futures):
+- Monday-Thursday: Flatten 21:45-5:00 PM ET (15 min before daily maintenance)
+- Friday: Market closes 21:00 UTC (no flatten mode needed, market just closes)
 - During flatten mode: Aggressive closing, no new entries
-- After 5:00 PM: Maintenance window (Mon-Thu) or weekend (Fri-Sun)
+- After 5:00 PM ET: Maintenance window (Mon-Thu) or weekend (Fri-Sun)
 
 DAILY RESETS:
-- 6:00 PM ET: Daily session opens (after maintenance window)
-- 9:30 AM: VWAP reset (stock market alignment for equity indexes)
-- Daily counters reset at 6 PM when new session starts
+- 6:00 PM ET: Daily session opens (after maintenance window) - VWAP resets here at market open (6 PM EST)
+- Daily counters reset at 6:00 PM ET when new session starts
 
-CRITICAL SAFETY RULES (24/5 FUTURES):
-1. FLATTEN BEFORE MAINTENANCE - Close by 4:45 PM daily (15 min buffer before 5 PM)
-2. NO WEEKEND POSITIONS - Force close by 4:45 PM Friday (before 5 PM weekend close)
-3. MAINTENANCE WINDOW - Market closed 5-6 PM Mon-Thu for settlement
-4. TIMEZONE ENFORCEMENT - All decisions use America/New_York (Eastern Time)
-5. DST AWARENESS - pytz handles spring forward / fall back automatically
+CRITICAL SAFETY RULES (24/5 FUTURES - UTC):
+1. FLATTEN BEFORE MAINTENANCE - Close by 4:45 PM ET daily (15 min buffer before 5:00 PM ET)
+2. NO WEEKEND POSITIONS - Market closes 5:00 PM ET Friday (weekend begins)
+3. MAINTENANCE WINDOW - Market closed 22:00-6:00 PM ET Mon-Thu for settlement
+4. TIMEZONE ENFORCEMENT - All decisions use UTC (CME futures standard)
+5. NO DST ISSUES - UTC never changes, no daylight saving complications
 6. AUDIT TRAIL - Every time-based action logged with timestamp and reason
 
 WHY THIS MATTERS FOR PROP FIRMS:
-TopStep's rules are designed to fail traders who don't respect:
-- Daily settlement (5 PM ET reset Mon-Thu, maintenance window)
+Prop firm rules are designed to fail traders who don't respect:
+- Daily settlement (5:00 PM ET reset Mon-Thu, maintenance window)
 - Overnight gap exposure
 - Weekend event risk
-- Daily loss limits (restart at 5 PM, not midnight)
+- Daily loss limits (restart at 5:00 PM ET, not midnight)
 
 By building time constraints into core logic, you protect against:
 - Gap risk from overnight news (Asia/Europe markets, economic data)
 - Weekend geopolitical events (can't control, can't trade out)
-- Settlement skew manipulation (institutional games in final 30 seconds)
+- Settlement skew manipulation (institutional games in final seconds)
 - Starting day already halfway to loss limit (overnight position losses carry forward)
 
 This time-based framework is NOT OPTIONAL for prop firm trading.

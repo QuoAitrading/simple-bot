@@ -1294,7 +1294,7 @@ class BidAskManager:
             # Update spread with timestamp for time-of-day tracking
             from datetime import datetime
             import pytz
-            tz = pytz.timezone(self.config.get("timezone", "America/New_York"))
+            tz = pytz.timezone(self.config.get("timezone", "US/Eastern"))
             dt = datetime.fromtimestamp(timestamp / 1000, tz=tz)
             self.spread_analyzers[symbol].update(quote.spread, dt)
         else:
