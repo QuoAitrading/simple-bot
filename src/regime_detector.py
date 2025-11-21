@@ -35,36 +35,34 @@ class RegimeDetector:
         self.last_detection_time = None
         
         # Regime-specific trading rules (NON-CONFIGURABLE)
+        # NOTE: Position sizing is controlled by user GUI settings only
+        # Regime detection adjusts: stops, targets, RSI filters, confidence thresholds
         self.regime_rules = {
             'HIGH_VOL_CHOPPY': {
-                'position_size_multiplier': 0.7,     # Reduce size 30%
                 'stop_multiplier': 1.3,              # Wider stops
                 'target_multiplier': 1.2,            # Wider targets
                 'min_rsi_extreme': 25,               # More extreme RSI required
                 'max_rsi_extreme': 75,
                 'confidence_threshold_adj': 0.10,    # Require +10% confidence
-                'description': 'Choppy high volatility - reduced size, wider stops'
+                'description': 'Choppy high volatility - wider stops, stricter filters'
             },
             'HIGH_VOL_TRENDING': {
-                'position_size_multiplier': 0.85,    # Reduce size 15%
                 'stop_multiplier': 1.15,             # Slightly wider stops
                 'target_multiplier': 1.25,           # Wider targets for trend
                 'min_rsi_extreme': 30,
                 'max_rsi_extreme': 70,
                 'confidence_threshold_adj': 0.05,    # Require +5% confidence
-                'description': 'Trending high volatility - modest size reduction'
+                'description': 'Trending high volatility - modest adjustments'
             },
             'LOW_VOL_TRENDING': {
-                'position_size_multiplier': 1.15,    # Increase size 15%
                 'stop_multiplier': 0.9,              # Tighter stops
                 'target_multiplier': 1.1,            # Slightly wider targets
                 'min_rsi_extreme': 32,
                 'max_rsi_extreme': 68,
                 'confidence_threshold_adj': -0.05,   # Allow -5% confidence
-                'description': 'Calm trending - increased size, tighter stops'
+                'description': 'Calm trending - tighter stops, relaxed filters'
             },
             'LOW_VOL_RANGING': {
-                'position_size_multiplier': 1.0,     # Standard size
                 'stop_multiplier': 0.95,             # Slightly tighter stops
                 'target_multiplier': 1.0,            # Standard targets
                 'min_rsi_extreme': 30,
@@ -73,7 +71,6 @@ class RegimeDetector:
                 'description': 'Calm ranging - standard parameters'
             },
             'NORMAL': {
-                'position_size_multiplier': 1.0,     # Standard size
                 'stop_multiplier': 1.0,              # Standard stops
                 'target_multiplier': 1.0,            # Standard targets
                 'min_rsi_extreme': 30,
@@ -196,29 +193,6 @@ class RegimeDetector:
         
         return self.regime_rules.get(regime, self.regime_rules['NORMAL'])
     
-    def apply_regime_position_sizing(self, base_size: int, regime: Optional[str] = None) -> int:
-        """
-        Apply regime-based position size adjustment.
-        
-        Args:
-            base_size: Base position size (contracts)
-            regime: Regime to apply (uses current if None)
-            
-        Returns:
-            Adjusted position size
-        """
-        if regime is None:
-            regime = self.current_regime
-        
-        rules = self.regime_rules.get(regime, self.regime_rules['NORMAL'])
-        multiplier = rules['position_size_multiplier']
-        
-        adjusted_size = max(1, int(base_size * multiplier))
-        
-        if adjusted_size != base_size:
-            logger.info(f"  Regime position sizing: {base_size} → {adjusted_size} contracts ({regime})")
-        
-        return adjusted_size
     
     def apply_regime_stops(self, base_stop_distance: float, regime: Optional[str] = None) -> float:
         """
@@ -324,7 +298,6 @@ class RegimeDetector:
         
         summary = f"Current Regime: {self.current_regime}\n"
         summary += f"  {rules['description']}\n"
-        summary += f"  Position Size: {rules['position_size_multiplier']:.0%}\n"
         summary += f"  Stop Distance: {rules['stop_multiplier']:.0%}\n"
         summary += f"  Target Distance: {rules['target_multiplier']:.0%}\n"
         summary += f"  Confidence Adj: {rules['confidence_threshold_adj']:+.0%}\n"

@@ -2786,9 +2786,10 @@ def calculate_position_size(symbol: str, side: str, entry_price: float, rl_confi
             stop_multiplier = CONFIG.get("stop_loss_atr_multiplier", 3.6)  # Iteration 3
             target_multiplier = CONFIG.get("profit_target_atr_multiplier", 4.75)  # Iteration 3
             
-            # Apply regime-based adjustments to stops and targets
-            stop_multiplier = regime_detector.apply_regime_stops(stop_multiplier, current_regime) / stop_multiplier * stop_multiplier
-            target_multiplier = regime_detector.apply_regime_targets(target_multiplier, current_regime) / target_multiplier * target_multiplier
+            # Apply regime-based adjustments to the ATR multipliers
+            regime_rules = regime_detector.get_regime_adjustments(current_regime)
+            stop_multiplier = stop_multiplier * regime_rules['stop_multiplier']
+            target_multiplier = target_multiplier * regime_rules['target_multiplier']
             
             if side == "long":
                 stop_price = entry_price - (atr * stop_multiplier)
@@ -2900,12 +2901,8 @@ def calculate_position_size(symbol: str, side: str, entry_price: float, rl_confi
                 logger.info(f"[FIXED CONTRACTS] Using fixed max of {user_max_contracts} contracts (dynamic contracts disabled)")
                 calculate_position_size._logged_fixed_mode = True
     
-    # REGIME-BASED POSITION SIZING: Apply regime multiplier (NON-CONFIGURABLE)
-    # This is applied after RL sizing but before recovery mode
-    original_contracts = contracts
-    contracts = regime_detector.apply_regime_position_sizing(contracts, current_regime)
-    if contracts != original_contracts:
-        logger.info(f"[REGIME SIZING] {current_regime}: {original_contracts} → {contracts} contracts")
+    # NOTE: Position sizing is controlled by user GUI settings and RL confidence only
+    # Regime detection does NOT affect position size - only stops, targets, and filters
     
     # RECOVERY MODE: Further reduce position size when approaching limits
     if bot_status.get("recovery_confidence_threshold") is not None:
