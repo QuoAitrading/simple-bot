@@ -4281,6 +4281,162 @@ def check_trailing_stop(symbol: str, current_price: float) -> None:
 
 
 # ============================================================================
+# PHASE FOUR-B: Regime-Based Timeout Exits
+# ============================================================================
+
+def check_sideways_timeout(symbol: str, current_price: float, current_time: datetime) -> Tuple[bool, Optional[float]]:
+    """
+    Check if position should exit due to sideways timeout (stagnant price action).
+    
+    Uses regime-based sideways_timeout parameter (8-18 minutes depending on regime).
+    Monitors if price not making meaningful progress in either direction.
+    Timeout clock resets when regime changes.
+    
+    Args:
+        symbol: Instrument symbol
+        current_price: Current market price
+        current_time: Current datetime
+    
+    Returns:
+        Tuple of (should_exit, exit_price)
+    """
+    position = state[symbol]["position"]
+    
+    if not position["active"]:
+        return False, None
+    
+    # Get current regime and its sideways timeout
+    current_regime_name = position.get("current_regime", position.get("entry_regime", "NORMAL"))
+    current_regime = REGIME_DEFINITIONS.get(current_regime_name, REGIME_DEFINITIONS["NORMAL"])
+    sideways_timeout_minutes = current_regime.sideways_timeout
+    
+    # Determine start time for timeout measurement
+    # Use regime change time if available, otherwise entry time
+    regime_change_time = position.get("regime_change_time")
+    start_time = regime_change_time if regime_change_time else position["entry_time"]
+    
+    if start_time is None:
+        return False, None
+    
+    # Calculate time elapsed
+    time_elapsed_minutes = (current_time - start_time).total_seconds() / 60.0
+    
+    # Check if exceeded sideways timeout
+    if time_elapsed_minutes < sideways_timeout_minutes:
+        return False, None
+    
+    # Check if price has been stagnant (minimal movement)
+    entry_price = position["entry_price"]
+    tick_size = CONFIG["tick_size"]
+    
+    # Calculate price movement from entry
+    price_movement_ticks = abs(current_price - entry_price) / tick_size
+    
+    # Define "stagnant" as less than 3 ticks of movement (minimal progress)
+    stagnant_threshold_ticks = 3.0
+    
+    if price_movement_ticks < stagnant_threshold_ticks:
+        # Price is stagnant and timeout exceeded
+        logger.warning("=" * 60)
+        logger.warning("SIDEWAYS TIMEOUT - EXITING STAGNANT POSITION")
+        logger.warning("=" * 60)
+        logger.warning(f"  Regime: {current_regime_name}")
+        logger.warning(f"  Timeout: {sideways_timeout_minutes} minutes")
+        logger.warning(f"  Time Elapsed: {time_elapsed_minutes:.1f} minutes")
+        logger.warning(f"  Price Movement: {price_movement_ticks:.1f} ticks")
+        logger.warning(f"  Entry: ${entry_price:.2f}, Current: ${current_price:.2f}")
+        logger.warning("=" * 60)
+        
+        return True, current_price
+    
+    return False, None
+
+
+def check_underwater_timeout(symbol: str, current_price: float, current_time: datetime) -> Tuple[bool, Optional[float]]:
+    """
+    Check if position should exit due to underwater timeout (continuous loss).
+    
+    Uses regime-based underwater_timeout parameter (6-10 minutes depending on regime).
+    Monitors if trade continuously losing beyond timeout duration.
+    Timeout clock resets when regime changes or when position goes back to profitable.
+    
+    Args:
+        symbol: Instrument symbol
+        current_price: Current market price
+        current_time: Current datetime
+    
+    Returns:
+        Tuple of (should_exit, exit_price)
+    """
+    position = state[symbol]["position"]
+    
+    if not position["active"]:
+        return False, None
+    
+    side = position["side"]
+    entry_price = position["entry_price"]
+    tick_size = CONFIG["tick_size"]
+    
+    # Calculate current P&L in ticks
+    if side == "long":
+        pnl_ticks = (current_price - entry_price) / tick_size
+    else:  # short
+        pnl_ticks = (entry_price - current_price) / tick_size
+    
+    # Check if currently underwater (losing)
+    if pnl_ticks >= 0:
+        # Position is profitable or breakeven - reset underwater timer
+        if "underwater_start_time" in position:
+            del position["underwater_start_time"]
+        return False, None
+    
+    # Position is underwater (losing)
+    # Track when we first went underwater
+    if "underwater_start_time" not in position:
+        position["underwater_start_time"] = current_time
+        return False, None
+    
+    # Get current regime and its underwater timeout
+    current_regime_name = position.get("current_regime", position.get("entry_regime", "NORMAL"))
+    current_regime = REGIME_DEFINITIONS.get(current_regime_name, REGIME_DEFINITIONS["NORMAL"])
+    underwater_timeout_minutes = current_regime.underwater_timeout
+    
+    # Determine start time for timeout measurement
+    # Use regime change time if it's more recent than underwater start, otherwise use underwater start
+    regime_change_time = position.get("regime_change_time")
+    underwater_start = position["underwater_start_time"]
+    
+    if regime_change_time and regime_change_time > underwater_start:
+        # Regime changed while underwater - reset clock from regime change
+        start_time = regime_change_time
+    else:
+        start_time = underwater_start
+    
+    # Calculate time underwater
+    time_underwater_minutes = (current_time - start_time).total_seconds() / 60.0
+    
+    # Check if exceeded underwater timeout
+    if time_underwater_minutes >= underwater_timeout_minutes:
+        # Continuously underwater beyond timeout
+        tick_value = CONFIG["tick_value"]
+        loss_dollars = pnl_ticks * tick_value * position["quantity"]
+        
+        logger.warning("=" * 60)
+        logger.warning("UNDERWATER TIMEOUT - CUTTING LOSS")
+        logger.warning("=" * 60)
+        logger.warning(f"  Regime: {current_regime_name}")
+        logger.warning(f"  Timeout: {underwater_timeout_minutes} minutes")
+        logger.warning(f"  Time Underwater: {time_underwater_minutes:.1f} minutes")
+        logger.warning(f"  Current Loss: {abs(pnl_ticks):.1f} ticks (${loss_dollars:.2f})")
+        logger.warning(f"  Entry: ${entry_price:.2f}, Current: ${current_price:.2f}")
+        logger.warning("=" * 60)
+        
+        return True, current_price
+    
+    return False, None
+
+
+# ============================================================================
 # PHASE FIVE: Time-Decay Tightening Logic
 # ============================================================================
 
@@ -4987,6 +5143,22 @@ def check_exit_conditions(symbol: str) -> None:
     # REGIME CHANGE CHECK - Detect regime changes and adjust parameters
     # This must happen BEFORE breakeven/trailing checks so they use updated regime parameters
     check_regime_change(symbol, current_bar["close"])
+    
+    # REGIME-BASED TIMEOUT CHECKS - Check sideways and underwater timeouts
+    # These use regime-specific timeout values and reset on regime changes
+    current_time = get_current_time()
+    
+    # Check sideways timeout (stagnant price action)
+    should_exit_sideways, exit_price = check_sideways_timeout(symbol, current_bar["close"], current_time)
+    if should_exit_sideways:
+        execute_exit(symbol, exit_price, "sideways_timeout")
+        return
+    
+    # Check underwater timeout (continuous loss)
+    should_exit_underwater, exit_price = check_underwater_timeout(symbol, current_bar["close"], current_time)
+    if should_exit_underwater:
+        execute_exit(symbol, exit_price, "underwater_timeout")
+        return
     
     # FOURTH - Partial exits (happens before breakeven/trailing because it reduces position size)
     check_partial_exits(symbol, current_bar["close"])
