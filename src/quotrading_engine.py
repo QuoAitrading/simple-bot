@@ -131,9 +131,25 @@ except ImportError:
     create_broker = None
     BrokerInterface = None
 
+
+# ============================================================================
+# BACKTEST MODE UTILITIES
+# ============================================================================
+
+def is_backtest_mode() -> bool:
+    """
+    Check if running in backtest mode.
+    Centralized check to avoid code duplication.
+    
+    Returns:
+        True if in backtest mode, False otherwise
+    """
+    return os.getenv('BOT_BACKTEST_MODE', '').lower() in ('true', '1', 'yes')
+
+
 # Load configuration from environment and config module
 # Check if running in backtest mode from environment variable
-_is_backtest = os.getenv('BOT_BACKTEST_MODE') == 'true'
+_is_backtest = is_backtest_mode()
 _bot_config = load_config(backtest_mode=_is_backtest)
 # Only validate if not in backtest mode (backtest mode skips broker requirements)
 if not _is_backtest:
@@ -207,8 +223,9 @@ bid_ask_manager: Optional[BidAskManager] = None
 # State management dictionary
 state: Dict[str, Any] = {}
 
-# Backtest mode: Track current simulation time (for backtesting)
-# When None, uses real datetime.now(). When set, uses this timestamp.
+# Backtest mode tracking
+# When True, runs in backtest mode using historical data (no broker/cloud connections)
+# Global variable to track simulation time during backtesting
 backtest_current_time: Optional[datetime] = None
 
 # Global tracking for safety mechanisms (Phase 12)
@@ -614,7 +631,7 @@ def check_cloud_kill_switch() -> None:
     global broker
     
     # Skip in backtest mode - no cloud API access needed
-    if os.getenv('BOT_BACKTEST_MODE') == 'true':
+    if is_backtest_mode():
         return
     
     try:
@@ -739,7 +756,7 @@ def check_azure_time_service() -> str:
         Trading state: 'entry_window', 'flatten_mode', or 'closed'
     """
     # Skip in backtest mode - use local time logic instead
-    if os.getenv('BOT_BACKTEST_MODE') == 'true':
+    if is_backtest_mode():
         return None
     
     try:
@@ -818,7 +835,7 @@ def check_broker_connection() -> None:
     global broker
     
     # Skip all broker/cloud checks in backtest mode
-    if os.getenv('BOT_BACKTEST_MODE') == 'true':
+    if is_backtest_mode():
         return
     
     # CRITICAL: Check cloud services FIRST (kill switch + time service)
@@ -1324,7 +1341,7 @@ def initialize_state(symbol: str) -> None:
     """
     # CRITICAL FIX: Reload config to get latest values (fixes subprocess caching issue)
     global _bot_config, CONFIG
-    _is_backtest = os.getenv('BOT_BACKTEST_MODE') == 'true'
+    _is_backtest = is_backtest_mode()
     _bot_config = load_config(backtest_mode=_is_backtest)
     # Only validate if not in backtest mode
     if not _is_backtest:
@@ -7306,7 +7323,7 @@ def handle_tick_event(event) -> None:
     bot_status["last_tick_time"] = dt
     
     # BACKTEST MODE: Update simulation time so all time-based logic uses historical time
-    if os.getenv('BOT_BACKTEST_MODE') == 'true':
+    if is_backtest_mode():
         backtest_current_time = dt
     
     # Increment total tick counter (separate from deque storage which caps at 10k)
