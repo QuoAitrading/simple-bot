@@ -124,10 +124,13 @@ Examples:
     return parser.parse_args()
 
 
-def initialize_rl_brains_for_backtest() -> Tuple[Any, ModuleType]:
+def initialize_rl_brains_for_backtest(bot_config) -> Tuple[Any, ModuleType]:
     """
     Initialize RL brain (signal confidence) for backtest mode.
     This ensures experience files are loaded before the backtest runs.
+    
+    Args:
+        bot_config: Bot configuration object with RL parameters
     
     Returns:
         Tuple of (rl_brain, bot_module) where rl_brain is the SignalConfidenceRL 
@@ -151,18 +154,19 @@ def initialize_rl_brains_for_backtest() -> Tuple[Any, ModuleType]:
     # Load the module
     spec.loader.exec_module(bot_module)
     
-    # Initialize RL brain with experience file
+    # Initialize RL brain with experience file and config values
     signal_exp_file = os.path.join(PROJECT_ROOT, "data/signal_experience.json")
     rl_brain = SignalConfidenceRL(
         experience_file=signal_exp_file,
-        backtest_mode=True
+        backtest_mode=True,
+        exploration_rate=bot_config.rl_exploration_rate,
+        min_exploration=bot_config.rl_min_exploration_rate,
+        exploration_decay=bot_config.rl_exploration_decay
     )
     
     # Set it on the bot module if it has rl_brain attribute
     if hasattr(bot_module, 'rl_brain'):
         bot_module.rl_brain = rl_brain
-    
-    logger.info(f"✅ RL BRAIN INITIALIZED for backtest - {len(rl_brain.experiences)} signal experiences loaded")
     
     return rl_brain, bot_module
 
@@ -221,6 +225,13 @@ def run_backtest(args: argparse.Namespace) -> Dict[str, Any]:
         end_date=end_date.strftime('%Y-%m-%d'),
         symbol=args.symbol if args.symbol else bot_config.instrument
     )
+    
+    # Show config values being used for backtest (from config.json)
+    print(f"📊 Backtest Configuration (from config.json):")
+    print(f"   Max Contracts: {bot_config.max_contracts}")
+    print(f"   RL Exploration Rate: {bot_config.rl_exploration_rate*100:.1f}%")
+    print(f"   RL Min Exploration: {bot_config.rl_min_exploration_rate*100:.1f}%")
+    print()
         
     # Create backtest configuration
     data_path = args.data_path if args.data_path else os.path.join(PROJECT_ROOT, "data/historical_data")
@@ -249,8 +260,11 @@ def run_backtest(args: argparse.Namespace) -> Dict[str, Any]:
     if hasattr(engine, 'logger'):
         engine.logger.setLevel(logging.CRITICAL)
     
-    # Initialize RL brain and bot module
-    rl_brain, bot_module = initialize_rl_brains_for_backtest()
+    # Initialize RL brain and bot module with config values
+    rl_brain, bot_module = initialize_rl_brains_for_backtest(bot_config)
+    
+    # Track initial experience count to show how many were added during backtest
+    initial_experience_count = len(rl_brain.experiences) if rl_brain else 0
     
     # Import bot functions from the loaded module
     initialize_state = bot_module.initialize_state
@@ -412,9 +426,11 @@ def run_backtest(args: argparse.Namespace) -> Dict[str, Any]:
     print("Saving RL experiences...")
     if rl_brain is not None and hasattr(rl_brain, 'save_experience'):
         rl_brain.save_experience()
+        final_experience_count = len(rl_brain.experiences)
+        new_experiences = final_experience_count - initial_experience_count
         print(f"✅ Signal RL experiences saved to data/signal_experience.json")
-        print(f"   Total experiences: {len(rl_brain.experiences)}")
-        print(f"   New experiences this backtest: {len([e for e in rl_brain.experiences if hasattr(e, 'timestamp')])}")
+        print(f"   Total experiences: {final_experience_count}")
+        print(f"   New experiences this backtest: {new_experiences}")
     else:
         print("⚠️  No RL brain to save")
     
