@@ -20,7 +20,6 @@ from .backtesting import (
 # Export backtest runner functions
 from .run_backtest import (
     run_backtest,
-    run_backtest_with_params,
     initialize_rl_brains_for_backtest
 )
 
@@ -32,6 +31,5 @@ __all__ = [
     'ReportGenerator',
     'Trade',
     'run_backtest',
-    'run_backtest_with_params',
     'initialize_rl_brains_for_backtest'
 ]
