@@ -16,17 +16,22 @@ This bot is designed to run continuously using US Eastern wall-clock time:
 
 CME Futures Trading Schedule (US Eastern Wall-Clock):
 - MAIN SESSION OPENS: 6:00 PM Eastern (market resumes after maintenance)
+- ENTRY CUTOFF: 4:00 PM Eastern (no new positions after this time)
+- FLATTEN POSITIONS: 4:45 PM Eastern (close existing positions, 15 min before maintenance)
 - DAILY MAINTENANCE: 5:00-6:00 PM Eastern (60-min daily break)
-- FLATTEN POSITIONS: 4:45 PM Eastern (15 min before maintenance)
-- NO TRADING WINDOW: 4:45-6:00 PM Eastern (flatten + maintenance)
 - SUNDAY OPEN: 6:00 PM Eastern Sunday (weekly start)
 - FRIDAY CLOSE: 5:00 PM Eastern (weekly close, same as daily maintenance start)
+
+IMPORTANT ENTRY/EXIT RULES:
+- Bot can OPEN new positions: 6:00 PM - 4:00 PM next day
+- Bot can HOLD existing positions: Until 4:45 PM (flatten time)
+- Gap between 4:00 PM - 4:45 PM: Can hold positions but cannot open new ones
 
 NOTE: These times NEVER change - always same wall-clock time regardless of DST.
 pytz handles EST (UTC-5) and EDT (UTC-4) conversions automatically.
 
 Bot States:
-- entry_window: Market open, trading allowed (6:00 PM - 4:45 PM next day)
+- entry_window: Market open, can trade (6:00 PM - 4:00 PM for new entries)
 - flatten_mode: 4:45-5:00 PM ET, aggressively close positions (15 min before maintenance)
 - closed: During maintenance (5:00-6:00 PM ET) or weekend, auto-flatten positions
 
@@ -2288,6 +2293,17 @@ def validate_signal_requirements(symbol: str, bar_time: datetime) -> Tuple[bool,
         return False, f"Flatten mode - close positions only"
     
     # Trading state is "entry_window" - market is open, proceed with checks
+    
+    # Daily entry cutoff - no new positions after 4:00 PM ET (can hold until 4:45 PM flatten)
+    # Bot can hold existing positions past 4 PM until flatten at 4:45 PM, but cannot open new ones
+    if current_time.time() >= datetime_time(16, 0):  # 4:00 PM ET
+        log_time_based_action(
+            "daily_entry_blocked",
+            f"After 4:00 PM ET, no new trades (can hold positions until 4:45 PM flatten)",
+            {"time": current_time.strftime('%H:%M:%S')}
+        )
+        logger.debug(f"After 4:00 PM ET - no new entries (existing positions can be held until 4:45 PM)")
+        return False, "Daily entry cutoff (4:00 PM ET)"
     
     # Friday restriction - close before weekend (use current time, not bar time)
     if current_time.weekday() == 4 and current_time.time() >= CONFIG["friday_entry_cutoff"]:

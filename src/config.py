@@ -73,7 +73,7 @@ class BotConfiguration:
     # These times NEVER change - always same wall-clock time regardless of DST
     market_open_time: time = field(default_factory=lambda: time(9, 30))  # Legacy stock market alignment - not used for VWAP reset
     entry_start_time: time = field(default_factory=lambda: time(18, 0))  # 6:00 PM Eastern - CME futures session opens
-    entry_end_time: time = field(default_factory=lambda: time(16, 40))  # 4:40 PM Eastern - 5 min before flatten
+    entry_end_time: time = field(default_factory=lambda: time(16, 0))  # 4:00 PM Eastern - no new entries after this (can hold positions until 4:45 PM)
     flatten_time: time = field(default_factory=lambda: time(16, 45))  # 4:45 PM Eastern - flatten positions (15 min before maintenance)
     forced_flatten_time: time = field(default_factory=lambda: time(17, 0))  # 5:00 PM Eastern - maintenance starts
     shutdown_time: time = field(default_factory=lambda: time(18, 0))  # 6:00 PM Eastern - market reopens after maintenance
