@@ -610,13 +610,17 @@ def load_from_env() -> BotConfiguration:
     return config
 
 
-def get_development_config() -> BotConfiguration:
-    """Development environment configuration."""
-    config = BotConfiguration()
-    config.environment = "development"
+def _load_config_from_json(config: BotConfiguration) -> BotConfiguration:
+    """
+    Helper function to load and apply JSON config values.
     
-    # Load additional config from JSON file if it exists
-    config_file = os.path.join(os.path.dirname(os.path.dirname(__file__)), "config.json")
+    Args:
+        config: BotConfiguration instance to update
+        
+    Returns:
+        Updated BotConfiguration instance
+    """
+    config_file = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data/config.json")
     if os.path.exists(config_file):
         import json
         with open(config_file, 'r') as f:
@@ -625,49 +629,34 @@ def get_development_config() -> BotConfiguration:
             for key, value in json_config.items():
                 if hasattr(config, key):
                     setattr(config, key, value)
+            
+            # Handle legacy 'symbols' field (GUI format) - map to 'instrument' and 'instruments'
+            if 'symbols' in json_config and json_config['symbols']:
+                config.instrument = json_config['symbols'][0]
+                config.instruments = json_config['symbols']
     
-    # API token must be set via environment variable
     return config
+
+
+def get_development_config() -> BotConfiguration:
+    """Development environment configuration."""
+    config = BotConfiguration()
+    config.environment = "development"
+    return _load_config_from_json(config)
 
 
 def get_staging_config() -> BotConfiguration:
     """Staging environment configuration."""
     config = BotConfiguration()
     config.environment = "staging"
-    
-    # Load additional config from JSON file if it exists
-    config_file = os.path.join(os.path.dirname(os.path.dirname(__file__)), "config.json")
-    if os.path.exists(config_file):
-        import json
-        with open(config_file, 'r') as f:
-            json_config = json.load(f)
-            # Update config with JSON values
-            for key, value in json_config.items():
-                if hasattr(config, key):
-                    setattr(config, key, value)
-    
-    # API token must be set via environment variable
-    return config
+    return _load_config_from_json(config)
 
 
 def get_production_config() -> BotConfiguration:
     """Production environment configuration."""
     config = BotConfiguration()
     config.environment = "production"
-    
-    # Load additional config from JSON file if it exists
-    config_file = os.path.join(os.path.dirname(os.path.dirname(__file__)), "config.json")
-    if os.path.exists(config_file):
-        import json
-        with open(config_file, 'r') as f:
-            json_config = json.load(f)
-            # Update config with JSON values
-            for key, value in json_config.items():
-                if hasattr(config, key):
-                    setattr(config, key, value)
-    
-    # API token must be set via environment variable
-    return config
+    return _load_config_from_json(config)
 
 
 def load_config(environment: Optional[str] = None, backtest_mode: bool = False) -> BotConfiguration:
