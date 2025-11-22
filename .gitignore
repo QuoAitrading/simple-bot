@@ -108,6 +108,7 @@ venv.bak/
 .env.*
 !.env.example
 !.env.*.example
+!.env.docker  # Docker Compose environment template (safe to commit)
 
 # Spyder project settings
 .spyderproject
