@@ -188,22 +188,20 @@ class SignalConfidenceRL:
             
             optimal_threshold = self.cached_threshold
         
-        # Exploration: Sometimes use random decision to explore
-        if random.random() < effective_exploration:
-            take = random.choice([True, False])
-            threshold_source = "User" if self.user_threshold is not None else "Learned"
-            reason = f"Exploring ({effective_exploration*100:.0f}% random, {len(self.experiences)} exp) | Threshold: {optimal_threshold:.1%} ({threshold_source})"
-            
-            if take:
-                self.signals_taken += 1
-            else:
-                self.signals_skipped += 1
-            
-            return take, confidence, reason
-        
-        # FILTER BASED ON LEARNED THRESHOLD
+        # FILTER BASED ON LEARNED THRESHOLD (calculate first)
         take = confidence > optimal_threshold
         
+        # Exploration: Give rejected signals a chance to be taken
+        # This allows the system to learn from signals it would normally skip
+        if not take and random.random() < effective_exploration:
+            # This signal was rejected, but exploration gives it a chance
+            take = True
+            threshold_source = "User" if self.user_threshold is not None else "Learned"
+            reason = f"Exploring ({effective_exploration*100:.0f}% chance for rejected signals, {len(self.experiences)} exp) | Threshold: {optimal_threshold:.1%} ({threshold_source})"
+            self.signals_taken += 1
+            return take, confidence, reason
+        
+        # Normal behavior: use threshold decision
         if take:
             self.signals_taken += 1
             reason += f" APPROVED ({confidence:.1%} > {optimal_threshold:.1%})"
