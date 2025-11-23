@@ -76,7 +76,7 @@ class CloudRLDecisionEngine:
         # Find most similar experiences (regardless of win/loss)
         similar = self.find_similar_states(current_state, max_results=num_samples)
         
-        if not similar or len(similar) < num_samples:
+        if len(similar) < num_samples:
             return 0.65, f"🆕 Limited similar experience ({len(similar)} trades) - optimistic"
         
         # Calculate win rate and average PNL from similar trades
