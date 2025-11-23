@@ -1205,8 +1205,8 @@ class QuoTradingLauncher:
         # Check if accounts were already fetched during login
         pre_loaded_accounts = self.config.get("accounts", [])
         if pre_loaded_accounts:
-            # Show account name with balance for better visibility
-            account_names = [f"{acc['name']} (${acc['balance']:,.0f})" for acc in pre_loaded_accounts]
+            # Show account ID with exact balance (not rounded)
+            account_names = [f"{acc['id']} - ${acc['balance']:,.2f}" for acc in pre_loaded_accounts]
             default_value = account_names[0]
         else:
             account_names = ["No accounts loaded"]
@@ -1655,13 +1655,13 @@ class QuoTradingLauncher:
         if not accounts or "No accounts" in selected_display:
             return
         
-        # Parse account name from display format: "Account Name ($50,000)"
+        # Parse account ID from display format: "AccountID - $50,000.00"
         try:
-            # Extract account name (everything before the last opening parenthesis)
-            account_name = selected_display.rsplit('(', 1)[0].strip()
+            # Extract account ID (everything before " - $")
+            account_id = selected_display.split(' - $')[0].strip()
             
-            # Find account by name
-            selected_account = next((acc for acc in accounts if acc['name'] == account_name), None)
+            # Find account by ID
+            selected_account = next((acc for acc in accounts if acc['id'] == account_id), None)
             
             if selected_account:
                 # Update account size field with selected account's balance
@@ -1670,7 +1670,7 @@ class QuoTradingLauncher:
                 self.account_entry.insert(0, str(int(balance)))
                 
                 # Update info label
-                info_text = f"✓ {selected_account['name']} | Balance: ${selected_account['balance']:,.2f}"
+                info_text = f"✓ {selected_account['id']} | Balance: ${selected_account['balance']:,.2f}"
                 self.account_info_label.config(text=info_text, fg=self.colors['success'])
         except Exception as e:
             print(f"[ERROR] Failed to update account info: {e}")
@@ -1915,13 +1915,13 @@ class QuoTradingLauncher:
         selected_account_id = None
         accounts = self.config.get("accounts", [])
         
-        # Parse account name from display format: "Account Name ($50,000)"
+        # Parse account ID from display format: "AccountID - $50,000.00"
         try:
-            account_name = selected_display.rsplit('(', 1)[0].strip()
+            account_id = selected_display.split(' - $')[0].strip()
             
             # Find matching account
             for acc in accounts:
-                if acc['name'] == account_name:
+                if acc['id'] == account_id:
                     selected_account_id = acc.get("id")
                     self.config["selected_account_id"] = selected_account_id
                     break
