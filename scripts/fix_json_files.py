@@ -17,6 +17,12 @@ from typing import Dict, Any, List
 # Add parent directory to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
+# Default cloud API URL (can be overridden via environment variable)
+DEFAULT_CLOUD_API_URL = os.getenv(
+    'QUOTRADING_CLOUD_API_URL',
+    'https://quotrading-signals.icymeadow-86b2969e.eastus.azurecontainerapps.io'
+)
+
 
 class JSONAutoFixer:
     """Automatically fixes common JSON configuration issues"""
@@ -70,7 +76,7 @@ class JSONAutoFixer:
             # Ensure cloud API URL is set
             if not config.get('cloud_api_url') or config.get('cloud_api_url') == '':
                 self.create_backup(filepath)
-                config['cloud_api_url'] = "https://quotrading-signals.icymeadow-86b2969e.eastus.azurecontainerapps.io"
+                config['cloud_api_url'] = DEFAULT_CLOUD_API_URL
                 modified = True
                 self.fixes_applied.append("Set default cloud API URL")
             

@@ -5,7 +5,7 @@
 # Runs all validation checks in sequence to ensure system is ready for live trading
 # =============================================================================
 
-set -e  # Exit on first error
+# Note: Not using 'set -e' to allow graceful handling of non-critical failures
 
 # Color codes
 RED='\033[0;31m'

@@ -67,7 +67,7 @@ class JSONValidator:
                     errors.append(f"rl_exploration_rate must be between 0.0 and 1.0, got {config['rl_exploration_rate']}")
             
             if 'symbols' in config:
-                if not config['symbols'] or len(config['symbols']) == 0:
+                if not config['symbols']:
                     errors.append("symbols list cannot be empty")
             
             if 'cloud_api_url' in config:

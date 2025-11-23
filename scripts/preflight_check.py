@@ -24,6 +24,9 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 class PreFlightChecker:
     """Pre-flight checker for live trading"""
     
+    # Safety thresholds
+    MAX_SAFE_DAILY_LOSS_PERCENT = 5.0  # Warn if daily loss > 5% of account
+    
     def __init__(self, project_root: str = None):
         if project_root is None:
             self.project_root = Path(__file__).parent.parent
@@ -172,7 +175,7 @@ class PreFlightChecker:
             loss_pct = (daily_loss / account_size) * 100
             print(f"   ✅ daily_loss_limit: ${daily_loss:.2f} ({loss_pct:.1f}% of account)")
             
-            if loss_pct > 5:
+            if loss_pct > self.MAX_SAFE_DAILY_LOSS_PERCENT:
                 print(f"   ⚠️  Daily loss limit is high ({loss_pct:.1f}% of account)")
                 self.warnings.append("High daily loss percentage")
         else:

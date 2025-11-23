@@ -53,7 +53,7 @@ if ! command -v az &> /dev/null; then
     exit 1
 fi
 
-AZ_VERSION=$(az version --output tsv 2>/dev/null | head -n 1 | awk '{print $2}')
+AZ_VERSION=$(az version --query '"azure-cli"' -o tsv 2>/dev/null)
 print_status "OK" "Azure CLI version: $AZ_VERSION"
 echo ""
 
