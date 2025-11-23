@@ -67,14 +67,16 @@ class CloudRLDecisionEngine:
         Returns:
             (confidence, reason)
         """
-        # Need at least 10 experiences before using them for decisions
-        if len(self.experiences) < 10:
+        num_samples = 10  # Number of similar experiences to analyze
+        
+        # Need at least num_samples experiences before using them for decisions
+        if len(self.experiences) < num_samples:
             return 0.65, f"🆕 Limited experience ({len(self.experiences)} trades) - optimistic"
         
-        # Find 10 most similar experiences (regardless of win/loss)
-        similar = self.find_similar_states(current_state, max_results=10)
+        # Find most similar experiences (regardless of win/loss)
+        similar = self.find_similar_states(current_state, max_results=num_samples)
         
-        if not similar or len(similar) < 10:
+        if not similar or len(similar) < num_samples:
             return 0.65, f"🆕 Limited similar experience ({len(similar)} trades) - optimistic"
         
         # Calculate win rate and average PNL from similar trades
