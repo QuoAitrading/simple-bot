@@ -1894,6 +1894,114 @@ def init_database_if_needed():
     except Exception as e:
         app.logger.warning(f"Database initialization check: {e}")
 
+@app.route('/api/admin/system-health', methods=['GET'])
+def admin_system_health():
+    """Get system health status for monitoring"""
+    admin_key = request.args.get('license_key') or request.args.get('admin_key')
+    if admin_key != ADMIN_API_KEY:
+        return jsonify({"error": "Unauthorized"}), 401
+    
+    health_status = {
+        "timestamp": datetime.now().isoformat(),
+        "database": {"status": "unknown", "response_time_ms": 0, "error": None},
+        "rl_engine": {"status": "unknown", "total_experiences": 0, "response_time_ms": 0, "error": None},
+        "azure_blob": {"status": "unknown", "response_time_ms": 0, "error": None}
+    }
+    
+    # Test PostgreSQL connection
+    db_start = datetime.now()
+    try:
+        conn = get_db_connection()
+        if conn:
+            with conn.cursor(cursor_factory=RealDictCursor) as cursor:
+                cursor.execute("SELECT COUNT(*) as count FROM rl_experiences WHERE took_trade = TRUE")
+                result = cursor.fetchone()
+                total_experiences = result['count'] if result else 0
+                
+            conn.close()
+            db_time = (datetime.now() - db_start).total_seconds() * 1000
+            health_status["database"] = {
+                "status": "healthy",
+                "response_time_ms": round(db_time, 2),
+                "error": None
+            }
+            health_status["rl_engine"] = {
+                "status": "healthy",
+                "total_experiences": total_experiences,
+                "response_time_ms": round(db_time, 2),
+                "last_query": datetime.now().isoformat(),
+                "error": None
+            }
+        else:
+            health_status["database"] = {
+                "status": "unhealthy",
+                "response_time_ms": 0,
+                "error": "Database connection failed"
+            }
+            health_status["rl_engine"] = {
+                "status": "unhealthy",
+                "total_experiences": 0,
+                "response_time_ms": 0,
+                "error": "Cannot query RL data - database unavailable"
+            }
+    except Exception as e:
+        logging.error(f"Database health check error: {e}")
+        health_status["database"] = {
+            "status": "unhealthy",
+            "response_time_ms": 0,
+            "error": str(e)
+        }
+        health_status["rl_engine"] = {
+            "status": "unhealthy",
+            "total_experiences": 0,
+            "response_time_ms": 0,
+            "error": str(e)
+        }
+    
+    # Test Azure Blob Storage connection
+    blob_start = datetime.now()
+    try:
+        if STORAGE_CONNECTION_STRING:
+            blob_service = BlobServiceClient.from_connection_string(STORAGE_CONNECTION_STRING)
+            container_client = blob_service.get_container_client(CONTAINER_NAME)
+            container_client.get_container_properties()
+            blob_time = (datetime.now() - blob_start).total_seconds() * 1000
+            health_status["azure_blob"] = {
+                "status": "healthy",
+                "response_time_ms": round(blob_time, 2),
+                "error": None
+            }
+        else:
+            health_status["azure_blob"] = {
+                "status": "not_configured",
+                "response_time_ms": 0,
+                "error": "Azure Storage not configured"
+            }
+    except Exception as e:
+        logging.error(f"Azure Blob health check error: {e}")
+        health_status["azure_blob"] = {
+            "status": "unhealthy",
+            "response_time_ms": 0,
+            "error": str(e)
+        }
+    
+    # Determine overall health
+    statuses = [
+        health_status["database"]["status"],
+        health_status["rl_engine"]["status"]
+    ]
+    
+    if all(s == "healthy" for s in statuses):
+        overall_status = "healthy"
+    elif any(s == "unhealthy" for s in statuses):
+        overall_status = "unhealthy"
+    else:
+        overall_status = "degraded"
+    
+    health_status["overall_status"] = overall_status
+    
+    return jsonify(health_status), 200
+
 if __name__ == '__main__':
     init_database_if_needed()
     port = int(os.environ.get('PORT', 5000))
