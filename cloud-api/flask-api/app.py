@@ -776,7 +776,8 @@ def admin_dashboard_stats():
             signal_exp_total = rl_stats['total'] or 0
             signal_exp_24h = rl_stats['today'] or 0
             
-            # Exit experiences (for now, use same data)
+            # Exit experiences (for now, use same data as signal experiences)
+            # TODO: Add separate tracking for exit experiences when exit decision logic is implemented
             exit_exp_total = signal_exp_total
             exit_exp_24h = signal_exp_24h
             
