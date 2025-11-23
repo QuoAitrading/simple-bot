@@ -776,6 +776,18 @@ def admin_dashboard_stats():
             signal_exp_total = rl_stats['total'] or 0
             signal_exp_24h = rl_stats['today'] or 0
             
+            # Get trade statistics (total trades and P&L)
+            cursor.execute("""
+                SELECT 
+                    COUNT(*) as total_trades,
+                    COALESCE(SUM(pnl), 0) as total_pnl
+                FROM rl_experiences
+                WHERE took_trade = TRUE
+            """)
+            trade_stats = cursor.fetchone()
+            total_trades = trade_stats['total_trades'] or 0
+            total_pnl = float(trade_stats['total_pnl']) if trade_stats['total_pnl'] else 0.0
+            
             return jsonify({
                 "users": {
                     "total": total_users,
@@ -786,8 +798,8 @@ def admin_dashboard_stats():
                     "last_24h": api_calls_24h
                 },
                 "trades": {
-                    "total": 0,
-                    "total_pnl": 0.0
+                    "total": total_trades,
+                    "total_pnl": total_pnl
                 },
                 "rl_experiences": {
                     "total_signal_experiences": signal_exp_total,
@@ -818,7 +830,10 @@ def admin_list_users():
                        u.license_expiration, u.created_at,
                        MAX(a.created_at) as last_active,
                        CASE WHEN MAX(a.created_at) > NOW() - INTERVAL '5 minutes' 
-                            THEN true ELSE false END as is_online
+                            THEN true ELSE false END as is_online,
+                       COUNT(a.id) as api_call_count,
+                       (SELECT COUNT(*) FROM rl_experiences r 
+                        WHERE r.license_key = u.license_key AND r.took_trade = TRUE) as trade_count
                 FROM users u
                 LEFT JOIN api_logs a ON u.license_key = a.license_key
                 GROUP BY u.id, u.email, u.license_key, u.license_type, u.license_status, 
@@ -840,8 +855,8 @@ def admin_list_users():
                     "created_at": user['created_at'].isoformat() if user['created_at'] else None,
                     "last_active": user['last_active'].isoformat() if user['last_active'] else None,
                     "is_online": user['is_online'],
-                    "api_call_count": 0,
-                    "trade_count": 0
+                    "api_call_count": int(user['api_call_count']) if user['api_call_count'] else 0,
+                    "trade_count": int(user['trade_count']) if user['trade_count'] else 0
                 })
             
             return jsonify({"users": formatted_users}), 200
@@ -880,6 +895,27 @@ def admin_get_user(account_id):
             if not user:
                 return jsonify({"error": "User not found"}), 404
             
+            # Get API call count for this user
+            cursor.execute("""
+                SELECT COUNT(*) as api_calls
+                FROM api_logs
+                WHERE license_key = %s
+            """, (user['license_key'],))
+            api_call_result = cursor.fetchone()
+            api_call_count = api_call_result['api_calls'] if api_call_result else 0
+            
+            # Get trade statistics for this user
+            cursor.execute("""
+                SELECT 
+                    COUNT(*) as total_trades,
+                    COALESCE(SUM(pnl), 0) as total_pnl,
+                    COALESCE(AVG(pnl), 0) as avg_pnl,
+                    COUNT(*) FILTER (WHERE pnl > 0) as winning_trades
+                FROM rl_experiences
+                WHERE license_key = %s AND took_trade = TRUE
+            """, (user['license_key'],))
+            trade_stats_result = cursor.fetchone()
+            
             # Format user data
             user_data = {
                 "user": {
@@ -893,12 +929,12 @@ def admin_get_user(account_id):
                     "last_active": user['last_active'].isoformat() if user['last_active'] else None,
                     "notes": None
                 },
-                "recent_api_calls": 0,
+                "recent_api_calls": api_call_count,
                 "trade_stats": {
-                    "total_trades": 0,
-                    "total_pnl": 0.0,
-                    "avg_pnl": 0.0,
-                    "winning_trades": 0
+                    "total_trades": int(trade_stats_result['total_trades']) if trade_stats_result else 0,
+                    "total_pnl": float(trade_stats_result['total_pnl']) if trade_stats_result else 0.0,
+                    "avg_pnl": float(trade_stats_result['avg_pnl']) if trade_stats_result else 0.0,
+                    "winning_trades": int(trade_stats_result['winning_trades']) if trade_stats_result else 0
                 },
                 "recent_activity": []
             }
