@@ -9,7 +9,7 @@ ALTER TABLE rl_experiences
 ADD COLUMN IF NOT EXISTS order_type_used VARCHAR(20),  -- 'passive', 'aggressive', 'mixed'
 ADD COLUMN IF NOT EXISTS entry_slippage_ticks DECIMAL(10,2),  -- Actual slippage in ticks
 ADD COLUMN IF NOT EXISTS partial_fill BOOLEAN DEFAULT FALSE,  -- Whether partial fill occurred
-ADD COLUMN IF NOT EXISTS fill_ratio DECIMAL(5,2),  -- Percentage filled (0.66 = 2 of 3)
+ADD COLUMN IF NOT EXISTS fill_ratio DECIMAL(3,2),  -- Percentage filled (0.00-1.00, e.g., 0.66 = 2 of 3)
 ADD COLUMN IF NOT EXISTS exit_reason VARCHAR(50),  -- 'target_reached', 'stop_loss', 'timeout', etc.
 ADD COLUMN IF NOT EXISTS held_full_duration BOOLEAN DEFAULT TRUE;  -- Whether hit target/stop vs time exit
 

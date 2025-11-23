@@ -1508,35 +1508,35 @@ def submit_outcome():
             if license_data['status'] != 'active':
                 return jsonify({"error": f"License is {license_data['status']}"}), 401
             
+            # Extract execution quality metrics
+            order_type = execution_data.get('order_type_used')
+            slippage = execution_data.get('entry_slippage_ticks')
+            partial = execution_data.get('partial_fill', False)
+            fill_ratio = execution_data.get('fill_ratio', 1.0)
+            exit_reason = execution_data.get('exit_reason')
+            held_full = execution_data.get('held_full_duration', True)
+            
             # Insert outcome directly into PostgreSQL (instant, no locking)
             cursor.execute("""
                 INSERT INTO rl_experiences (
-                    license_key,
-                    symbol,
-                    rsi,
-                    vwap_distance,
-                    atr,
-                    volume_ratio,
-                    hour,
-                    day_of_week,
-                    recent_pnl,
-                    streak,
-                    side,
-                    regime,
-                    took_trade,
-                    pnl,
-                    duration,
-                    order_type_used,
-                    entry_slippage_ticks,
-                    partial_fill,
-                    fill_ratio,
-                    exit_reason,
-                    held_full_duration,
+                    license_key, symbol, rsi, vwap_distance, atr, volume_ratio,
+                    hour, day_of_week, recent_pnl, streak, side, regime,
+                    took_trade, pnl, duration,
+                    order_type_used, entry_slippage_ticks, partial_fill, 
+                    fill_ratio, exit_reason, held_full_duration,
                     created_at
-                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW())
+                ) VALUES (
+                    %s, %s, %s, %s, %s, %s,
+                    %s, %s, %s, %s, %s, %s,
+                    %s, %s, %s,
+                    %s, %s, %s,
+                    %s, %s, %s,
+                    NOW()
+                )
             """, (
+                # State data
                 license_key,
-                state.get('symbol', 'ES'),  # Default to ES if not provided
+                state.get('symbol', 'ES'),
                 state.get('rsi', 50.0),
                 state.get('vwap_distance', 0.0),
                 state.get('atr', 0.0),
@@ -1547,16 +1547,17 @@ def submit_outcome():
                 state.get('streak', 0),
                 state.get('side', 'long'),
                 state.get('regime', 'NORMAL'),
+                # Outcome data
                 took_trade,
                 pnl,
                 duration,
-                # Execution quality metrics for RL learning
-                execution_data.get('order_type_used'),
-                execution_data.get('entry_slippage_ticks'),
-                execution_data.get('partial_fill', False),
-                execution_data.get('fill_ratio', 1.0),
-                execution_data.get('exit_reason'),
-                execution_data.get('held_full_duration', True)
+                # Execution quality data
+                order_type,
+                slippage,
+                partial,
+                fill_ratio,
+                exit_reason,
+                held_full
             ))
             
             # Get total experiences and win rate for this symbol
