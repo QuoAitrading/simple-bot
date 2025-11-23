@@ -103,9 +103,6 @@ class QuoTradingLauncher:
         # Default fallback symbol
         self.DEFAULT_SYMBOL = 'ES'
         
-        # Account mismatch detection threshold
-        self.ACCOUNT_MISMATCH_THRESHOLD = 5000  # Dollars - warn if difference is > $5000 (catches wrong account tier selection)
-        
         self.root.configure(bg=self.colors['background'])
         
         # Load saved config
@@ -928,13 +925,8 @@ class QuoTradingLauncher:
         username = self.broker_username_entry.get().strip()
         quotrading_api_key = self.quotrading_api_key_entry.get().strip()
         
-        # Get selected account type (works for both TopStep and Tradovate)
-        account_type = self.account_type_var.get()
-        if account_type in self.current_account_types:
-            account_info = self.current_account_types[account_type]
-            account_size = account_info["size"]
-        else:
-            account_size = "10000"  # Default fallback
+        # Get account size - will be replaced by real data from broker anyway
+        account_size = "50000"  # Default starting point, real data will override
         
         # Remove placeholder if present (but not if it's the admin key)
         if quotrading_api_key == self.config.get("quotrading_api_key", "") and quotrading_api_key != "QUOTRADING_ADMIN_MASTER_2025":
@@ -966,7 +958,7 @@ class QuoTradingLauncher:
             def on_license_success(license_data):
                 self.hide_loading()
                 # License valid - proceed with broker validation
-                self._continue_broker_validation(broker, token, username, quotrading_api_key, account_size, account_type)
+                self._continue_broker_validation(broker, token, username, quotrading_api_key, account_size)
             
             def on_license_error(error_msg):
                 self.hide_loading()
@@ -983,9 +975,9 @@ class QuoTradingLauncher:
             return
         
         # Admin key - skip license validation and proceed directly
-        self._continue_broker_validation(broker, token, username, quotrading_api_key, account_size, account_type)
+        self._continue_broker_validation(broker, token, username, quotrading_api_key, account_size)
     
-    def _continue_broker_validation(self, broker, token, username, quotrading_api_key, account_size, account_type):
+    def _continue_broker_validation(self, broker, token, username, quotrading_api_key, account_size):
         """Continue broker validation after license is confirmed valid."""
         # Validate by actually connecting and fetching accounts
         def validate_in_thread():
@@ -1102,24 +1094,12 @@ class QuoTradingLauncher:
                 def on_success_ui():
                     self.hide_loading()
                     
-                    # Check for account size mismatch (compare selected tier vs actual starting balance)
-                    user_selected_size = float(account_size)
-                    actual_starting_balance = accounts[0]['balance']  # This is the starting balance, not equity
-                    
-                    mismatch_warning = ""
-                    if abs(user_selected_size - actual_starting_balance) > self.ACCOUNT_MISMATCH_THRESHOLD:
-                        mismatch_warning = (
-                            f"\n\n⚠️ ACCOUNT SIZE MISMATCH:\n\n"
-                            f"You selected: {account_type} (${user_selected_size:,.0f})\n"
-                            f"Actual account: ${actual_starting_balance:,.0f}\n\n"
-                            f"The bot will use the actual account balance for risk calculations.\n"
-                            f"Make sure you selected the correct account type!"
-                        )
+                    # Validate account was fetched successfully
+                    actual_starting_balance = accounts[0]['balance']
                     
                     # Save config
                     self.config["broker_type"] = self.broker_type_var.get()
                     self.config["broker"] = broker
-                    self.config["account_type"] = account_type
                     self.config["account_size"] = str(int(actual_starting_balance))  # Use actual balance
                     self.config["broker_validated"] = True
                     self.config["accounts"] = accounts
@@ -1139,12 +1119,6 @@ class QuoTradingLauncher:
                     
                     self.save_config()
                     
-                    # Show mismatch warning if needed
-                    if mismatch_warning:
-                        messagebox.showwarning(
-                            "Account Size Mismatch",
-                            f"Login successful!{mismatch_warning}"
-                        )
                     
                     # Proceed to trading screen with accounts pre-loaded
                     self.setup_trading_screen()
