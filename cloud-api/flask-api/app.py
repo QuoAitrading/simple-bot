@@ -16,7 +16,9 @@ import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from rl_decision_engine import CloudRLDecisionEngine
-from whop import Whop
+import hmac
+import hashlib
+import requests
 
 app = Flask(__name__)
 logging.basicConfig(level=logging.INFO)
@@ -32,9 +34,7 @@ DB_PORT = os.environ.get("DB_PORT", "5432")
 WHOP_API_KEY = os.environ.get("WHOP_API_KEY", "")
 WHOP_WEBHOOK_SECRET = os.environ.get("WHOP_WEBHOOK_SECRET", "")
 ADMIN_API_KEY = os.environ.get("ADMIN_API_KEY", "ADMIN-DEV-KEY-2024")  # For creating licenses
-
-# Initialize Whop client
-whop_client = Whop(api_key=WHOP_API_KEY)
+WHOP_API_BASE_URL = "https://api.whop.com/api/v5"
 
 # Email configuration (for SendGrid or SMTP)
 SENDGRID_API_KEY = os.environ.get("SENDGRID_API_KEY", "")
@@ -553,14 +553,23 @@ def create_license():
 def whop_webhook():
     """Handle Whop webhook events for subscription management"""
     try:
-        payload = request.get_json()
+        payload = request.get_data()
         headers = request.headers
         
         # Verify signature if secret is set
-        if WHOP_WEBHOOK_SECRET:
-            # TODO: Implement signature verification using Whop SDK
-            # whop_client.verify_webhook(payload, headers['Whop-Signature'], WHOP_WEBHOOK_SECRET)
-            pass
+        if WHOP_WEBHOOK_SECRET and 'X-Whop-Signature' in headers:
+            signature = headers.get('X-Whop-Signature')
+            expected_signature = hmac.new(
+                WHOP_WEBHOOK_SECRET.encode('utf-8'),
+                payload,
+                hashlib.sha256
+            ).hexdigest()
+            
+            if not hmac.compare_digest(signature, expected_signature):
+                logging.warning("❌ Invalid Whop webhook signature")
+                return jsonify({"status": "error", "message": "Invalid signature"}), 401
+        
+        payload = json.loads(payload)
 
         event_type = payload.get('action') # Whop often uses 'action' or 'type'
         if not event_type:
