@@ -17,14 +17,14 @@ This bot is designed to run continuously using US Eastern wall-clock time:
 CME Futures Trading Schedule (US Eastern Wall-Clock):
 - MAIN SESSION OPENS: 6:00 PM Eastern (market resumes after maintenance)
 - ENTRY CUTOFF: 4:00 PM Eastern (no new positions after this time)
-- FLATTEN POSITIONS: 4:45 PM Eastern (close existing positions, 15 min before maintenance)
-- DAILY MAINTENANCE: 5:00-6:00 PM Eastern (60-min daily break)
+- FLATTEN POSITIONS: 4:45 PM Eastern (close existing positions before maintenance)
+- DAILY MAINTENANCE: 4:45-6:00 PM Eastern (1hr 15min daily break)
 - SUNDAY OPEN: 6:00 PM Eastern Sunday (weekly start)
-- FRIDAY CLOSE: 5:00 PM Eastern (weekly close, same as daily maintenance start)
+- FRIDAY CLOSE: 4:45 PM Eastern (weekly close, start of weekend maintenance)
 
 IMPORTANT ENTRY/EXIT RULES:
 - Bot can OPEN new positions: 6:00 PM - 4:00 PM next day
-- Bot can HOLD existing positions: Until 4:45 PM (flatten time)
+- Bot can HOLD existing positions: Until 4:45 PM (forced flatten time)
 - Gap between 4:00 PM - 4:45 PM: Can hold positions but cannot open new ones
 
 NOTE: These times NEVER change - always same wall-clock time regardless of DST.
@@ -32,12 +32,12 @@ pytz handles EST (UTC-5) and EDT (UTC-4) conversions automatically.
 
 Bot States:
 - entry_window: Market open, can trade (6:00 PM - 4:00 PM for new entries)
-- flatten_mode: 4:45-5:00 PM ET, aggressively close positions (15 min before maintenance)
-- closed: During maintenance (5:00-6:00 PM ET) or weekend, auto-flatten positions
+- flatten_mode: 4:30-4:45 PM ET, aggressively close positions (15 min before forced close)
+- closed: During maintenance (4:45-6:00 PM ET) or weekend, auto-flatten positions
 
 Friday Special Rules:
-- Trading ends at 5:00 PM ET (same as daily maintenance start)
-- No flatten logic needed on Friday, market just closes at maintenance time
+- Trading ends at 4:45 PM ET (start of weekend maintenance)
+- No special flatten logic needed on Friday, market closes at maintenance time
 
 For Multi-User Subscriptions:
 - All users see US Eastern times (CME standard)
@@ -809,7 +809,7 @@ def check_broker_connection() -> None:
         
         # Only go idle during maintenance, not weekend
         # Maintenance is 5:00-6:00 PM ET on weekdays (Mon-Fri)
-        if "maintenance" in halt_reason.lower() or (eastern_time.weekday() < 5 and eastern_time.time() >= datetime_time(17, 0) and eastern_time.time() < datetime_time(18, 0)):
+        if "maintenance" in halt_reason.lower() or (eastern_time.weekday() < 5 and eastern_time.time() >= datetime_time(16, 45) and eastern_time.time() < datetime_time(18, 0)):
             logger.critical(SEPARATOR_LINE)
             logger.critical("≡ƒöº MAINTENANCE WINDOW - GOING IDLE")
             logger.critical(f"Time: {eastern_time.strftime('%H:%M:%S %Z')}")
@@ -3928,8 +3928,8 @@ def check_time_based_exits(symbol: str, current_bar: Dict[str, Any], position: D
     Check time-based exit conditions.
     
     ONLY checks for:
-    1. Emergency forced flatten at market close (4:45 PM ET)
-    2. Flatten mode aggressive management during final 15 minutes
+    1. Emergency forced flatten at 4:45 PM ET (market close before maintenance)
+    2. Flatten mode aggressive management during 4:30-4:45 PM window
     
     All other exits are regime-based (stops, timeouts, breakeven, trailing).
     
@@ -3947,12 +3947,12 @@ def check_time_based_exits(symbol: str, current_bar: Dict[str, Any], position: D
     stop_price = position["stop_price"]
     tick_size = CONFIG["tick_size"]
     
-    # Force close at forced_flatten_time (5:00 PM ET - maintenance starts)
+    # Force close at forced_flatten_time (4:45 PM ET - maintenance starts)
     trading_state = get_trading_state(bar_time)
     if trading_state == "closed":
         return "emergency_forced_flatten", get_flatten_price(symbol, side, current_bar["close"])
     
-    # Flatten mode: aggressive profit/loss management during final 15 minutes
+    # Flatten mode: aggressive profit/loss management during 4:30-4:45 PM window
     if bot_status["flatten_mode"]:
         # Flatten mode: aggressive profit/loss management
         if side == "long":
@@ -6298,7 +6298,7 @@ def check_trade_limits(current_time: datetime) -> Tuple[bool, Optional[str]]:
     
     # Check for futures maintenance window (5:00-6:00 PM ET Monday-Friday)
     if eastern_time.weekday() < 5:  # Monday through Friday only
-        maintenance_start = datetime_time(17, 0)  # 5:00 PM ET
+        maintenance_start = datetime_time(16, 45)  # 4:45 PM ET - Futures maintenance
         maintenance_end = datetime_time(18, 0)    # 6:00 PM ET
         if maintenance_start <= eastern_time.time() < maintenance_end:
             if bot_status["trading_enabled"]:
@@ -6837,20 +6837,22 @@ def get_trading_state(dt: datetime = None) -> str:
     if weekday == 6 and current_time < datetime_time(18, 0):
         return 'closed'
     
-    # FRIDAY SPECIAL: Market closes at 5:00 PM ET (same as maintenance start)
-    if weekday == 4 and current_time >= datetime_time(17, 0):
+    # FRIDAY SPECIAL: Market closes at 4:45 PM ET (futures maintenance)
+    if weekday == 4 and current_time >= datetime_time(16, 45):
         return 'closed'
     
     # Get configured trading times from CONFIG (CME Eastern schedule)
-    flatten_time = CONFIG.get("flatten_time", datetime_time(16, 45))  # 4:45 PM ET
-    forced_flatten_time = CONFIG.get("forced_flatten_time", datetime_time(17, 0))  # 5:00 PM ET
+    # Futures market: Trading 6:00 PM - 4:45 PM daily
+    # Maintenance: 4:45 PM - 6:00 PM daily
+    flatten_time = CONFIG.get("flatten_time", datetime_time(16, 30))  # 4:30 PM ET - start flatten mode
+    forced_flatten_time = CONFIG.get("forced_flatten_time", datetime_time(16, 45))  # 4:45 PM ET - force close
     
-    # CLOSED: Daily maintenance (5:00-6:00 PM ET, Monday-Thursday)
+    # CLOSED: Daily maintenance (4:45-6:00 PM ET, Monday-Thursday)
     if weekday < 4:  # Monday-Thursday
         if forced_flatten_time <= current_time < datetime_time(18, 0):
             return 'closed'  # Daily maintenance period
     
-    # FLATTEN MODE: 4:45-5:00 PM ET daily (15 min before maintenance)
+    # FLATTEN MODE: 4:30-4:45 PM ET daily (15 min before forced close)
     # This applies Monday-Friday (not Saturday/Sunday which are already handled above)
     if flatten_time <= current_time < forced_flatten_time:
         return 'flatten_mode'
@@ -7314,7 +7316,7 @@ def handle_time_check_event(data: Dict[str, Any]) -> None:
         # Check for delayed license expiration stop conditions
         # If license expired and we're waiting for market close (Friday)
         if bot_status.get("stop_at_market_close", False):
-            maintenance_start = CONFIG.get("forced_flatten_time", datetime_time(17, 0))  # 5:00 PM ET
+            maintenance_start = CONFIG.get("forced_flatten_time", datetime_time(16, 45))  # 4:45 PM ET
             if current_time_only >= maintenance_start:
                 logger.critical("≡ƒ¢æ Market closed - stopping trading due to expired license")
                 
@@ -7344,7 +7346,7 @@ def handle_time_check_event(data: Dict[str, Any]) -> None:
         
         # If license expired and we're waiting for maintenance window
         elif bot_status.get("stop_at_maintenance", False):
-            maintenance_start = CONFIG.get("forced_flatten_time", datetime_time(17, 0))  # 5:00 PM ET
+            maintenance_start = CONFIG.get("forced_flatten_time", datetime_time(16, 45))  # 4:45 PM ET
             if current_time_only >= maintenance_start:
                 logger.critical("≡ƒ¢æ Maintenance window reached - stopping trading due to expired license")
                 
@@ -7557,8 +7559,8 @@ def handle_license_check_event(data: Dict[str, Any]) -> None:
                 current_time_only = eastern_time.time()
                 
                 # Check if we're approaching maintenance or end of week
-                flatten_time = CONFIG.get("flatten_time", datetime_time(16, 45))  # 4:45 PM ET
-                maintenance_start = CONFIG.get("forced_flatten_time", datetime_time(17, 0))  # 5:00 PM ET
+                flatten_time = CONFIG.get("flatten_time", datetime_time(16, 30))  # 4:30 PM ET
+                maintenance_start = CONFIG.get("forced_flatten_time", datetime_time(16, 45))  # 4:45 PM ET
                 
                 should_stop_now = True
                 stop_reason = "License expired - stopping trading immediately"
