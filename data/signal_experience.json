@@ -166165,15 +166165,232 @@
         "exit_reason": "early_loss_cut",
         "held_full_duration": false
       }
+    },
+    {
+      "timestamp": "2025-11-25T21:40:38.044406",
+      "state": {
+        "symbol": "ES",
+        "rsi": 50,
+        "vwap_distance": 0.8310745677268594,
+        "atr": 0,
+        "volume_ratio": 1.0,
+        "hour": 21,
+        "day_of_week": 0,
+        "recent_pnl": 0,
+        "streak": 0,
+        "side": "short",
+        "price": 6681.5,
+        "regime": "NORMAL_TRENDING"
+      },
+      "action": {
+        "took_trade": true,
+        "exploration_rate": 0.3
+      },
+      "reward": 422.5,
+      "duration": 11.0,
+      "execution": {
+        "order_type_used": "market",
+        "entry_slippage_ticks": 0.0,
+        "partial_fill": false,
+        "fill_ratio": 1.0,
+        "exit_reason": "stop_loss",
+        "held_full_duration": false
+      }
+    },
+    {
+      "timestamp": "2025-11-25T21:40:38.120871",
+      "state": {
+        "symbol": "ES",
+        "rsi": 50,
+        "vwap_distance": 0.6096506203101317,
+        "atr": 0,
+        "volume_ratio": 1.0,
+        "hour": 1,
+        "day_of_week": 1,
+        "recent_pnl": 0,
+        "streak": 0,
+        "side": "long",
+        "price": 6661.5,
+        "regime": "HIGH_VOL_CHOPPY"
+      },
+      "action": {
+        "took_trade": true,
+        "exploration_rate": 0.3
+      },
+      "reward": -127.5,
+      "duration": 8.0,
+      "execution": {
+        "order_type_used": "market",
+        "entry_slippage_ticks": 0.0,
+        "partial_fill": false,
+        "fill_ratio": 1.0,
+        "exit_reason": "underwater_timeout",
+        "held_full_duration": false
+      }
+    },
+    {
+      "timestamp": "2025-11-25T21:40:38.145131",
+      "state": {
+        "symbol": "ES",
+        "rsi": 50,
+        "vwap_distance": 0.8219923443947202,
+        "atr": 0,
+        "volume_ratio": 1.0,
+        "hour": 1,
+        "day_of_week": 1,
+        "recent_pnl": 0,
+        "streak": 0,
+        "side": "long",
+        "price": 6646.75,
+        "regime": "HIGH_VOL_TRENDING"
+      },
+      "action": {
+        "took_trade": true,
+        "exploration_rate": 0.3
+      },
+      "reward": 685.0,
+      "duration": 7.0,
+      "execution": {
+        "order_type_used": "market",
+        "entry_slippage_ticks": 0.0,
+        "partial_fill": false,
+        "fill_ratio": 1.0,
+        "exit_reason": "stop_loss",
+        "held_full_duration": false
+      }
+    },
+    {
+      "timestamp": "2025-11-25T21:40:38.189276",
+      "state": {
+        "symbol": "ES",
+        "rsi": 50,
+        "vwap_distance": 0.10974621601343688,
+        "atr": 0,
+        "volume_ratio": 1.0,
+        "hour": 3,
+        "day_of_week": 1,
+        "recent_pnl": 0,
+        "streak": 0,
+        "side": "short",
+        "price": 6663.0,
+        "regime": "HIGH_VOL_CHOPPY"
+      },
+      "action": {
+        "took_trade": true,
+        "exploration_rate": 0.3
+      },
+      "reward": -565.0,
+      "duration": 4.0,
+      "execution": {
+        "order_type_used": "market",
+        "entry_slippage_ticks": 0.0,
+        "partial_fill": false,
+        "fill_ratio": 1.0,
+        "exit_reason": "stop_loss",
+        "held_full_duration": false
+      }
+    },
+    {
+      "timestamp": "2025-11-25T21:40:38.547233",
+      "state": {
+        "symbol": "ES",
+        "rsi": 50,
+        "vwap_distance": 0.8302139194744239,
+        "atr": 0,
+        "volume_ratio": 1.0,
+        "hour": 10,
+        "day_of_week": 1,
+        "recent_pnl": 0,
+        "streak": 0,
+        "side": "long",
+        "price": 6633.25,
+        "regime": "LOW_VOL_RANGING"
+      },
+      "action": {
+        "took_trade": true,
+        "exploration_rate": 0.3
+      },
+      "reward": -227.5,
+      "duration": 7.0,
+      "execution": {
+        "order_type_used": "market",
+        "entry_slippage_ticks": 0.0,
+        "partial_fill": false,
+        "fill_ratio": 1.0,
+        "exit_reason": "stop_loss",
+        "held_full_duration": false
+      }
+    },
+    {
+      "timestamp": "2025-11-25T21:40:38.601882",
+      "state": {
+        "symbol": "ES",
+        "rsi": 50,
+        "vwap_distance": 0.8176184604501733,
+        "atr": 0,
+        "volume_ratio": 1.0,
+        "hour": 10,
+        "day_of_week": 1,
+        "recent_pnl": 0,
+        "streak": 0,
+        "side": "long",
+        "price": 6630.75,
+        "regime": "LOW_VOL_RANGING"
+      },
+      "action": {
+        "took_trade": true,
+        "exploration_rate": 0.3
+      },
+      "reward": 22.5,
+      "duration": 5.0,
+      "execution": {
+        "order_type_used": "market",
+        "entry_slippage_ticks": 0.0,
+        "partial_fill": false,
+        "fill_ratio": 1.0,
+        "exit_reason": "stop_loss",
+        "held_full_duration": false
+      }
+    },
+    {
+      "timestamp": "2025-11-25T21:40:38.693499",
+      "state": {
+        "symbol": "ES",
+        "rsi": 50,
+        "vwap_distance": 0.8285042324166624,
+        "atr": 0,
+        "volume_ratio": 1.0,
+        "hour": 14,
+        "day_of_week": 1,
+        "recent_pnl": 0,
+        "streak": 0,
+        "side": "short",
+        "price": 6643.5,
+        "regime": "HIGH_VOL_CHOPPY"
+      },
+      "action": {
+        "took_trade": true,
+        "exploration_rate": 0.3
+      },
+      "reward": 197.5,
+      "duration": 21.0,
+      "execution": {
+        "order_type_used": "market",
+        "entry_slippage_ticks": 0.0,
+        "partial_fill": false,
+        "fill_ratio": 1.0,
+        "exit_reason": "stop_loss",
+        "held_full_duration": false
+      }
     }
   ],
   "stats": {
-    "total_signals": 26,
-    "taken": 11,
-    "skipped": 15,
-    "take_rate": 42.30769230769231,
-    "recent_pnl": 1047.5,
-    "recent_win_rate": 54.54545454545454,
+    "total_signals": 33,
+    "taken": 8,
+    "skipped": 25,
+    "take_rate": 24.242424242424242,
+    "recent_pnl": 407.5,
+    "recent_win_rate": 57.14285714285714,
     "exploration_rate": 30.0
   }
 }
