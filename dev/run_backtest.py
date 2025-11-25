@@ -266,6 +266,8 @@ def run_backtest(args: argparse.Namespace) -> Dict[str, Any]:
     # Import bot functions from the loaded module
     initialize_state = bot_module.initialize_state
     on_tick = bot_module.on_tick
+    inject_complete_bar = bot_module.inject_complete_bar  # For historical bar replay
+    inject_complete_bar_15min = bot_module.inject_complete_bar_15min  # For 15min bars
     check_for_signals = bot_module.check_for_signals
     check_exit_conditions = bot_module.check_exit_conditions
     check_daily_reset = bot_module.check_daily_reset
@@ -305,12 +307,19 @@ def run_backtest(args: argparse.Namespace) -> Dict[str, Any]:
         This executes:
         - Signal RL for confidence scoring
         - Pattern matching for signal detection
-        - Regime detection for market adaptation
+        - Regime detection for market adaptation (uses ATR from OHLC bars)
         - All trade management (stops, targets, breakeven, trailing)
         - UTC maintenance and flatten rules
         """
         nonlocal prev_position_active, bars_processed, total_bars, last_exit_reason
         total_bars = len(bars_1min)
+        
+        # Pre-load all 15-minute bars before processing 1-minute bars
+        # This ensures indicators (RSI, MACD, trend) are ready
+        logger.info(f"Pre-loading {len(bars_15min)} 15-minute bars for indicators...")
+        for bar_15min in bars_15min:
+            inject_complete_bar_15min(symbol, bar_15min)
+        logger.info(f"15-minute bars loaded, indicators ready")
         
         for bar_idx, bar in enumerate(bars_1min):
             bars_processed = bar_idx + 1
@@ -321,25 +330,15 @@ def run_backtest(args: argparse.Namespace) -> Dict[str, Any]:
             
             # Extract bar data
             timestamp = bar['timestamp']
-            price = bar['close']
-            volume = bar['volume']
-            timestamp_ms = int(timestamp.timestamp() * 1000)
             
             # Check for new trading day (resets daily counters following production rules)
             timestamp_eastern = timestamp.astimezone(eastern_tz)
             check_daily_reset(symbol, timestamp_eastern)
             
-            # Process tick through actual bot logic
-            # This includes all signal detection, pattern matching, regime handling
-            on_tick(symbol, price, volume, timestamp_ms)
-            
-            # Check for entry signals after each bar
-            # Uses RL confidence, pattern matching, and regime-aware logic
-            check_for_signals(symbol)
-            
-            # Check for exit signals
-            # Handles stops, targets, breakeven, trailing, time decay
-            check_exit_conditions(symbol)
+            # CRITICAL FIX: Inject complete OHLC bar instead of using on_tick
+            # This preserves high/low data for accurate ATR calculation
+            # inject_complete_bar handles regime detection, VWAP, signals, and exits
+            inject_complete_bar(symbol, bar)
             
             # Track previous position state
             if symbol in state and 'position' in state[symbol]:
