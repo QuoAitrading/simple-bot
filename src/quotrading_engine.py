@@ -1753,6 +1753,12 @@ def inject_complete_bar(symbol: str, bar: Dict[str, Any]) -> None:
         symbol: Instrument symbol
         bar: Complete bar dict with timestamp, open, high, low, close, volume
     """
+    global backtest_current_time
+    
+    # BACKTEST MODE: Update simulation time so all time-based logic uses historical time
+    if is_backtest_mode() and 'timestamp' in bar:
+        backtest_current_time = bar['timestamp']
+    
     # DEBUG: Check what we're getting
     if len(state[symbol]["bars_1min"]) == 0:  # First bar only
         logger.info(f"[INJECT_BAR] First bar: H={bar.get('high', 'MISSING'):.2f} L={bar.get('low', 'MISSING'):.2f}")
@@ -2338,15 +2344,18 @@ def validate_signal_requirements(symbol: str, bar_time: datetime) -> Tuple[bool,
     # Trading state is "entry_window" - market is open, proceed with checks
     
     # Daily entry cutoff - no new positions after 4:00 PM ET (can hold until 4:45 PM flatten)
-    # Bot can hold existing positions past 4 PM until flatten at 4:45 PM, but cannot open new ones
-    if current_time.time() >= datetime_time(16, 0):  # 4:00 PM ET
+    # CRITICAL: This only applies BEFORE the market reopens at 6:00 PM
+    # Market schedule: 6:00 PM (today) → 4:00 PM (next day) with maintenance 5:00-6:00 PM
+    # Entry window: 6:00 PM → 4:00 PM next day (no new entries in the 4:00-6:00 PM window)
+    current_time_only = current_time.time()
+    if datetime_time(16, 0) <= current_time_only < datetime_time(18, 0):  # 4:00 PM - 6:00 PM ET
         log_time_based_action(
             "daily_entry_blocked",
-            f"After 4:00 PM ET, no new trades (can hold positions until 4:45 PM flatten)",
+            f"Between 4:00-6:00 PM ET, no new trades (flatten/maintenance window)",
             {"time": current_time.strftime('%H:%M:%S')}
         )
-        logger.debug(f"After 4:00 PM ET - no new entries (existing positions can be held until 4:45 PM)")
-        return False, "Daily entry cutoff (4:00 PM ET)"
+        logger.debug(f"4:00-6:00 PM ET window - no new entries (flatten at 4:45 PM, maintenance at 5:00 PM, reopens at 6:00 PM)")
+        return False, "Daily entry cutoff (4:00-6:00 PM ET)"
     
     # Check if already have position
     if state[symbol]["position"]["active"]:
@@ -2533,6 +2542,12 @@ def check_long_signal_conditions(symbol: str, prev_bar: Dict[str, Any],
                 return False
             logger.debug(f"Volume spike: {current_volume} >= {avg_volume * volume_mult:.0f} ")
     
+    # FILTER 4: Bullish bar confirmation - current bar must be bullish (close > open)
+    # This ensures the reversal is happening with buying pressure, not selling into the bounce
+    if current_bar["close"] <= current_bar["open"]:
+        logger.debug(f"Long rejected - not a bullish bar: close {current_bar['close']:.2f} <= open {current_bar['open']:.2f}")
+        return False
+    
     logger.info(f" LONG SIGNAL: Price reversal at {current_bar['close']:.2f} (entry zone: {vwap_bands['lower_2']:.2f})")
     return True
 
@@ -2601,6 +2616,12 @@ def check_short_signal_conditions(symbol: str, prev_bar: Dict[str, Any],
                 logger.debug(f"Short rejected - no volume spike: {current_volume} < {avg_volume * volume_mult:.0f}")
                 return False
             logger.debug(f"Volume spike: {current_volume} >= {avg_volume * volume_mult:.0f} ")
+    
+    # FILTER 4: Bearish bar confirmation - current bar must be bearish (close < open)
+    # This ensures the reversal is happening with selling pressure, not buying into the drop
+    if current_bar["close"] >= current_bar["open"]:
+        logger.debug(f"Short rejected - not a bearish bar: close {current_bar['close']:.2f} >= open {current_bar['open']:.2f}")
+        return False
     
     logger.info(f" SHORT SIGNAL: Price reversal at {current_bar['close']:.2f} (entry zone: {vwap_bands['upper_2']:.2f})")
     return True

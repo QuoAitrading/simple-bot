@@ -266,10 +266,11 @@ def run_backtest(args: argparse.Namespace) -> Dict[str, Any]:
     
     # Import bot functions from the loaded module
     initialize_state = bot_module.initialize_state
-    on_tick = bot_module.on_tick
+    inject_complete_bar = bot_module.inject_complete_bar
     check_for_signals = bot_module.check_for_signals
     check_exit_conditions = bot_module.check_exit_conditions
     check_daily_reset = bot_module.check_daily_reset
+    check_vwap_reset = bot_module.check_vwap_reset
     state = bot_module.state
     
     # Initialize bot state for backtesting
@@ -322,25 +323,18 @@ def run_backtest(args: argparse.Namespace) -> Dict[str, Any]:
             
             # Extract bar data
             timestamp = bar['timestamp']
-            price = bar['close']
-            volume = bar['volume']
-            timestamp_ms = int(timestamp.timestamp() * 1000)
+            timestamp_eastern = timestamp.astimezone(eastern_tz)
             
             # Check for new trading day (resets daily counters following production rules)
-            timestamp_eastern = timestamp.astimezone(eastern_tz)
             check_daily_reset(symbol, timestamp_eastern)
             
-            # Process tick through actual bot logic
-            # This includes all signal detection, pattern matching, regime handling
-            on_tick(symbol, price, volume, timestamp_ms)
+            # Check for VWAP reset at 6PM ET (futures trading day start)
+            check_vwap_reset(symbol, timestamp_eastern)
             
-            # Check for entry signals after each bar
-            # Uses RL confidence, pattern matching, and regime-aware logic
-            check_for_signals(symbol)
-            
-            # Check for exit signals
-            # Handles stops, targets, breakeven, trailing, time decay
-            check_exit_conditions(symbol)
+            # CRITICAL: Use inject_complete_bar to preserve OHLC data for accurate ATR calculation
+            # This is essential for proper indicator calculations (ATR, RSI, etc.)
+            # Using on_tick loses intrabar high/low which breaks ATR-based regime detection
+            inject_complete_bar(symbol, bar)
             
             # Track previous position state
             if symbol in state and 'position' in state[symbol]:
@@ -380,7 +374,7 @@ def run_backtest(args: argparse.Namespace) -> Dict[str, Any]:
                     
                 # If bot closed position (active=False), close it in backtest engine too
                 elif not pos.get('active') and engine.current_position is not None:
-                    exit_price = price
+                    exit_price = bar['close']  # Use bar close price for exit
                     exit_time = timestamp
                     # Use the last captured exit reason
                     engine._close_position(exit_time, exit_price, last_exit_reason)
@@ -405,9 +399,10 @@ def run_backtest(args: argparse.Namespace) -> Dict[str, Any]:
                 'quantity': trade.quantity,
                 'entry_price': trade.entry_price,
                 'exit_price': trade.exit_price,
+                'entry_time': trade.entry_time,  # Add entry time
+                'exit_time': trade.exit_time,
                 'pnl': trade.pnl,
                 'exit_reason': trade.exit_reason,  # This comes from the engine
-                'exit_time': trade.exit_time,
                 'duration_minutes': trade.duration_minutes,
                 'confidence': confidence
             }
@@ -474,8 +469,11 @@ def main():
     logging.getLogger('regime_detection').setLevel(logging.WARNING)  # Suppress regime change spam
     logging.getLogger('signal_confidence').setLevel(logging.WARNING)  # Only show warnings and errors
     
-    # Initialize clean reporter with account_size from config
-    reporter = reset_reporter(starting_balance=bot_config.account_size)
+    # Initialize clean reporter with account_size and max_contracts from config
+    reporter = reset_reporter(
+        starting_balance=bot_config.account_size,
+        max_contracts=bot_config.get('max_contracts', 1)
+    )
     
     # Create a custom filter to allow only specific INFO messages through AND track signals
     class BacktestMessageFilter(logging.Filter):
@@ -488,6 +486,12 @@ def main():
             elif 'RL REJECTED' in msg:
                 reporter.record_signal(approved=False)
                 return True  # Show rejections for debugging
+            elif 'Exploring' in msg:
+                # Show exploration messages
+                return True
+            elif 'LONG SIGNAL' in msg or 'SHORT SIGNAL' in msg:
+                # Show when signals are detected (before RL decision)
+                return True
             # Allow WARNING and above
             return record.levelno >= logging.WARNING
     
