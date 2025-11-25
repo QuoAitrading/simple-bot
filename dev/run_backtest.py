@@ -166,6 +166,19 @@ def initialize_rl_brains_for_backtest(bot_config) -> Tuple[Any, ModuleType]:
         exploration_decay=bot_config.rl_exploration_decay
     )
     
+    # Log how many experiences were loaded
+    experience_count = len(rl_brain.experiences) if rl_brain else 0
+    logger.info("=" * 60)
+    logger.info("RL BRAIN INITIALIZATION")
+    logger.info("=" * 60)
+    logger.info(f"Experience file: {signal_exp_file}")
+    logger.info(f"Experiences loaded: {experience_count:,}")
+    logger.info(f"Exploration rate: {backtest_exploration_rate*100:.1f}%")
+    if experience_count < 100:
+        logger.warning("⚠️  Low experience count! For best results, use 1000+ experiences")
+        logger.warning("   Make sure your local data/signal_experience.json has your full experience database")
+    logger.info("=" * 60)
+    
     # Set it on the bot module if it has rl_brain attribute
     if hasattr(bot_module, 'rl_brain'):
         bot_module.rl_brain = rl_brain
