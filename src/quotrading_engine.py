@@ -2380,8 +2380,8 @@ def validate_signal_requirements(symbol: str, bar_time: datetime) -> Tuple[bool,
         logger.debug("Position already active, skipping signal generation")
         return False, "Position active"
     
-    # Check daily trade limit
-    if state[symbol]["daily_trade_count"] >= CONFIG["max_trades_per_day"]:
+    # Check daily trade limit (LIVE MODE ONLY - backtesting should not have trade limits)
+    if not is_backtest_mode() and state[symbol]["daily_trade_count"] >= CONFIG["max_trades_per_day"]:
         logger.warning(f"Daily trade limit reached ({CONFIG['max_trades_per_day']}), stopping for the day")
         
         # Send max trades reached alert (only once)
