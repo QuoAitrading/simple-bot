@@ -118,22 +118,24 @@ class RegimeDetector:
         
         Args:
             bars: Recent price bars (OHLCV data)
-            current_atr: Current ATR value
+            current_atr: Current ATR value (from last 14 bars)
             atr_period: Period for ATR calculation (default 14)
         
         Returns:
             RegimeParameters for the detected regime
         """
-        if len(bars) < 20:
-            # Not enough data - return NORMAL regime as default
+        if len(bars) < 114:
+            # Not enough data - need 100 bars for baseline + 14 for current
             logger.debug(f"Insufficient bars ({len(bars)}) for regime detection, using NORMAL")
             return REGIME_DEFINITIONS["NORMAL"]
         
-        # Get last 20 bars for analysis
-        recent_bars = list(bars)[-20:]
+        # Get bars: use 15-114 for baseline (100 bars), last 20 for price action
+        all_bars = list(bars)
+        baseline_bars = all_bars[-114:-14]  # Bars 15-114 from end (100 bars)
+        recent_bars = all_bars[-20:]  # Last 20 for price action analysis
         
-        # Calculate average ATR over last 20 bars
-        avg_atr = self._calculate_average_atr(recent_bars, atr_period)
+        # Calculate baseline ATR from earlier period (NOT including current 14 bars)
+        avg_atr = self._calculate_average_atr(baseline_bars, atr_period)
         
         if avg_atr == 0:
             logger.debug("Average ATR is 0, using NORMAL regime")

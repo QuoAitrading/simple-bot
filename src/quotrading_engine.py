@@ -1714,6 +1714,9 @@ def update_1min_bar(symbol: str, price: float, volume: int, dt: datetime) -> Non
                 logger.info(f"[MARKET] {market_cond}")
                 logger.info("=" * 80)
             
+            # Update current regime after bar completion
+            update_current_regime(symbol)
+            
             # Check for exit conditions if position is active
             check_exit_conditions(symbol)
             # Check for entry signals if no position
@@ -1761,6 +1764,9 @@ def inject_complete_bar(symbol: str, bar: Dict[str, Any]) -> None:
     
     # Add the complete bar with proper OHLC
     state[symbol]["bars_1min"].append(bar)
+    
+    # Update current regime after adding new bar
+    update_current_regime(symbol)
     
     # Update VWAP and check conditions
     calculate_vwap(symbol)
@@ -2341,16 +2347,6 @@ def validate_signal_requirements(symbol: str, bar_time: datetime) -> Tuple[bool,
         )
         logger.debug(f"After 4:00 PM ET - no new entries (existing positions can be held until 4:45 PM)")
         return False, "Daily entry cutoff (4:00 PM ET)"
-    
-    # Friday restriction - close before weekend (use current time, not bar time)
-    if current_time.weekday() == 4 and current_time.time() >= CONFIG["friday_entry_cutoff"]:
-        log_time_based_action(
-            "friday_entry_blocked",
-            f"Friday after {CONFIG['friday_entry_cutoff']}, no new trades to avoid weekend gap risk",
-            {"day": "Friday", "time": bar_time.strftime('%H:%M:%S')}
-        )
-        logger.info(f"Friday after {CONFIG['friday_entry_cutoff']} - no new trades (weekend gap risk)")
-        return False, "Friday entry cutoff"
     
     # Check if already have position
     if state[symbol]["position"]["active"]:
@@ -3969,16 +3965,6 @@ def check_time_based_exits(symbol: str, current_bar: Dict[str, Any], position: D
             if profit_ticks > 1 or current_bar["close"] > midpoint:
                 return "flatten_mode_exit", get_flatten_price(symbol, side, current_bar["close"])
     
-    # Friday-specific exits
-    if bar_time.weekday() == 4:  # Friday
-        # Target close by 3 PM to avoid weekend gap risk
-        if bar_time.time() >= CONFIG["friday_close_target"]:
-            return "friday_weekend_protection", get_flatten_price(symbol, side, current_bar["close"])
-        
-        # After 2 PM on Friday, take any profit
-        if bar_time.time() >= datetime_time(14, 0) and unrealized_pnl > 0:
-            return "friday_profit_protection", get_flatten_price(symbol, side, current_bar["close"])
-    
     # After 3:30 PM - cut losses early if less than 75% of stop distance
     if bar_time.time() >= datetime_time(15, 30) and not bot_status["flatten_mode"]:
         if side == "long":
@@ -4739,6 +4725,33 @@ def execute_partial_exit(symbol: str, contracts: int, exit_price: float, r_multi
         logger.error(f"Failed to execute partial exit #{level}")
 
 
+def update_current_regime(symbol: str) -> None:
+    """
+    Update the current regime for the symbol based on latest bars.
+    This is called after each bar completion to keep regime detection current.
+    
+    Args:
+        symbol: Instrument symbol
+    """
+    regime_detector = get_regime_detector()
+    bars = state[symbol]["bars_1min"]
+    
+    # Need enough bars for regime detection (114 = 100 baseline + 14 current)
+    if len(bars) < 114:
+        state[symbol]["current_regime"] = "NORMAL"
+        return
+    
+    current_atr = calculate_atr_1min(symbol, CONFIG.get("atr_period", 14))
+    if current_atr is None:
+        state[symbol]["current_regime"] = "NORMAL"
+        return
+    
+    # Detect and store current regime
+    detected_regime = regime_detector.detect_regime(bars, current_atr, CONFIG.get("atr_period", 14))
+    state[symbol]["current_regime"] = detected_regime.name
+    logger.debug(f"[REGIME] Updated to {detected_regime.name} (ATR: {current_atr:.2f})")
+
+
 def check_regime_change(symbol: str, current_price: float) -> None:
     """
     Check if market regime has changed during an active trade and adjust parameters.
@@ -5074,21 +5087,7 @@ def check_exit_conditions(symbol: str) -> None:
             logger.critical("4:42 PM - Cutting small loss before settlement")
         elif reason == "early_profit_lock":
             logger.warning(f"Phase 10: Closing early profit instead of waiting for target")
-        elif reason == "friday_weekend_protection":
-            logger.critical(SEPARATOR_LINE)
-            logger.critical("FRIDAY 3 PM - CLOSING POSITION TO AVOID WEEKEND GAP RISK")
-            logger.critical(SEPARATOR_LINE)
         elif reason == "friday_profit_protection":
-            tick_size = CONFIG["tick_size"]
-            tick_value = CONFIG["tick_value"]
-            if side == "long":
-                price_change = current_bar["close"] - entry_price
-            else:
-                price_change = entry_price - current_bar["close"]
-            ticks = price_change / tick_size
-            unrealized_pnl = ticks * tick_value * position["quantity"]
-            logger.warning(f"Friday 2 PM+ - Taking ${unrealized_pnl:+.2f} profit to avoid weekend risk")
-        elif reason == "early_loss_cut":
             tick_size = CONFIG["tick_size"]
             if side == "long":
                 current_loss_distance = entry_price - current_bar["close"]
