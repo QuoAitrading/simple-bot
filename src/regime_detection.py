@@ -21,6 +21,12 @@ from collections import deque
 
 logger = logging.getLogger(__name__)
 
+# Constants for regime detection
+MIN_BARS_FOR_REGIME_DETECTION = 114  # 100 for baseline + 14 for current ATR
+BASELINE_BARS_START = 114  # Start of baseline window
+BASELINE_BARS_END = 14     # End of baseline window (from end)
+PRICE_ACTION_LOOKBACK = 20  # Bars to analyze for price action classification
+
 
 class RegimeParameters:
     """Parameters for a specific market regime."""
@@ -116,23 +122,29 @@ class RegimeDetector:
         """
         Detect current market regime from recent bars.
         
+        CRITICAL: Pass 15-minute bars here (not 1-minute bars) to reduce noise
+        and get accurate regime classification. The current_atr should also be
+        calculated from 15-minute bars using quotrading_engine.calculate_atr().
+        
         Args:
-            bars: Recent price bars (OHLCV data)
-            current_atr: Current ATR value (from last 14 bars)
+            bars: Recent 15-minute price bars (OHLCV data)
+            current_atr: Current ATR value from 15-minute bars (last 14 bars)
             atr_period: Period for ATR calculation (default 14)
         
         Returns:
             RegimeParameters for the detected regime
         """
-        if len(bars) < 114:
-            # Not enough data - need 100 bars for baseline + 14 for current
-            logger.debug(f"Insufficient bars ({len(bars)}) for regime detection, using NORMAL")
+        if len(bars) < MIN_BARS_FOR_REGIME_DETECTION:
+            # Not enough data - need minimum bars for baseline + current
+            logger.debug(f"Insufficient bars ({len(bars)}/{MIN_BARS_FOR_REGIME_DETECTION}) for regime detection, using NORMAL")
             return REGIME_DEFINITIONS["NORMAL"]
         
-        # Get bars: use 15-114 for baseline (100 bars), last 20 for price action
+        # Get bars for analysis
+        # - Baseline: bars 15-114 from end (100 bars) for average ATR
+        # - Recent: last 20 bars for price action (trending/choppy/ranging)
         all_bars = list(bars)
-        baseline_bars = all_bars[-114:-14]  # Bars 15-114 from end (100 bars)
-        recent_bars = all_bars[-20:]  # Last 20 for price action analysis
+        baseline_bars = all_bars[-MIN_BARS_FOR_REGIME_DETECTION:-BASELINE_BARS_END]  # Last 114 to 14 bars
+        recent_bars = all_bars[-PRICE_ACTION_LOOKBACK:]  # Last 20 bars
         
         # Calculate baseline ATR from earlier period (NOT including current 14 bars)
         avg_atr = self._calculate_average_atr(baseline_bars, atr_period)
@@ -166,12 +178,12 @@ class RegimeDetector:
         """
         Calculate average ATR over the given bars.
         
-        Note: This uses the bars passed in (typically 1-minute bars for regime detection),
-        while quotrading_engine.calculate_atr() uses 15-minute bars. This is intentional
-        as regime detection needs higher-resolution data for accurate volatility classification.
+        This is used internally by regime detection to calculate baseline ATR.
+        In production, pass 15-minute bars here (from quotrading_engine.calculate_atr()).
         
         Args:
             bars: List of bars (must have 'high', 'low', 'close')
+                  Should be 15-minute bars for production use (less noise)
             period: ATR period
         
         Returns:

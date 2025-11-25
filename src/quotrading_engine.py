@@ -121,7 +121,7 @@ from error_recovery import ErrorRecoveryManager, ErrorType as RecoveryErrorType
 from bid_ask_manager import BidAskManager, BidAskQuote
 from notifications import get_notifier
 from signal_confidence import SignalConfidenceRL
-from regime_detection import get_regime_detector, REGIME_DEFINITIONS
+from regime_detection import get_regime_detector, REGIME_DEFINITIONS, MIN_BARS_FOR_REGIME_DETECTION
 from cloud_api import CloudAPIClient
 
 # Conditionally import broker (only needed for live trading, not backtesting)
@@ -1414,7 +1414,7 @@ def initialize_state(symbol: str) -> None:
             "quantity": 0,
             "entry_price": None,
             "stop_price": None,
-            "target_price": None,
+            # NO target_price - using trailing stop only (pure tick-based management)
             "entry_time": None,
             # Regime Information - For dynamic exit management
             "entry_regime": None,  # Regime at entry
@@ -1530,7 +1530,7 @@ def save_position_state(symbol: str) -> None:
             "quantity": position["quantity"],
             "entry_price": position["entry_price"],
             "stop_price": position["stop_price"],
-            "target_price": position["target_price"],
+            # NO target_price - trailing stop only
             "entry_time": position["entry_time"].isoformat() if position.get("entry_time") else None,
             "order_id": position.get("order_id"),
             "stop_order_id": position.get("stop_order_id"),
@@ -1621,7 +1621,8 @@ def load_position_state(symbol: str) -> bool:
         state[symbol]["position"]["quantity"] = saved_state["quantity"]
         state[symbol]["position"]["entry_price"] = saved_state["entry_price"]
         state[symbol]["position"]["stop_price"] = saved_state["stop_price"]
-        state[symbol]["position"]["target_price"] = saved_state["target_price"]
+        # Backward compat: Skip target_price from old saved states (no longer used)
+        # Old states may have target_price field, but we ignore it in pure trailing stop system
         state[symbol]["position"]["order_id"] = saved_state.get("order_id")
         state[symbol]["position"]["stop_order_id"] = saved_state.get("stop_order_id")
         
@@ -2045,11 +2046,14 @@ def calculate_atr(symbol: str, period: int = 14) -> Optional[float]:
 
 def calculate_atr_1min(symbol: str, period: int = 14) -> Optional[float]:
     """
-    Calculate Average True Range (ATR) using 1-minute bars for regime detection.
+    Calculate Average True Range (ATR) using 1-minute bars.
     
-    This function uses 1-minute bars to provide higher-resolution volatility data
-    for accurate regime detection. The regime detector needs ATR calculated from
-    the same timeframe as the bars it analyzes (1-minute bars).
+    NOTE: This is NOT used for regime detection or trading decisions.
+    For trading decisions (regime detection, position sizing), use calculate_atr()
+    which uses 15-minute bars to reduce noise.
+    
+    This function exists for potential future use cases that need high-resolution
+    volatility data (e.g., intraday volatility spikes, tick-level analysis).
     
     Args:
         symbol: Instrument symbol
@@ -2377,8 +2381,8 @@ def validate_signal_requirements(symbol: str, bar_time: datetime) -> Tuple[bool,
         logger.debug("Position already active, skipping signal generation")
         return False, "Position active"
     
-    # Check daily trade limit
-    if state[symbol]["daily_trade_count"] >= CONFIG["max_trades_per_day"]:
+    # Check daily trade limit (LIVE MODE ONLY - backtesting should not have trade limits)
+    if not is_backtest_mode() and state[symbol]["daily_trade_count"] >= CONFIG["max_trades_per_day"]:
         logger.warning(f"Daily trade limit reached ({CONFIG['max_trades_per_day']}), stopping for the day")
         
         # Send max trades reached alert (only once)
@@ -2526,36 +2530,23 @@ def check_long_signal_conditions(symbol: str, prev_bar: Dict[str, Any],
     if not (touched_lower and bounced_back):
         return False
     
-    # FILTER 1: VWAP Direction - price should be BELOW VWAP (discount/oversold)
-    use_vwap_direction = CONFIG.get("use_vwap_direction_filter", False)
-    if use_vwap_direction and vwap is not None:
-        if current_bar["close"] >= vwap:
-            logger.debug(f"Long rejected - price above VWAP: {current_bar['close']:.2f} >= {vwap:.2f}")
-            return False
-        logger.debug(f"Price below VWAP: {current_bar['close']:.2f} < {vwap:.2f} ")
+    # FILTER 1: VWAP Direction - disabled (not used in RL training)
+    # The RL brain learns which VWAP positions work best
     
-    # FILTER 2: RSI - extreme oversold (ITERATION 3)
-    use_rsi = CONFIG.get("use_rsi_filter", True)
-    rsi_oversold = CONFIG.get("rsi_oversold", 35.0)  # Iteration 3 - selective entry
+    # FILTER 2: RSI - loose filter to avoid trading in neutral zone
+    # Use 45 threshold based on RL training data (median RSI ~35 for longs)
+    use_rsi = CONFIG.get("use_rsi_filter", False)
+    rsi_oversold = CONFIG.get("rsi_oversold", 45.0)  # Looser than original 35
     if use_rsi:
         rsi = state[symbol]["rsi"]
         if rsi is not None:
             if rsi >= rsi_oversold:
-                logger.debug(f"Long rejected - RSI not extreme: {rsi:.2f} >= {rsi_oversold}")
+                logger.debug(f"Long rejected - RSI not oversold: {rsi:.2f} >= {rsi_oversold}")
                 return False
-            logger.debug(f"RSI extreme oversold: {rsi:.2f} < {rsi_oversold} ")
+            logger.debug(f"RSI oversold: {rsi:.2f} < {rsi_oversold} ")
     
-    # FILTER 3: Volume spike - confirmation of interest
-    use_volume = CONFIG.get("use_volume_filter", True)
-    volume_mult = CONFIG.get("volume_spike_multiplier", 1.5)
-    if use_volume:
-        avg_volume = state[symbol]["avg_volume"]
-        if avg_volume is not None and avg_volume > 0:
-            current_volume = current_bar["volume"]
-            if current_volume < avg_volume * volume_mult:
-                logger.debug(f"Long rejected - no volume spike: {current_volume} < {avg_volume * volume_mult:.0f}")
-                return False
-            logger.debug(f"Volume spike: {current_volume} >= {avg_volume * volume_mult:.0f} ")
+    # FILTER 3: Volume spike - disabled (not used in RL training)
+    # RL training data shows median volume ratio of 0.11, not requiring spikes
     
     logger.info(f" LONG SIGNAL: Price reversal at {current_bar['close']:.2f} (entry zone: {vwap_bands['lower_2']:.2f})")
     return True
@@ -2603,28 +2594,20 @@ def check_short_signal_conditions(symbol: str, prev_bar: Dict[str, Any],
             return False
         logger.debug(f"Price above VWAP: {current_bar['close']:.2f} > {vwap:.2f} ")
     
-    # FILTER 2: RSI - extreme overbought (ITERATION 3)
-    use_rsi = CONFIG.get("use_rsi_filter", True)
-    rsi_overbought = CONFIG.get("rsi_overbought", 65.0)  # Iteration 3 - selective entry
+    # FILTER 2: RSI - loose filter to avoid trading in neutral zone
+    # Use 55 threshold based on RL training data (median RSI ~70 for shorts)
+    use_rsi = CONFIG.get("use_rsi_filter", False)
+    rsi_overbought = CONFIG.get("rsi_overbought", 55.0)  # Looser than original 65
     if use_rsi:
         rsi = state[symbol]["rsi"]
         if rsi is not None:
             if rsi <= rsi_overbought:
-                logger.debug(f"Short rejected - RSI not extreme: {rsi:.2f} <= {rsi_overbought}")
+                logger.debug(f"Short rejected - RSI not overbought: {rsi:.2f} <= {rsi_overbought}")
                 return False
-            logger.debug(f"RSI extreme overbought: {rsi:.2f} > {rsi_overbought} ")
+            logger.debug(f"RSI overbought: {rsi:.2f} > {rsi_overbought} ")
     
-    # FILTER 3: Volume spike - confirmation of interest
-    use_volume = CONFIG.get("use_volume_filter", True)
-    volume_mult = CONFIG.get("volume_spike_multiplier", 1.5)
-    if use_volume:
-        avg_volume = state[symbol]["avg_volume"]
-        if avg_volume is not None and avg_volume > 0:
-            current_volume = current_bar["volume"]
-            if current_volume < avg_volume * volume_mult:
-                logger.debug(f"Short rejected - no volume spike: {current_volume} < {avg_volume * volume_mult:.0f}")
-                return False
-            logger.debug(f"Volume spike: {current_volume} >= {avg_volume * volume_mult:.0f} ")
+    # FILTER 3: Volume spike - disabled (not used in RL training)
+    # RL training data shows median volume ratio of 0.11, not requiring spikes
     
     logger.info(f" SHORT SIGNAL: Price reversal at {current_bar['close']:.2f} (entry zone: {vwap_bands['upper_2']:.2f})")
     return True
@@ -2835,14 +2818,15 @@ def check_for_signals(symbol: str) -> None:
 # PHASE EIGHT: Position Sizing
 # ============================================================================
 
-def calculate_position_size(symbol: str, side: str, entry_price: float, rl_confidence: Optional[float] = None) -> Tuple[int, float, float]:
+def calculate_position_size(symbol: str, side: str, entry_price: float, rl_confidence: Optional[float] = None) -> Tuple[int, float]:
     """
-    Calculate position size based on risk management rules.
+    Calculate position size based on tick-based risk management.
     
-    FIXED CONTRACTS: User's max_contracts setting determines position size.
-    - User configures max_contracts (e.g., 3 contracts)
-    - Position size is ALWAYS fixed at this value (no dynamic scaling)
-    - Risk-based calculation ensures we don't exceed risk tolerance
+    TICK-BASED RISK MANAGEMENT:
+    - Position size is FIXED at max_contracts (user setting)
+    - Stop loss is regime-based (ATR * stop_multiplier)
+    - NO FIXED TARGETS - uses trailing stop only
+    - NO capital-based risk limits - all risk management is through stops and trailing
     
     Args:
         symbol: Instrument symbol
@@ -2851,92 +2835,58 @@ def calculate_position_size(symbol: str, side: str, entry_price: float, rl_confi
         rl_confidence: Optional RL confidence (not used for position sizing)
     
     Returns:
-        Tuple of (contracts, stop_price, target_price)
+        Tuple of (contracts, stop_price)
     """
-    # Get account equity
-    equity = get_account_equity()
-    
-    # Calculate risk allowance (1.2% of equity)
-    risk_dollars = equity * CONFIG["risk_per_trade"]
-    logger.info(f"Account equity: ${equity:.2f}, Risk allowance: ${risk_dollars:.2f}")
+    # FIXED POSITION SIZE: Always use user's max_contracts setting
+    contracts = CONFIG["max_contracts"]
     
     # Determine stop price using regime-based approach
-    vwap_bands = state[symbol]["vwap_bands"]
-    vwap = state[symbol]["vwap"]
     tick_size = CONFIG["tick_size"]
     
-    # Detect current regime for entry
+    # Detect current regime for entry using 15-minute bars (less noise)
     regime_detector = get_regime_detector()
-    bars = state[symbol]["bars_1min"]
-    atr = calculate_atr_1min(symbol, CONFIG.get("atr_period", 14))
+    bars_15min = state[symbol]["bars_15min"]
+    
+    # Use 15-minute bars for ATR calculation (smoother, less noise)
+    atr = calculate_atr(symbol, CONFIG.get("atr_period", 14))
     
     if atr is None:
         # Fallback to fixed stops if ATR can't be calculated
-        logger.warning("ATR calculation failed, using fixed stops as fallback")
+        logger.warning("ATR calculation failed (need 15-min bars), using fixed stops as fallback")
         max_stop_ticks = 11
         if side == "long":
             stop_price = entry_price - (max_stop_ticks * tick_size)
-            target_price = vwap_bands["upper_3"]
         else:
             stop_price = entry_price + (max_stop_ticks * tick_size)
-            target_price = vwap_bands["lower_3"]
         stop_price = round_to_tick(stop_price)
-        target_price = round_to_tick(target_price)
     else:
-        # Use regime-based stop loss calculation
-        entry_regime = regime_detector.detect_regime(bars, atr, CONFIG.get("atr_period", 14))
+        # Use regime-based stop loss calculation with 15-minute bars
+        entry_regime = regime_detector.detect_regime(bars_15min, atr, CONFIG.get("atr_period", 14))
         
         # Calculate stop using regime multiplier (pure regime-based, no confidence scaling)
         stop_multiplier = entry_regime.stop_mult
-        logger.info(f"Regime-based stop: {entry_regime.name}, multiplier {stop_multiplier:.2f}x")
-        
-        # Use fixed target multiplier (can be made regime-based in future)
-        target_multiplier = CONFIG.get("profit_target_atr_multiplier", 4.75)
+        logger.info(f"Regime-based stop: {entry_regime.name}, multiplier {stop_multiplier:.2f}x, ATR from 15-min: {atr:.2f}")
         
         if side == "long":
             stop_price = entry_price - (atr * stop_multiplier)
-            target_price = entry_price + (atr * target_multiplier)
         else:  # short
             stop_price = entry_price + (atr * stop_multiplier)
-            target_price = entry_price - (atr * target_multiplier)
         
         stop_price = round_to_tick(stop_price)
-        target_price = round_to_tick(target_price)
     
-    # Calculate stop distance in ticks
+    # Calculate stop distance in ticks for logging
     stop_distance = abs(entry_price - stop_price)
     ticks_at_risk = stop_distance / tick_size
     
-    # Calculate risk per contract
+    # Calculate risk per contract for logging
     tick_value = CONFIG["tick_value"]
     risk_per_contract = ticks_at_risk * tick_value
     
-    # Calculate number of contracts based on risk (baseline calculation)
-    if risk_per_contract > 0:
-        contracts = int(risk_dollars / risk_per_contract)
-    else:
-        contracts = 0
+    logger.info(f"[TICK-BASED] Position sizing: {contracts} contract(s) (fixed)")
+    logger.info(f"  Entry: ${entry_price:.2f}, Stop: ${stop_price:.2f} (No fixed target - uses trailing stop)")
+    logger.info(f"  Risk: {ticks_at_risk:.1f} ticks (${risk_per_contract:.2f} per contract)")
     
-    # Get user's max contracts limit and apply it (FIXED - no dynamic scaling)
-    user_max_contracts = CONFIG["max_contracts"]
-    contracts = min(contracts, user_max_contracts)
-    
-    logger.info(f"[FIXED CONTRACTS] Using fixed max of {user_max_contracts} contracts")
-    
-    if contracts == 0:
-        logger.warning(f"Position size too small: risk=${risk_per_contract:.2f}, allowance=${risk_dollars:.2f}")
-        return 0, stop_price, None
-    
-    # Calculate target distance for logging
-    target_distance = abs(target_price - entry_price)
-    
-    logger.info(f"Position sizing: {contracts} contract(s)")
-    logger.info(f"  Entry: ${entry_price:.2f}, Stop: ${stop_price:.2f}, Target: ${target_price:.2f}")
-    logger.info(f"  Risk: {ticks_at_risk:.1f} ticks (${risk_per_contract:.2f})")
-    logger.info(f"  Reward: {target_distance/tick_size:.1f} ticks ({target_distance/stop_distance:.1f}:1 R/R)")
-    logger.info(f"  VWAP: ${vwap:.2f} (mean reversion target)")
-    
-    return contracts, stop_price, target_price
+    return contracts, stop_price
 
 
 # ============================================================================
@@ -3333,7 +3283,7 @@ def execute_entry(symbol: str, side: str, entry_price: float) -> None:
                 side=side,
                 entry_price=entry_price,
                 stop_price=suggested_stop,
-                target_price=suggested_target,
+                target_price=None,  # No fixed target - trailing stop only
                 mode="SIGNAL_ONLY"
             )
         except Exception as e:
@@ -3411,7 +3361,7 @@ def execute_entry(symbol: str, side: str, entry_price: float) -> None:
     rl_confidence = state[symbol].get("entry_rl_confidence")
     
     # Calculate position size (with RL adjustment if confidence available)
-    contracts, stop_price, target_price = calculate_position_size(symbol, side, entry_price, rl_confidence)
+    contracts, stop_price = calculate_position_size(symbol, side, entry_price, rl_confidence)
     
     if contracts == 0:
         logger.warning("Cannot enter trade - position size is zero")
@@ -3444,9 +3394,8 @@ def execute_entry(symbol: str, side: str, entry_price: float) -> None:
     original_contracts = contracts
     if bid_ask_manager is not None:
         try:
-            expected_profit_ticks = abs(target_price - entry_price) / CONFIG["tick_size"]
             adjusted_contracts, cost_breakdown = bid_ask_manager.calculate_spread_aware_position_size(
-                symbol, contracts, expected_profit_ticks
+                symbol, contracts, 20  # Expected ticks (approximate)
             )
             if adjusted_contracts != original_contracts:
                 logger.warning(f"  Position size adjusted: {original_contracts} -> {adjusted_contracts} contracts")
@@ -3457,7 +3406,7 @@ def execute_entry(symbol: str, side: str, entry_price: float) -> None:
     
     logger.info(f"  Contracts: {contracts}")
     logger.info(f"  Stop Loss: ${stop_price:.2f}")
-    logger.info(f"  Target: ${target_price:.2f}")
+    logger.info(f"  Exit Strategy: Trailing stop only (no fixed target)")
     
     # Track order execution details for post-trade analysis
     fill_start_time = datetime.now()
@@ -3627,15 +3576,18 @@ def execute_entry(symbol: str, side: str, entry_price: float) -> None:
     # Calculate initial risk in ticks
     stop_distance_ticks = abs(actual_fill_price - stop_price) / CONFIG["tick_size"]
     
-    # Detect entry regime
+    # Detect entry regime using 15-minute bars (less noise, more accurate)
     regime_detector = get_regime_detector()
-    bars = state[symbol]["bars_1min"]
-    atr = calculate_atr_1min(symbol, CONFIG.get("atr_period", 14))
+    bars_15min = state[symbol]["bars_15min"]
+    
+    # Use 15-minute ATR for regime detection
+    atr = calculate_atr(symbol, CONFIG.get("atr_period", 14))
     if atr is None:
         atr = DEFAULT_FALLBACK_ATR  # Use constant instead of magic number
-        logger.warning(f"ATR not calculable, using fallback value: {DEFAULT_FALLBACK_ATR}")
+        logger.warning(f"ATR not calculable from 15-min bars, using fallback value: {DEFAULT_FALLBACK_ATR}")
     
-    entry_regime = regime_detector.detect_regime(bars, atr, CONFIG.get("atr_period", 14))
+    # Detect regime from 15-minute bars
+    entry_regime = regime_detector.detect_regime(bars_15min, atr, CONFIG.get("atr_period", 14))
     logger.info(f"")
     logger.info(f"  📊 PROFESSIONAL RISK MANAGEMENT")
     logger.info(f"  Entry Regime: {entry_regime.name}")
@@ -3666,7 +3618,7 @@ def execute_entry(symbol: str, side: str, entry_price: float) -> None:
         "quantity": contracts,
         "entry_price": actual_fill_price,
         "stop_price": stop_price,
-        "target_price": target_price,
+        "target_price": None,  # No fixed target - uses trailing stop only
         "entry_time": entry_time,
         "order_id": order.get("order_id"),
         "order_type_used": order_type_used,  # Track for exit optimization
@@ -3744,7 +3696,7 @@ def execute_entry(symbol: str, side: str, entry_price: float) -> None:
             state[symbol]["position"]["side"] = None
             state[symbol]["position"]["entry_price"] = None
             state[symbol]["position"]["stop_price"] = None
-            state[symbol]["position"]["target_price"] = None
+            # target_price removed - using trailing stop only
             
             # CRITICAL: Save state to disk immediately
             save_position_state(symbol)
@@ -3803,78 +3755,8 @@ def check_stop_hit(symbol: str, current_bar: Dict[str, Any], position: Dict[str,
     return False, None
 
 
-def check_target_reached(symbol: str, current_bar: Dict[str, Any], position: Dict[str, Any], 
-                        bar_time: datetime) -> Tuple[bool, Optional[float]]:
-    """
-    Check if profit target has been reached, including time-based adjustments.
-    
-    Args:
-        symbol: Instrument symbol
-        current_bar: Current 1-minute bar
-        position: Position dictionary
-        bar_time: Current bar timestamp
-    
-    Returns:
-        Tuple of (target_reached, target_price)
-    """
-    side = position["side"]
-    target_price = position["target_price"]
-    entry_price = position["entry_price"]
-    stop_price = position["stop_price"]
-    
-    # Check regular target
-    if side == "long":
-        if current_bar["high"] >= target_price:
-            # ===== CRITICAL FIX #4: Target Order Validation =====
-            # Price reached target - verify we can actually fill at this price
-            # In backtesting, assume fill. In live, would check if limit order filled.
-            
-            # Check if price is still near target (within CONFIG threshold)
-            tick_size = CONFIG["tick_size"]
-            target_validation_ticks = CONFIG.get("target_fill_validation_ticks", 2)
-            price_distance = abs(current_bar["close"] - target_price) / tick_size
-            
-            if price_distance <= target_validation_ticks:
-                # Price still near target - good fill likely
-                return True, target_price
-            else:
-                # Price ran past target and reversed - might not fill at target
-                logger.warning(f"[WARN] Target Validation: Price hit ${target_price:.2f} but reversed to ${current_bar['close']:.2f}")
-                logger.warning(f"  Distance: {price_distance:.1f} ticks (>{target_validation_ticks} tick threshold)")
-                logger.warning(f"  Using current price for guaranteed fill instead")
-                # Use current price (more conservative, guaranteed fill)
-                return True, current_bar["close"]
-    else:  # short
-        if current_bar["low"] <= target_price:
-            # ===== CRITICAL FIX #4: Target Order Validation =====
-            tick_size = CONFIG["tick_size"]
-            target_validation_ticks = CONFIG.get("target_fill_validation_ticks", 2)
-            price_distance = abs(current_bar["close"] - target_price) / tick_size
-            
-            if price_distance <= target_validation_ticks:
-                return True, target_price
-            else:
-                logger.warning(f"[WARN] Target Validation: Price hit ${target_price:.2f} but reversed to ${current_bar['close']:.2f}")
-                logger.warning(f"  Distance: {price_distance:.1f} ticks (>{target_validation_ticks} tick threshold)")
-                logger.warning(f"  Using current price for guaranteed fill instead")
-                return True, current_bar["close"]
-    
-    # Phase Five: Time-based exit tightening after 3 PM
-    if bar_time.time() >= datetime_time(15, 0) and not bot_status["flatten_mode"]:
-        # After 3 PM - tighten profit taking to 1:1 R/R
-        stop_distance = abs(entry_price - stop_price)
-        tightened_target_distance = stop_distance  # 1:1 instead of 1.5:1
-        
-        if side == "long":
-            tightened_target = entry_price + tightened_target_distance
-            if current_bar["high"] >= tightened_target:
-                return True, tightened_target
-        else:  # short
-            tightened_target = entry_price - tightened_target_distance
-            if current_bar["low"] <= tightened_target:
-                return True, tightened_target
-    
-    return False, None
+# NO check_target_reached function - using pure trailing stop management
+# All exits handled by: stop loss, trailing stop, timeouts, daily limits, flatten mode
 
 
 def check_reversal_signal(symbol: str, current_bar: Dict[str, Any], position: Dict[str, Any]) -> Tuple[bool, Optional[float]]:
@@ -4819,26 +4701,34 @@ def update_current_regime(symbol: str) -> None:
     Update the current regime for the symbol based on latest bars.
     This is called after each bar completion to keep regime detection current.
     
+    CRITICAL: Uses 15-minute bars for ATR calculation (less noise) as per strategy design.
+    Regime detection requires 114 bars total (100 for baseline + 14 for current ATR).
+    
     Args:
         symbol: Instrument symbol
     """
     regime_detector = get_regime_detector()
-    bars = state[symbol]["bars_1min"]
     
-    # Need enough bars for regime detection (114 = 100 baseline + 14 current)
-    if len(bars) < 114:
+    # Use 15-minute bars for regime detection (less noise, more accurate)
+    bars_15min = state[symbol]["bars_15min"]
+    
+    # Need enough 15-min bars for regime detection
+    if len(bars_15min) < MIN_BARS_FOR_REGIME_DETECTION:
         state[symbol]["current_regime"] = "NORMAL"
+        logger.debug(f"[REGIME] Insufficient 15-min bars ({len(bars_15min)}/{MIN_BARS_FOR_REGIME_DETECTION}) - using NORMAL")
         return
     
-    current_atr = calculate_atr_1min(symbol, CONFIG.get("atr_period", 14))
+    # Calculate ATR from 15-minute bars (smoother, less noise)
+    current_atr = calculate_atr(symbol, CONFIG.get("atr_period", 14))
     if current_atr is None:
         state[symbol]["current_regime"] = "NORMAL"
+        logger.debug(f"[REGIME] ATR calculation failed - using NORMAL")
         return
     
-    # Detect and store current regime
-    detected_regime = regime_detector.detect_regime(bars, current_atr, CONFIG.get("atr_period", 14))
+    # Detect and store current regime using 15-min bars
+    detected_regime = regime_detector.detect_regime(bars_15min, current_atr, CONFIG.get("atr_period", 14))
     state[symbol]["current_regime"] = detected_regime.name
-    logger.debug(f"[REGIME] Updated to {detected_regime.name} (ATR: {current_atr:.2f})")
+    logger.debug(f"[REGIME] Updated to {detected_regime.name} (ATR from 15-min: {current_atr:.2f})")
 
 
 def check_regime_change(symbol: str, current_price: float) -> None:
@@ -4846,7 +4736,7 @@ def check_regime_change(symbol: str, current_price: float) -> None:
     Check if market regime has changed during an active trade and adjust parameters.
     
     This function:
-    1. Detects current regime from last 20 bars
+    1. Detects current regime from 15-minute bars (less noise)
     2. Compares to entry regime
     3. If changed, updates stop loss and trailing parameters based on new regime
     4. Uses pure regime multipliers (no confidence scaling)
@@ -4866,16 +4756,19 @@ def check_regime_change(symbol: str, current_price: float) -> None:
     # Get entry regime
     entry_regime_name = position.get("entry_regime", "NORMAL")
     
-    # Detect current regime
+    # Detect current regime using 15-minute bars (less noise, more accurate)
     regime_detector = get_regime_detector()
-    bars = state[symbol]["bars_1min"]
-    current_atr = calculate_atr_1min(symbol, CONFIG.get("atr_period", 14))
+    bars_15min = state[symbol]["bars_15min"]
+    
+    # Use 15-minute ATR for regime detection
+    current_atr = calculate_atr(symbol, CONFIG.get("atr_period", 14))
     
     if current_atr is None:
         logger.debug("ATR not calculable, skipping regime change check")
         return  # Can't detect regime without ATR
     
-    current_regime = regime_detector.detect_regime(bars, current_atr, CONFIG.get("atr_period", 14))
+    # Detect regime from 15-minute bars
+    current_regime = regime_detector.detect_regime(bars_15min, current_atr, CONFIG.get("atr_period", 14))
     
     # Check if regime has changed
     has_changed, new_regime = regime_detector.check_regime_change(
@@ -5223,19 +5116,8 @@ def check_exit_conditions(symbol: str) -> None:
         execute_exit(symbol, price, reason)
         return
     
-    # SECOND - VWAP target hit check
-    target_hit, price = check_target_reached(symbol, current_bar, position, bar_time)
-    if target_hit:
-        if price == position["target_price"]:
-            execute_exit(symbol, price, "target_reached")
-            # Track successful target wait
-            if bot_status["flatten_mode"]:
-                bot_status["target_wait_wins"] += 1
-        else:
-            # Tightened target
-            logger.info("Time-based tightened profit target reached (1:1 R/R after 3 PM)")
-            execute_exit(symbol, price, "tightened_target")
-        return
+    # NO TARGET CHECK - Pure tick-based management with trailing stops only
+    # All profit-taking handled by trailing stop logic below
     
     # THIRD - VWAP stop hit check
     stop_hit, price = check_stop_hit(symbol, current_bar, position)
@@ -5763,7 +5645,9 @@ def execute_exit(symbol: str, exit_price: float, reason: str) -> None:
                     "partial_fill": position.get("quantity", 0) < position.get("original_quantity", 0),
                     "fill_ratio": position.get("quantity", 0) / position.get("original_quantity", 1) if position.get("original_quantity") else 1.0,
                     "exit_reason": reason,
-                    "held_full_duration": reason in ["target_hit", "stop_hit"]
+                    # held_full_duration: True if position hit stop or trailing (natural exits)
+                    # False for early exits: timeouts, flatten, manual, reversal
+                    "held_full_duration": reason in ["stop_hit", "trailing_stop"]
                 }
             )
             
@@ -5885,7 +5769,7 @@ def execute_exit(symbol: str, exit_price: float, reason: str) -> None:
         "quantity": 0,
         "entry_price": None,
         "stop_price": None,
-        "target_price": None,
+        # NO target_price - trailing stop only
         "entry_time": None,
         # Advanced Exit Management - Breakeven State
         "breakeven_active": False,
@@ -6376,6 +6260,9 @@ def check_safety_conditions(symbol: str) -> Tuple[bool, Optional[str]]:
     Check all safety conditions before allowing trading.
     Coordinates various safety checks through helper functions.
     
+    Daily loss limits are enforced in both live and backtest modes to ensure
+    realistic trading behavior and prevent runaway losses.
+    
     Args:
         symbol: Instrument symbol
     
@@ -6416,10 +6303,10 @@ def check_safety_conditions(symbol: str) -> Tuple[bool, Optional[str]]:
     if not is_safe:
         return False, reason
     
-    # Daily loss limit DISABLED for backtesting
-    # is_safe, reason = check_daily_loss_limit(symbol)
-    # if not is_safe:
-    #     return False, reason
+    # Check daily loss limit (enforced for both live and backtest for realistic trading)
+    is_safe, reason = check_daily_loss_limit(symbol)
+    if not is_safe:
+        return False, reason
     
     # Check if approaching daily loss limit (SIMPLIFIED - no recovery mode or dynamic scaling)
     is_approaching, approach_reason, severity = check_approaching_failure(symbol)
@@ -7203,7 +7090,6 @@ def main(symbol_override: str = None) -> None:
     logger.info(f"[{trading_symbol}] Shutdown: {CONFIG['shutdown_time']} ET")
     logger.info(f"[{trading_symbol}] Max Contracts: {CONFIG['max_contracts']}")
     logger.info(f"[{trading_symbol}] Max Trades/Day: {CONFIG['max_trades_per_day']}")
-    logger.info(f"[{trading_symbol}] Risk Per Trade: {CONFIG['risk_per_trade'] * 100:.1f}%")
     logger.info(f"[{trading_symbol}] Daily Loss Limit: ${CONFIG['daily_loss_limit']}")
     logger.info(SEPARATOR_LINE)
     

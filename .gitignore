@@ -171,3 +171,4 @@ launcher/config.json
 # Keep example/template files
 !data/.gitkeep
 !launcher/.gitkeep
+*_original.csv
