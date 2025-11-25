@@ -51,9 +51,11 @@ class BacktestReporter:
         
         # Format entry/exit times
         entry_time = trade.get('entry_time', '')
+        exit_time = trade.get('exit_time', '')
         
         # Handle different time formats (datetime objects or strings)
         if hasattr(entry_time, 'strftime'):
+            # It's a datetime object - format it directly
             entry_str = entry_time.strftime('%a %m/%d %H:%M')
         elif isinstance(entry_time, str) and len(entry_time) >= 10:
             # Parse ISO format string
@@ -69,7 +71,15 @@ class BacktestReporter:
         # Get other details
         entry_price = trade.get('entry_price', 0)
         exit_price = trade.get('exit_price', 0)
-        duration = abs(trade.get('duration_minutes', 0))  # Use absolute value
+        
+        # Calculate duration from entry/exit times if duration_minutes is wrong
+        duration = trade.get('duration_minutes', 0)
+        if duration > 10000 or duration < 0:  # Unrealistic duration
+            # Recalculate from timestamps
+            if hasattr(entry_time, 'timestamp') and hasattr(exit_time, 'timestamp'):
+                duration = (exit_time - entry_time).total_seconds() / 60.0
+        duration = abs(duration)  # Ensure positive
+        
         confidence = trade.get('confidence', 0)
         exit_reason = trade.get('exit_reason', 'unknown')
         qty = trade.get('quantity', 1)

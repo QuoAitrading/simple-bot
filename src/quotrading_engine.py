@@ -1753,6 +1753,12 @@ def inject_complete_bar(symbol: str, bar: Dict[str, Any]) -> None:
         symbol: Instrument symbol
         bar: Complete bar dict with timestamp, open, high, low, close, volume
     """
+    global backtest_current_time
+    
+    # BACKTEST MODE: Update simulation time so all time-based logic uses historical time
+    if is_backtest_mode() and 'timestamp' in bar:
+        backtest_current_time = bar['timestamp']
+    
     # DEBUG: Check what we're getting
     if len(state[symbol]["bars_1min"]) == 0:  # First bar only
         logger.info(f"[INJECT_BAR] First bar: H={bar.get('high', 'MISSING'):.2f} L={bar.get('low', 'MISSING'):.2f}")
