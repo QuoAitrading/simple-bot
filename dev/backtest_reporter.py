@@ -51,17 +51,16 @@ class BacktestReporter:
         
         # Format entry/exit times
         entry_time = trade.get('entry_time', '')
-        exit_time = trade.get('exit_time', '')
         
         # Handle different time formats (datetime objects or strings)
         if hasattr(entry_time, 'strftime'):
-            entry_str = entry_time.strftime('%m/%d %H:%M')
+            entry_str = entry_time.strftime('%a %m/%d %H:%M')
         elif isinstance(entry_time, str) and len(entry_time) >= 10:
             # Parse ISO format string
             try:
                 from datetime import datetime
-                dt = datetime.fromisoformat(entry_str.replace('Z', '+00:00'))
-                entry_str = dt.strftime('%m/%d %H:%M')
+                dt = datetime.fromisoformat(entry_time.replace('Z', '+00:00') if 'Z' in entry_time else entry_time)
+                entry_str = dt.strftime('%a %m/%d %H:%M')
             except:
                 entry_str = entry_time[:16] if entry_time else 'N/A'
         else:
