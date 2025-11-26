@@ -55,7 +55,6 @@ from typing import Any, Dict, List, Optional, Tuple, Callable
 import pytz
 import time as time_module  # Import time module with alias
 import statistics  # For calculating statistics like mean, median, etc.
-import aiohttp
 import asyncio
 import hashlib
 
@@ -207,10 +206,10 @@ recovery_manager: Optional[ErrorRecoveryManager] = None
 # Global timer manager
 timer_manager: Optional[TimerManager] = None
 
-# Global RL brain for signal confidence learning (ONLY for backtesting - NOT used in live)
+# Global RL brain for signal confidence learning (used in both live and backtest modes)
 rl_brain: Optional[SignalConfidenceRL] = None
 
-# Global cloud API client for live trading decisions
+# Global cloud API client for reporting trade outcomes (data collection only)
 cloud_api_client: Optional[CloudAPIClient] = None
 
 # Global bid/ask manager
@@ -220,7 +219,8 @@ bid_ask_manager: Optional[BidAskManager] = None
 state: Dict[str, Any] = {}
 
 # Backtest mode tracking
-# When True, runs in backtest mode using historical data (no broker/cloud connections)
+# When True, runs in backtest mode using historical data (no broker connections)
+# Note: Cloud API may still be used for outcome reporting in live mode
 # Global variable to track simulation time during backtesting.
 # When None, get_current_time() uses real datetime.now()
 # When set (by handle_tick_event), get_current_time() uses this historical timestamp
@@ -262,68 +262,31 @@ logger = setup_logging()
 
 
 # ============================================================================
-# CLOUD RL API INTEGRATION - Shared Learning Pool
+# CLOUD API INTEGRATION - Data Collection Only
 # ============================================================================
+# Cloud API is used ONLY for reporting trade outcomes (data collection).
+# Trading decisions (confidence/approval) are made locally using RL brain.
 
-# Cloud ML API configuration
-CLOUD_ML_API_URL = os.getenv("CLOUD_ML_API_URL", "https://quotrading-api-v2.azurewebsites.net")
-USE_CLOUD_SIGNALS = os.getenv("USE_CLOUD_SIGNALS", "true").lower() == "true"
-
-# Generate privacy-preserving user ID
-def get_user_id() -> str:
-    """Generate consistent user ID from broker username"""
-    username = CONFIG.get("broker_username", "default_user")
-    return hashlib.md5(username.encode()).hexdigest()[:12]
-
-USER_ID = get_user_id()
 
 
 async def get_ml_confidence_async(rl_state: Dict[str, Any], side: str) -> Tuple[bool, float, str]:
     """
-    Get RL decision from cloud API or local RL brain (backtest mode).
+    Get RL decision from local RL brain for both live and backtest modes.
     
-    LIVE MODE: Uses cloud_api_client to ask cloud RL brain for decision
+    LIVE MODE: Uses local rl_brain for confidence decisions (no cloud dependency)
     BACKTEST MODE: Uses local rl_brain for learning and testing
     
     Returns: (take_signal, confidence, reason)
     """
-    global cloud_api_client, rl_brain
+    global rl_brain
     
-    # BACKTEST MODE: Use local RL brain
-    if is_backtest_mode() or CONFIG.get("backtest_mode", False):
-        if rl_brain is not None:
-            return rl_brain.should_take_signal(rl_state)
-        return True, 0.65, "Backtest mode - no RL brain initialized"
+    # Use local RL brain for all modes (live and backtest)
+    if rl_brain is not None:
+        return rl_brain.should_take_signal(rl_state)
     
-    # LIVE MODE: Use cloud API client
-    if cloud_api_client is None:
-        logger.error("Cloud API client not initialized - cannot trade safely")
-        return False, 0.0, "Cloud API not initialized"
-    
-    # Add side and price to state for cloud decision
-    rl_state_with_context = rl_state.copy()
-    rl_state_with_context['side'] = side.lower()
-    
-    # Get current price from state
-    current_price = state.get("current_price", 0)
-    rl_state_with_context['price'] = current_price
-    
-    # Ask cloud RL brain for decision (synchronous call with timeout)
-    try:
-        # Run in thread pool to avoid blocking async event loop
-        loop = asyncio.get_event_loop()
-        take_trade, confidence, reason = await loop.run_in_executor(
-            None, 
-            cloud_api_client.ask_should_take_trade,
-            rl_state_with_context
-        )
-        
-        logger.info(f"Γÿü∩╕Å Cloud RL Decision: {reason}")
-        return take_trade, confidence, reason
-        
-    except Exception as e:
-        logger.error(f"Cloud API error: {e}")
-        return False, 0.0, f"Cloud API error: {e}"
+    # Fallback if RL brain not initialized
+    logger.warning("RL brain not initialized - using default approval")
+    return True, 0.65, "No RL brain initialized - default approval"
 
 
 def get_ml_confidence(rl_state: Dict[str, Any], side: str) -> Tuple[bool, float, str]:
@@ -336,6 +299,7 @@ def get_ml_confidence(rl_state: Dict[str, Any], side: str) -> Tuple[bool, float,
         loop.close()
 
 
+
 async def save_trade_experience_async(
     rl_state: Dict[str, Any],
     side: str,
@@ -344,20 +308,22 @@ async def save_trade_experience_async(
     execution_data: Dict[str, Any]
 ) -> None:
     """
-    Report trade outcome to cloud RL brain (live mode) or local RL brain (backtest mode).
-    Cloud brain learns from all users' experiences collectively.
+    Save trade outcome based on mode.
+    
+    LIVE MODE: Saves to cloud ONLY (reads local for pattern matching, but doesn't save local)
+    BACKTEST MODE: Saves to local RL brain only
     """
     global cloud_api_client, rl_brain
     
-    # BACKTEST MODE: Use local RL brain
+    # BACKTEST MODE: Save to local RL brain only
     if is_backtest_mode() or CONFIG.get("backtest_mode", False):
         if rl_brain is not None:
             rl_brain.record_outcome(rl_state, True, pnl, duration_minutes, execution_data)
         return
     
-    # LIVE MODE: Report to cloud
+    # LIVE MODE: Report to cloud ONLY (don't save locally)
     if cloud_api_client is None:
-        logger.warning("Cloud API client not initialized - cannot report trade outcome")
+        logger.debug("Cloud API client not initialized - skipping cloud reporting")
         return
     
     try:
@@ -386,77 +352,6 @@ async def save_trade_experience_async(
     except Exception as e:
         logger.debug(f"Non-critical: Could not report outcome to cloud: {e}")
 
-
-async def save_rejected_signal_async(
-    rl_state: Dict[str, Any],
-    side: str,
-    rejection_reason: str,
-    price_move_ticks: float
-) -> None:
-    """
-    Save rejected signal to cloud API so RL can learn from missed opportunities.
-    Helps RL understand: "Should I have taken this trade anyway?"
-    """
-    if not USE_CLOUD_SIGNALS:
-        return
-    
-    # Only retry once for rejected signals (less critical than actual trades)
-    max_retries = 1
-    for attempt in range(max_retries):
-        try:
-            payload = {
-                "user_id": USER_ID,
-                "symbol": CONFIG["instrument"],
-                "side": side,
-                "signal": f"{side}_bounce",
-                "rsi": rl_state.get("rsi", 50),
-                "vwap_distance": rl_state.get("vwap_distance", 0),
-                "volume_ratio": rl_state.get("volume_ratio", 1.0),
-                "streak": rl_state.get("streak", 0),
-                "time_of_day_score": rl_state.get("time_of_day_score", 0.5),
-                "volatility": rl_state.get("volatility", 1.0),
-                "took_trade": False,
-                "rejection_reason": rejection_reason,
-                "price_move_ticks": price_move_ticks
-            }
-            
-            timeout_seconds = 3.0
-            
-            async with aiohttp.ClientSession() as session:
-                async with session.post(
-                    f"{CLOUD_ML_API_URL}/api/main",
-                    json=payload,
-                    timeout=aiohttp.ClientTimeout(total=timeout_seconds)
-                ) as response:
-                    if response.status == 200:
-                        logger.debug(f"[CLOUD RL] Rejected signal saved: {rejection_reason}")
-                        return  # Success!
-                    else:
-                        if attempt < max_retries - 1:
-                            await asyncio.sleep(0.5)
-                            continue
-                        
-        except Exception as e:
-            if attempt < max_retries - 1:
-                await asyncio.sleep(0.5)
-                continue
-
-
-def save_rejected_signal(
-    rl_state: Dict[str, Any],
-    side: str,
-    rejection_reason: str,
-    price_move_ticks: float
-) -> None:
-    """Synchronous wrapper for save_rejected_signal_async"""
-    try:
-        loop = asyncio.get_event_loop()
-        if loop.is_running():
-            asyncio.ensure_future(save_rejected_signal_async(rl_state, side, rejection_reason, price_move_ticks))
-        else:
-            loop.run_until_complete(save_rejected_signal_async(rl_state, side, rejection_reason, price_move_ticks))
-    except Exception as e:
-        logger.debug(f"Failed to save rejected signal: {e}")
 
 
 def save_trade_experience(
@@ -3535,7 +3430,7 @@ def execute_entry(symbol: str, side: str, entry_price: float) -> None:
         logger.warning(f"  Signal: {side.upper()} @ ${entry_price:.2f}")
         logger.warning(SEPARATOR_LINE)
         
-        # Track rejected signal for RL learning
+        # Store for potential shadow outcome tracking
         rl_state = state[symbol].get("entry_rl_state")
         if rl_state is not None:
             # Extract price movement from reason (e.g., "Price moved UP 5.0 ticks")
@@ -3543,15 +3438,6 @@ def execute_entry(symbol: str, side: str, entry_price: float) -> None:
             match = re.search(r'(\d+\.?\d*)\s+ticks', price_reason)
             price_move_ticks = float(match.group(1)) if match else 0.0
             
-            # Save to cloud so RL learns: "Should I take trades when price moved X ticks?"
-            save_rejected_signal(
-                rl_state=rl_state,
-                side=side,
-                rejection_reason=f"price_moved_{price_move_ticks:.0f}_ticks",
-                price_move_ticks=price_move_ticks
-            )
-            
-            # Store for potential shadow outcome tracking
             state[symbol]["last_rejected_signal"] = {
                 "time": get_current_time(),
                 "state": rl_state,
@@ -7151,26 +7037,39 @@ def main(symbol_override: str = None) -> None:
     logger.info(f"QuoTrading AI Bot Starting [{trading_symbol}]")
     logger.info(SEPARATOR_LINE)
     
-    # Initialize Cloud API Client for LIVE mode, RL Brain for BACKTEST mode
+    # Initialize local RL brain for both LIVE and BACKTEST modes
+    # LIVE MODE: Reads from local symbol-specific folder for pattern matching, saves to cloud only
+    # BACKTEST MODE: Reads and saves to local symbol-specific folder
     if is_backtest_mode() or CONFIG.get("backtest_mode", False):
-        logger.info(f"[{trading_symbol}] BACKTEST MODE: Using local RL brain")
-        # RL brain will be initialized by backtest code
+        logger.info(f"[{trading_symbol}] BACKTEST MODE: Local RL brain will be initialized by backtest code")
     else:
-        logger.info(f"[{trading_symbol}] LIVE MODE: Initializing cloud API client...")
-        license_key = CONFIG.get("quotrading_license") or CONFIG.get("user_api_key")
-        
-        if not license_key:
-            logger.error(f"[{trading_symbol}] No license key found in config - cannot connect to cloud RL")
-            logger.error(f"[{trading_symbol}] Add 'quotrading_license' to config.json")
-            return
-        
-        cloud_api_url = "https://quotrading-flask-api.azurewebsites.net"
-        cloud_api_client = CloudAPIClient(
-            api_url=cloud_api_url,
-            license_key=license_key,
-            timeout=10
+        logger.info(f"[{trading_symbol}] LIVE MODE: Initializing local RL brain...")
+        # Use symbol-specific folder for experiences
+        signal_exp_file = str(get_data_file_path(f"experiences/{trading_symbol}/signal_experience.json"))
+        rl_brain = SignalConfidenceRL(
+            experience_file=signal_exp_file,
+            backtest_mode=False,  # Live mode
+            confidence_threshold=CONFIG.get("rl_confidence_threshold"),
+            exploration_rate=0.0,  # No exploration in live mode (pure exploitation)
+            min_exploration=0.0,
+            exploration_decay=0.995,
+            save_local=False  # Live mode: read local but save to cloud only
         )
-        logger.info(f"[{trading_symbol}] Γ£à Cloud API client initialized")
+        logger.info(f"[{trading_symbol}] ✅ Local RL brain initialized with {len(rl_brain.experiences)} experiences from experiences/{trading_symbol}/")
+        logger.info(f"[{trading_symbol}] 📝 Live mode: Reading local experiences, saving to cloud only")
+        
+        # Initialize Cloud API Client for reporting trade outcomes to cloud
+        license_key = CONFIG.get("quotrading_license") or CONFIG.get("user_api_key")
+        if license_key:
+            cloud_api_url = "https://quotrading-flask-api.azurewebsites.net"
+            cloud_api_client = CloudAPIClient(
+                api_url=cloud_api_url,
+                license_key=license_key,
+                timeout=10
+            )
+            logger.info(f"[{trading_symbol}] ✅ Cloud API client initialized for outcome reporting")
+        else:
+            logger.warning(f"[{trading_symbol}] No license key - cloud outcome reporting disabled")
     
     # Log symbol specifications if loaded
     if SYMBOL_SPEC:
