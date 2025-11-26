@@ -5749,15 +5749,19 @@ def execute_exit(symbol: str, exit_price: float, reason: str) -> None:
             mfe = mfe_ticks * tick_value
             mae = mae_ticks * tick_value
             
+            # Get the side from position
+            trade_side = position.get("side", "unknown")
+            
             # Record market state + outcomes to local RL brain (backtest) or cloud (live)
             save_trade_experience(
                 rl_state=market_state,  # Market state (flat structure)
-                side="",  # Not needed (in market state already)
+                side=trade_side,  # Trade direction (for cloud API)
                 pnl=pnl,
                 duration_minutes=duration_minutes,
                 execution_data={
                     "mfe": mfe,
-                    "mae": mae
+                    "mae": mae,
+                    "exit_reason": reason  # CRITICAL: How trade closed
                 }
             )
             
