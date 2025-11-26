@@ -1755,8 +1755,10 @@ def inject_complete_bar(symbol: str, bar: Dict[str, Any]) -> None:
     # Update current regime after adding new bar
     update_current_regime(symbol)
     
-    # Update MACD after each 1-minute bar (faster than waiting for 15-min bars)
+    # Update all indicators after each 1-minute bar (all on same timeframe)
     update_macd(symbol)
+    update_rsi(symbol)
+    update_volume_average(symbol)
     
     # Update VWAP and check conditions
     calculate_vwap(symbol)
@@ -2060,19 +2062,21 @@ def calculate_atr_1min(symbol: str, period: int = 14) -> Optional[float]:
 
 def update_rsi(symbol: str) -> None:
     """
-    Update RSI indicator for the symbol.
+    Update RSI indicator for the symbol using 1-minute bars.
+    Changed from 15-min to 1-min for mean reversion scalping strategy.
     
     Args:
         symbol: Instrument symbol
     """
-    bars = state[symbol]["bars_15min"]
+    bars = state[symbol]["bars_1min"]  # Changed from 15-min to 1-min
     rsi_period = CONFIG.get("rsi_period", 10)  # Iteration 3 - fast RSI
     
     if len(bars) < rsi_period + 1:
         logger.debug(f"Not enough bars for RSI: {len(bars)}/{rsi_period + 1}")
         return
     
-    closes = [bar["close"] for bar in bars]
+    # Use recent bars for calculation
+    closes = [bar["close"] for bar in list(bars)[-100:]]
     rsi = calculate_rsi(closes, rsi_period)
     
     if rsi is not None:
@@ -2111,13 +2115,13 @@ def update_macd(symbol: str) -> None:
 
 def update_volume_average(symbol: str) -> None:
     """
-    Update average volume for spike detection.
-    Also tracks recent volume history for surge detection.
+    Update average volume for spike detection using 1-minute bars.
+    Changed from 15-min to 1-min for mean reversion scalping strategy.
     
     Args:
         symbol: Instrument symbol
     """
-    bars = state[symbol]["bars_15min"]
+    bars = state[symbol]["bars_1min"]  # Changed from 15-min to 1-min
     lookback = CONFIG.get("volume_lookback", 20)
     
     if len(bars) < lookback:
