@@ -244,7 +244,6 @@ class BotConfiguration:
     use_atr_stops: bool = False  # ATR stops disabled - using proven 11-tick fixed stops
     atr_period: int = 14  # ATR calculation period
     stop_loss_atr_multiplier: float = 3.6  # Iteration 3 (tight stops)
-    profit_target_atr_multiplier: float = 4.75  # Iteration 3 (solid targets)
     
     # Instrument Specifications
     tick_size: float = 0.25
