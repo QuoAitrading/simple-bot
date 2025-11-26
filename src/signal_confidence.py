@@ -218,6 +218,7 @@ class SignalConfidenceRL:
     def calculate_confidence(self, current_state: Dict) -> Tuple[float, str]:
         """
         Calculate confidence based on similar past experiences.
+        UPDATED for FLAT FORMAT: experiences have 'pnl' at top level (not 'reward').
         
         Returns:
             (confidence, reason)
@@ -234,11 +235,13 @@ class SignalConfidenceRL:
             return 0.5, " No similar situations - neutral confidence"
         
         # Calculate win rate from similar situations
-        wins = sum(1 for exp in similar if exp['reward'] > 0)
+        # FLAT FORMAT: 'pnl' is at top level (not 'reward')
+        wins = sum(1 for exp in similar if exp.get('pnl', exp.get('reward', 0)) > 0)
         win_rate = wins / len(similar)
         
         # Average profit from similar situations
-        avg_profit = sum(exp['reward'] for exp in similar) / len(similar)
+        # FLAT FORMAT: 'pnl' is at top level (not 'reward')
+        avg_profit = sum(exp.get('pnl', exp.get('reward', 0)) for exp in similar) / len(similar)
         
         # SAFETY CHECK: Reject signals with negative expected value
         if avg_profit < 0:
@@ -258,14 +261,24 @@ class SignalConfidenceRL:
         return confidence, reason
     
     def find_similar_states(self, current: Dict, max_results: int = 10) -> list:
-        """Find past experiences with similar market states."""
+        """
+        Find past experiences with similar market states.
+        UPDATED for FLAT FORMAT: experiences have fields at top level (no nested 'state').
+        """
         if not self.experiences:
             return []
         
         # Calculate similarity score for each past experience
         scored = []
         for exp in self.experiences:
-            past = exp['state']
+            # FLAT FORMAT: fields are at top level (not in exp['state'])
+            # Handle both old nested format (backward compatibility) and new flat format
+            if 'state' in exp:
+                # Old nested format (backward compatibility)
+                past = exp['state']
+            else:
+                # New flat format - use exp directly
+                past = exp
             
             # Calculate distance in each dimension (with safety checks for missing keys)
             rsi_diff = abs(current.get('rsi', 50) - past.get('rsi', 50)) / 100
@@ -303,6 +316,7 @@ class SignalConfidenceRL:
         Strategy: For different threshold levels, calculate what the expected profit would be.
         Choose the threshold that maximizes profit PER TRADE (quality), not total volume.
         SMART TRADING: Be selective, not aggressive. Quality over quantity.
+        UPDATED for FLAT FORMAT: experiences have fields at top level.
         """
         if len(self.experiences) < 50:
             # Not enough data - use conservative default (50% minimum confidence)
@@ -316,30 +330,41 @@ class SignalConfidenceRL:
         # This avoids O(n┬▓) complexity by doing the expensive work upfront
         experience_confidences = []
         for exp in self.experiences:
-            if not exp.get('action', {}).get('took_trade', False):
+            # FLAT FORMAT: 'took_trade' is at top level (not in exp['action'])
+            if not exp.get('took_trade', exp.get('action', {}).get('took_trade', False)):
                 continue  # Skip experiences where trade wasn't taken
             
             # Calculate what confidence this trade would have had
             # (based on similar past trades at the time)
-            state = exp['state']
+            # FLAT FORMAT: fields are at top level (not in exp['state'])
+            if 'state' in exp:
+                # Old nested format (backward compatibility)
+                state = exp['state']
+            else:
+                # New flat format
+                state = exp
+            
             similar_before = [
                 e for e in self.experiences 
-                if e['timestamp'] < exp['timestamp'] and 
-                   abs(e['state'].get('rsi', 50) - state.get('rsi', 50)) < 10 and
-                   abs(e['state'].get('vwap_distance', 1.0) - state.get('vwap_distance', 1.0)) < 0.5 and
-                   e['state'].get('side') == state.get('side')
+                if e.get('timestamp', '') < exp.get('timestamp', '') and 
+                   abs(e.get('rsi', 50) - state.get('rsi', 50)) < 10 and
+                   abs(e.get('vwap_distance', 1.0) - state.get('vwap_distance', 1.0)) < 0.5
             ]
             
             if len(similar_before) < 5:
                 continue  # Not enough similar trades to calculate confidence
             
             # Calculate win rate of similar trades
-            wins = sum(1 for e in similar_before if e['reward'] > 0)
+            # FLAT FORMAT: 'pnl' is at top level (not 'reward')
+            wins = sum(1 for e in similar_before if e.get('pnl', e.get('reward', 0)) > 0)
             confidence = wins / len(similar_before) if similar_before else 0.5
+            
+            # FLAT FORMAT: 'pnl' is at top level (not 'reward')
+            pnl_value = exp.get('pnl', exp.get('reward', 0))
             
             experience_confidences.append({
                 'confidence': confidence,
-                'reward': exp['reward']
+                'reward': pnl_value  # Keep 'reward' key for consistency in threshold calculation
             })
         
         # Now test each threshold quickly using pre-calculated confidences
@@ -444,13 +469,16 @@ class SignalConfidenceRL:
                       execution_data: Optional[Dict] = None):
         """
         Record the outcome of this signal for learning.
+        FLAT FORMAT: All fields at top level (no nested state/action/reward structure).
         
         Args:
-            state: Market state when signal triggered
+            state: Market state when signal triggered (flat dict with 16+ fields)
             took_trade: Whether we took the trade
             pnl: Profit/loss (0 if skipped)
             duration_minutes: How long trade lasted
             execution_data: Optional execution quality metrics (for live trading learning)
+                - mfe: Max Favorable Excursion (dollars)
+                - mae: Max Adverse Excursion (dollars)
                 - order_type_used: "passive", "aggressive", "mixed"
                 - entry_slippage_ticks: Actual slippage in ticks
                 - partial_fill: Whether partial fill occurred
@@ -458,21 +486,51 @@ class SignalConfidenceRL:
                 - exit_reason: How trade closed
                 - held_full_duration: Whether hit target/stop vs time exit
         """
-        experience = {
-            'timestamp': datetime.now().isoformat(),
-            'state': state,
-            'action': {
-                'took_trade': took_trade,
-                'exploration_rate': self.exploration_rate
-            },
-            'reward': pnl,
-            'duration': duration_minutes,
-            'execution': execution_data or {}  # Store execution quality data
-        }
+        print(f"\n[DEBUG] record_outcome() called!")
+        print(f"[DEBUG] Input state type: {type(state)}")
+        print(f"[DEBUG] Input state keys: {list(state.keys()) if isinstance(state, dict) else 'NOT A DICT'}")
+        print(f"[DEBUG] took_trade: {took_trade}, pnl: {pnl}, duration: {duration_minutes}")
+        print(f"[DEBUG] execution_data: {execution_data}")
+        
+        # FLAT FORMAT: Merge all fields at top level
+        # Start with market state (16 fields from capture_market_state)
+        experience = state.copy() if isinstance(state, dict) else {}
+        
+        # Add outcome fields at top level (not nested)
+        experience['pnl'] = pnl
+        experience['duration'] = duration_minutes
+        experience['took_trade'] = took_trade
+        experience['exploration_rate'] = self.exploration_rate
+        
+        # Add MFE/MAE if available
+        if execution_data:
+            if 'mfe' in execution_data:
+                experience['mfe'] = execution_data['mfe']
+            if 'mae' in execution_data:
+                experience['mae'] = execution_data['mae']
+            
+            # Add other execution metrics at top level
+            if 'order_type_used' in execution_data:
+                experience['order_type_used'] = execution_data['order_type_used']
+            if 'entry_slippage_ticks' in execution_data:
+                experience['entry_slippage_ticks'] = execution_data['entry_slippage_ticks']
+            if 'partial_fill' in execution_data:
+                experience['partial_fill'] = execution_data['partial_fill']
+            if 'fill_ratio' in execution_data:
+                experience['fill_ratio'] = execution_data['fill_ratio']
+            if 'exit_reason' in execution_data:
+                experience['exit_reason'] = execution_data['exit_reason']
+        
+        print(f"[DEBUG] FLAT FORMAT experience created with {len(experience)} fields")
+        print(f"[DEBUG] Experience keys: {list(experience.keys())}")
+        print(f"[DEBUG] Sample values: timestamp={experience.get('timestamp', 'MISSING')}, "
+              f"price={experience.get('price', 'MISSING')}, pnl={experience.get('pnl', 'MISSING')}")
         
         # Add to memory (learning enabled)
         self.experiences.append(experience)
         self.recent_trades.append(pnl)
+        
+        print(f"[DEBUG] Experience appended. Total experiences: {len(self.experiences)}")
         
         # Update win/loss streaks
         if took_trade:
@@ -485,16 +543,23 @@ class SignalConfidenceRL:
         
         # Save every 5 trades (auto-save enabled)
         if len(self.experiences) % 5 == 0:
+            print(f"[DEBUG] Auto-save triggered (every 5 experiences)")
             self.save_experience()
         
         # Log learning progress with execution details
         if took_trade:
             outcome = "WIN" if pnl > 0 else "LOSS"
-            log_msg = f"Recorded {outcome}: ${pnl:.2f} in {duration_minutes}min | Streak: W{self.current_win_streak}/L{self.current_loss_streak}"
+            log_msg = f"πΎ [FLAT FORMAT] Recorded {outcome}: ${pnl:.2f} in {duration_minutes}min | Streak: W{self.current_win_streak}/L{self.current_loss_streak}"
             
-            # Add execution quality info if available
-            if execution_data:
+            # Add MFE/MAE info if available
+            if execution_data and ('mfe' in execution_data or 'mae' in execution_data):
                 exec_notes = []
+                if 'mfe' in execution_data:
+                    exec_notes.append(f"MFE: ${execution_data['mfe']:.2f}")
+                if 'mae' in execution_data:
+                    exec_notes.append(f"MAE: ${execution_data['mae']:.2f}")
+                
+                # Add other execution quality info if available
                 if execution_data.get("order_type_used"):
                     exec_notes.append(f"Order: {execution_data['order_type_used']}")
                 if execution_data.get("entry_slippage_ticks", 0) > 0:
@@ -503,7 +568,7 @@ class SignalConfidenceRL:
                     exec_notes.append(f"Partial: {execution_data.get('fill_ratio', 0):.0%}")
                 
                 if exec_notes:
-                    log_msg += f" | Exec: {', '.join(exec_notes)}"
+                    log_msg += f" | {', '.join(exec_notes)}"
             
             logger.info(log_msg)
     
