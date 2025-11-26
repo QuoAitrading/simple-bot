@@ -369,7 +369,7 @@ async def save_trade_experience_async(
         # Convert duration to seconds
         duration_seconds = duration_minutes * 60.0
         
-        # Report to cloud in background (non-blocking)
+        # Report to cloud in background (non-blocking) with execution_data
         loop = asyncio.get_event_loop()
         await loop.run_in_executor(
             None,
@@ -377,10 +377,11 @@ async def save_trade_experience_async(
             state_with_context,
             True,  # took_trade
             pnl,
-            duration_seconds
+            duration_seconds,
+            execution_data  # Pass execution metrics to cloud
         )
         
-        logger.info(f"Γ£à Outcome reported to cloud: ${pnl:+.2f} in {duration_minutes:.1f}min")
+        logger.info(f"☁️ Outcome reported to cloud: ${pnl:+.2f} in {duration_minutes:.1f}min")
         
     except Exception as e:
         logger.debug(f"Non-critical: Could not report outcome to cloud: {e}")

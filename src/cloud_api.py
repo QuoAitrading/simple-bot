@@ -220,7 +220,7 @@ class CloudAPIClient:
         # Should never reach here, but just in case
         return self._fallback_decision(state)
     
-    def report_trade_outcome(self, state: Dict, took_trade: bool, pnl: float, duration: float) -> bool:
+    def report_trade_outcome(self, state: Dict, took_trade: bool, pnl: float, duration: float, execution_data: Optional[Dict] = None) -> bool:
         """
         Report trade outcome to cloud RL brain.
         
@@ -229,6 +229,7 @@ class CloudAPIClient:
             took_trade: Whether trade was actually taken
             pnl: Profit/loss in dollars
             duration: Trade duration in seconds
+            execution_data: Optional execution quality metrics (mfe, mae, exit_reason, order_type_used, entry_slippage_ticks)
         
         Returns:
             True if successfully reported, False otherwise
@@ -238,7 +239,8 @@ class CloudAPIClient:
                 state=original_state,
                 took_trade=True,
                 pnl=125.50,
-                duration=1800
+                duration=1800,
+                execution_data={"mfe": 200.0, "mae": 50.0, "exit_reason": "target_hit"}
             )
         """
         # Skip reporting if license is invalid
@@ -247,15 +249,21 @@ class CloudAPIClient:
             return False
         
         try:
+            payload = {
+                "license_key": self.license_key,
+                "state": state,
+                "took_trade": took_trade,
+                "pnl": pnl,
+                "duration": duration
+            }
+            
+            # Add execution data if provided
+            if execution_data:
+                payload["execution_data"] = execution_data
+            
             response = requests.post(
                 f"{self.api_url}/api/rl/submit-outcome",
-                json={
-                    "license_key": self.license_key,
-                    "state": state,
-                    "took_trade": took_trade,
-                    "pnl": pnl,
-                    "duration": duration
-                },
+                json=payload,
                 timeout=self.timeout
             )
             
@@ -273,7 +281,7 @@ class CloudAPIClient:
             logger.debug(f"Non-critical: Could not report outcome to cloud: {e}")
             return False
 
-    async def report_trade_outcome_async(self, state: Dict, took_trade: bool, pnl: float, duration: float) -> bool:
+    async def report_trade_outcome_async(self, state: Dict, took_trade: bool, pnl: float, duration: float, execution_data: Optional[Dict] = None) -> bool:
         """
         Async version of report_trade_outcome using aiohttp.
         """
@@ -283,16 +291,22 @@ class CloudAPIClient:
             return False
         
         try:
+            payload = {
+                "license_key": self.license_key,
+                "state": state,
+                "took_trade": took_trade,
+                "pnl": pnl,
+                "duration": duration
+            }
+            
+            # Add execution data if provided
+            if execution_data:
+                payload["execution_data"] = execution_data
+            
             session = await self._get_session()
             async with session.post(
                 f"{self.api_url}/api/rl/submit-outcome",
-                json={
-                    "license_key": self.license_key,
-                    "state": state,
-                    "took_trade": took_trade,
-                    "pnl": pnl,
-                    "duration": duration
-                },
+                json=payload,
                 timeout=self.timeout
             ) as response:
                     
