@@ -17,14 +17,14 @@ This bot is designed to run continuously using US Eastern wall-clock time:
 CME Futures Trading Schedule (US Eastern Wall-Clock):
 - MAIN SESSION OPENS: 6:00 PM Eastern (market resumes after maintenance)
 - ENTRY CUTOFF: 4:00 PM Eastern (no new positions after this time)
-- FLATTEN POSITIONS: 4:45 PM Eastern (close existing positions, 15 min before maintenance)
-- DAILY MAINTENANCE: 5:00-6:00 PM Eastern (60-min daily break)
+- FLATTEN POSITIONS: 4:45 PM Eastern (close existing positions before maintenance)
+- DAILY MAINTENANCE: 4:45-6:00 PM Eastern (1hr 15min daily break)
 - SUNDAY OPEN: 6:00 PM Eastern Sunday (weekly start)
-- FRIDAY CLOSE: 5:00 PM Eastern (weekly close, same as daily maintenance start)
+- FRIDAY CLOSE: 4:45 PM Eastern (weekly close, start of weekend maintenance)
 
 IMPORTANT ENTRY/EXIT RULES:
 - Bot can OPEN new positions: 6:00 PM - 4:00 PM next day
-- Bot can HOLD existing positions: Until 4:45 PM (flatten time)
+- Bot can HOLD existing positions: Until 4:45 PM (forced flatten time)
 - Gap between 4:00 PM - 4:45 PM: Can hold positions but cannot open new ones
 
 NOTE: These times NEVER change - always same wall-clock time regardless of DST.
@@ -32,12 +32,12 @@ pytz handles EST (UTC-5) and EDT (UTC-4) conversions automatically.
 
 Bot States:
 - entry_window: Market open, can trade (6:00 PM - 4:00 PM for new entries)
-- flatten_mode: 4:45-5:00 PM ET, aggressively close positions (15 min before maintenance)
-- closed: During maintenance (5:00-6:00 PM ET) or weekend, auto-flatten positions
+- flatten_mode: 4:30-4:45 PM ET, aggressively close positions (15 min before forced close)
+- closed: During maintenance (4:45-6:00 PM ET) or weekend, auto-flatten positions
 
 Friday Special Rules:
-- Trading ends at 5:00 PM ET (same as daily maintenance start)
-- No flatten logic needed on Friday, market just closes at maintenance time
+- Trading ends at 4:45 PM ET (start of weekend maintenance)
+- No special flatten logic needed on Friday, market closes at maintenance time
 
 For Multi-User Subscriptions:
 - All users see US Eastern times (CME standard)
@@ -743,10 +743,10 @@ def check_azure_time_service() -> str:
                     time_hour = time_obj.hour
                     time_minute = time_obj.minute
                     
-                    # Flatten mode: 21:45-5:00 PM ET (15 min before maintenance)
-                    if time_hour == 21 and time_minute >= 45:
+                    # Flatten mode: 4:30-4:45 PM ET (15 min before forced close)
+                    if time_hour == 21 and time_minute >= 30:  # 4:30 PM+ in 24h
                         state = "flatten_mode"
-                    elif time_hour == 22 and time_minute == 0:
+                    elif time_hour == 22 and time_minute < 45:  # Before 4:45 PM in 24h
                         state = "flatten_mode"
                     else:
                         state = "entry_window"
@@ -809,7 +809,7 @@ def check_broker_connection() -> None:
         
         # Only go idle during maintenance, not weekend
         # Maintenance is 5:00-6:00 PM ET on weekdays (Mon-Fri)
-        if "maintenance" in halt_reason.lower() or (eastern_time.weekday() < 5 and eastern_time.time() >= datetime_time(17, 0) and eastern_time.time() < datetime_time(18, 0)):
+        if "maintenance" in halt_reason.lower() or (eastern_time.weekday() < 5 and eastern_time.time() >= datetime_time(16, 45) and eastern_time.time() < datetime_time(18, 0)):
             logger.critical(SEPARATOR_LINE)
             logger.critical("≡ƒöº MAINTENANCE WINDOW - GOING IDLE")
             logger.critical(f"Time: {eastern_time.strftime('%H:%M:%S %Z')}")
@@ -2338,7 +2338,7 @@ def validate_signal_requirements(symbol: str, bar_time: datetime) -> Tuple[bool,
         return False, f"Market closed"
     
     if trading_state == "flatten_mode":
-        logger.debug(f"Flatten mode active (21:45-5:00 PM ET), no new entries")
+        logger.debug(f"Flatten mode active (4:30-4:45 PM ET), no new entries")
         return False, f"Flatten mode - close positions only"
     
     # Trading state is "entry_window" - market is open, proceed with checks
@@ -2354,7 +2354,7 @@ def validate_signal_requirements(symbol: str, bar_time: datetime) -> Tuple[bool,
             f"Between 4:00-6:00 PM ET, no new trades (flatten/maintenance window)",
             {"time": current_time.strftime('%H:%M:%S')}
         )
-        logger.debug(f"4:00-6:00 PM ET window - no new entries (flatten at 4:45 PM, maintenance at 5:00 PM, reopens at 6:00 PM)")
+        logger.debug(f"4:00-6:00 PM ET window - no new entries (flatten at 4:45 PM, maintenance starts at 4:45 PM, reopens at 6:00 PM)")
         return False, "Daily entry cutoff (4:00-6:00 PM ET)"
     
     # Check if already have position
@@ -3801,7 +3801,9 @@ def check_stop_hit(symbol: str, current_bar: Dict[str, Any], position: Dict[str,
 def check_target_reached(symbol: str, current_bar: Dict[str, Any], position: Dict[str, Any], 
                         bar_time: datetime) -> Tuple[bool, Optional[float]]:
     """
-    Check if profit target has been reached, including time-based adjustments.
+    Check if VWAP target has been reached.
+    
+    Uses regime-based target calculation only. No time-based tightening.
     
     Args:
         symbol: Instrument symbol
@@ -3814,8 +3816,6 @@ def check_target_reached(symbol: str, current_bar: Dict[str, Any], position: Dic
     """
     side = position["side"]
     target_price = position["target_price"]
-    entry_price = position["entry_price"]
-    stop_price = position["stop_price"]
     
     # Check regular target
     if side == "long":
@@ -3853,21 +3853,6 @@ def check_target_reached(symbol: str, current_bar: Dict[str, Any], position: Dic
                 logger.warning(f"  Distance: {price_distance:.1f} ticks (>{target_validation_ticks} tick threshold)")
                 logger.warning(f"  Using current price for guaranteed fill instead")
                 return True, current_bar["close"]
-    
-    # Phase Five: Time-based exit tightening after 3 PM
-    if bar_time.time() >= datetime_time(15, 0) and not bot_status["flatten_mode"]:
-        # After 3 PM - tighten profit taking to 1:1 R/R
-        stop_distance = abs(entry_price - stop_price)
-        tightened_target_distance = stop_distance  # 1:1 instead of 1.5:1
-        
-        if side == "long":
-            tightened_target = entry_price + tightened_target_distance
-            if current_bar["high"] >= tightened_target:
-                return True, tightened_target
-        else:  # short
-            tightened_target = entry_price - tightened_target_distance
-            if current_bar["low"] <= tightened_target:
-                return True, tightened_target
     
     return False, None
 
@@ -3940,7 +3925,13 @@ def check_proactive_stop(symbol: str, current_bar: Dict[str, Any], position: Dic
 def check_time_based_exits(symbol: str, current_bar: Dict[str, Any], position: Dict[str, Any], 
                            bar_time: datetime) -> Tuple[Optional[str], Optional[float]]:
     """
-    Check all time-based exit conditions.
+    Check time-based exit conditions.
+    
+    ONLY checks for:
+    1. Emergency forced flatten at 4:45 PM ET (market close before maintenance)
+    2. Flatten mode aggressive management during 4:30-4:45 PM window
+    
+    All other exits are regime-based (stops, timeouts, breakeven, trailing).
     
     Args:
         symbol: Instrument symbol
@@ -3955,41 +3946,14 @@ def check_time_based_exits(symbol: str, current_bar: Dict[str, Any], position: D
     entry_price = position["entry_price"]
     stop_price = position["stop_price"]
     tick_size = CONFIG["tick_size"]
-    tick_value = CONFIG["tick_value"]
     
-    # Calculate unrealized P&L (used in multiple checks)
-    if side == "long":
-        price_change = current_bar["close"] - entry_price
-    else:
-        price_change = entry_price - current_bar["close"]
-    ticks = price_change / tick_size
-    unrealized_pnl = ticks * tick_value * position["quantity"]
-    
-    # Force close at forced_flatten_time (5:00 PM ET - maintenance starts)
+    # Force close at forced_flatten_time (4:45 PM ET - maintenance starts)
     trading_state = get_trading_state(bar_time)
     if trading_state == "closed":
         return "emergency_forced_flatten", get_flatten_price(symbol, side, current_bar["close"])
     
-    # Flatten mode: specific time-based exits
+    # Flatten mode: aggressive profit/loss management during 4:30-4:45 PM window
     if bot_status["flatten_mode"]:
-        tz = pytz.timezone(CONFIG["timezone"])
-        current_time = datetime.now(tz)
-        
-        # 4:40 PM - close profitable positions immediately
-        if current_time.time() >= datetime_time(16, 40) and unrealized_pnl > 0:
-            return "time_based_profit_take", get_flatten_price(symbol, side, current_bar["close"])
-        
-        # 4:42 PM - close small losses
-        if current_time.time() >= datetime_time(16, 42):
-            stop_distance = abs(entry_price - stop_price)
-            if unrealized_pnl < 0 and abs(unrealized_pnl) < (stop_distance * tick_value * position["quantity"] / 2):
-                return "time_based_loss_cut", get_flatten_price(symbol, side, current_bar["close"])
-        
-        # Phase 10: Early profit lock after 4:40 PM
-        if current_time.time() >= datetime_time(16, 40) and unrealized_pnl > 0:
-            bot_status["early_close_saves"] += 1
-            return "early_profit_lock", get_flatten_price(symbol, side, current_bar["close"])
-        
         # Flatten mode: aggressive profit/loss management
         if side == "long":
             profit_ticks = (current_bar["close"] - entry_price) / tick_size
@@ -4001,23 +3965,6 @@ def check_time_based_exits(symbol: str, current_bar: Dict[str, Any], position: D
             midpoint = entry_price + (stop_price - entry_price) / 2
             if profit_ticks > 1 or current_bar["close"] > midpoint:
                 return "flatten_mode_exit", get_flatten_price(symbol, side, current_bar["close"])
-    
-    # After 3:30 PM - cut losses early if less than 75% of stop distance
-    if bar_time.time() >= datetime_time(15, 30) and not bot_status["flatten_mode"]:
-        if side == "long":
-            current_loss_distance = entry_price - current_bar["close"]
-            stop_distance = entry_price - stop_price
-            if current_loss_distance > 0:  # In a loss
-                loss_percent = current_loss_distance / stop_distance
-                if loss_percent < 0.75:  # Less than 75% of stop distance
-                    return "early_loss_cut", current_bar["close"]
-        else:  # short
-            current_loss_distance = current_bar["close"] - entry_price
-            stop_distance = stop_price - entry_price
-            if current_loss_distance > 0:  # In a loss
-                loss_percent = current_loss_distance / stop_distance
-                if loss_percent < 0.75:  # Less than 75% of stop distance
-                    return "early_loss_cut", current_bar["close"]
     
     return None, None
 
@@ -4393,17 +4340,30 @@ def check_sideways_timeout(symbol: str, current_price: float, current_time: date
     
     if price_range_ticks < stagnant_range_threshold_ticks:
         # Price stuck in narrow range and timeout exceeded
-        logger.warning("=" * 60)
-        logger.warning("SIDEWAYS TIMEOUT - EXITING STAGNANT POSITION")
-        logger.warning("=" * 60)
-        logger.warning(f"  Regime: {current_regime_name}")
-        logger.warning(f"  Timeout: {sideways_timeout_minutes} minutes")
-        logger.warning(f"  Time Elapsed: {time_elapsed_minutes:.1f} minutes")
-        logger.warning(f"  Price Range: {price_range_ticks:.1f} ticks (High: ${position['sideways_high']:.2f}, Low: ${position['sideways_low']:.2f})")
-        logger.warning(f"  Entry: ${entry_price:.2f}, Current: ${current_price:.2f}")
-        logger.warning(f"  Current P&L: {pnl_ticks:+.1f} ticks (profitable)")
-        logger.warning(f"  Reason: Position stuck in narrow range - not developing momentum")
-        logger.warning("=" * 60)
+        # Enhanced logging for backtesting
+        if is_backtest_mode():
+            logger.info("=" * 60)
+            logger.info("[EXIT] SIDEWAYS TIMEOUT - EXITING STAGNANT POSITION")
+            logger.info("=" * 60)
+            logger.info(f"  Regime: {current_regime_name}")
+            logger.info(f"  Timeout: {sideways_timeout_minutes} minutes")
+            logger.info(f"  Time Elapsed: {time_elapsed_minutes:.1f} minutes")
+            logger.info(f"  Price Range: {price_range_ticks:.1f} ticks")
+            logger.info(f"  Entry: ${entry_price:.2f}, Current: ${current_price:.2f}")
+            logger.info(f"  Current P&L: {pnl_ticks:+.1f} ticks (profitable)")
+            logger.info("=" * 60)
+        else:
+            logger.warning("=" * 60)
+            logger.warning("SIDEWAYS TIMEOUT - EXITING STAGNANT POSITION")
+            logger.warning("=" * 60)
+            logger.warning(f"  Regime: {current_regime_name}")
+            logger.warning(f"  Timeout: {sideways_timeout_minutes} minutes")
+            logger.warning(f"  Time Elapsed: {time_elapsed_minutes:.1f} minutes")
+            logger.warning(f"  Price Range: {price_range_ticks:.1f} ticks (High: ${position['sideways_high']:.2f}, Low: ${position['sideways_low']:.2f})")
+            logger.warning(f"  Entry: ${entry_price:.2f}, Current: ${current_price:.2f}")
+            logger.warning(f"  Current P&L: {pnl_ticks:+.1f} ticks (profitable)")
+            logger.warning(f"  Reason: Position stuck in narrow range - not developing momentum")
+            logger.warning("=" * 60)
         
         return True, current_price
     
@@ -4476,15 +4436,27 @@ def check_underwater_timeout(symbol: str, current_price: float, current_time: da
         tick_value = CONFIG["tick_value"]
         loss_dollars = pnl_ticks * tick_value * position["quantity"]
         
-        logger.warning("=" * 60)
-        logger.warning("UNDERWATER TIMEOUT - CUTTING LOSS")
-        logger.warning("=" * 60)
-        logger.warning(f"  Regime: {current_regime_name}")
-        logger.warning(f"  Timeout: {underwater_timeout_minutes} minutes")
-        logger.warning(f"  Total Elapsed Time: {total_elapsed_minutes:.1f} minutes (since entry)")
-        logger.warning(f"  Current Loss: {abs(pnl_ticks):.1f} ticks (${loss_dollars:.2f})")
-        logger.warning(f"  Entry: ${entry_price:.2f}, Current: ${current_price:.2f}")
-        logger.warning("=" * 60)
+        # Enhanced logging for backtesting
+        if is_backtest_mode():
+            logger.info("=" * 60)
+            logger.info("[EXIT] UNDERWATER TIMEOUT - CUTTING LOSS")
+            logger.info("=" * 60)
+            logger.info(f"  Regime: {current_regime_name}")
+            logger.info(f"  Timeout: {underwater_timeout_minutes} minutes")
+            logger.info(f"  Total Elapsed Time: {total_elapsed_minutes:.1f} minutes (since entry)")
+            logger.info(f"  Current Loss: {abs(pnl_ticks):.1f} ticks (${loss_dollars:.2f})")
+            logger.info(f"  Entry: ${entry_price:.2f}, Current: ${current_price:.2f}")
+            logger.info("=" * 60)
+        else:
+            logger.warning("=" * 60)
+            logger.warning("UNDERWATER TIMEOUT - CUTTING LOSS")
+            logger.warning("=" * 60)
+            logger.warning(f"  Regime: {current_regime_name}")
+            logger.warning(f"  Timeout: {underwater_timeout_minutes} minutes")
+            logger.warning(f"  Total Elapsed Time: {total_elapsed_minutes:.1f} minutes (since entry)")
+            logger.warning(f"  Current Loss: {abs(pnl_ticks):.1f} ticks (${loss_dollars:.2f})")
+            logger.warning(f"  Entry: ${entry_price:.2f}, Current: ${current_price:.2f}")
+            logger.warning("=" * 60)
         
         return True, current_price
     
@@ -4830,10 +4802,20 @@ def update_current_regime(symbol: str) -> None:
         state[symbol]["current_regime"] = "NORMAL"
         return
     
+    # Store previous regime to detect changes
+    prev_regime = state[symbol].get("current_regime", "NORMAL")
+    
     # Detect and store current regime
     detected_regime = regime_detector.detect_regime(bars, current_atr, CONFIG.get("atr_period", 14))
     state[symbol]["current_regime"] = detected_regime.name
-    logger.debug(f"[REGIME] Updated to {detected_regime.name} (ATR: {current_atr:.2f})")
+    
+    # Enhanced logging for backtesting - log regime changes explicitly
+    if is_backtest_mode() and prev_regime != detected_regime.name:
+        logger.info(f"[REGIME CHANGE] {prev_regime} → {detected_regime.name} (ATR: {current_atr:.2f})")
+        logger.info(f"  Stop Mult: {detected_regime.stop_mult:.2f}x | Trailing: {detected_regime.trailing_mult:.2f}x")
+        logger.info(f"  Timeouts: Sideways={detected_regime.sideways_timeout}min, Underwater={detected_regime.underwater_timeout}min")
+    else:
+        logger.debug(f"[REGIME] Updated to {detected_regime.name} (ATR: {current_atr:.2f})")
 
 
 def check_regime_change(symbol: str, current_price: float) -> None:
@@ -5152,7 +5134,7 @@ def check_exit_conditions(symbol: str) -> None:
                 recap_msg += f"\nOpen Position: {position['side'].upper()} {position['quantity']} @ ${position['entry_price']:.2f}\n"
                 recap_msg += f"Unrealized P&L: ${unrealized_pnl:+.2f}\n"
             
-            recap_msg += f"\nBot entering flatten mode. All positions will close before 5:00 PM maintenance window."
+            recap_msg += f"\nBot entering flatten mode. All positions will close before 4:45 PM forced flatten."
             
             notifier.send_error_alert(
                 error_message=recap_msg,
@@ -5186,7 +5168,7 @@ def check_exit_conditions(symbol: str) -> None:
     # ========================================================================
     # Critical execution sequence - order matters!
     
-    # FIRST - Time-based exit check (highest priority - hard deadline)
+    # FIRST - Time-based exit check (only emergency flatten and flatten mode)
     reason, price = check_time_based_exits(symbol, current_bar, position, bar_time)
     if reason:
         # Log specific messages for certain exit types
@@ -5194,23 +5176,6 @@ def check_exit_conditions(symbol: str) -> None:
             logger.critical(SEPARATOR_LINE)
             logger.critical("EMERGENCY FORCED FLATTEN - 4:45 PM FLATTEN WINDOW")
             logger.critical(SEPARATOR_LINE)
-        elif reason == "time_based_profit_take":
-            logger.critical("4:40 PM - Closing profitable position immediately")
-        elif reason == "time_based_loss_cut":
-            logger.critical("4:42 PM - Cutting small loss before settlement")
-        elif reason == "early_profit_lock":
-            logger.warning(f"Phase 10: Closing early profit instead of waiting for target")
-        elif reason == "friday_profit_protection":
-            tick_size = CONFIG["tick_size"]
-            if side == "long":
-                current_loss_distance = entry_price - current_bar["close"]
-                stop_distance = entry_price - stop_price
-                loss_percent = current_loss_distance / stop_distance
-            else:
-                current_loss_distance = current_bar["close"] - entry_price
-                stop_distance = stop_price - entry_price
-                loss_percent = current_loss_distance / stop_distance
-            logger.warning(f"Time-based early loss cut (3:30 PM+): {loss_percent*100:.1f}% of stop distance")
         elif reason == "flatten_mode_exit":
             profit_ticks = abs((current_bar["close"] - entry_price) / CONFIG["tick_size"]) if side == "long" else abs((entry_price - current_bar["close"]) / CONFIG["tick_size"])
             logger.info(f"Flatten mode exit: profit_ticks={profit_ticks:.1f}")
@@ -5221,15 +5186,10 @@ def check_exit_conditions(symbol: str) -> None:
     # SECOND - VWAP target hit check
     target_hit, price = check_target_reached(symbol, current_bar, position, bar_time)
     if target_hit:
-        if price == position["target_price"]:
-            execute_exit(symbol, price, "target_reached")
-            # Track successful target wait
-            if bot_status["flatten_mode"]:
-                bot_status["target_wait_wins"] += 1
-        else:
-            # Tightened target
-            logger.info("Time-based tightened profit target reached (1:1 R/R after 3 PM)")
-            execute_exit(symbol, price, "tightened_target")
+        execute_exit(symbol, price, "target_reached")
+        # Track successful target wait
+        if bot_status["flatten_mode"]:
+            bot_status["target_wait_wins"] += 1
         return
     
     # THIRD - VWAP stop hit check
@@ -5778,10 +5738,8 @@ def execute_exit(symbol: str, exit_price: float, reason: str) -> None:
     
     # Log time-based exits with detailed audit trail
     time_based_reasons = [
-        "flatten_mode_exit", "time_based_profit_take", "time_based_loss_cut",
-        "emergency_forced_flatten", "tightened_target", "early_loss_cut",
-        "proactive_stop", "early_profit_lock", "friday_weekend_protection",
-        "friday_profit_protection", "trailing_stop_failure_emergency"
+        "flatten_mode_exit", "emergency_forced_flatten",
+        "proactive_stop"
     ]
     
     if reason in time_based_reasons:
@@ -5795,16 +5753,8 @@ def execute_exit(symbol: str, exit_price: float, reason: str) -> None:
         
         reason_descriptions = {
             "flatten_mode_exit": "Flatten mode aggressive exit",
-            "time_based_profit_take": "4:40 PM profit lock before settlement",
-            "time_based_loss_cut": "4:42 PM small loss cut before settlement",
             "emergency_forced_flatten": "4:45 PM flatten before maintenance",
-            "tightened_target": "3 PM tightened target (1:1 R/R)",
-            "early_loss_cut": "3:30 PM early loss cut (<75% stop)",
-            "proactive_stop": "Proactive stop (within 2 ticks)",
-            "early_profit_lock": "Early profit lock in flatten mode",
-            "friday_weekend_protection": "Friday 3 PM weekend protection",
-            "friday_profit_protection": "Friday 2 PM profit protection",
-            "trailing_stop_failure_emergency": "Trailing stop update failed - emergency exit"
+            "proactive_stop": "Proactive stop (within 2 ticks)"
         }
         
         log_time_based_action(
@@ -6348,7 +6298,7 @@ def check_trade_limits(current_time: datetime) -> Tuple[bool, Optional[str]]:
     
     # Check for futures maintenance window (5:00-6:00 PM ET Monday-Friday)
     if eastern_time.weekday() < 5:  # Monday through Friday only
-        maintenance_start = datetime_time(17, 0)  # 5:00 PM ET
+        maintenance_start = datetime_time(16, 45)  # 4:45 PM ET - Futures maintenance
         maintenance_end = datetime_time(18, 0)    # 6:00 PM ET
         if maintenance_start <= eastern_time.time() < maintenance_end:
             if bot_status["trading_enabled"]:
@@ -6495,7 +6445,7 @@ def check_safety_conditions(symbol: str) -> Tuple[bool, Optional[str]]:
 
 def check_no_overnight_positions(symbol: str) -> None:
     """
-    Critical safety check - ensure NO positions past 5:00 PM ET (maintenance start).
+    Critical safety check - ensure NO positions past 4:45 PM ET (forced flatten time).
     This prevents gap risk and prop firm evaluation issues.
     
     Args:
@@ -6507,10 +6457,10 @@ def check_no_overnight_positions(symbol: str) -> None:
     eastern_tz = pytz.timezone('US/Eastern')
     current_time = datetime.now(eastern_tz)
     
-    # Critical: If it's past 5:00 PM ET and we still have a position, this is a SERIOUS ERROR
+    # Critical: If it's past 4:45 PM ET and we still have a position, this is a SERIOUS ERROR
     if current_time.time() >= CONFIG["shutdown_time"]:
         logger.critical("=" * 70)
-        logger.critical("CRITICAL ERROR: POSITION DETECTED PAST 5:00 PM ET")
+        logger.critical("CRITICAL ERROR: POSITION DETECTED PAST 4:45 PM ET")
         logger.critical("OVERNIGHT POSITION RISK - IMMEDIATE EMERGENCY CLOSE REQUIRED")
         logger.critical("=" * 70)
         logger.critical(f"Position: {state[symbol]['position']['side']} "
@@ -6842,14 +6792,15 @@ def get_trading_state(dt: datetime = None) -> str:
     Returns:
         Trading state:
         - 'entry_window': Market open, ready to trade (6:00 PM - 4:45 PM next day)
-        - 'flatten_mode': 4:45-5:00 PM ET, close positions before maintenance  
+        - 'flatten_mode': 4:30-4:45 PM ET, close positions before forced flatten
         - 'closed': Market closed (flatten all positions immediately)
     
     CME Futures Schedule (US Eastern Wall-Clock - NEVER changes with DST):
     - Market opens: 6:00 PM Eastern (Sunday-Thursday)
-    - Flatten time: 4:45 PM Eastern daily (Mon-Fri) - 15 min before maintenance
-    - Maintenance: 5:00-6:00 PM Eastern (60-min daily break)
-    - Friday close: 5:00 PM Eastern (market closes at maintenance start)
+    - Flatten mode: 4:30 PM Eastern daily (Mon-Fri) - start aggressive exits
+    - Forced flatten: 4:45 PM Eastern daily (Mon-Fri) - close all positions
+    - Maintenance: 4:45-6:00 PM Eastern (1hr 15min daily break)
+    - Friday close: 4:45 PM Eastern (market closes for weekend maintenance)
     - Sunday open: 6:00 PM Eastern Sunday (weekly start)
     """
     # AZURE-FIRST: Try cloud time service (unless in backtest mode)
@@ -6887,20 +6838,22 @@ def get_trading_state(dt: datetime = None) -> str:
     if weekday == 6 and current_time < datetime_time(18, 0):
         return 'closed'
     
-    # FRIDAY SPECIAL: Market closes at 5:00 PM ET (same as maintenance start)
-    if weekday == 4 and current_time >= datetime_time(17, 0):
+    # FRIDAY SPECIAL: Market closes at 4:45 PM ET (futures maintenance)
+    if weekday == 4 and current_time >= datetime_time(16, 45):
         return 'closed'
     
     # Get configured trading times from CONFIG (CME Eastern schedule)
-    flatten_time = CONFIG.get("flatten_time", datetime_time(16, 45))  # 4:45 PM ET
-    forced_flatten_time = CONFIG.get("forced_flatten_time", datetime_time(17, 0))  # 5:00 PM ET
+    # Futures market: Trading 6:00 PM - 4:45 PM daily
+    # Maintenance: 4:45 PM - 6:00 PM daily
+    flatten_time = CONFIG.get("flatten_time", datetime_time(16, 30))  # 4:30 PM ET - start flatten mode
+    forced_flatten_time = CONFIG.get("forced_flatten_time", datetime_time(16, 45))  # 4:45 PM ET - force close
     
-    # CLOSED: Daily maintenance (5:00-6:00 PM ET, Monday-Thursday)
+    # CLOSED: Daily maintenance (4:45-6:00 PM ET, Monday-Thursday)
     if weekday < 4:  # Monday-Thursday
         if forced_flatten_time <= current_time < datetime_time(18, 0):
             return 'closed'  # Daily maintenance period
     
-    # FLATTEN MODE: 4:45-5:00 PM ET daily (15 min before maintenance)
+    # FLATTEN MODE: 4:30-4:45 PM ET daily (15 min before forced close)
     # This applies Monday-Friday (not Saturday/Sunday which are already handled above)
     if flatten_time <= current_time < forced_flatten_time:
         return 'flatten_mode'
@@ -7364,7 +7317,7 @@ def handle_time_check_event(data: Dict[str, Any]) -> None:
         # Check for delayed license expiration stop conditions
         # If license expired and we're waiting for market close (Friday)
         if bot_status.get("stop_at_market_close", False):
-            maintenance_start = CONFIG.get("forced_flatten_time", datetime_time(17, 0))  # 5:00 PM ET
+            maintenance_start = CONFIG.get("forced_flatten_time", datetime_time(16, 45))  # 4:45 PM ET
             if current_time_only >= maintenance_start:
                 logger.critical("≡ƒ¢æ Market closed - stopping trading due to expired license")
                 
@@ -7394,7 +7347,7 @@ def handle_time_check_event(data: Dict[str, Any]) -> None:
         
         # If license expired and we're waiting for maintenance window
         elif bot_status.get("stop_at_maintenance", False):
-            maintenance_start = CONFIG.get("forced_flatten_time", datetime_time(17, 0))  # 5:00 PM ET
+            maintenance_start = CONFIG.get("forced_flatten_time", datetime_time(16, 45))  # 4:45 PM ET
             if current_time_only >= maintenance_start:
                 logger.critical("≡ƒ¢æ Maintenance window reached - stopping trading due to expired license")
                 
@@ -7607,25 +7560,25 @@ def handle_license_check_event(data: Dict[str, Any]) -> None:
                 current_time_only = eastern_time.time()
                 
                 # Check if we're approaching maintenance or end of week
-                flatten_time = CONFIG.get("flatten_time", datetime_time(16, 45))  # 4:45 PM ET
-                maintenance_start = CONFIG.get("forced_flatten_time", datetime_time(17, 0))  # 5:00 PM ET
+                flatten_time = CONFIG.get("flatten_time", datetime_time(16, 30))  # 4:30 PM ET
+                maintenance_start = CONFIG.get("forced_flatten_time", datetime_time(16, 45))  # 4:45 PM ET
                 
                 should_stop_now = True
                 stop_reason = "License expired - stopping trading immediately"
                 
                 # If Friday and before close, wait until market closes
                 if weekday == 4 and current_time_only < maintenance_start:
-                    logger.warning(f"ΓÅ░ License expired on Friday - will stop at market close (5:00 PM ET)")
+                    logger.warning(f"ΓÅ░ License expired on Friday - will stop at market close (4:45 PM ET)")
                     should_stop_now = False
                     stop_reason = "License expired - will stop at Friday market close"
                     # Set flag to stop at market close
                     bot_status["stop_at_market_close"] = True
                 
-                # If weekday and close to maintenance, wait until maintenance
+                # If weekday and close to forced flatten, wait until maintenance
                 elif weekday < 4 and flatten_time <= current_time_only < maintenance_start:
-                    logger.warning(f"ΓÅ░ License expired during flatten window - will stop at maintenance (5:00 PM ET)")
+                    logger.warning(f"ΓÅ░ License expired during flatten window - will stop at forced flatten (4:45 PM ET)")
                     should_stop_now = False
-                    stop_reason = "License expired - will stop at maintenance window"
+                    stop_reason = "License expired - will stop at forced flatten time"
                     bot_status["stop_at_maintenance"] = True
                 
                 # If weekend, should have already stopped on Friday

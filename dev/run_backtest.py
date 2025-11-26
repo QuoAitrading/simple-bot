@@ -472,7 +472,7 @@ def main():
     # Initialize clean reporter with account_size and max_contracts from config
     reporter = reset_reporter(
         starting_balance=bot_config.account_size,
-        max_contracts=bot_config.get('max_contracts', 1)
+        max_contracts=bot_config.max_contracts
     )
     
     # Create a custom filter to allow only specific INFO messages through AND track signals
