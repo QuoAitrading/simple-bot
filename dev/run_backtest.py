@@ -202,6 +202,9 @@ def run_backtest(args: argparse.Namespace) -> Dict[str, Any]:
     if args.symbol:
         bot_config.instrument = args.symbol
     
+    # Convert config to dict early for header
+    bot_config_dict = bot_config.to_dict()
+    
     # Determine date range
     tz = pytz.timezone(bot_config.timezone)
     
@@ -220,16 +223,9 @@ def run_backtest(args: argparse.Namespace) -> Dict[str, Any]:
     reporter.print_header(
         start_date=start_date.strftime('%Y-%m-%d'),
         end_date=end_date.strftime('%Y-%m-%d'),
-        symbol=args.symbol if args.symbol else bot_config.instrument
+        symbol=args.symbol if args.symbol else bot_config.instrument,
+        config=bot_config_dict
     )
-    
-    # Show config values being used for backtest (from config.json)
-    print(f"Backtest Configuration (from data/config.json):")
-    print(f"   Account Size: ${bot_config.account_size:,.2f}")
-    print(f"   Max Contracts: {bot_config.max_contracts}")
-    print(f"   RL Exploration Rate: {bot_config.rl_exploration_rate*100:.1f}%")
-    print(f"   RL Min Exploration: {bot_config.rl_min_exploration_rate*100:.1f}%")
-    print()
         
     # Create backtest configuration
     data_path = args.data_path if args.data_path else os.path.join(PROJECT_ROOT, "data/historical_data")
@@ -243,15 +239,10 @@ def run_backtest(args: argparse.Namespace) -> Dict[str, Any]:
         use_tick_data=args.use_tick_data
     )
     
-    logger.info(f"Backtest Configuration:")
-    logger.info(f"  Period: {start_date.strftime('%Y-%m-%d')} to {end_date.strftime('%Y-%m-%d')}")
-    logger.info(f"  Initial Equity: ${backtest_config.initial_equity:,.2f}")
-    logger.info(f"  Symbols: {', '.join(backtest_config.symbols)}")
-    logger.info(f"  Data Path: {backtest_config.data_path}")
-    logger.info(f"  Replay Mode: {'Tick-by-tick' if args.use_tick_data else 'Bar-by-bar (1-minute bars)'}")
+    # Suppress verbose logger output - keep only essential info
+    logger.setLevel(logging.CRITICAL)
     
     # Create backtest engine
-    bot_config_dict = bot_config.to_dict()
     engine = BacktestEngine(backtest_config, bot_config_dict)
     
     # Suppress engine logger warnings for clean output
@@ -317,8 +308,9 @@ def run_backtest(args: argparse.Namespace) -> Dict[str, Any]:
         for bar_idx, bar in enumerate(bars_1min):
             bars_processed = bar_idx + 1
             
-            # Update progress every 100 bars
-            if bars_processed % 100 == 0 or bars_processed == total_bars:
+            # Update progress less frequently - every 10% or every 500 bars (whichever is larger)
+            progress_interval = max(500, total_bars // 10)  # Show 10 updates max
+            if bars_processed % progress_interval == 0 or bars_processed == total_bars:
                 reporter.update_progress(bars_processed, total_bars)
             
             # Extract bar data
@@ -347,9 +339,9 @@ def run_backtest(args: argparse.Namespace) -> Dict[str, Any]:
                     if 'last_exit_reason' in state[symbol]:
                         last_exit_reason = state[symbol]['last_exit_reason']
                 
-                # Capture confidence when position opens
+                # Capture confidence and regime when position opens
                 if current_active and not prev_position_active:
-                    # Position just opened - save the confidence
+                    # Position just opened - save the confidence and regime
                     entry_time = pos.get('entry_time', timestamp)
                     entry_time_key = str(entry_time)
                     confidence = state[symbol].get('entry_rl_confidence', 0.5)
@@ -357,6 +349,10 @@ def run_backtest(args: argparse.Namespace) -> Dict[str, Any]:
                     if confidence <= 1.0:
                         confidence = confidence * 100
                     trade_confidences[entry_time_key] = confidence
+                    
+                    # Track regime at entry
+                    regime = state[symbol].get('current_regime', 'UNKNOWN')
+                    trade_confidences[f"{entry_time_key}_regime"] = regime
                 
                 prev_position_active = current_active
                 
@@ -389,9 +385,10 @@ def run_backtest(args: argparse.Namespace) -> Dict[str, Any]:
     # Get trades from engine metrics and add to reporter
     if hasattr(engine, 'metrics') and hasattr(engine.metrics, 'trades'):
         for trade in engine.metrics.trades:
-            # Get RL confidence from tracked confidences
+            # Get RL confidence and regime from tracked data
             entry_time_key = str(trade.entry_time)
             confidence = trade_confidences.get(entry_time_key, 50)  # Default to 50% if not found
+            regime = trade_confidences.get(f"{entry_time_key}_regime", "")  # Get regime if tracked
             
             # Convert Trade dataclass to dict for reporter
             trade_dict = {
@@ -399,12 +396,13 @@ def run_backtest(args: argparse.Namespace) -> Dict[str, Any]:
                 'quantity': trade.quantity,
                 'entry_price': trade.entry_price,
                 'exit_price': trade.exit_price,
-                'entry_time': trade.entry_time,  # Add entry time
+                'entry_time': trade.entry_time,
                 'exit_time': trade.exit_time,
                 'pnl': trade.pnl,
-                'exit_reason': trade.exit_reason,  # This comes from the engine
+                'exit_reason': trade.exit_reason,
                 'duration_minutes': trade.duration_minutes,
-                'confidence': confidence
+                'confidence': confidence,
+                'regime': regime  # Add regime info
             }
             reporter.record_trade(trade_dict)
     
@@ -475,23 +473,21 @@ def main():
         max_contracts=bot_config.max_contracts
     )
     
-    # Create a custom filter to allow only specific INFO messages through AND track signals
+    # Create a custom filter to suppress signal spam and only track them
     class BacktestMessageFilter(logging.Filter):
         def filter(self, record):
-            # Track RL signals for the reporter
+            # Track RL signals for the reporter but suppress output
             msg = record.getMessage()
             if 'RL APPROVED' in msg:
                 reporter.record_signal(approved=True)
-                return True
+                return False  # Suppress output
             elif 'RL REJECTED' in msg:
                 reporter.record_signal(approved=False)
-                return True  # Show rejections for debugging
+                return False  # Suppress output
             elif 'Exploring' in msg:
-                # Show exploration messages
-                return True
+                return False  # Suppress exploration messages
             elif 'LONG SIGNAL' in msg or 'SHORT SIGNAL' in msg:
-                # Show when signals are detected (before RL decision)
-                return True
+                return False  # Suppress signal detection messages
             # Allow WARNING and above
             return record.levelno >= logging.WARNING
     
