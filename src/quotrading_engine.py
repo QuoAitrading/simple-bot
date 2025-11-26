@@ -1755,6 +1755,9 @@ def inject_complete_bar(symbol: str, bar: Dict[str, Any]) -> None:
     # Update current regime after adding new bar
     update_current_regime(symbol)
     
+    # Update MACD after each 1-minute bar (faster than waiting for 15-min bars)
+    update_macd(symbol)
+    
     # Update VWAP and check conditions
     calculate_vwap(symbol)
     check_exit_conditions(symbol)
@@ -2079,12 +2082,13 @@ def update_rsi(symbol: str) -> None:
 
 def update_macd(symbol: str) -> None:
     """
-    Update MACD indicator for the symbol.
+    Update MACD indicator for the symbol using 1-minute bars for faster initialization.
     
     Args:
         symbol: Instrument symbol
     """
-    bars = state[symbol]["bars_15min"]
+    # Use 1-minute bars for faster MACD calculation (faster initialization)
+    bars = state[symbol]["bars_1min"]
     
     # Get MACD parameters from config
     fast_period = CONFIG.get("macd_fast", 12)
@@ -2095,7 +2099,8 @@ def update_macd(symbol: str) -> None:
         logger.debug(f"Not enough bars for MACD: {len(bars)}/{slow_period + signal_period}")
         return
     
-    closes = [bar["close"] for bar in bars]
+    # Use recent bars for calculation
+    closes = [bar["close"] for bar in list(bars)[-100:]]  # Use last 100 bars
     macd_data = calculate_macd(closes, fast_period, slow_period, signal_period)
     
     if macd_data is not None:
