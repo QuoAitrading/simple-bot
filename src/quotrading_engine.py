@@ -236,6 +236,13 @@ bot_status: Dict[str, Any] = {
     # PRODUCTION: Track trading costs
     "total_slippage_cost": 0.0,  # Total slippage costs across all trades
     "total_commission": 0.0,  # Total commissions across all trades
+    # Track target wait decisions
+    "target_wait_wins": 0,
+    "target_wait_losses": 0,
+    "early_close_wins": 0,
+    "early_close_losses": 0,
+    "early_close_saves": 0,
+    "flatten_mode": False,
 }
 
 
@@ -342,9 +349,14 @@ async def save_trade_experience_async(
     """
     global cloud_api_client, rl_brain
     
+    print(f"\n[DEBUG] save_trade_experience_async CALLED! Backtest mode: {is_backtest_mode()}")
+    print(f"[DEBUG] rl_brain exists: {rl_brain is not None}")
+    print(f"[DEBUG] rl_state keys: {list(rl_state.keys())[:5]}")
+    
     # BACKTEST MODE: Use local RL brain
     if is_backtest_mode() or CONFIG.get("backtest_mode", False):
         if rl_brain is not None:
+            print(f"[DEBUG] Calling rl_brain.record_outcome()")
             rl_brain.record_outcome(rl_state, True, pnl, duration_minutes, execution_data)
         return
     
@@ -2332,9 +2344,9 @@ def validate_signal_requirements(symbol: str, bar_time: datetime) -> Tuple[bool,
         logger.debug("Position already active, skipping signal generation")
         return False, "Position active"
     
-    # Check daily trade limit
-    if state[symbol]["daily_trade_count"] >= CONFIG["max_trades_per_day"]:
-        logger.warning(f"Daily trade limit reached ({CONFIG['max_trades_per_day']}), stopping for the day")
+    # Check daily trade limit (skip in backtest mode)
+    if not is_backtest_mode() and state[symbol]["daily_trade_count"] >= CONFIG["max_trades_per_day"]:
+        logger.debug(f"Daily trade limit reached ({CONFIG['max_trades_per_day']}), stopping for the day")
         
         # Send max trades reached alert (only once)
         if state[symbol]["daily_trade_count"] == CONFIG["max_trades_per_day"]:
@@ -2504,13 +2516,16 @@ def check_long_signal_conditions(symbol: str, prev_bar: Dict[str, Any],
     use_volume = CONFIG.get("use_volume_filter", True)
     volume_mult = CONFIG.get("volume_spike_multiplier", 1.5)
     if use_volume:
-        avg_volume = state[symbol]["avg_volume"]
-        if avg_volume is not None and avg_volume > 0:
+        # Use 1-min bar average (same as RL volume_ratio calculation)
+        bars_1min = state[symbol]["bars_1min"]
+        if len(bars_1min) >= 20:
+            recent_volumes = [bar["volume"] for bar in list(bars_1min)[-20:]]
+            avg_volume_1min = sum(recent_volumes) / len(recent_volumes)
             current_volume = current_bar["volume"]
-            if current_volume < avg_volume * volume_mult:
-                logger.debug(f"Long rejected - no volume spike: {current_volume} < {avg_volume * volume_mult:.0f}")
+            if current_volume < avg_volume_1min * volume_mult:
+                logger.debug(f"Long rejected - no volume spike: {current_volume:.0f} < {avg_volume_1min * volume_mult:.0f}")
                 return False
-            logger.debug(f"Volume spike: {current_volume} >= {avg_volume * volume_mult:.0f} ")
+            logger.debug(f"Volume spike: {current_volume:.0f} >= {avg_volume_1min * volume_mult:.0f}")
     
     # FILTER 4: Bullish bar confirmation - current bar must be bullish (close > open)
     # This ensures the reversal is happening with buying pressure, not selling into the bounce
@@ -2579,13 +2594,16 @@ def check_short_signal_conditions(symbol: str, prev_bar: Dict[str, Any],
     use_volume = CONFIG.get("use_volume_filter", True)
     volume_mult = CONFIG.get("volume_spike_multiplier", 1.5)
     if use_volume:
-        avg_volume = state[symbol]["avg_volume"]
-        if avg_volume is not None and avg_volume > 0:
+        # Use 1-min bar average (same as RL volume_ratio calculation)
+        bars_1min = state[symbol]["bars_1min"]
+        if len(bars_1min) >= 20:
+            recent_volumes = [bar["volume"] for bar in list(bars_1min)[-20:]]
+            avg_volume_1min = sum(recent_volumes) / len(recent_volumes)
             current_volume = current_bar["volume"]
-            if current_volume < avg_volume * volume_mult:
-                logger.debug(f"Short rejected - no volume spike: {current_volume} < {avg_volume * volume_mult:.0f}")
+            if current_volume < avg_volume_1min * volume_mult:
+                logger.debug(f"Short rejected - no volume spike: {current_volume:.0f} < {avg_volume_1min * volume_mult:.0f}")
                 return False
-            logger.debug(f"Volume spike: {current_volume} >= {avg_volume * volume_mult:.0f} ")
+            logger.debug(f"Volume spike: {current_volume} >= {avg_volume_1min * volume_mult:.0f}")
     
     # FILTER 4: Bearish bar confirmation - current bar must be bearish (close < open)
     # This ensures the reversal is happening with selling pressure, not buying into the drop
@@ -2597,9 +2615,278 @@ def check_short_signal_conditions(symbol: str, prev_bar: Dict[str, Any],
     return True
 
 
+def calculate_slope(values: List[float], periods: int = 5) -> float:
+    """
+    Calculate the slope (rate of change) of recent values.
+    
+    Args:
+        values: List of values (most recent last)
+        periods: Number of periods to calculate slope over
+    
+    Returns:
+        Slope as percentage change per period
+    """
+    if len(values) < periods:
+        return 0.0
+    
+    recent = values[-periods:]
+    if len(recent) < 2 or recent[0] == 0:
+        return 0.0
+    
+    # Calculate percentage change from first to last
+    change = (recent[-1] - recent[0]) / recent[0]
+    return change
+
+
+def calculate_stochastic(bars: deque, k_period: int = 14, d_period: int = 3) -> Dict[str, float]:
+    """
+    Calculate Stochastic oscillator (%K and %D).
+    
+    Args:
+        bars: Deque of OHLC bars
+        k_period: Period for %K calculation
+        d_period: Period for %D calculation (SMA of %K)
+    
+    Returns:
+        Dictionary with 'k' and 'd' values (0-100)
+    """
+    if len(bars) < k_period:
+        return {"k": 50.0, "d": 50.0}
+    
+    recent_bars = list(bars)[-k_period:]
+    
+    # Get current close and highest/lowest over period
+    current_close = recent_bars[-1]["close"]
+    highest_high = max(bar["high"] for bar in recent_bars)
+    lowest_low = min(bar["low"] for bar in recent_bars)
+    
+    # Calculate %K
+    if highest_high == lowest_low:
+        k_value = 50.0
+    else:
+        k_value = ((current_close - lowest_low) / (highest_high - lowest_low)) * 100
+    
+    # Calculate %D (SMA of %K) - simplified: just return %K for now
+    # Full implementation would track recent %K values
+    d_value = k_value
+    
+    return {"k": k_value, "d": d_value}
+
+
+def get_session_type(current_time) -> str:
+    """
+    Determine if currently in RTH (Regular Trading Hours) or ETH (Extended Trading Hours).
+    
+    RTH for ES: 9:30 AM - 4:00 PM ET
+    ETH: All other times
+    
+    Args:
+        current_time: datetime object in ET timezone
+    
+    Returns:
+        "RTH" or "ETH"
+    """
+    hour = current_time.hour
+    minute = current_time.minute
+    
+    # RTH: 9:30 AM - 4:00 PM ET
+    if (hour == 9 and minute >= 30) or (10 <= hour < 16):
+        return "RTH"
+    else:
+        return "ETH"
+
+
+def get_volatility_regime(atr: float, symbol: str) -> str:
+    """
+    Classify current volatility regime based on ATR.
+    
+    Args:
+        atr: Current ATR value
+        symbol: Instrument symbol
+    
+    Returns:
+        "LOW", "MEDIUM", or "HIGH"
+    """
+    # Get historical ATR values for comparison
+    bars = state[symbol]["bars_1min"]
+    if len(bars) < 100:
+        return "MEDIUM"
+    
+    # Calculate average ATR over last 100 bars
+    recent_bars = list(bars)[-100:]
+    atr_values = []
+    
+    for i in range(14, len(recent_bars)):  # Need 14 bars for ATR
+        bars_slice = recent_bars[i-14:i+1]
+        true_ranges = []
+        
+        for j in range(1, len(bars_slice)):
+            high = bars_slice[j]["high"]
+            low = bars_slice[j]["low"]
+            prev_close = bars_slice[j-1]["close"]
+            
+            tr = max(
+                high - low,
+                abs(high - prev_close),
+                abs(low - prev_close)
+            )
+            true_ranges.append(tr)
+        
+        if true_ranges:
+            atr_values.append(sum(true_ranges) / len(true_ranges))
+    
+    if not atr_values:
+        return "MEDIUM"
+    
+    avg_atr = sum(atr_values) / len(atr_values)
+    
+    # Classify based on deviation from average
+    if atr < avg_atr * 0.75:
+        return "LOW"
+    elif atr > avg_atr * 1.25:
+        return "HIGH"
+    else:
+        return "MEDIUM"
+
+
+def capture_market_state(symbol: str, current_price: float) -> Dict[str, Any]:
+    """
+    Capture comprehensive market state snapshot for analysis and learning.
+    This replaces the old RL state structure with a flat market state structure.
+    
+    Args:
+        symbol: Instrument symbol
+        current_price: Current market price
+    
+    Returns:
+        Dictionary with market state features (flat structure)
+    """
+    vwap = state[symbol].get("vwap", current_price)
+    vwap_bands = state[symbol].get("vwap_bands", {})
+    rsi = state[symbol].get("rsi", 50)
+    
+    # Calculate VWAP standard deviation
+    vwap_std = 0
+    if vwap_bands:
+        upper = vwap_bands.get("upper_1", vwap)
+        vwap_std = abs(upper - vwap) if upper != vwap else 0
+    
+    # Calculate VWAP distance in standard deviations
+    vwap_distance = abs(current_price - vwap) / vwap_std if vwap_std > 0 else 0
+    
+    # Get ATR (use 1min bars for consistency)
+    atr = calculate_atr_1min(symbol, CONFIG.get("atr_period", 14))
+    if atr is None or atr == 0:
+        atr = calculate_atr(symbol, CONFIG.get("atr_period", 14))
+        if atr is None:
+            atr = 0
+    
+    # Calculate volume ratio (current 1min bar vs avg of recent 1min bars)
+    bars_1min = state[symbol]["bars_1min"]
+    if len(bars_1min) >= 20:
+        recent_volumes = [bar["volume"] for bar in list(bars_1min)[-20:]]
+        avg_volume_1min = sum(recent_volumes) / len(recent_volumes)
+        current_bar = bars_1min[-1]
+        volume_ratio = current_bar["volume"] / avg_volume_1min if avg_volume_1min > 0 else 1.0
+    else:
+        volume_ratio = 1.0
+    
+    # Calculate returns (price change)
+    if len(bars_1min) >= 2:
+        prev_close = bars_1min[-2]["close"]
+        returns = (current_price - prev_close) / prev_close if prev_close > 0 else 0.0
+    else:
+        returns = 0.0
+    
+    # Calculate VWAP slope
+    if len(bars_1min) >= 10:
+        recent_vwaps = []
+        # Recalculate VWAP for each recent bar (simplified)
+        for bar in list(bars_1min)[-10:]:
+            recent_vwaps.append(bar["close"])  # Simplified: use close as proxy
+        vwap_slope = calculate_slope(recent_vwaps, 5)
+    else:
+        vwap_slope = 0.0
+    
+    # Calculate ATR slope
+    if len(bars_1min) >= 20:
+        atr_values = []
+        recent_bars = list(bars_1min)[-20:]
+        for i in range(14, len(recent_bars)):
+            bars_slice = recent_bars[i-14:i+1]
+            true_ranges = []
+            for j in range(1, len(bars_slice)):
+                high = bars_slice[j]["high"]
+                low = bars_slice[j]["low"]
+                prev_close = bars_slice[j-1]["close"]
+                tr = max(high - low, abs(high - prev_close), abs(low - prev_close))
+                true_ranges.append(tr)
+            if true_ranges:
+                atr_values.append(sum(true_ranges) / len(true_ranges))
+        
+        if len(atr_values) >= 5:
+            atr_slope = calculate_slope(atr_values, 5)
+        else:
+            atr_slope = 0.0
+    else:
+        atr_slope = 0.0
+    
+    # Get MACD histogram
+    macd_data = state[symbol].get("macd")
+    if macd_data:
+        macd_hist = macd_data.get("histogram", 0.0)
+    else:
+        macd_hist = 0.0
+    
+    # Calculate Stochastic
+    stoch = calculate_stochastic(bars_1min, 14, 3)
+    stoch_k = stoch["k"]
+    
+    # Calculate volume slope
+    if len(bars_1min) >= 10:
+        recent_volumes = [bar["volume"] for bar in list(bars_1min)[-10:]]
+        volume_slope = calculate_slope(recent_volumes, 5)
+    else:
+        volume_slope = 0.0
+    
+    # Get current time and session
+    current_time = get_current_time()
+    hour = current_time.hour
+    session = get_session_type(current_time)
+    
+    # Get regime
+    regime = state[symbol].get("current_regime", "NORMAL")
+    
+    # Get volatility regime
+    volatility_regime = get_volatility_regime(atr, symbol)
+    
+    market_state = {
+        "timestamp": current_time.isoformat(),
+        "symbol": symbol,
+        "price": current_price,
+        "returns": returns,
+        "vwap_distance": vwap_distance,
+        "vwap_slope": vwap_slope,
+        "atr": atr,
+        "atr_slope": atr_slope,
+        "rsi": rsi if rsi is not None else 50,
+        "macd_hist": macd_hist,
+        "stoch_k": stoch_k,
+        "volume_ratio": volume_ratio,
+        "volume_slope": volume_slope,
+        "hour": hour,
+        "session": session,
+        "regime": regime,
+        "volatility_regime": volatility_regime
+    }
+    
+    return market_state
+
+
 def capture_rl_state(symbol: str, side: str, current_price: float) -> Dict[str, Any]:
     """
-    Capture market state for RL decision making.
+    DEPRECATED: Use capture_market_state() instead.
+    Kept for backward compatibility with existing code.
     
     Args:
         symbol: Instrument symbol
@@ -2623,15 +2910,25 @@ def capture_rl_state(symbol: str, side: str, current_price: float) -> Dict[str, 
     # Calculate VWAP distance in standard deviations
     vwap_distance = abs(current_price - vwap) / vwap_std if vwap_std > 0 else 0
     
-    # Get ATR
-    atr = calculate_atr(symbol, CONFIG.get("atr_period", 14))
-    if atr is None:
-        atr = 0
+    # Get ATR (use 1min bars for consistency with regime detection)
+    atr = calculate_atr_1min(symbol, CONFIG.get("atr_period", 14))
+    if atr is None or atr == 0:
+        # Fallback to 15min ATR if 1min not available yet
+        atr = calculate_atr(symbol, CONFIG.get("atr_period", 14))
+        if atr is None:
+            atr = 0
     
-    # Calculate volume ratio
-    avg_volume = state[symbol].get("avg_volume")
-    current_bar = state[symbol]["bars_1min"][-1]
-    volume_ratio = current_bar["volume"] / avg_volume if avg_volume and avg_volume > 0 else 1.0
+    # Calculate volume ratio (compare current 1min bar to avg of recent 1min bars)
+    bars_1min = state[symbol]["bars_1min"]
+    if len(bars_1min) >= 20:
+        # Use average of last 20 1-min bars for comparison
+        recent_volumes = [bar["volume"] for bar in list(bars_1min)[-20:]]
+        avg_volume_1min = sum(recent_volumes) / len(recent_volumes)
+        current_bar = bars_1min[-1]
+        volume_ratio = current_bar["volume"] / avg_volume_1min if avg_volume_1min > 0 else 1.0
+    else:
+        # Not enough data yet
+        volume_ratio = 1.0
     
     # Get current time
     current_time = get_current_time()
@@ -2719,9 +3016,25 @@ def check_for_signals(symbol: str) -> None:
     
     # Check for long signal
     if check_long_signal_conditions(symbol, prev_bar, current_bar):
-        # REINFORCEMENT LEARNING - Get confidence from cloud API (shared learning pool)
-        # Capture market state
-        rl_state = capture_rl_state(symbol, "long", current_bar["close"])
+        # MARKET STATE CAPTURE - Record comprehensive market conditions
+        # Capture current market state (flat structure with all indicators)
+        market_state = capture_market_state(symbol, current_bar["close"])
+        
+        # For backward compatibility with RL brain, convert to old format
+        rl_state = {
+            "symbol": symbol,
+            "rsi": market_state["rsi"],
+            "vwap_distance": market_state["vwap_distance"],
+            "atr": market_state["atr"],
+            "volume_ratio": market_state["volume_ratio"],
+            "hour": market_state["hour"],
+            "day_of_week": get_current_time().weekday(),
+            "recent_pnl": 0,  # Will be updated from trade history
+            "streak": 0,  # Will be updated from trade history
+            "side": "long",
+            "price": current_bar["close"],
+            "regime": market_state["regime"]
+        }
         
         # Ask cloud RL API for decision (or local RL as fallback)
         take_signal, confidence, reason = get_ml_confidence(rl_state, "long")
@@ -2749,8 +3062,9 @@ def check_for_signals(symbol: str) -> None:
             logger.info(f"   RSI: {rl_state['rsi']:.1f}, VWAP dist: {rl_state['vwap_distance']:.2f}, "
                       f"Vol ratio: {rl_state['volume_ratio']:.2f}x, Streak: {rl_state['streak']:+d}")
         
-        # Store the state for outcome recording after trade
-        state[symbol]["entry_rl_state"] = rl_state
+        # Store BOTH states: market state (new) and rl state (for compatibility)
+        state[symbol]["entry_market_state"] = market_state  # NEW: Full market state
+        state[symbol]["entry_rl_state"] = rl_state  # OLD: For backward compatibility
         state[symbol]["entry_rl_confidence"] = confidence
         
         execute_entry(symbol, "long", current_bar["close"])
@@ -2758,9 +3072,25 @@ def check_for_signals(symbol: str) -> None:
     
     # Check for short signal
     if check_short_signal_conditions(symbol, prev_bar, current_bar):
-        # REINFORCEMENT LEARNING - Get confidence from cloud API (shared learning pool)
-        # Capture market state
-        rl_state = capture_rl_state(symbol, "short", current_bar["close"])
+        # MARKET STATE CAPTURE - Record comprehensive market conditions
+        # Capture current market state (flat structure with all indicators)
+        market_state = capture_market_state(symbol, current_bar["close"])
+        
+        # For backward compatibility with RL brain, convert to old format
+        rl_state = {
+            "symbol": symbol,
+            "rsi": market_state["rsi"],
+            "vwap_distance": market_state["vwap_distance"],
+            "atr": market_state["atr"],
+            "volume_ratio": market_state["volume_ratio"],
+            "hour": market_state["hour"],
+            "day_of_week": get_current_time().weekday(),
+            "recent_pnl": 0,  # Will be updated from trade history
+            "streak": 0,  # Will be updated from trade history
+            "side": "short",
+            "price": current_bar["close"],
+            "regime": market_state["regime"]
+        }
         
         # Ask cloud RL API for decision (or local RL as fallback)
         take_signal, confidence, reason = get_ml_confidence(rl_state, "short")
@@ -2788,8 +3118,9 @@ def check_for_signals(symbol: str) -> None:
             logger.info(f"   RSI: {rl_state['rsi']:.1f}, VWAP dist: {rl_state['vwap_distance']:.2f}, "
                       f"Vol ratio: {rl_state['volume_ratio']:.2f}x, Streak: {rl_state['streak']:+d}")
         
-        # Store the state for outcome recording after trade
-        state[symbol]["entry_rl_state"] = rl_state
+        # Store BOTH states: market state (new) and rl state (for compatibility)
+        state[symbol]["entry_market_state"] = market_state  # NEW: Full market state
+        state[symbol]["entry_rl_state"] = rl_state  # OLD: For backward compatibility
         state[symbol]["entry_rl_confidence"] = confidence
         
         execute_entry(symbol, "short", current_bar["close"])
@@ -3716,10 +4047,8 @@ def execute_entry(symbol: str, side: str, entry_price: float) -> None:
     # Increment daily trade counter
     state[symbol]["daily_trade_count"] += 1
     
-    logger.info(f"Position opened successfully (Trade {state[symbol]['daily_trade_count']}/{CONFIG['max_trades_per_day']})")
+    logger.info(f"Position opened successfully")
     logger.info(SEPARATOR_LINE)
-
-
 # ============================================================================
 # PHASE TEN: Exit Management
 # ============================================================================
@@ -4864,6 +5193,34 @@ def check_exit_conditions(symbol: str) -> None:
     side = position["side"]
     entry_price = position["entry_price"]
     stop_price = position["stop_price"]
+    current_price = current_bar["close"]
+    
+    # CRITICAL: Update price extremes on EVERY bar for accurate MFE/MAE tracking
+    # This tracks the best and worst prices reached during the trade
+    if side == "long":
+        # Track highest price for longs (MFE)
+        if position["highest_price_reached"] is None:
+            position["highest_price_reached"] = current_price
+        else:
+            position["highest_price_reached"] = max(position["highest_price_reached"], current_price)
+        
+        # Track lowest price for longs (MAE)
+        if position["lowest_price_reached"] is None:
+            position["lowest_price_reached"] = current_price
+        else:
+            position["lowest_price_reached"] = min(position["lowest_price_reached"], current_price)
+    else:  # short
+        # Track highest price for shorts (MAE)
+        if position["highest_price_reached"] is None:
+            position["highest_price_reached"] = current_price
+        else:
+            position["highest_price_reached"] = max(position["highest_price_reached"], current_price)
+        
+        # Track lowest price for shorts (MFE)
+        if position["lowest_price_reached"] is None:
+            position["lowest_price_reached"] = current_price
+        else:
+            position["lowest_price_reached"] = min(position["lowest_price_reached"], current_price)
     
     # Phase Two: Check trading state and handle market close/open
     trading_state = get_trading_state(bar_time)
@@ -5487,8 +5844,61 @@ def execute_exit(symbol: str, exit_price: float, reason: str) -> None:
     
     # REINFORCEMENT LEARNING - Record outcome to cloud API (shared learning pool)
     try:
-        # Check if we have the entry state stored
-        if "entry_rl_state" in state[symbol]:
+        # Check if we have the entry market state stored (NEW FORMAT)
+        if "entry_market_state" in state[symbol]:
+            market_state = state[symbol]["entry_market_state"]
+            
+            # Calculate trade duration in minutes
+            entry_time = position.get("entry_time")
+            duration_minutes = 0
+            if entry_time:
+                duration = exit_time - entry_time
+                duration_minutes = duration.total_seconds() / 60
+            
+            # Calculate MFE (Max Favorable Excursion) and MAE (Max Adverse Excursion)
+            entry_price = position.get("entry_price", exit_price)
+            tick_size = CONFIG.get("tick_size", 0.25)
+            tick_value = CONFIG.get("tick_value", 12.50)
+            
+            # Get from position tracking (if available)
+            if position["side"] == "long":
+                highest_price = position.get("highest_price_reached", exit_price)
+                lowest_price = position.get("lowest_price_reached", exit_price)
+                mfe_ticks = (highest_price - entry_price) / tick_size
+                mae_ticks = (entry_price - lowest_price) / tick_size
+            else:  # short
+                highest_price = position.get("highest_price_reached", exit_price)
+                lowest_price = position.get("lowest_price_reached", exit_price)
+                mfe_ticks = (entry_price - lowest_price) / tick_size
+                mae_ticks = (highest_price - entry_price) / tick_size
+            
+            mfe = mfe_ticks * tick_value
+            mae = mae_ticks * tick_value
+            
+            # Record market state + outcomes to local RL brain (backtest) or cloud (live)
+            save_trade_experience(
+                rl_state=market_state,  # Market state (flat structure)
+                side="",  # Not needed (in market state already)
+                pnl=pnl,
+                duration_minutes=duration_minutes,
+                execution_data={
+                    "mfe": mfe,
+                    "mae": mae
+                }
+            )
+            
+            logger.info(f"πΎ [EXPERIENCE] Recorded: ${pnl:+.2f} in {duration_minutes:.1f}min | MFE: ${mfe:.2f}, MAE: ${mae:.2f}")
+            
+            # Clean up state
+            if "entry_market_state" in state[symbol]:
+                del state[symbol]["entry_market_state"]
+            if "entry_rl_state" in state[symbol]:
+                del state[symbol]["entry_rl_state"]
+            if "entry_rl_confidence" in state[symbol]:
+                del state[symbol]["entry_rl_confidence"]
+        
+        # Fallback: Check for old RL state format (backward compatibility)
+        elif "entry_rl_state" in state[symbol]:
             entry_state = state[symbol]["entry_rl_state"]
             entry_side = state[symbol]["position"]["side"]  # Get the trade side
             
@@ -5568,7 +5978,6 @@ def execute_exit(symbol: str, exit_price: float, reason: str) -> None:
     update_session_stats(symbol, pnl)
     
     logger.info(f"Daily P&L: ${state[symbol]['daily_pnl']:+.2f}")
-    logger.info(f"Trades today: {state[symbol]['daily_trade_count']}/{CONFIG['max_trades_per_day']}")
     logger.info(SEPARATOR_LINE)
     
     # Update session state for cross-session awareness
