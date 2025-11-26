@@ -264,31 +264,37 @@ class SignalConfidenceRL:
         """
         Find past experiences with similar market states.
         
-        PATTERN MATCHING STRATEGY (15 features):
+        PATTERN MATCHING STRATEGY (14 features):
         ========================================
-        Continuous Features (12):
-          - rsi (15% weight)
-          - vwap_distance (15% weight)
-          - atr (10% weight)
-          - volume_ratio (10% weight)
-          - macd_hist (10% weight)
-          - stoch_k (10% weight)
-          - returns (8% weight)
-          - vwap_slope (5% weight)
-          - atr_slope (5% weight)
-          - volume_slope (5% weight)
-          - hour (4% weight)
-          - streak (3% weight)
+        Continuous Features (11):
+          - rsi (15% weight) - Overbought/oversold
+          - vwap_distance (15% weight) - Price vs VWAP
+          - atr (10% weight) - Volatility level
+          - volume_ratio (10% weight) - Volume spike
+          - macd_hist (10% weight) - Trend momentum
+          - stoch_k (10% weight) - Oscillator
+          - returns (5% weight) - Price momentum
+          - vwap_slope (5% weight) - VWAP direction
+          - atr_slope (3% weight) - Volatility trend
+          - volume_slope (2% weight) - Volume trend
+          - hour (5% weight) - Time of day
         
         Categorical Features (3):
-          - regime (binary match)
-          - volatility_regime (binary match)
-          - session (binary match)
+          - regime (5% weight) - Market regime (binary match)
+          - volatility_regime (3% weight) - Vol regime (binary match)
+          - session (2% weight) - RTH vs ETH (binary match)
+        
+        Weight Distribution:
+          - Primary indicators: 50% (rsi, vwap_distance, atr, volume_ratio)
+          - Momentum indicators: 20% (macd_hist, stoch_k)
+          - Trend/slope indicators: 15% (returns, vwap_slope, atr_slope, volume_slope)
+          - Time factor: 5% (hour)
+          - Categorical matches: 10% (regime, volatility_regime, session)
         
         EXCLUDED (outcomes/metadata):
           ❌ timestamp, symbol, price, pnl, duration, took_trade,
           ❌ exploration_rate, mfe, mae, order_type_used,
-          ❌ entry_slippage_ticks, exit_reason
+          ❌ entry_slippage_ticks, exit_reason, streak
         
         UPDATED for FLAT FORMAT: experiences have fields at top level (no nested 'state').
         """
@@ -308,7 +314,7 @@ class SignalConfidenceRL:
                 past = exp
             
             # Calculate distance for continuous features (normalized to 0-1 range)
-            # 12 continuous features with proper normalization
+            # 11 continuous features (streak removed - not logged)
             rsi_diff = abs(current.get('rsi', 50) - past.get('rsi', 50)) / 100  # 0-100 scale
             vwap_distance_diff = abs(current.get('vwap_distance', 0) - past.get('vwap_distance', 0)) / 5  # Typical range ±5
             atr_diff = abs(current.get('atr', 1) - past.get('atr', 1)) / 20  # Normalize to typical ATR range
@@ -320,32 +326,38 @@ class SignalConfidenceRL:
             atr_slope_diff = abs(current.get('atr_slope', 0) - past.get('atr_slope', 0)) / 2  # ATR slope range
             volume_slope_diff = abs(current.get('volume_slope', 0) - past.get('volume_slope', 0)) / 5  # Volume slope range
             hour_diff = abs(current.get('hour', 12) - past.get('hour', 12)) / 24  # 0-23 hour range
-            streak_diff = abs(current.get('streak', 0) - past.get('streak', 0)) / 10  # Streak range
             
             # Categorical features - binary match (0 if same, 1 if different)
             regime_match = 0.0 if current.get('regime', 'NORMAL') == past.get('regime', 'NORMAL') else 1.0
-            volatility_regime_match = 0.0 if current.get('volatility_regime', 'NORMAL') == past.get('volatility_regime', 'NORMAL') else 1.0
+            volatility_match = 0.0 if current.get('volatility_regime', 'NORMAL') == past.get('volatility_regime', 'NORMAL') else 1.0
             session_match = 0.0 if current.get('session', 'RTH') == past.get('session', 'RTH') else 1.0
             
             # Weighted similarity score (lower is more similar)
-            # Total weights: 15% + 15% + 10% + 10% + 10% + 10% + 8% + 5% + 5% + 5% + 4% + 3% = 100%
-            # Plus categorical features weighted in calculation
+            # Primary indicators (50%), Momentum (20%), Trend/slope (15%), Time (5%), Categorical (10%)
             similarity = (
-                rsi_diff * 0.15 +           # 15% weight
-                vwap_distance_diff * 0.15 + # 15% weight
-                atr_diff * 0.10 +           # 10% weight
-                volume_ratio_diff * 0.10 +  # 10% weight
-                macd_hist_diff * 0.10 +     # 10% weight
-                stoch_k_diff * 0.10 +       # 10% weight
-                returns_diff * 0.08 +       # 8% weight
-                vwap_slope_diff * 0.05 +    # 5% weight
-                atr_slope_diff * 0.05 +     # 5% weight
-                volume_slope_diff * 0.05 +  # 5% weight
-                hour_diff * 0.04 +          # 4% weight
-                streak_diff * 0.03 +        # 3% weight
-                regime_match * 0.15 +       # Categorical: regime match
-                volatility_regime_match * 0.10 +  # Categorical: volatility regime match
-                session_match * 0.05        # Categorical: session match
+                # Primary indicators (50%)
+                rsi_diff * 0.15 +                    # Overbought/oversold
+                vwap_distance_diff * 0.15 +          # Price vs VWAP
+                atr_diff * 0.10 +                    # Volatility level
+                volume_ratio_diff * 0.10 +           # Volume spike
+                
+                # Momentum indicators (20%)
+                macd_hist_diff * 0.10 +              # Trend momentum
+                stoch_k_diff * 0.10 +                # Oscillator
+                
+                # Trend/slope indicators (15%)
+                returns_diff * 0.05 +                # Price momentum
+                vwap_slope_diff * 0.05 +             # VWAP direction
+                atr_slope_diff * 0.03 +              # Volatility trend
+                volume_slope_diff * 0.02 +           # Volume trend
+                
+                # Time factor (5%)
+                hour_diff * 0.05 +                   # Time of day
+                
+                # Categorical matches (10%)
+                regime_match * 0.05 +                # Market regime (binary)
+                volatility_match * 0.03 +            # Vol regime (binary)
+                session_match * 0.02                 # RTH vs ETH (binary)
             )
             
             scored.append((similarity, exp))
