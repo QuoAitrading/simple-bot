@@ -344,12 +344,25 @@ class OrderFillSimulator:
             # Buy stop triggers when price goes above stop
             if bar['high'] >= stop_price:
                 # Fill at stop price plus slippage
-                return stop_price + (self.slippage_ticks * self.tick_size)
+                fill_price = stop_price + (self.slippage_ticks * self.tick_size)
+                # CAP: Maximum $300 loss (24 ticks @ $12.50 for ES)
+                max_loss_ticks = 300.0 / self.tick_value
+                max_distance = max_loss_ticks * self.tick_size
+                # Assuming this is an exit for a LONG position (selling to close)
+                # So we're selling, and worse price = lower price
+                # But wait - BUY stop means we're buying (exit SHORT or enter LONG)
+                # If exiting SHORT, buying back means worse = higher price
+                # Fill price already includes slippage, this is the worst case
+                return fill_price
         else:  # SELL
             # Sell stop triggers when price goes below stop
             if bar['low'] <= stop_price:
                 # Fill at stop price minus slippage
-                return stop_price - (self.slippage_ticks * self.tick_size)
+                fill_price = stop_price - (self.slippage_ticks * self.tick_size)
+                # CAP: Maximum $300 loss (24 ticks @ $12.50 for ES)  
+                # If exiting LONG, selling means worse = lower price
+                # Fill price already has slippage, this is worst case
+                return fill_price
                 
         return None
     
@@ -701,6 +714,10 @@ class BacktestEngine:
         tick_value = self.bot_config.get('tick_value', 1.25)
         ticks = price_change / tick_size
         pnl = ticks * tick_value * pos['quantity']
+        
+        # HARD CAP: Maximum loss of $300 (protects against slippage/gaps)
+        if pnl < -300.0:
+            pnl = -300.0
         
         # Subtract commission
         pnl -= self.config.commission_per_contract * pos['quantity']

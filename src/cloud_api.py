@@ -7,8 +7,9 @@ Bots make decisions locally using their own RL brain.
 
 import logging
 import requests
+import aiohttp
+import asyncio
 from typing import Dict, Tuple, Optional
-
 
 logger = logging.getLogger(__name__)
 
@@ -38,8 +39,20 @@ class CloudAPIClient:
         self.timeout = timeout
         self.max_retries = max_retries
         self.license_valid = True  # Set to False only on 401 license errors
+        self.session: Optional[aiohttp.ClientSession] = None
         
         logger.info(f"🌐 Cloud API client initialized: {self.api_url} (data collection only)")
+
+    async def _get_session(self) -> aiohttp.ClientSession:
+        """Get or create the shared ClientSession"""
+        if self.session is None or self.session.closed:
+            self.session = aiohttp.ClientSession()
+        return self.session
+
+    async def close(self):
+        """Close the session"""
+        if self.session and not self.session.closed:
+            await self.session.close()
     
     def report_trade_outcome(self, state: Dict, took_trade: bool, pnl: float, duration: float, execution_data: Optional[Dict] = None) -> bool:
         """
@@ -70,17 +83,22 @@ class CloudAPIClient:
             return False
         
         try:
+            # FLAT FORMAT: All 24 fields at root level (no nesting)
             payload = {
                 "license_key": self.license_key,
-                "state": state,
+                # Market state (17 fields)
+                **state,  # timestamp, symbol, price, returns, vwap_distance, vwap_slope, atr, atr_slope, rsi, macd_hist, stoch_k, volume_ratio, volume_slope, hour, session, regime, volatility_regime
+                # Trade outcomes (7 fields)
                 "took_trade": took_trade,
                 "pnl": pnl,
-                "duration": duration
+                "duration": duration,
+                "exploration_rate": state.get("exploration_rate", 0.0),
+                "mfe": execution_data.get("mfe", 0.0) if execution_data else 0.0,
+                "mae": execution_data.get("mae", 0.0) if execution_data else 0.0,
+                "order_type_used": execution_data.get("order_type_used", "market") if execution_data else "market",
+                "entry_slippage_ticks": execution_data.get("entry_slippage_ticks", 0.0) if execution_data else 0.0,
+                "exit_reason": execution_data.get("exit_reason", "unknown") if execution_data else "unknown"
             }
-            
-            # Add execution data if provided
-            if execution_data:
-                payload["execution_data"] = execution_data
             
             response = requests.post(
                 f"{self.api_url}/api/rl/submit-outcome",
@@ -101,6 +119,54 @@ class CloudAPIClient:
         except Exception as e:
             logger.debug(f"Non-critical: Could not report outcome to cloud: {e}")
             return False
+
+    async def report_trade_outcome_async(self, state: Dict, took_trade: bool, pnl: float, duration: float, execution_data: Optional[Dict] = None) -> bool:
+        """
+        Async version of report_trade_outcome using aiohttp.
+        """
+        # Skip reporting if license is invalid
+        if not self.license_valid:
+            logger.debug("License invalid - skipping outcome report")
+            return False
+        
+        try:
+            # FLAT FORMAT: All 24 fields at root level (no nesting)
+            payload = {
+                "license_key": self.license_key,
+                # Market state (17 fields)
+                **state,  # timestamp, symbol, price, returns, vwap_distance, vwap_slope, atr, atr_slope, rsi, macd_hist, stoch_k, volume_ratio, volume_slope, hour, session, regime, volatility_regime
+                # Trade outcomes (7 fields)
+                "took_trade": took_trade,
+                "pnl": pnl,
+                "duration": duration,
+                "exploration_rate": state.get("exploration_rate", 0.0),
+                "mfe": execution_data.get("mfe", 0.0) if execution_data else 0.0,
+                "mae": execution_data.get("mae", 0.0) if execution_data else 0.0,
+                "order_type_used": execution_data.get("order_type_used", "market") if execution_data else "market",
+                "entry_slippage_ticks": execution_data.get("entry_slippage_ticks", 0.0) if execution_data else 0.0,
+                "exit_reason": execution_data.get("exit_reason", "unknown") if execution_data else "unknown"
+            }
+            
+            session = await self._get_session()
+            async with session.post(
+                f"{self.api_url}/api/rl/submit-outcome",
+                json=payload,
+                timeout=self.timeout
+            ) as response:
+                    
+                    if response.status == 200:
+                        data = await response.json()
+                        total_exp = data.get('total_experiences', '?')
+                        win_rate = data.get('win_rate', 0) * 100
+                        logger.info(f"✅ Outcome reported to cloud ({total_exp} experiences, {win_rate:.0f}% WR)")
+                        return True
+                    else:
+                        logger.warning(f"⚠️ Failed to report outcome: HTTP {response.status}")
+                        return False
+                
+        except Exception as e:
+            logger.debug(f"Non-critical: Could not report outcome to cloud: {e}")
+            return False
     
     def set_license_valid(self, valid: bool):
         """
@@ -110,4 +176,3 @@ class CloudAPIClient:
         self.license_valid = valid
         status = "valid" if valid else "invalid"
         logger.info(f"License marked as {status}")
-

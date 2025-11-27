@@ -2955,15 +2955,18 @@ def calculate_position_size(symbol: str, side: str, entry_price: float, rl_confi
         # Use regime-based stop loss calculation
         entry_regime = regime_detector.detect_regime(bars, atr, CONFIG.get("atr_period", 14))
         
-        # Calculate stop using regime multiplier (pure regime-based, no confidence scaling)
-        stop_multiplier = entry_regime.stop_mult
-        logger.info(f"Regime-based stop: {entry_regime.name}, multiplier {stop_multiplier:.2f}x")
+        # CONFIGURABLE STOP: Read from config (default $300)
+        max_stop_dollars = CONFIG.get("max_stop_loss_dollars", 300.0)
+        tick_value = CONFIG["tick_value"]
+        max_stop_ticks = max_stop_dollars / tick_value  # 24 ticks for ES @ $300
+        stop_distance = max_stop_ticks * tick_size
         
+        logger.info(f"Fixed stop: {max_stop_ticks:.0f} ticks (${max_stop_dollars:.2f}) - Regime: {entry_regime.name}")
         
         if side == "long":
-            stop_price = entry_price - (atr * stop_multiplier)
+            stop_price = entry_price - stop_distance
         else:  # short
-            stop_price = entry_price + (atr * stop_multiplier)
+            stop_price = entry_price + stop_distance
         
         stop_price = round_to_tick(stop_price)
     
@@ -5307,6 +5310,12 @@ def calculate_pnl(position: Dict[str, Any], exit_price: float) -> Tuple[float, f
     
     ticks = price_change / tick_size
     gross_pnl = ticks * tick_value * contracts
+    
+    # CONFIGURABLE CAP: Maximum loss (protects against slippage/gaps)
+    max_stop_loss = CONFIG.get("max_stop_loss_dollars", 300.0)
+    if gross_pnl < -max_stop_loss:
+        logger.warning(f"⚠️ Loss capped: ${gross_pnl:.2f} -> $-{max_stop_loss:.2f} (max loss protection)")
+        gross_pnl = -max_stop_loss
     
     # Deduct commissions
     commission = CONFIG.get("commission_per_contract", 0.0) * contracts

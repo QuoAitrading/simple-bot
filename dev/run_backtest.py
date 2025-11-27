@@ -144,10 +144,8 @@ def initialize_rl_brains_for_backtest(bot_config) -> Tuple[Any, ModuleType]:
     bot_module = importlib.util.module_from_spec(spec)
     sys.modules['quotrading_engine'] = bot_module
     
-    # Also make it available as quotrading_bot for compatibility
-    sys.modules['quotrading_bot'] = bot_module
-    sys.modules['vwap_bounce_bot'] = bot_module  # Legacy alias
-
+    # Also make it available as vwap_bounce_bot for compatibility
+    sys.modules['vwap_bounce_bot'] = bot_module
     
     # Load the module
     spec.loader.exec_module(bot_module)
@@ -155,16 +153,17 @@ def initialize_rl_brains_for_backtest(bot_config) -> Tuple[Any, ModuleType]:
     # Get symbol for symbol-specific experience folder
     symbol = bot_config.instrument
     
-    # Initialize RL brain with symbol-specific experience file and config values
+    # Initialize RL brain with symbol-specific experience file
+    # LIVE TRADING: Always uses 0% exploration (reads from config)
+    # BACKTESTING: Always uses 30% exploration (hardcoded for learning)
     signal_exp_file = os.path.join(PROJECT_ROOT, f"experiences/{symbol}/signal_experience.json")
     rl_brain = SignalConfidenceRL(
         experience_file=signal_exp_file,
         backtest_mode=True,
         confidence_threshold=bot_config.rl_confidence_threshold,
-        exploration_rate=bot_config.rl_exploration_rate,
-        min_exploration=bot_config.rl_min_exploration_rate,
-        exploration_decay=bot_config.rl_exploration_decay,
-        save_local=True  # Backtest mode: save locally
+        exploration_rate=0.3,  # HARDCODED 30% for backtesting only
+        min_exploration=0.3,
+        exploration_decay=bot_config.rl_exploration_decay
     )
     
     # Set it on the bot module if it has rl_brain attribute
@@ -218,7 +217,25 @@ def run_backtest(args: argparse.Namespace) -> Dict[str, Any]:
         start_date = datetime.strptime(args.start, '%Y-%m-%d')
         end_date = datetime.strptime(args.end, '%Y-%m-%d')
     elif args.days:
-        end_date = datetime.now(tz)
+        # Load the CSV to get the actual end date of available data
+        data_path = args.data_path if args.data_path else os.path.join(PROJECT_ROOT, "data/historical_data")
+        symbol = args.symbol if args.symbol else bot_config.instrument
+        csv_path = os.path.join(data_path, f"{symbol}_1min.csv")
+        
+        if os.path.exists(csv_path):
+            # Read last line to get actual end date from data
+            with open(csv_path, 'r') as f:
+                lines = f.readlines()
+                if len(lines) > 1:  # Skip header
+                    last_line = lines[-1]
+                    last_timestamp = last_line.split(',')[0]
+                    end_date = datetime.strptime(last_timestamp, '%Y-%m-%d %H:%M:%S')
+                    end_date = tz.localize(end_date.replace(hour=23, minute=59, second=59))
+                else:
+                    end_date = datetime.now(tz)
+        else:
+            end_date = datetime.now(tz)
+        
         start_date = end_date - timedelta(days=args.days)
     else:
         # Default: last 7 days
