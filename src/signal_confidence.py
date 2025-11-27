@@ -56,6 +56,7 @@ class SignalConfidenceRL:
         else:
             self.experience_file = experience_file
         self.experiences = []  # All past (state, action, reward) tuples
+        self.experience_keys = set()  # Set for O(1) duplicate detection
         self.recent_trades = deque(maxlen=20)  # Last 20 outcomes
         self.backtest_mode = backtest_mode
         self.freeze_learning = False  # LEARNING ENABLED - Brain 2 learns during backtests
@@ -582,33 +583,26 @@ class SignalConfidenceRL:
         # USER REQUEST: Only save trades that were actually taken
         if took_trade:
             # DUPLICATE PREVENTION: Check if this experience already exists
-            # Create unique key from timestamp, symbol, pnl, and exit_reason
+            # Create unique key from timestamp, symbol, pnl (rounded), and exit_reason
+            # Round PnL to 2 decimal places to avoid floating point precision issues
             exp_key = (
                 experience.get('timestamp'),
                 experience.get('symbol'),
-                experience.get('pnl'),
+                round(experience.get('pnl', 0), 2),
                 execution_data.get('exit_reason') if execution_data else None
             )
             
-            # Check if this exact experience already exists
-            is_duplicate = False
-            for existing_exp in self.experiences:
-                existing_key = (
-                    existing_exp.get('timestamp'),
-                    existing_exp.get('symbol'),
-                    existing_exp.get('pnl'),
-                    existing_exp.get('exit_reason')
-                )
-                if exp_key == existing_key:
-                    is_duplicate = True
-                    logger.debug(f"⚠️  Duplicate experience detected and skipped: {exp_key}")
-                    break
-            
-            if not is_duplicate:
-                self.experiences.append(experience)
-                self.recent_trades.append(pnl)
-            else:
+            # Check if this exact experience already exists (O(1) lookup with set)
+            if exp_key in self.experience_keys:
+                logger.debug(f"⚠️  Duplicate experience detected and skipped: {exp_key}")
                 logger.debug(f"   Skipped duplicate at {experience.get('timestamp')}")
+                # Don't update recent_trades or streaks for duplicates
+                return
+            
+            # Not a duplicate - add to experiences
+            self.experience_keys.add(exp_key)
+            self.experiences.append(experience)
+            self.recent_trades.append(pnl)
         
         # Update win/loss streaks
         if took_trade:
@@ -692,6 +686,19 @@ class SignalConfidenceRL:
                     data = json.load(f)
                     logger.debug(f"[DEBUG] JSON loaded successfully. Keys: {list(data.keys())}")
                     self.experiences = data.get('experiences', [])
+                    
+                    # Populate experience_keys set for O(1) duplicate detection
+                    # Round PnL to 2 decimal places to avoid floating point precision issues
+                    self.experience_keys = set()
+                    for exp in self.experiences:
+                        exp_key = (
+                            exp.get('timestamp'),
+                            exp.get('symbol'),
+                            round(exp.get('pnl', 0), 2),  # Round to 2 decimal places
+                            exp.get('exit_reason')
+                        )
+                        self.experience_keys.add(exp_key)
+                    
                     logger.debug(f"Γ£ô Loaded {len(self.experiences)} past signal experiences")
             except Exception as e:
                 logger.error(f"Failed to load experiences: {e}")
