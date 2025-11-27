@@ -581,8 +581,34 @@ class SignalConfidenceRL:
         # Add to memory (learning enabled)
         # USER REQUEST: Only save trades that were actually taken
         if took_trade:
-            self.experiences.append(experience)
-            self.recent_trades.append(pnl)
+            # DUPLICATE PREVENTION: Check if this experience already exists
+            # Create unique key from timestamp, symbol, pnl, and exit_reason
+            exp_key = (
+                experience.get('timestamp'),
+                experience.get('symbol'),
+                experience.get('pnl'),
+                execution_data.get('exit_reason') if execution_data else None
+            )
+            
+            # Check if this exact experience already exists
+            is_duplicate = False
+            for existing_exp in self.experiences:
+                existing_key = (
+                    existing_exp.get('timestamp'),
+                    existing_exp.get('symbol'),
+                    existing_exp.get('pnl'),
+                    existing_exp.get('exit_reason')
+                )
+                if exp_key == existing_key:
+                    is_duplicate = True
+                    logger.debug(f"⚠️  Duplicate experience detected and skipped: {exp_key}")
+                    break
+            
+            if not is_duplicate:
+                self.experiences.append(experience)
+                self.recent_trades.append(pnl)
+            else:
+                logger.debug(f"   Skipped duplicate at {experience.get('timestamp')}")
         
         # Update win/loss streaks
         if took_trade:
