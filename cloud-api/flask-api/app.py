@@ -137,18 +137,23 @@ def send_license_email(email, license_key):
         # Fallback to SMTP (Gmail, etc.)
         if SMTP_USERNAME and SMTP_PASSWORD:
             logging.info(f"🔍 Attempting SMTP email to {email}")
-            msg = MIMEMultipart('alternative')
-            msg['Subject'] = subject
-            msg['From'] = FROM_EMAIL
-            msg['To'] = email
-            msg.attach(MIMEText(html_body, 'html'))
-            
-            with smtplib.SMTP(SMTP_SERVER, SMTP_PORT) as server:
-                server.starttls()
-                server.login(SMTP_USERNAME, SMTP_PASSWORD)
-                server.send_message(msg)
-            logging.info(f"✅ SMTP email sent successfully to {email}")
-            return True
+            try:
+                msg = MIMEMultipart('alternative')
+                msg['Subject'] = subject
+                msg['From'] = FROM_EMAIL
+                msg['To'] = email
+                msg.attach(MIMEText(html_body, 'html'))
+                
+                with smtplib.SMTP(SMTP_SERVER, SMTP_PORT) as server:
+                    server.starttls()
+                    server.login(SMTP_USERNAME, SMTP_PASSWORD)
+                    server.send_message(msg)
+                logging.info(f"✅ SMTP email sent successfully to {email}")
+                return True
+            except Exception as e:
+                logging.error(f"❌ SMTP exception: {type(e).__name__}: {str(e)}")
+                logging.error(f"❌ No email method worked")
+                return False
         else:
             logging.error(f"❌ No email method configured - SMTP credentials missing")
             return False
@@ -157,10 +162,6 @@ def send_license_email(email, license_key):
         logging.error(f"❌ CRITICAL ERROR in send_license_email: {type(e).__name__}: {str(e)}")
         import traceback
         logging.error(f"Traceback: {traceback.format_exc()}")
-        return False
-            
-    except Exception as e:
-        logging.error(f"❌ Failed to send email: {e}")
         return False
 
 def generate_license_key():
