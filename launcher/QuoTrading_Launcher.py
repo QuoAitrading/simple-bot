@@ -1302,6 +1302,8 @@ class QuoTradingLauncher:
         symbol_frame.pack(fill=tk.X, pady=(0, 0))
         
         self.symbol_vars = {}
+        # Only show primary trading symbols in GUI (ES, MNQ, NQ)
+        # Other symbols (YM, RTY, CL, GC, NG, 6E, ZN, MES, MBTX) are kept in experiences/ for future use
         symbols = [
             ("ES", "E-mini S&P 500"),
             ("MNQ", "Micro E-mini Nasdaq 100"),
