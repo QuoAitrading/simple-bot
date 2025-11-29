@@ -4732,7 +4732,7 @@ def execute_partial_exit(symbol: str, contracts: int, exit_price: float, r_multi
             # Mark position as inactive
             position["active"] = False
             
-            # CRITICAL: Save position state to disk - bot must never forget it closed the position
+            # Save position state to ensure persistence across restarts
             save_position_state(symbol)
             
             # Update daily P&L
