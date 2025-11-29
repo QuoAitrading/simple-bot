@@ -1726,11 +1726,11 @@ class QuoTradingLauncher:
         try:
             max_loss_per_trade = float(self.max_loss_per_trade_entry.get())
             if max_loss_per_trade <= 0:
-                raise ValueError()
-        except ValueError:
+                raise ValueError("Max loss per trade must be greater than 0")
+        except ValueError as e:
             messagebox.showerror(
                 "Invalid Max Loss Per Trade",
-                "Please enter a valid max loss per trade (greater than 0)."
+                "Please enter a valid numeric value greater than 0 for max loss per trade."
             )
             return
         
