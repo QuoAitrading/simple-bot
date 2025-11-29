@@ -815,7 +815,8 @@ class BrokerSDKImplementation(BrokerInterface):
                                     timestamp = int(dt.timestamp() * 1000)
                                 else:
                                     timestamp = int(datetime.now().timestamp() * 1000)
-                            except:
+                            except (ValueError, TypeError, AttributeError) as e:
+                                logger.debug(f"Timestamp parsing error: {e}, using current time")
                                 timestamp = int(datetime.now().timestamp() * 1000)
                             
                             # Call bot's callback with tick data
@@ -906,7 +907,8 @@ class BrokerSDKImplementation(BrokerInterface):
                                 logger.warning(f"Quote feed stale - {age_seconds:.1f}s since last update")
                             last_valid_timestamp[0] = current_time
                             
-                        except:
+                        except (ValueError, TypeError, AttributeError) as e:
+                            logger.debug(f"Timestamp parsing error: {e}, using current time")
                             timestamp = int(datetime.now().timestamp() * 1000)
                         
                         # Call bot's callback with quote data

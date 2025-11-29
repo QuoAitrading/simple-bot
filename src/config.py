@@ -293,7 +293,7 @@ class BotConfiguration:
     breakeven_stop_offset_ticks: int = 1  # Static offset from entry
     
     # Partial Exits (static R-multiples)
-    partial_exits_enabled: bool = True  # ENABLED - Scale out at targets
+    partial_exits_enabled: bool = False  # DISABLED - Bot exits all contracts at once (no runners)
     partial_exit_1_percentage: float = 0.50  # 50% exit at first level
     partial_exit_1_r_multiple: float = 2.0  # Exit at 2.0R
     partial_exit_2_percentage: float = 0.30  # 30% exit at second level
