@@ -4594,10 +4594,16 @@ def check_partial_exits(symbol: str, current_price: float) -> None:
     Scales out of position at 2R, 3R, and 5R to lock in profits while
     maintaining exposure to further gains.
     
+    NOTE: This feature is DISABLED by default. Set partial_exits_enabled=True in config to enable.
+    
     Args:
         symbol: Instrument symbol
         current_price: Current market price
     """
+    # Check if partial exits are enabled in configuration
+    if not CONFIG.get("partial_exits_enabled", False):
+        return  # Partial exits disabled - exit entire position at target instead
+    
     position = state[symbol]["position"]
     
     # Only process active positions
@@ -4660,7 +4666,7 @@ def check_partial_exits(symbol: str, current_price: float) -> None:
     if (r_multiple >= CONFIG.get("partial_exit_3_r_multiple", 5.0) and 
         not position["partial_exit_3_completed"]):
         
-        # Close all remaining contracts (the final runner)
+        # Close all remaining contracts (final exit at 5.0R)
         remaining_quantity = position["remaining_quantity"]
         
         if remaining_quantity >= 1:
@@ -4711,7 +4717,25 @@ def execute_partial_exit(symbol: str, contracts: int, exit_price: float, r_multi
     order = place_market_order(symbol, order_side, contracts)
     
     if order:
-        # Update position tracking
+        # Verify actual fill in live mode (not backtest)
+        import time
+        if not is_backtest_mode():
+            time.sleep(1)  # Brief wait for fill confirmation
+            
+            # Check actual position to verify fill
+            current_position = abs(get_position_quantity(symbol))
+            expected_remaining = position["remaining_quantity"] - contracts
+            
+            if abs(current_position - expected_remaining) > 0:
+                # Partial fill detected
+                actual_filled = position["remaining_quantity"] - current_position
+                logger.warning(f"  [PARTIAL FILL] Only {actual_filled} of {contracts} contracts filled")
+                contracts = actual_filled  # Adjust to actual filled amount
+                
+                # Recalculate profit based on actual fill
+                profit_dollars = profit_ticks * tick_value * contracts
+        
+        # Update position tracking with actual filled amount
         position["remaining_quantity"] -= contracts
         position["quantity"] = position["remaining_quantity"]
         position[completion_flag] = True
@@ -4746,6 +4770,9 @@ def execute_partial_exit(symbol: str, contracts: int, exit_price: float, r_multi
             
             # Update daily P&L for this partial
             state[symbol]["daily_pnl"] += profit_dollars
+            
+            # Save position state after partial exit
+            save_position_state(symbol)
     else:
         logger.error(f"Failed to execute partial exit #{level}")
 
@@ -5447,24 +5474,30 @@ def handle_exit_orders(symbol: str, position: Dict[str, Any], exit_price: float,
             order = place_market_order(symbol, order_side, contracts)
             
             if order:
-                logger.critical(f"  Γ£ô Order placed - Order ID: {order.get('order_id', 'N/A')}")
+                logger.critical(f"  ✓ Order placed - Order ID: {order.get('order_id', 'N/A')}")
                 
                 # In backtesting, position closes immediately
                 # In live trading, wait briefly and verify
                 import time
                 time.sleep(1)
                 
-                # Verify position actually closed
+                # Verify position actually closed or partially filled
                 current_position = get_position_quantity(symbol)
                 
                 if current_position == 0:
                     logger.critical("=" * 80)
                     logger.critical(f"[SUCCESS] FORCED FLATTEN SUCCESSFUL (Attempt {attempt})")
                     logger.critical("=" * 80)
-                    return  # SUCCESS - position closed
+                    return  # SUCCESS - position fully closed
                 else:
-                    logger.error(f"  [WARN] Position still shows {current_position} contracts - verifying...")
-                    # Might be a delay in reporting, continue to next check
+                    # Partial fill - update contracts remaining and retry
+                    contracts_filled = contracts - abs(current_position)
+                    if contracts_filled > 0:
+                        logger.warning(f"  [PARTIAL FILL] {contracts_filled} of {contracts} contracts filled")
+                        logger.warning(f"  [REMAINING] {abs(current_position)} contracts still open - retrying...")
+                        contracts = abs(current_position)  # Update quantity for next attempt
+                    else:
+                        logger.error(f"  [WARN] Position still shows {current_position} contracts - no fill detected")
             else:
                 logger.error(f"  [FAIL] Order placement FAILED on attempt {attempt}")
             
