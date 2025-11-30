@@ -958,7 +958,7 @@ class QuoTradingLauncher:
         
         sync_label = tk.Label(
             fetch_button_frame,
-            text="🔄 PING:",
+            text="🔄 Test Connection:",
             font=("Segoe UI", 8, "bold"),
             bg=self.colors['card'],
             fg=self.colors['success']
@@ -966,7 +966,7 @@ class QuoTradingLauncher:
         sync_label.pack(anchor=tk.W)
         
         # Button to ping RL server
-        button_text = "Ping"
+        button_text = "Ping Server"
         fetch_btn = self.create_button(fetch_button_frame, button_text, self.fetch_account_info, "next")
         fetch_btn.pack()
         
@@ -1088,7 +1088,7 @@ class QuoTradingLauncher:
         
         tk.Label(
             shadow_mode_frame,
-            text="Watch signals without executing",
+            text="Ghost trading - signals only, manual execution",
             font=("Segoe UI", 7, "bold"),
             bg=self.colors['card'],
             fg=self.colors['text_light']
@@ -1447,17 +1447,19 @@ class QuoTradingLauncher:
                         
                         # Update info label to show connection success
                         self.account_info_label.config(
-                            text=f"✓ Ping successful! RL Server is online",
+                            text=f"✓ Server ping successful! Connection to AI server is working.",
                             fg=self.colors['success']
                         )
                         
                         messagebox.showinfo(
                             "Ping Successful",
-                            f"✓ Connection Successful!\n\n"
-                            f"Server: {rl_server_url}\n"
+                            f"✓ Connection Test Passed!\n\n"
+                            f"Server: QuoTrading RL Server\n"
+                            f"URL: {rl_server_url}\n"
                             f"Status: {status.upper()}\n"
                             f"Version: {version}\n\n"
-                            f"RL server is ready."
+                            f"Your connection to the AI server is working properly.\n"
+                            f"The bot is ready to receive trading signals."
                         )
                     
                     self.root.after(0, show_success)
@@ -1519,8 +1521,8 @@ class QuoTradingLauncher:
         thread.start()
     
     def auto_adjust_parameters(self):
-        """Auto-adjust trading parameters based on user-entered account size."""
-        # Get account size from user input
+        """Auto-adjust trading parameters based on user-entered account size using smart math."""
+        # Get account size from user input or selected account
         try:
             account_size = float(self.account_entry.get() or "10000")
         except ValueError:
@@ -1537,46 +1539,49 @@ class QuoTradingLauncher:
             )
             return
         
-        # Simple auto-configuration based on account size
-        # Daily loss limit: 2% of account size (standard conservative rule)
+        # Smart auto-configuration based on account size and risk management principles
+        # Daily loss limit: 2% of account size (standard conservative rule for prop firms)
         daily_loss_limit = account_size * 0.02
         
-        # Max contracts: Scale based on account size
-        # Small accounts (< $25k): 1-2 contracts
-        # Medium accounts ($25k-$50k): 2-3 contracts  
-        # Large accounts ($50k-$100k): 3-5 contracts
-        # Very large accounts (> $100k): 5-10 contracts
-        if account_size < 25000:
-            max_contracts = 2
-        elif account_size < 50000:
-            max_contracts = 3
-        elif account_size < 100000:
-            max_contracts = 5
-        elif account_size < 250000:
-            max_contracts = 8
-        else:
-            max_contracts = 10
+        # Max contracts: Scale intelligently based on account size
+        # Use a logarithmic-style scaling to avoid over-leveraging small accounts
+        # Formula: min(max_allowed, max(1, floor(account_size / 12500)))
+        # This gives roughly 1 contract per $12.5k of account size
+        max_contracts = min(self.max_contracts_allowed, max(1, int(account_size / 12500)))
         
-        # Max trades per day: Scale based on account size
-        # Smaller accounts should trade less frequently
+        # Max loss per trade: Should be proportional to daily loss limit
+        # Use 20-25% of daily loss limit for single trade risk (allows 4-5 losing trades)
+        # This prevents one bad trade from consuming entire daily limit
+        max_loss_per_trade = daily_loss_limit * 0.2
+        
+        # Max trades per day: Scale based on account size and risk per trade
+        # Larger accounts can handle more trades, but cap based on practical limits
+        # Formula: Allow enough trades to reach daily limit with average losses
+        # Minimum 5 trades, maximum 20 trades
         if account_size < 25000:
-            max_trades = 5
+            max_trades = 6  # Conservative for small accounts
         elif account_size < 50000:
-            max_trades = 7
+            max_trades = 8  # Moderate activity
         elif account_size < 100000:
-            max_trades = 10
+            max_trades = 12  # Good activity for medium accounts
+        elif account_size < 250000:
+            max_trades = 15  # Active trading for larger accounts
         else:
-            max_trades = 15
+            max_trades = 20  # Maximum activity for very large accounts
         
         # Apply the calculated settings
         self.loss_entry.delete(0, tk.END)
         self.loss_entry.insert(0, f"{daily_loss_limit:.2f}")
+        
+        self.max_loss_per_trade_entry.delete(0, tk.END)
+        self.max_loss_per_trade_entry.insert(0, f"{max_loss_per_trade:.2f}")
+        
         self.contracts_var.set(max_contracts)
         self.trades_var.set(max_trades)
         
-        # Update info label with feedback
+        # Update info label with detailed feedback
         self.auto_adjust_info_label.config(
-            text=f"✓ Optimized for ${account_size:,.2f} account - {max_contracts} contracts, ${daily_loss_limit:.0f} daily limit, {max_trades} trades/day",
+            text=f"✓ Smart config for ${account_size:,.2f}: {max_contracts} contracts, ${daily_loss_limit:.0f} daily limit, ${max_loss_per_trade:.0f} per trade, {max_trades} trades/day",
             fg=self.colors['success']
         )
     
