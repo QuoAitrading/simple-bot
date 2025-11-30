@@ -1573,15 +1573,17 @@ class QuoTradingLauncher:
         self.loss_entry.delete(0, tk.END)
         self.loss_entry.insert(0, f"{daily_loss_limit:.2f}")
         
-        self.max_loss_per_trade_entry.delete(0, tk.END)
-        self.max_loss_per_trade_entry.insert(0, f"{max_loss_per_trade:.2f}")
+        # Update max loss per trade if field exists
+        if hasattr(self, 'max_loss_per_trade_entry'):
+            self.max_loss_per_trade_entry.delete(0, tk.END)
+            self.max_loss_per_trade_entry.insert(0, f"{max_loss_per_trade:.2f}")
         
         self.contracts_var.set(max_contracts)
         self.trades_var.set(max_trades)
         
-        # Update info label with detailed feedback
+        # Update info label with concise feedback
         self.auto_adjust_info_label.config(
-            text=f"✓ Smart config for ${account_size:,.2f}: {max_contracts} contracts, ${daily_loss_limit:.0f} daily limit, ${max_loss_per_trade:.0f} per trade, {max_trades} trades/day",
+            text=f"✓ Auto-configured: {max_contracts} contracts • ${max_loss_per_trade:.0f}/trade • {max_trades} trades/day",
             fg=self.colors['success']
         )
     
