@@ -37,8 +37,7 @@ USE_CLOUD_SIGNALS = True  # Set to True for production (cloud ML/RL)
 
 # Cloud API endpoints - Azure deployment
 # The bot (src/quotrading_engine.py) handles all cloud ML/RL communication
-CLOUD_API_BASE_URL = os.getenv("QUOTRADING_API_URL", "https://quotrading-signals.icymeadow-86b2969e.eastus.azurecontainerapps.io")
-CLOUD_SIGNAL_ENDPOINT = f"{CLOUD_API_BASE_URL}/api/ml/get_confidence"
+CLOUD_API_BASE_URL = os.getenv("QUOTRADING_API_URL", "https://quotrading-flask-api.azurewebsites.net")
 CLOUD_SIGNAL_POLL_INTERVAL = 5  # Seconds between signal polls
 
 
@@ -383,89 +382,6 @@ class QuoTradingLauncher:
         if hasattr(self, 'loading_window'):
             self.loading_window.destroy()
     
-    def validate_api_call(self, api_type, credentials, success_callback, error_callback):
-        """Validate credentials with cloud API.
-        
-        QuoTrading: Validates against cloud subscription API
-        Brokers: Local format validation
-        
-        Args:
-            api_type: "quotrading" or "broker"
-            credentials: dict with credentials to validate
-            success_callback: function to call on successful validation
-            error_callback: function to call on validation failure (receives error message)
-        """
-        def api_call():
-            try:
-                if api_type == "quotrading":
-                    import requests
-                    email = credentials.get("email", "")
-                    api_key = credentials.get("api_key", "")
-                    
-                    # Get API URL from environment or use default
-                    import os
-                    api_url = os.getenv("QUOTRADING_API_URL", "https://quotrading-signals.icymeadow-86b2969e.eastus.azurecontainerapps.io")
-                    
-                    # Call cloud API to validate license
-                    try:
-                        response = requests.post(
-                            f"{api_url}/api/v1/license/validate",
-                            json={"email": email, "api_key": api_key},
-                            timeout=10
-                        )
-                        
-                        if response.status_code == 200:
-                            data = response.json()
-                            # Save subscription limits to config
-                            self.config["max_contract_size"] = data.get("max_contract_size", 3)
-                            self.config["max_accounts"] = data.get("max_accounts", 1)
-                            self.config["subscription_tier"] = data.get("subscription_tier", "basic")
-                            self.config["subscription_end"] = data.get("subscription_end")
-                            self.save_config()
-                            self.root.after(0, success_callback)
-                        else:
-                            error_data = response.json()
-                            error_msg = error_data.get("detail", "License validation failed")
-                            self.root.after(0, lambda: error_callback(error_msg))
-                    
-                    except requests.exceptions.Timeout:
-                        self.root.after(0, lambda: error_callback("Connection timeout - please check your internet connection"))
-                    except requests.exceptions.ConnectionError:
-                        self.root.after(0, lambda: error_callback("Cannot connect to QuoTrading servers - please check your internet"))
-                    except Exception as e:
-                        self.root.after(0, lambda: error_callback(f"API error: {str(e)}"))
-                
-                elif api_type == "broker":
-                    broker = credentials.get("broker", "")
-                    token = credentials.get("token", "")
-                    username = credentials.get("username", "")
-                    
-                    # Validate all required fields are present
-                    if not broker:
-                        self.root.after(0, lambda: error_callback("Broker not specified"))
-                        return
-                    
-                    if not token or len(token) < 10:
-                        self.root.after(0, lambda: error_callback(f"Invalid {broker} API token"))
-                        return
-                    
-                    if not username or len(username) < 3:
-                        self.root.after(0, lambda: error_callback(f"Invalid {broker} username"))
-                        return
-                    
-                    # Credentials have valid format
-                    self.root.after(0, success_callback)
-                
-                else:
-                    self.root.after(0, lambda: error_callback(f"Unknown validation type: {api_type}"))
-                    
-            except Exception as e:
-                self.root.after(0, lambda: error_callback(f"Validation error: {str(e)}"))
-        
-        # Start validation in background thread
-        thread = threading.Thread(target=api_call, daemon=True)
-        thread.start()
-    
     def validate_license_key(self, api_key, success_callback, error_callback):
         """Validate QuoTrading license key with cloud API.
         
@@ -479,28 +395,42 @@ class QuoTradingLauncher:
         
         def validate_in_thread():
             try:
-                api_url = os.getenv("QUOTRADING_API_URL", "https://quotrading-signals.icymeadow-86b2969e.eastus.azurecontainerapps.io")
+                api_url = os.getenv("QUOTRADING_API_URL", "https://quotrading-flask-api.azurewebsites.net")
                 
-                # Call cloud API to validate license
+                # Call cloud API to validate license using the /api/main endpoint
+                # This endpoint validates the license and returns signal confidence
                 response = requests.post(
-                    f"{api_url}/api/v1/license/validate",
-                    json={"license_key": api_key},
+                    f"{api_url}/api/main",
+                    json={
+                        "license_key": api_key,
+                        "signal_type": "NEUTRAL",  # Dummy data for validation
+                        "regime": "RANGING",
+                        "vix_level": 15.0
+                    },
                     timeout=10
                 )
                 
                 if response.status_code == 200:
                     license_data = response.json()
-                    # Save subscription info to config
-                    self.config["max_contract_size"] = license_data.get("max_contract_size", 3)
-                    self.config["max_accounts"] = license_data.get("max_accounts", 1)
-                    self.config["subscription_tier"] = license_data.get("subscription_tier", "basic")
-                    self.config["subscription_end"] = license_data.get("subscription_end")
+                    
+                    # Check if license is actually valid
+                    if not license_data.get("license_valid", False):
+                        error_msg = license_data.get("message", "License validation failed")
+                        self.root.after(0, lambda: error_callback(error_msg))
+                        return
+                    
+                    # Save subscription info to config (extract from message if available)
+                    # Default to basic tier
+                    self.config["max_contract_size"] = 3
+                    self.config["max_accounts"] = 1
+                    self.config["subscription_tier"] = "basic"
+                    self.config["subscription_end"] = license_data.get("license_expiration")
                     self.save_config()
                     
                     self.root.after(0, lambda: success_callback(license_data))
                 else:
                     error_data = response.json()
-                    error_msg = error_data.get("detail", "License validation failed")
+                    error_msg = error_data.get("message", "License validation failed")
                     self.root.after(0, lambda: error_callback(error_msg))
             
             except requests.exceptions.Timeout:
@@ -2769,7 +2699,7 @@ class QuoTradingLauncher:
 # QuoTrading License (Required - contact support@quotrading.com to purchase)
 QUOTRADING_LICENSE_KEY={self.config.get("quotrading_api_key", "")}
 QUOTRADING_API_KEY={self.config.get("quotrading_api_key", "")}
-QUOTRADING_API_URL=https://quotrading-signals.icymeadow-86b2969e.eastus.azurecontainerapps.io
+QUOTRADING_API_URL=https://quotrading-flask-api.azurewebsites.net
 ACCOUNT_SIZE={self.config.get("account_size", 50000)}
 
 # Broker Configuration

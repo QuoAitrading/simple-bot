@@ -521,7 +521,7 @@ def check_cloud_kill_switch() -> None:
     try:
         import requests
         
-        cloud_api_url = CONFIG.get("cloud_api_url", "https://quotrading-api-v2.azurewebsites.net")
+        cloud_api_url = CONFIG.get("cloud_api_url", "https://quotrading-flask-api.azurewebsites.net")
         
         response = requests.get(
             f"{cloud_api_url}/api/main",
@@ -646,7 +646,7 @@ def check_azure_time_service() -> str:
     try:
         import requests
         
-        cloud_api_url = CONFIG.get("cloud_api_url", "https://quotrading-api-v2.azurewebsites.net")
+        cloud_api_url = CONFIG.get("cloud_api_url", "https://quotrading-flask-api.azurewebsites.net")
         
         response = requests.get(
             f"{cloud_api_url}/api/main",
@@ -7671,7 +7671,7 @@ def handle_license_check_event(data: Dict[str, Any]) -> None:
         
         # Validate license via API
         import requests
-        api_url = os.getenv("QUOTRADING_API_URL", "https://quotrading-api-v2.azurewebsites.net")
+        api_url = os.getenv("QUOTRADING_API_URL", "https://quotrading-flask-api.azurewebsites.net")
         
         response = requests.post(
             f"{api_url}/api/main",
