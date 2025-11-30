@@ -703,6 +703,7 @@
                 <button class="filter-btn" onclick="filterByOnline(true)">🟢 Online Only</button>
                 <button class="filter-btn" onclick="filterByOnline(false)">⚪ Offline Only</button>
                 <button class="filter-btn" onclick="filterByStatus('all')">Show All</button>
+                <button class="filter-btn" onclick="extendAllLicenses()" style="background: #ea8600; color: white; font-weight: 600;">⏱️ Extend All Licenses</button>
             </div>
             <table class="sheet-table">
                 <thead>
@@ -2849,6 +2850,55 @@
                 }
             } catch (error) {
                 alert('❌ Error: ' + error.message);
+            }
+        }
+
+        // Extend all licenses (for maintenance)
+        async function extendAllLicenses() {
+            const days = prompt('Extend ALL licenses by how many days?\n\n(For scheduled maintenance/downtime compensation)', '1');
+            
+            if (!days || isNaN(days) || parseInt(days) <= 0) {
+                return;
+            }
+            
+            const confirm = window.confirm(`⚠️ EXTEND ALL LICENSES ⚠️\n\nThis will add ${days} day(s) to EVERY license (Active, Suspended, Expired).\n\nTotal users: ${allUsers.length}\n\nContinue?`);
+            if (!confirm) return;
+            
+            try {
+                const allLicenseKeys = allUsers.map(user => user.license_key);
+                
+                if (allLicenseKeys.length === 0) {
+                    alert('No users found');
+                    return;
+                }
+                
+                console.log('Extending all licenses:', allLicenseKeys.length, 'users');
+                
+                // Bulk extend all licenses
+                const response = await fetch(`${API_URL}/api/admin/bulk/extend`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-Admin-API-Key': ADMIN_KEY
+                    },
+                    body: JSON.stringify({
+                        license_keys: allLicenseKeys,
+                        days: parseInt(days)
+                    })
+                });
+                
+                const data = await response.json();
+                console.log('Bulk extend response:', data);
+                
+                if (response.ok) {
+                    alert(`✅ SUCCESS\n\nExtended ${data.success} licenses by ${days} day(s)\nFailed: ${data.failed || 0}\n\n${data.errors && data.errors.length > 0 ? 'Errors:\n' + data.errors.join('\n') : ''}`);
+                    await loadDashboard(); // Refresh the dashboard
+                } else {
+                    alert(`❌ Error: ${data.error || 'Unknown error'}`);
+                }
+            } catch (error) {
+                console.error('Extend all error:', error);
+                alert(`❌ Failed to extend licenses: ${error.message}`);
             }
         }
 
