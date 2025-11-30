@@ -1523,7 +1523,7 @@ class QuoTradingLauncher:
         """Universal smart auto-configure for ALL account types.
         
         Uses intelligent math that works for prop firms and live brokers alike.
-        Considers drawdown limits, account size, and safe risk management.
+        Max loss per trade values are rounded to nearest $50 for clean numbers.
         """
         # Get account size from user input or selected account
         try:
@@ -1543,62 +1543,61 @@ class QuoTradingLauncher:
             return
         
         # UNIVERSAL SMART FORMULA - Works for ALL account types
-        # Key principle: Conservative scaling that protects capital
+        # Key principle: Simple percentage-based with clean $50 increments
         
-        # Daily loss limit: Use smart scaling based on account size
-        # Smaller accounts: ~1.5% of account
-        # Larger accounts: Caps at reasonable limits to avoid excessive risk
-        # Formula ensures we never exceed safe thresholds
+        # Max loss per trade: Based on account size, rounded to nearest $50
+        # This is the main risk parameter - everything else scales from this
         
         if account_size <= 10000:
-            # Small accounts: 1.5% with minimum $100
-            daily_loss_limit = max(100, account_size * 0.015)
+            # Small accounts: $50-$100 per trade
+            max_loss_per_trade = 50
         elif account_size <= 25000:
-            # Growing accounts: ~1.2-1.5%
-            daily_loss_limit = account_size * 0.012
+            # Growing accounts: $150 per trade
+            max_loss_per_trade = 150
         elif account_size <= 50000:
-            # Medium accounts: Cap at $600 (1.2% of $50k)
-            daily_loss_limit = min(600, account_size * 0.012)
+            # Medium accounts: $300 per trade
+            max_loss_per_trade = 300
         elif account_size <= 100000:
-            # Large accounts: Cap at $900 (0.9% of $100k)
-            daily_loss_limit = min(900, account_size * 0.009)
+            # Large accounts: $450 per trade
+            max_loss_per_trade = 450
+        elif account_size <= 150000:
+            # Very large accounts: $600 per trade
+            max_loss_per_trade = 600
         else:
-            # Very large accounts: Cap at $1200 (hard limit)
-            daily_loss_limit = min(1200, account_size * 0.008)
+            # Huge accounts: Cap at $750 per trade
+            max_loss_per_trade = 750
         
-        # MAX LOSS PER TRADE: 12% of daily limit
-        # This gives ~8 losing trades before hitting daily limit
-        # Very safe buffer for users
-        PER_TRADE_RISK_PCT = 0.12  # 12% of daily
-        max_loss_per_trade = daily_loss_limit * PER_TRADE_RISK_PCT
+        # DAILY LOSS LIMIT: Based on max_loss_per_trade with buffer
+        # Allow 3-4 losing trades before hitting daily limit
+        # This gives reasonable protection without being too restrictive
+        TRADES_BEFORE_DAILY_LIMIT = 3.5
+        daily_loss_limit = max_loss_per_trade * TRADES_BEFORE_DAILY_LIMIT
         
-        # MAX CONTRACTS: Universal scaling
-        # 1 contract per $600 of daily loss capacity
-        # Conservative across all account sizes
-        DOLLARS_PER_CONTRACT = 600
-        max_contracts = min(self.max_contracts_allowed, max(1, int(daily_loss_limit / DOLLARS_PER_CONTRACT)))
+        # Round daily limit to nearest $50 for clean numbers
+        daily_loss_limit = round(daily_loss_limit / 50) * 50
         
-        # MAX TRADES PER DAY: Universal conservative scaling
-        # Based on daily loss capacity, not account type
-        if daily_loss_limit < 200:
-            max_trades = 3
-        elif daily_loss_limit < 400:
+        # MAX CONTRACTS: Conservative scaling based on max loss per trade
+        # 1 contract per $300 of max loss per trade
+        DOLLARS_PER_CONTRACT = 300
+        max_contracts = min(self.max_contracts_allowed, max(1, int(max_loss_per_trade / DOLLARS_PER_CONTRACT)))
+        
+        # MAX TRADES PER DAY: Based on account size
+        # Smaller accounts = fewer trades
+        if account_size <= 25000:
             max_trades = 4
-        elif daily_loss_limit < 600:
+        elif account_size <= 50000:
             max_trades = 5
-        elif daily_loss_limit < 800:
+        elif account_size <= 100000:
             max_trades = 6
-        elif daily_loss_limit < 1000:
-            max_trades = 7
         else:
-            max_trades = 8
+            max_trades = 7
         
         # Apply the calculated settings
         self.loss_entry.delete(0, tk.END)
-        self.loss_entry.insert(0, f"{daily_loss_limit:.2f}")
+        self.loss_entry.insert(0, f"{daily_loss_limit:.0f}")
         
         self.max_loss_per_trade_entry.delete(0, tk.END)
-        self.max_loss_per_trade_entry.insert(0, f"{max_loss_per_trade:.2f}")
+        self.max_loss_per_trade_entry.insert(0, f"{max_loss_per_trade:.0f}")
         
         self.contracts_var.set(max_contracts)
         self.trades_var.set(max_trades)
@@ -1606,7 +1605,7 @@ class QuoTradingLauncher:
         # Update info label with universal feedback
         loss_trades_buffer = daily_loss_limit / max_loss_per_trade if max_loss_per_trade > 0 else 0
         self.auto_adjust_info_label.config(
-            text=f"✓ Smart config: {max_contracts} contracts • ${max_loss_per_trade:.0f}/trade • {max_trades} trades/day • ${daily_loss_limit:.0f} daily limit • {loss_trades_buffer:.0f}x buffer",
+            text=f"✓ Smart config: {max_contracts} contracts • ${max_loss_per_trade:.0f}/trade • {max_trades} trades/day • ${daily_loss_limit:.0f} daily limit • {loss_trades_buffer:.1f}x buffer",
             fg=self.colors['success']
         )
     
