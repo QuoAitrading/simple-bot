@@ -708,6 +708,7 @@
             <table class="sheet-table">
                 <thead>
                     <tr>
+                        <th style="width: 90px">Online</th>
                         <th style="width: 100px">Status</th>
                         <th style="width: 180px">Email</th>
                         <th style="width: 140px">API Key</th>
@@ -724,7 +725,7 @@
                 </thead>
                 <tbody id="usersTableBody">
                     <tr>
-                        <td colspan="12" class="empty-state">
+                        <td colspan="13" class="empty-state">
                             <div class="empty-state-icon">📋</div>
                             <div class="empty-state-text">Loading users...</div>
                         </td>
@@ -738,6 +739,7 @@
             <div class="toolbar" style="margin-bottom: 16px;">
                 <button class="filter-btn" onclick="showActivityView('api')" id="apiViewBtn" style="background: #1a73e8; color: white;">📊 API Logs</button>
                 <button class="filter-btn" onclick="showActivityView('webhooks')" id="webhooksViewBtn">🔗 Webhook Events</button>
+                <button class="filter-btn" onclick="showActivityView('security')" id="securityViewBtn">🛡️ Security Events</button>
             </div>
             
             <!-- API Logs View -->
@@ -784,6 +786,30 @@
                             <td colspan="7" class="empty-state">
                                 <div class="empty-state-icon">🔗</div>
                                 <div class="empty-state-text">No webhook events</div>
+                            </td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+            
+            <!-- Security Events View -->
+            <div id="securityView" style="display: none;">
+                <table class="sheet-table">
+                    <thead>
+                        <tr>
+                            <th style="width: 160px">Timestamp</th>
+                            <th style="width: 140px">License Key</th>
+                            <th style="width: 120px">Email</th>
+                            <th style="width: 180px">Endpoint</th>
+                            <th style="width: 100px">Attempts</th>
+                            <th style="width: 250px">Reason</th>
+                        </tr>
+                    </thead>
+                    <tbody id="securityTableBody">
+                        <tr>
+                            <td colspan="6" class="empty-state">
+                                <div class="empty-state-icon">🛡️</div>
+                                <div class="empty-state-text">No security events</div>
                             </td>
                         </tr>
                     </tbody>
@@ -1653,6 +1679,7 @@
                 return `
                 <tr class="${expirationInfo.rowClass}">
                     <td>${onlineBadge}</td>
+                    <td><span class="badge badge-${user.license_status.toLowerCase()}">${user.license_status}</span></td>
                     <td>${user.email}</td>
                     <td style="font-family: 'Courier New', monospace; font-size: 11px; color: #202124;">${user.license_key || '-'}</td>
                     <td><span class="badge badge-${user.license_type.toLowerCase()}">${user.license_type}</span></td>
@@ -1759,21 +1786,34 @@
         }
 
         function showActivityView(view) {
+            // Hide all views
+            document.getElementById('apiLogsView').style.display = 'none';
+            document.getElementById('webhooksView').style.display = 'none';
+            document.getElementById('securityView').style.display = 'none';
+            
+            // Reset all button styles
+            document.getElementById('apiViewBtn').style.background = '';
+            document.getElementById('apiViewBtn').style.color = '';
+            document.getElementById('webhooksViewBtn').style.background = '';
+            document.getElementById('webhooksViewBtn').style.color = '';
+            document.getElementById('securityViewBtn').style.background = '';
+            document.getElementById('securityViewBtn').style.color = '';
+            
+            // Show selected view
             if (view === 'api') {
                 document.getElementById('apiLogsView').style.display = 'block';
-                document.getElementById('webhooksView').style.display = 'none';
                 document.getElementById('apiViewBtn').style.background = '#1a73e8';
                 document.getElementById('apiViewBtn').style.color = 'white';
-                document.getElementById('webhooksViewBtn').style.background = '';
-                document.getElementById('webhooksViewBtn').style.color = '';
-            } else {
-                document.getElementById('apiLogsView').style.display = 'none';
+            } else if (view === 'webhooks') {
                 document.getElementById('webhooksView').style.display = 'block';
                 document.getElementById('webhooksViewBtn').style.background = '#1a73e8';
                 document.getElementById('webhooksViewBtn').style.color = 'white';
-                document.getElementById('apiViewBtn').style.background = '';
-                document.getElementById('apiViewBtn').style.color = '';
                 loadWebhooks();
+            } else if (view === 'security') {
+                document.getElementById('securityView').style.display = 'block';
+                document.getElementById('securityViewBtn').style.background = '#1a73e8';
+                document.getElementById('securityViewBtn').style.color = 'white';
+                loadSecurityEvents();
             }
         }
 
@@ -1811,6 +1851,41 @@
                 `}).join('');
             } catch (error) {
                 console.error('Failed to load webhooks:', error);
+            }
+        }
+
+        async function loadSecurityEvents() {
+            try {
+                const response = await fetch(`${API_URL}/api/admin/security-events?license_key=${ADMIN_KEY}&limit=100`);
+                const data = await response.json();
+                
+                const tbody = document.getElementById('securityTableBody');
+                
+                if (!data.events || data.events.length === 0) {
+                    tbody.innerHTML = `
+                        <tr>
+                            <td colspan="6" class="empty-state">
+                                <div class="empty-state-icon">🛡️</div>
+                                <div class="empty-state-text">No security events - all systems secure!</div>
+                            </td>
+                        </tr>
+                    `;
+                    return;
+                }
+                
+                tbody.innerHTML = data.events.map(event => {
+                    return `
+                    <tr>
+                        <td>${formatDateTime(event.timestamp)}</td>
+                        <td style="font-family: monospace; font-size: 11px;">${event.license_key?.substring(0, 12)}...</td>
+                        <td>${event.email || '-'}</td>
+                        <td><code style="background: #f1f3f4; padding: 2px 6px; border-radius: 3px; font-size: 11px;">${event.endpoint}</code></td>
+                        <td><span class="badge badge-suspended" style="font-weight: 600;">${event.attempts || '-'}</span></td>
+                        <td style="font-size: 12px; color: #d93025;">${event.reason || 'Rate limit exceeded'}</td>
+                    </tr>
+                `}).join('');
+            } catch (error) {
+                console.error('Failed to load security events:', error);
             }
         }
 

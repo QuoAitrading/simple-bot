@@ -818,7 +818,7 @@ _rate_limit_cache = {}  # {license_key: [timestamp1, timestamp2, ...]}
 _RATE_LIMIT_WINDOW = 60  # seconds
 _RATE_LIMIT_MAX = 100  # max submissions per window
 
-def check_rate_limit(license_key):
+def check_rate_limit(license_key, endpoint="unknown"):
     """Check if license key is within rate limits. Returns (allowed: bool, message: str)"""
     import time
     current_time = time.time()
@@ -835,11 +835,43 @@ def check_rate_limit(license_key):
     # Check limit
     submission_count = len(_rate_limit_cache[license_key])
     if submission_count >= _RATE_LIMIT_MAX:
+        # Log security event
+        log_security_event(license_key, endpoint, submission_count, f"Rate limit exceeded: {submission_count}/{_RATE_LIMIT_MAX} in {_RATE_LIMIT_WINDOW}s")
         return False, f"Rate limit exceeded: {submission_count} submissions in last {_RATE_LIMIT_WINDOW}s (max {_RATE_LIMIT_MAX})"
     
     # Add current submission
     _rate_limit_cache[license_key].append(current_time)
     return True, "OK"
+
+def log_security_event(license_key, endpoint, attempts, reason):
+    """Log security event (rate limit, suspicious activity) to database"""
+    try:
+        conn = get_db_connection()
+        if not conn:
+            return
+        
+        # Get user email for better tracking
+        email = None
+        try:
+            cur = conn.cursor()
+            cur.execute("SELECT email FROM users WHERE license_key = %s", (license_key,))
+            user = cur.fetchone()
+            if user:
+                email = user[0]
+            cur.close()
+        except:
+            pass
+        
+        cur = conn.cursor()
+        cur.execute("""
+            INSERT INTO security_events (license_key, email, endpoint, attempts, reason, timestamp)
+            VALUES (%s, %s, %s, %s, %s, NOW())
+        """, (license_key, email, endpoint, attempts, reason))
+        conn.commit()
+        cur.close()
+        return_connection(conn)
+    except Exception as e:
+        logging.error(f"Failed to log security event: {e}")
 
 def log_webhook_event(event_type, status, whop_id=None, user_id=None, email=None, details=None, error=None, payload=None):
     """Log webhook event to database for debugging"""
@@ -1070,7 +1102,7 @@ def heartbeat():
             return jsonify({"status": "error", "message": "Device fingerprint required"}), 400
         
         # Rate limiting
-        allowed, rate_msg = check_rate_limit(license_key)
+        allowed, rate_msg = check_rate_limit(license_key, '/api/heartbeat')
         if not allowed:
             return jsonify({"status": "error", "message": rate_msg}), 429
         
@@ -2492,7 +2524,7 @@ def submit_outcome():
             return jsonify({"success": False, "message": f"Invalid license: {msg}"}), 403
 
         # 2. Rate Limiting (Prevent DoS attacks)
-        allowed, rate_msg = check_rate_limit(license_key)
+        allowed, rate_msg = check_rate_limit(license_key, '/api/rl/submit-outcome')
         if not allowed:
             logging.warning(f"⚠️ Rate limit exceeded: {license_key}")
             return jsonify({"success": False, "message": rate_msg}), 429
@@ -3940,6 +3972,73 @@ def admin_get_webhooks():
     except Exception as e:
         logging.error(f"Webhooks fetch error: {e}")
         return jsonify({"webhooks": []}), 200
+    finally:
+        cur.close()
+        return_connection(conn)
+
+@app.route('/api/admin/security-events', methods=['GET'])
+def admin_get_security_events():
+    """Get security event history (rate limits, suspicious activity) - admin only"""
+    api_key = request.args.get('license_key') or request.args.get('admin_key')
+    if api_key != ADMIN_API_KEY:
+        return jsonify({"error": "Unauthorized"}), 401
+    
+    limit = request.args.get('limit', 100, type=int)
+    if limit > 500:
+        limit = 500
+    
+    conn = get_db_connection()
+    if not conn:
+        return jsonify({"events": []}), 200
+    
+    try:
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+        
+        # Check if security_events table exists
+        cur.execute("""
+            SELECT EXISTS (
+                SELECT FROM information_schema.tables 
+                WHERE table_name = 'security_events'
+            )
+        """)
+        table_exists = cur.fetchone()['exists']
+        
+        if not table_exists:
+            # Create security_events table
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS security_events (
+                    id SERIAL PRIMARY KEY,
+                    timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    license_key VARCHAR(255),
+                    email VARCHAR(255),
+                    endpoint VARCHAR(255),
+                    attempts INTEGER,
+                    reason TEXT
+                )
+            """)
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_security_events_timestamp ON security_events(timestamp DESC)")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_security_events_license ON security_events(license_key)")
+            conn.commit()
+            return jsonify({"events": []}), 200
+        
+        # Fetch recent security events
+        cur.execute("""
+            SELECT * FROM security_events
+            ORDER BY timestamp DESC
+            LIMIT %s
+        """, (limit,))
+        rows = cur.fetchall()
+        
+        # Convert datetime to ISO
+        for row in rows:
+            if row.get('timestamp'):
+                row['timestamp'] = row['timestamp'].isoformat()
+        
+        return jsonify({"events": rows}), 200
+        
+    except Exception as e:
+        logging.error(f"Security events fetch error: {e}")
+        return jsonify({"events": []}), 200
     finally:
         cur.close()
         return_connection(conn)
