@@ -2984,10 +2984,8 @@ BOT_LOG_LEVEL=INFO
         try:
             with open(lock_file, 'w') as f:
                 json.dump(lock_data, f, indent=2)
-            print(f"[INFO] Created lock for account {account_id} (PID: {bot_pid})")
             return True
         except Exception as e:
-            print(f"[ERROR] Failed to create lock: {e}")
             return False
     
     def save_config(self):
