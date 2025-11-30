@@ -710,6 +710,7 @@
                     <tr>
                         <th style="width: 100px">Status</th>
                         <th style="width: 180px">Email</th>
+                        <th style="width: 140px">API Key</th>
                         <th style="width: 80px">License</th>
                         <th style="width: 100px">Expires</th>
                         <th style="width: 80px">Symbol</th>
@@ -723,7 +724,7 @@
                 </thead>
                 <tbody id="usersTableBody">
                     <tr>
-                        <td colspan="11" class="empty-state">
+                        <td colspan="12" class="empty-state">
                             <div class="empty-state-icon">📋</div>
                             <div class="empty-state-text">Loading users...</div>
                         </td>
@@ -1218,10 +1219,6 @@
                 <div class="success-message" id="successMessage"></div>
                 <form id="addUserForm" onsubmit="createUser(event)">
                     <div class="form-group">
-                        <label class="form-label">Account ID *</label>
-                        <input type="text" class="form-input" id="accountId" required placeholder="e.g., USER001">
-                    </div>
-                    <div class="form-group">
                         <label class="form-label">Email *</label>
                         <input type="email" class="form-input" id="email" required placeholder="user@example.com">
                     </div>
@@ -1557,7 +1554,7 @@
             if (users.length === 0) {
                 tbody.innerHTML = `
                     <tr>
-                        <td colspan="12" class="empty-state">
+                        <td colspan="13" class="empty-state">
                             <div class="empty-state-icon">📋</div>
                             <div class="empty-state-text">No users found</div>
                         </td>
@@ -1600,6 +1597,7 @@
                 <tr class="${expirationInfo.rowClass}">
                     <td>${onlineBadge}</td>
                     <td>${user.email}</td>
+                    <td style="font-family: 'Courier New', monospace; font-size: 11px; color: #202124;">${user.license_key || '-'}</td>
                     <td><span class="badge badge-${user.license_type.toLowerCase()}">${user.license_type}</span></td>
                     <td>
                         ${formatDate(user.license_expiration) || 'Never'}
@@ -2392,7 +2390,6 @@
         async function createUser(event) {
             event.preventDefault();
             
-            const accountId = document.getElementById('accountId').value;
             const email = document.getElementById('email').value;
             const licenseType = document.getElementById('licenseType').value;
             const daysValid = document.getElementById('daysValid').value;
@@ -2405,7 +2402,6 @@
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({
-                            account_id: accountId,
                             email: email,
                             license_type: licenseType,
                             days_valid: parseInt(daysValid),
@@ -2418,7 +2414,7 @@
                 
                 if (response.ok) {
                     const msg = document.getElementById('successMessage');
-                    msg.innerHTML = `✅ User created successfully!<br><strong>License Key:</strong> ${data.license_key}`;
+                    msg.innerHTML = `✅ User created successfully!<br><strong>License Key (API Key):</strong> ${data.license_key}`;
                     msg.classList.add('show');
                     
                     setTimeout(() => {
@@ -2426,7 +2422,7 @@
                         loadDashboard();
                     }, 3000);
                 } else {
-                    alert('Failed to create user: ' + data.detail);
+                    alert('Failed to create user: ' + (data.error || data.detail || 'Unknown error'));
                 }
             } catch (error) {
                 alert('Failed to create user: ' + error.message);

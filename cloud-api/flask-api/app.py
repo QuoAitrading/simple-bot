@@ -121,11 +121,11 @@ def send_license_email(email, license_key, whop_user_id=None, whop_membership_id
                                 Thank you for subscribing! Your license key is unique to your account — do not share it. Save this email for future reference.
                             </p>
                             
-                            <div style="background: linear-gradient(135deg, #f1f5f9 0%, #e2e8f0 100%); border-left: 4px solid #667eea; padding: 24px; border-radius: 8px; margin: 24px 0;">
+                            <div style="background: #f8fafc; border-left: 4px solid #667eea; padding: 24px; border-radius: 8px; margin: 24px 0;">
                                 <p style="color: #64748b; font-size: 13px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; margin: 0 0 12px 0;">
                                     Your License Key
                                 </p>
-                                <p style="font-size: 26px; font-weight: 900; color: #000000; letter-spacing: 2px; font-family: 'Courier New', monospace; margin: 0; word-break: break-all; line-height: 1.4; background: #ffffff; padding: 16px; border-radius: 6px; border: 2px solid #667eea;">
+                                <p style="font-size: 26px; font-weight: 900; color: #1e293b !important; letter-spacing: 2px; font-family: 'Courier New', monospace; margin: 0; word-break: break-all; line-height: 1.4; background: #ffffff !important; padding: 16px; border-radius: 6px; border: 3px solid #667eea;">
                                     {license_key}
                                 </p>
                             </div>
