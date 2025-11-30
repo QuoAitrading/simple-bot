@@ -451,8 +451,14 @@ def initialize_broker() -> None:
                 if data.get("license_valid"):
                     logger.info(f"Γ£à License validated - {data.get('message', 'Access Granted')}")
                 else:
-                    logger.error("Γ¥î INVALID LICENSE - Bot will not start")
-                    logger.error(f"Reason: {data.get('message', 'Unknown error')}")
+                    reason = data.get('message', 'Unknown error')
+                    logger.error("=" * 70)
+                    logger.error("INVALID OR EXPIRED LICENSE - Bot will not start")
+                    logger.error(f"Reason: {reason}")
+                    if "expired" in reason.lower():
+                        logger.error("Your license has expired. Please renew to continue trading.")
+                    logger.error("Contact: support@quotrading.com")
+                    logger.error("=" * 70)
                     sys.exit(1)
             else:
                 logger.error(f"Γ¥î License validation failed - HTTP {response.status_code}")
@@ -2401,13 +2407,13 @@ def validate_signal_requirements(symbol: str, bar_time: datetime) -> Tuple[bool,
         return False, "Daily trade limit"
     
     # Daily loss limit - Adjusted by current profit
-    # If daily limit is $1000 and trader made $300 profit, effective limit becomes $1300
-    # This means they can lose up to $1300 before hitting the limit
+    # If user sets daily limit to $X and trader makes $Y profit, effective limit becomes $X + $Y
+    # This means they can lose up to $X + $Y before hitting the limit
     current_pnl = state[symbol]["daily_pnl"]
     base_loss_limit = CONFIG["daily_loss_limit"]
     
     # Adjust loss limit by adding current profit (if positive)
-    # Example: $1000 limit + $300 profit = can lose up to $1300 total before stopping
+    # Profit acts as a buffer - the more profit made, the more can be lost before limit is hit
     effective_loss_limit = base_loss_limit + max(0, current_pnl)
     
     if state[symbol]["daily_pnl"] <= -effective_loss_limit:
@@ -6073,15 +6079,18 @@ def execute_exit(symbol: str, exit_price: float, reason: str) -> None:
         
         # Disconnect broker cleanly
         logger.critical("Disconnecting from broker...")
+        logger.critical("LICENSE EXPIRED - Stopping all trading and market data")
         try:
             global broker
             if broker is not None:
                 broker.disconnect()
+                logger.critical("Websocket disconnected - No data streaming")
         except Exception as e:
             pass  # Silent disconnect
         
         # Bot stays ON but IDLE - never exits unless user presses Ctrl+C
         logger.critical("Bot will remain ON but IDLE (no trading)")
+        logger.critical("LICENSE EXPIRED - Please renew your license")
         logger.critical("Press Ctrl+C to stop bot")
         # NOTE: Bot does NOT exit - it stays running in idle mode
         # sys.exit(0)  # COMMENTED OUT - bot should never exit unless user stops it
@@ -6368,8 +6377,8 @@ def perform_daily_reset(symbol: str, new_date: Any) -> None:
 def check_daily_loss_limit(symbol: str) -> Tuple[bool, Optional[str]]:
     """
     Check if daily loss limit has been exceeded.
-    Loss limit is adjusted by current profit - if trader made $300 and limit is $1000,
-    they can lose up to $1300 before hitting the limit.
+    Loss limit is adjusted by current profit - if trader made profit and limit is set by user,
+    they can lose [user's limit + profit] before hitting the limit.
     
     Args:
         symbol: Instrument symbol
@@ -6419,8 +6428,11 @@ def check_approaching_failure(symbol: str) -> Tuple[bool, Optional[str], Optiona
         - reason: Description of what limit is being approached
         - severity_level: 0.0-1.0 indicating how close to failure (0.8 = at 80%, 1.0 = at 100%)
     """
-    daily_loss_limit = CONFIG.get("daily_loss_limit", 1000.0)
-    if daily_loss_limit > 0 and state[symbol]["daily_pnl"] <= -daily_loss_limit * DAILY_LOSS_APPROACHING_THRESHOLD:
+    daily_loss_limit = CONFIG.get("daily_loss_limit")
+    if daily_loss_limit is None or daily_loss_limit <= 0:
+        return False, None, 0.0
+    
+    if state[symbol]["daily_pnl"] <= -daily_loss_limit * DAILY_LOSS_APPROACHING_THRESHOLD:
         daily_loss_severity = abs(state[symbol]["daily_pnl"]) / daily_loss_limit
         reason = f"Daily loss at {daily_loss_severity*100:.1f}% of limit (${state[symbol]['daily_pnl']:.2f}/${-daily_loss_limit:.2f})"
         
@@ -7834,14 +7846,17 @@ def handle_license_check_event(data: Dict[str, Any]) -> None:
                     
                     # Disconnect broker cleanly
                     logger.critical("Disconnecting from broker...")
+                    logger.critical("LICENSE EXPIRED - Stopping all trading and market data")
                     try:
                         if broker is not None:
                             broker.disconnect()
+                            logger.critical("Websocket disconnected - No data streaming")
                     except Exception as e:
                         pass  # Silent disconnect
                     
                     # Bot stays ON but IDLE - never exits unless user presses Ctrl+C
                     logger.critical("Bot will remain ON but IDLE (no trading)")
+                    logger.critical("LICENSE EXPIRED - Please renew your license")
                     logger.critical("Press Ctrl+C to stop bot")
                     # NOTE: Bot does NOT exit - it stays running in idle mode
                     # sys.exit(0)  # COMMENTED OUT - bot should never exit unless user stops it

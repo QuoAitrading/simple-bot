@@ -16,25 +16,30 @@ def test_profit_adjusted_loss_limit():
     print("=" * 80)
     print("TEST: Profit-Adjusted Daily Loss Limit")
     print("=" * 80)
-    print("\nConcept: If daily loss limit is $1000 and trader makes $300 profit,")
-    print("the effective loss limit becomes $1300 (base + profit cushion)")
+    print("\nConcept: User sets daily loss limit (e.g. $1000), profit acts as buffer")
+    print("If trader makes profit, they're further from their limit")
+    print("Example: $1000 limit + $300 profit = can lose $1300 before stopping")
     print()
     
-    base_loss_limit = 1000.0
+    # Example with user-configurable limit (NOT hardcoded)
+    base_loss_limit = 1000.0  # This would come from user's GUI settings
     test_cases = [
         (0, "No profit - use base limit"),
-        (100, "$100 profit - can lose $1100 total"),
-        (300, "$300 profit - can lose $1300 total"),
-        (500, "$500 profit - can lose $1500 total"),
-        (1000, "$1000 profit - can lose $2000 total"),
+        (100, "$100 profit buffer - can lose $1100 total"),
+        (300, "$300 profit buffer - can lose $1300 total"),
+        (500, "$500 profit buffer - can lose $1500 total"),
+        (1000, "$1000 profit buffer - can lose $2000 total"),
     ]
+    
+    print(f"User's configured daily loss limit: ${base_loss_limit:.2f}")
+    print()
     
     for profit, description in test_cases:
         effective_loss_limit = base_loss_limit + max(0, profit)
         
         print(f"\n${profit:>6.2f} profit: {description}")
-        print(f"  Base loss limit: ${base_loss_limit:.2f}")
-        print(f"  Profit cushion: ${max(0, profit):.2f}")
+        print(f"  Base loss limit (from user config): ${base_loss_limit:.2f}")
+        print(f"  Profit buffer: ${max(0, profit):.2f}")
         print(f"  Effective loss limit: ${effective_loss_limit:.2f}")
     
     print("\n" + "=" * 80)
