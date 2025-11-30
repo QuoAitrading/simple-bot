@@ -122,14 +122,11 @@ def send_license_email(email, license_key, whop_user_id=None, whop_membership_id
                             </p>
                             
                             <div style="background: linear-gradient(135deg, #f1f5f9 0%, #e2e8f0 100%); border-left: 4px solid #667eea; padding: 24px; border-radius: 8px; margin: 24px 0;">
-                                <p style="color: #64748b; font-size: 13px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; margin: 0 0 8px 0;">
+                                <p style="color: #64748b; font-size: 13px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; margin: 0 0 12px 0;">
                                     Your License Key
                                 </p>
-                                <p style="font-size: 28px; font-weight: 700; color: #1e293b; letter-spacing: 1px; font-family: 'Courier New', monospace; margin: 0; word-break: break-all;">
+                                <p style="font-size: 24px; font-weight: 700; color: #1e293b; letter-spacing: 2px; font-family: 'Courier New', monospace; margin: 0; word-break: break-all; line-height: 1.4;">
                                     {license_key}
-                                </p>
-                                <p style="color: #f59e0b; font-size: 13px; margin: 12px 0 0 0; font-weight: 500;">
-                                    ⚠️ Keep this key secure — it's unique to your account
                                 </p>
                             </div>
                             
