@@ -805,8 +805,6 @@ class QuoTradingLauncher:
         # Validate by actually connecting and fetching accounts
         def validate_in_thread():
             import traceback
-            print(f"[DEBUG] validate_in_thread started")
-            print(f"[DEBUG] broker={broker}, username={username}")
             try:
                 # Import broker interface
                 import sys
@@ -864,7 +862,6 @@ class QuoTradingLauncher:
                                 raise Exception("No account info available")
                         except Exception as e:
                             # Fallback if account_info is not available
-                            print(f"[DEBUG] account_info failed ({str(e)}), using fallback")
                             current_equity = ts_broker.get_account_equity()
                             stored_starting_balance = self.config.get("topstep_starting_balance")
                             if stored_starting_balance:
@@ -946,15 +943,6 @@ class QuoTradingLauncher:
                         f"• Active account status\n\n"
                         f"Contact support if the issue persists."
                     )
-                    
-                    print(f"\n{'='*60}")
-                    print(f"LOGIN ERROR - {broker}")
-                    print(f"{'='*60}")
-                    print(f"Username: {username}")
-                    print(f"Error: {error_msg}")
-                    print(f"\nFull traceback:")
-                    print(error_traceback)
-                    print(f"{'='*60}\n")
                 
                 self.root.after(0, on_error_ui)
         
@@ -1145,33 +1133,6 @@ class QuoTradingLauncher:
         # Right side - Trading Modes
         modes_section = tk.Frame(symbols_modes_container, bg=self.colors['card'])
         modes_section.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        
-        # Confidence Trading (Fixed - no dynamic contracts)
-        conf_mode_frame = tk.Frame(modes_section, bg=self.colors['card'])
-        conf_mode_frame.pack(fill=tk.X, pady=(0, 5))
-        
-        self.confidence_trading_var = tk.BooleanVar(value=self.config.get("confidence_trading", False))
-        
-        tk.Checkbutton(
-            conf_mode_frame,
-            text="⚖️ Confidence Trading",
-            variable=self.confidence_trading_var,
-            font=("Segoe UI", 8, "bold"),
-            bg=self.colors['card'],
-            fg=self.colors['text'],
-            selectcolor=self.colors['secondary'],
-            activebackground=self.colors['card'],
-            activeforeground=self.colors['success'],
-            cursor="hand2"
-        ).pack(anchor=tk.W)
-        
-        tk.Label(
-            conf_mode_frame,
-            text="Filter trades by confidence threshold",
-            font=("Segoe UI", 7, "bold"),
-            bg=self.colors['card'],
-            fg=self.colors['text_light']
-        ).pack(anchor=tk.W, padx=(20, 0))
         
         # Shadow Mode
         shadow_mode_frame = tk.Frame(modes_section, bg=self.colors['card'])
@@ -1513,19 +1474,17 @@ class QuoTradingLauncher:
                 info_text = f"✓ {selected_account['id']} | Balance: ${selected_account['balance']:,.2f}"
                 self.account_info_label.config(text=info_text, fg=self.colors['success'])
         except Exception as e:
-            print(f"[ERROR] Failed to update account info: {e}")
+            pass
     
     
     def fetch_account_info(self):
         """Ping RL server to verify API connectivity."""
-        print("\n[DEBUG] Ping button clicked!")
         
         # Show loading spinner
         self.show_loading("Pinging RL server...")
         
         def test_connection_thread():
             """Ping RL server."""
-            print("[DEBUG] Pinging RL server...")
             import traceback
             try:
                 import requests
@@ -1534,13 +1493,10 @@ class QuoTradingLauncher:
                 rl_server_url = CLOUD_API_BASE_URL
                 health_endpoint = f"{rl_server_url}/health"
                 
-                print(f"[DEBUG] Pinging: {health_endpoint}")
-                
                 # Ping with timeout
                 response = requests.get(health_endpoint, timeout=10)
                 
                 if response.status_code == 200:
-                    print("[DEBUG] Ping successful!")
                     
                     # Get response data if available
                     try:
@@ -1589,7 +1545,6 @@ class QuoTradingLauncher:
                         f"• RL server status\n\n"
                         f"Contact support if issue persists."
                     )
-                    print(f"[ERROR] {error_msg}")
                 
                 self.root.after(0, show_error)
                 
@@ -1608,13 +1563,11 @@ class QuoTradingLauncher:
                         f"• RL server status\n\n"
                         f"Contact support if issue persists."
                     )
-                    print(f"[ERROR] {error_msg}")
                 
                 self.root.after(0, show_error)
                 
             except Exception as error:
                 error_msg = str(error)
-                error_traceback = traceback.format_exc()
                 
                 def show_error():
                     self.hide_loading()
@@ -1624,16 +1577,6 @@ class QuoTradingLauncher:
                         f"Server: {rl_server_url}\n\n"
                         f"Contact support if issue persists."
                     )
-                    
-                    # Log to console for debugging
-                    print(f"\n{'='*60}")
-                    print(f"PING ERROR")
-                    print(f"{'='*60}")
-                    print(f"URL: {rl_server_url}")
-                    print(f"Error: {error_msg}")
-                    print(f"\nFull traceback:")
-                    print(error_traceback)
-                    print(f"{'='*60}\n")
                 
                 self.root.after(0, show_error)
         
@@ -1760,7 +1703,6 @@ class QuoTradingLauncher:
         self.config["max_trades"] = self.trades_var.get()
         self.config["confidence_threshold"] = self.confidence_var.get()
         self.config["shadow_mode"] = self.shadow_mode_var.get()
-        self.config["confidence_trading"] = self.confidence_trading_var.get()
         self.config["selected_account"] = self.account_dropdown_var.get()
         
         # Get selected account ID - parse from dropdown display format
@@ -1785,10 +1727,6 @@ class QuoTradingLauncher:
         if not selected_account_id and accounts:
             selected_account_id = accounts[0].get("id")
             self.config["selected_account_id"] = selected_account_id
-            print(f"[WARNING] Could not parse account from '{selected_display}', using first account: {selected_account_id}")
-        
-        print(f"[DEBUG] Selected account: {selected_display}")
-        print(f"[DEBUG] Account ID: {selected_account_id}")
         
         # CHECK INSTANCE LOCK - Prevent duplicate trading on same account
         if selected_account_id:
@@ -1834,10 +1772,6 @@ class QuoTradingLauncher:
         # Only show enabled features
         if self.shadow_mode_var.get():
             confirmation_text += f"\n✓ Shadow Mode: ON (paper trading - no real trades)\n"
-        
-        if self.confidence_trading_var.get():
-            confirmation_text += f"✓ Confidence Trading: ENABLED\n"
-            confirmation_text += f"  → Filters signals by confidence threshold\n"
         
         confirmation_text += f"\nThis will open a PowerShell terminal with live logs.\n"
         confirmation_text += f"Use the window's close button to stop the bot.\n\n"
@@ -2856,9 +2790,6 @@ BOT_MAX_LOSS_PER_TRADE={self.config.get("max_loss_per_trade", 200)}
 # AI/Confidence Settings
 BOT_CONFIDENCE_THRESHOLD={self.confidence_var.get()}
 # Bot only takes signals above this confidence threshold (user's minimum)
-BOT_CONFIDENCE_TRADING={'true' if self.confidence_trading_var.get() else 'false'}
-# When enabled: Filters trades by confidence threshold only
-# Contracts are FIXED at user's max_contracts setting (no dynamic scaling)
 
 # Trading Mode (Signal-Only Mode for manual trading)
 BOT_SHADOW_MODE={'true' if self.shadow_mode_var.get() else 'false'}
@@ -2876,8 +2807,6 @@ BOT_LOG_LEVEL=INFO
         
         with open(env_path, 'w') as f:
             f.write(env_content)
-        
-        print(f"✓ .env file created with {len(selected_symbols)} symbols: {symbols_str}")
     
     def load_config(self):
         """Load saved configuration."""

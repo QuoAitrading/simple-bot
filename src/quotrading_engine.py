@@ -219,12 +219,8 @@ try:
         CONFIG["slippage_ticks"] = SYMBOL_SPEC.typical_slippage_ticks
         _bot_config.slippage_ticks = SYMBOL_SPEC.typical_slippage_ticks
     
-    print(f"Γ£ô Symbol specs loaded: {SYMBOL_SPEC.name} ({SYMBOL_SPEC.symbol})")
-    print(f"  Tick Value: ${SYMBOL_SPEC.tick_value:.2f} | Tick Size: ${SYMBOL_SPEC.tick_size}")
-    print(f"  Slippage: {SYMBOL_SPEC.typical_slippage_ticks} ticks")
 except Exception as e:
     # Symbol specs not available - will use defaults from config
-    print(f"Symbol specs not loaded (using defaults): {e}")
     pass
 
 # String constants
@@ -1708,8 +1704,8 @@ def inject_complete_bar(symbol: str, bar: Dict[str, Any]) -> None:
     if is_backtest_mode() and 'timestamp' in bar:
         backtest_current_time = bar['timestamp']
     
-    # DEBUG: Check what we're getting
-    if len(state[symbol]["bars_1min"]) == 0:  # First bar only
+    # First bar check
+    if len(state[symbol]["bars_1min"]) == 0:
         logger.info(f"[INJECT_BAR] First bar: H={bar.get('high', 'MISSING'):.2f} L={bar.get('low', 'MISSING'):.2f}")
     
     # Finalize any pending bar first
