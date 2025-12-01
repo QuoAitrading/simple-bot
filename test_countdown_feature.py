@@ -66,7 +66,7 @@ def main():
     print(" " * 5 + "PowerShell Terminal - Bot Starting...")
     print("=" * 60 + "\n")
     
-    display_animated_logo(duration=3.0, fps=15)
+    display_animated_logo(duration=8.0, fps=15)
     
     print("\n" + "=" * 60)
     print(" " * 15 + "✅ TEST COMPLETE!")

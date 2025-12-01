@@ -8237,7 +8237,7 @@ if __name__ == "__main__":
                 os.system('clear')
             
             # Show logo without headers - full screen splash
-            display_animated_logo(duration=3.0, fps=15, with_headers=False)
+            display_animated_logo(duration=8.0, fps=15, with_headers=False)
             
             # Clear screen after logo to make room for logs
             if os.name == 'nt':
