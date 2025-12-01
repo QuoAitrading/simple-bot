@@ -7258,9 +7258,30 @@ def main(symbol_override: str = None) -> None:
     # Use symbol override if provided (for multi-symbol support)
     trading_symbol = symbol_override if symbol_override else CONFIG["instrument"]
     
-    logger.info(SEPARATOR_LINE)
-    logger.info(f"QuoTrading AI Bot Starting [{trading_symbol}]")
-    logger.info(SEPARATOR_LINE)
+    # Professional startup header with GUI settings
+    logger.info("=" * 80)
+    logger.info("QuoTrading AI Professional Trading System")
+    logger.info("=" * 80)
+    
+    # Display mode and connection
+    mode_str = "SIGNAL-ONLY MODE (Manual Trading)" if _bot_config.shadow_mode else "LIVE TRADING"
+    logger.info(f"Mode: {mode_str}")
+    logger.info(f"Symbol: {trading_symbol}")
+    
+    # Show broker connection status (will be updated after broker connects)
+    logger.info("Broker: Connecting...")
+    
+    # Display GUI Settings in professional format
+    logger.info("")
+    logger.info("📋 Trading Configuration:")
+    logger.info(f"  • Max Contracts: {CONFIG['max_contracts']}")
+    logger.info(f"  • Max Trades/Day: {CONFIG['max_trades_per_day']}")
+    logger.info(f"  • Risk Per Trade: {CONFIG['risk_per_trade'] * 100:.1f}%")
+    logger.info(f"  • Daily Loss Limit: ${CONFIG['daily_loss_limit']}")
+    logger.info(f"  • Entry Window: {CONFIG['entry_start_time']} - {CONFIG['entry_end_time']} ET")
+    logger.info(f"  • Force Close: {CONFIG['forced_flatten_time']} ET")
+    logger.info("=" * 80)
+    logger.info("")
     
     # Initialize local RL brain for both LIVE and BACKTEST modes
     # LIVE MODE: Reads from local symbol-specific folder for pattern matching, saves to cloud only
@@ -7294,37 +7315,19 @@ def main(symbol_override: str = None) -> None:
             )
             pass  # Silent - cloud API initialized
         else:
-            logger.warning(f"[{trading_symbol}] No license key - cloud outcome reporting disabled")
+            logger.warning(f"No license key - cloud outcome reporting disabled")
     
-    # Log symbol specifications if loaded
-    if SYMBOL_SPEC:
-        logger.info(f"[{trading_symbol}] Symbol: {SYMBOL_SPEC.name} ({SYMBOL_SPEC.symbol})")
-        logger.info(f"[{trading_symbol}]   Tick Value: ${SYMBOL_SPEC.tick_value:.2f} | Tick Size: ${SYMBOL_SPEC.tick_size}")
-        logger.info(f"[{trading_symbol}]   Slippage: {SYMBOL_SPEC.typical_slippage_ticks} ticks | Volatility: {SYMBOL_SPEC.volatility_factor}x")
-        logger.info(f"[{trading_symbol}]   Trading Hours: {SYMBOL_SPEC.session_start} - {SYMBOL_SPEC.session_end} ET")
+    # Symbol specifications - suppress detailed info, just essentials
+    # (Tick value, slippage, etc. are technical details customers don't need)
     
-    # Display operating mode
-    if _bot_config.shadow_mode:
-        logger.info(f"[{trading_symbol}] Mode: ≡ƒôè SIGNAL-ONLY MODE (Manual Trading)")
-        logger.info(f"[{trading_symbol}] ΓÜá∩╕Å  Signal mode: Shows trading signals without executing trades")
-    else:
-        logger.info(f"[{trading_symbol}] Mode: LIVE TRADING")
-    
-    logger.info(f"[{trading_symbol}] Instrument: {trading_symbol}")
-    logger.info(f"[{trading_symbol}] Entry Window: {CONFIG['entry_start_time']} - {CONFIG['entry_end_time']} ET")
-    logger.info(f"[{trading_symbol}] Force Close: {CONFIG['forced_flatten_time']} ET")
-    logger.info(f"[{trading_symbol}] Shutdown: {CONFIG['shutdown_time']} ET")
-    logger.info(f"[{trading_symbol}] Max Contracts: {CONFIG['max_contracts']}")
-    logger.info(f"[{trading_symbol}] Max Trades/Day: {CONFIG['max_trades_per_day']}")
-    logger.info(f"[{trading_symbol}] Risk Per Trade: {CONFIG['risk_per_trade'] * 100:.1f}%")
-    logger.info(f"[{trading_symbol}] Daily Loss Limit: ${CONFIG['daily_loss_limit']}")
-    logger.info(SEPARATOR_LINE)
+    # Operating mode and settings already shown in header - no need to repeat
+    pass  # Silent - configuration already displayed in header
     
     # Phase Fifteen: Validate timezone configuration
     validate_timezone_configuration()
     
     # Initialize bid/ask manager
-        pass  # Silent - bid/ask manager initialization
+    pass  # Silent - bid/ask manager initialization
     bid_ask_manager = BidAskManager(CONFIG)
     
     # Initialize broker (replaces initialize_sdk)
@@ -7332,7 +7335,10 @@ def main(symbol_override: str = None) -> None:
     
     # Phase 12: Record starting equity for drawdown monitoring
     bot_status["starting_equity"] = get_account_equity()
-    logger.info(f"[{trading_symbol}] Starting Equity: ${bot_status['starting_equity']:.2f}")
+    
+    # Update header with broker connection status and starting equity
+    logger.info(f"✅ Broker Connected | Starting Equity: ${bot_status['starting_equity']:.2f}")
+    logger.info("")
     
     # Initialize state for instrument (use override symbol if provided)
     initialize_state(trading_symbol)
@@ -7401,8 +7407,9 @@ def main(symbol_override: str = None) -> None:
     # Only the dev (Kevin) gets the experience data saved to cloud
     pass  # Silent - RL cloud mode (not customer-facing)
     
-    pass  # Silent - initialization complete
-    logger.info(SEPARATOR_LINE)
+    logger.info("🚀 Bot Ready - Monitoring for Signals")
+    logger.info("Press Ctrl+C for graceful shutdown")
+    logger.info("")
     
     # Run event loop (blocks until shutdown signal)
     try:
@@ -7456,8 +7463,8 @@ def handle_tick_event(event) -> None:
     state[symbol]["total_ticks_received"] += 1
     total_ticks = state[symbol]["total_ticks_received"]
     
-    # Log market snapshot periodically (every 5000 ticks for professional monitoring)
-    if total_ticks % 5000 == 0:
+    # Log market snapshot periodically (every 1000 ticks for professional monitoring)
+    if total_ticks % 1000 == 0:
         # Get current bid/ask from bid_ask_manager if available
         if bid_ask_manager is not None:
             quote = bid_ask_manager.get_current_quote(symbol)

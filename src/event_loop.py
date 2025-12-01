@@ -178,7 +178,7 @@ class EventLoop:
         """
         self.running = True
         self.start_time = time.time()
-        logger.info("✅ Bot Ready - Monitoring for signals")
+        pass  # Silent - event loop starting (message shown in main startup)
         
         last_status_time = time.time()
         
