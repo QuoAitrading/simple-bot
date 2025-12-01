@@ -272,6 +272,9 @@ class QuoTradingLauncher:
         # Track current API key for lock management
         self.current_api_key = None
         
+        # Countdown state (initialized here to avoid dynamic attribute creation)
+        self.countdown_cancelled = False
+        
         # Register cleanup on window close
         self.root.protocol("WM_DELETE_WINDOW", self.on_closing)
         
@@ -1970,8 +1973,8 @@ class QuoTradingLauncher:
         countdown_dialog.transient(self.root)
         countdown_dialog.grab_set()
         
-        # Remove window decorations for modern look
-        countdown_dialog.overrideredirect(True)
+        # Keep window decorations for better UX (user can still close if needed)
+        # This is safer than overrideredirect(True) which could trap users
         
         # Center the dialog
         countdown_dialog.update_idletasks()
@@ -1979,13 +1982,9 @@ class QuoTradingLauncher:
         y = self.root.winfo_y() + (self.root.winfo_height() // 2) - (countdown_dialog.winfo_height() // 2)
         countdown_dialog.geometry(f"+{x}+{y}")
         
-        # Add border frame
-        border_frame = tk.Frame(countdown_dialog, bg=self.colors['border'], bd=0)
-        border_frame.pack(fill=tk.BOTH, expand=True, padx=2, pady=2)
-        
-        # Inner frame
-        inner_frame = tk.Frame(border_frame, bg=self.colors['card'])
-        inner_frame.pack(fill=tk.BOTH, expand=True, padx=2, pady=2)
+        # Main content frame
+        inner_frame = tk.Frame(countdown_dialog, bg=self.colors['card'])
+        inner_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
         
         # Header
         header_label = tk.Label(

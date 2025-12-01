@@ -7297,8 +7297,8 @@ def main(symbol_override: str = None) -> None:
     try:
         display_animated_logo(duration=3.0, fps=15)
     except Exception as e:
-        # If logo display fails, just continue - it's not critical
-        pass
+        # Logo display failed - log it but continue (not critical)
+        logger.warning(f"Could not display rainbow logo: {e}")
     
     # CRITICAL: Validate license FIRST, before any initialization
     # This is the "login screen" - fail fast if license invalid or session conflict

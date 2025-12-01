@@ -67,6 +67,10 @@ def color_char_with_gradient(char, position, total_chars, color_offset=0):
     if char.strip() == '':
         return char
     
+    # Handle empty lines
+    if total_chars == 0:
+        return char
+    
     rainbow = get_rainbow_colors()
     
     # Calculate which color to use based on position
@@ -115,10 +119,9 @@ def display_animated_logo(duration=3.0, fps=10):
     for frame in range(frames):
         # Move cursor up to overwrite previous frame (only after first frame)
         if frame > 0:
-            # Move cursor up by number of logo lines
-            for _ in range(len(QUO_AI_LOGO)):
-                print("\033[F", end='')  # Move up one line
-                print("\033[K", end='')  # Clear line
+            # Combine ANSI escape sequences for efficiency
+            clear_and_move = '\033[F\033[K' * len(QUO_AI_LOGO)
+            print(clear_and_move, end='')
         
         # Calculate color offset for this frame
         # This creates the "flowing" rainbow effect
