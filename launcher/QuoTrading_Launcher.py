@@ -611,8 +611,9 @@ class QuoTradingLauncher:
                             "Your license key is currently active on another device.\n"
                             "Only one device can use a license at a time.\n\n"
                             "Please stop the bot on the other device first.\n\n"
-                            "If you recently stopped the bot on another device,\n"
-                            "wait 90 seconds and try again."
+                            "If you recently stopped the bot, it may take up to\n"
+                            "2 minutes for the session to auto-clear. Please wait\n"
+                            "and try again."
                         )
                     else:
                         error_msg = error_data.get("message", "License validation failed - Access Forbidden")

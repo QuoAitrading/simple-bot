@@ -6,6 +6,12 @@ Verify that:
 2. Stale sessions are auto-cleared on login
 3. Active sessions block concurrent logins
 4. Sessions are released on clean shutdown
+
+Note: This test duplicates the fingerprint generation logic from launcher
+and bot files because importing those files directly requires tkinter and
+other dependencies that may not be available in test environment. This
+ensures tests can run in isolation but should be kept in sync with changes
+to production code.
 """
 
 import sys

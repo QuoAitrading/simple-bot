@@ -147,14 +147,8 @@ def get_device_fingerprint() -> str:
     # This allows launcher and bot to share the same session
     fingerprint_raw = f"{machine_id}:{username}:{platform_name}"
     
-    # Debug logging
-    logging.info(f"BOT Fingerprint components: MAC={machine_id}, user={username}, platform={platform_name}")
-    logging.info(f"BOT Raw fingerprint: {fingerprint_raw}")
-    
     # Hash for privacy (don't send raw MAC address to server)
     fingerprint_hash = hashlib.sha256(fingerprint_raw.encode()).hexdigest()[:16]
-    
-    logging.info(f"BOT Final fingerprint: {fingerprint_hash}")
     
     return fingerprint_hash
 
