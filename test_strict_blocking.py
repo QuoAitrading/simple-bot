@@ -225,10 +225,10 @@ def main():
         print("   • Doesn't matter same or different device")
         print("   • Only exception: session fully expired (>= 60s)")
         print("\n✅ Faster crash detection:")
-        print("   • Reduced timeout from 60s to 60s")
-        print("   • Heartbeat interval reduced from 30s to 20s")
+        print("   • Timeout: 60 seconds (1 minute)")
+        print("   • Heartbeat interval: 20 seconds (reduced from 30s)")
         print("   • Bot crashes detected in 60 seconds")
-        print("   • Still 2x heartbeat interval (20s) for network tolerance")
+        print("   • 3x heartbeat interval (20s × 3) for network tolerance")
         print("="*70)
         return 0
         

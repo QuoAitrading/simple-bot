@@ -52,7 +52,7 @@ ADMIN_API_KEY = os.environ.get("ADMIN_API_KEY", "ADMIN-DEV-KEY-2026")  # For cre
 # Session locking configuration
 # A session is considered "active" if heartbeat received within this threshold
 # Heartbeats are sent every 20 seconds by the bot
-# Session expires after 40 seconds of no heartbeat - 2x heartbeat interval for crash detection while tolerating network issues
+# Session expires after 60 seconds of no heartbeat - 3x heartbeat interval for crash detection while tolerating network issues
 SESSION_TIMEOUT_SECONDS = 60  # 60 seconds - session expires if no heartbeat for 60 seconds (3x heartbeat interval)
 WHOP_API_BASE_URL = "https://api.whop.com/api/v5"
 
