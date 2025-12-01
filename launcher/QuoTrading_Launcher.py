@@ -275,6 +275,9 @@ class QuoTradingLauncher:
         # Countdown state (initialized here to avoid dynamic attribute creation)
         self.countdown_cancelled = False
         
+        # License timer label (will be created when trading screen is shown)
+        self.license_timer_label = None
+        
         # Register cleanup on window close
         self.root.protocol("WM_DELETE_WINDOW", self.on_closing)
         
@@ -1590,6 +1593,30 @@ class QuoTradingLauncher:
         launch_container.pack(expand=True, padx=(0, 60))
         launch_btn = self.create_button(launch_container, "LAUNCH AI", self.start_bot, "next")
         launch_btn.pack(pady=2, ipady=3)
+        
+        # License expiration timer (bottom right)
+        timer_container = tk.Frame(bottom_row, bg=self.colors['card'])
+        timer_container.pack(side=tk.RIGHT, anchor=tk.E, padx=(0, 5))
+        
+        tk.Label(
+            timer_container,
+            text="⏱️ License Expires:",
+            font=("Segoe UI", 7, "bold"),
+            bg=self.colors['card'],
+            fg=self.colors['text_light']
+        ).pack()
+        
+        self.license_timer_label = tk.Label(
+            timer_container,
+            text="Loading...",
+            font=("Segoe UI", 9, "bold"),
+            bg=self.colors['card'],
+            fg=self.colors['success']
+        )
+        self.license_timer_label.pack()
+        
+        # Start the license timer update
+        self.update_license_timer()
     
     def on_account_selected(self, event=None):
         """Update account size field when user selects a different account from dropdown."""
@@ -1618,6 +1645,80 @@ class QuoTradingLauncher:
                 self.account_info_label.config(text=info_text, fg=self.colors['success'])
         except Exception as e:
             pass
+    
+    def update_license_timer(self):
+        """Update the license expiration timer display."""
+        if not hasattr(self, 'license_timer_label'):
+            return  # Timer label not created yet
+        
+        # Get license expiration from config
+        license_expiration = self.config.get("license_expiration")
+        
+        if not license_expiration:
+            self.license_timer_label.config(text="No expiration data", fg=self.colors['text_secondary'])
+            return
+        
+        try:
+            # Parse the expiration datetime (format: "2025-12-31T23:59:59" or similar)
+            from datetime import datetime
+            
+            # Handle different possible formats
+            if isinstance(license_expiration, str):
+                # Try ISO format first
+                try:
+                    expiration_dt = datetime.fromisoformat(license_expiration.replace('Z', '+00:00'))
+                except:
+                    # Try other common formats
+                    try:
+                        expiration_dt = datetime.strptime(license_expiration, "%Y-%m-%d %H:%M:%S")
+                    except:
+                        expiration_dt = datetime.strptime(license_expiration, "%Y-%m-%dT%H:%M:%S")
+            else:
+                # Already a datetime object
+                expiration_dt = license_expiration
+            
+            # Calculate time remaining
+            now = datetime.now()
+            time_remaining = expiration_dt - now
+            
+            # Check if expired
+            if time_remaining.total_seconds() <= 0:
+                self.license_timer_label.config(text="EXPIRED", fg=self.colors['error'])
+                return
+            
+            # Calculate days, hours, minutes, seconds
+            total_seconds = int(time_remaining.total_seconds())
+            days = total_seconds // 86400
+            hours = (total_seconds % 86400) // 3600
+            minutes = (total_seconds % 3600) // 60
+            seconds = total_seconds % 60
+            
+            # Format the display
+            if days > 0:
+                timer_text = f"{days}d {hours}h {minutes}m {seconds}s"
+            elif hours > 0:
+                timer_text = f"{hours}h {minutes}m {seconds}s"
+            elif minutes > 0:
+                timer_text = f"{minutes}m {seconds}s"
+            else:
+                timer_text = f"{seconds}s"
+            
+            # Color based on time remaining
+            if days > 7:
+                color = self.colors['success']  # Green - plenty of time
+            elif days > 1:
+                color = self.colors['warning']  # Orange - getting close
+            else:
+                color = self.colors['error']  # Red - expiring soon
+            
+            self.license_timer_label.config(text=timer_text, fg=color)
+            
+        except Exception as e:
+            self.license_timer_label.config(text="Error", fg=self.colors['error'])
+        
+        # Schedule next update in 1 second
+        if hasattr(self, 'root') and self.root.winfo_exists():
+            self.root.after(1000, self.update_license_timer)
     
     
     def fetch_account_info(self):
