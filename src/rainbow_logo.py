@@ -147,8 +147,8 @@ def display_logo_line(line, color_offset=0, center_width=80):
 
 def display_animated_logo(duration=8.0, fps=15, with_headers=True):
     """
-    Display the QuoTrading AI logo with animated rainbow colors and fade-in subtitle.
-    Professional splash screen - shows logo ONCE with flowing rainbow and fading subtitle.
+    Display the QuoTrading AI logo with animated rainbow colors.
+    Professional splash screen - shows logo ONCE with flowing rainbow gradient.
     
     Args:
         duration: How long to display in seconds (default: 8.0)
@@ -180,9 +180,6 @@ def display_animated_logo(duration=8.0, fps=15, with_headers=True):
         # Calculate color offset for flowing rainbow effect
         color_offset = (frame / frames) * len(get_rainbow_colors())
         
-        # Calculate fade progress for subtitle (0.0 to 1.0 over duration)
-        fade_progress = frame / frames
-        
         # If not first frame, move cursor up to redraw
         if frame > 0:
             # Move cursor up to beginning of logo
@@ -202,7 +199,7 @@ def display_animated_logo(duration=8.0, fps=15, with_headers=True):
         
         # Subtitle with rainbow gradient (centered)
         sys.stdout.write('\033[2K')  # Clear line
-        # Apply rainbow gradient to subtitle with fade-in effect
+        # Apply rainbow gradient to subtitle
         subtitle_colored = color_line_with_gradient(SUBTITLE, color_offset)
         subtitle_padding = (terminal_width - len(SUBTITLE)) // 2
         sys.stdout.write(" " * subtitle_padding + subtitle_colored + "\n")
