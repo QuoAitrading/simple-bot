@@ -200,11 +200,12 @@ def display_animated_logo(duration=8.0, fps=15, with_headers=True):
         # Blank line
         sys.stdout.write('\033[2K\n')
         
-        # Subtitle with fade-in effect (centered)
+        # Subtitle with rainbow gradient (centered)
         sys.stdout.write('\033[2K')  # Clear line
-        subtitle_color = get_faded_color(fade_progress)
+        # Apply rainbow gradient to subtitle with fade-in effect
+        subtitle_colored = color_line_with_gradient(SUBTITLE, color_offset)
         subtitle_padding = (terminal_width - len(SUBTITLE)) // 2
-        sys.stdout.write(" " * subtitle_padding + subtitle_color + SUBTITLE + Colors.RESET + "\n")
+        sys.stdout.write(" " * subtitle_padding + subtitle_colored + "\n")
         
         # Flush to ensure immediate display
         sys.stdout.flush()
