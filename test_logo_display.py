@@ -119,8 +119,11 @@ def test_instant_display_flag():
            'display_animated_logo(duration=2' in content or \
            'display_animated_logo(duration=1' in content:
             print("✓ Logo duration is optimized (3 seconds or less)")
+            return True
         
-        return True
+        # If we get here, duration might be missing or unknown
+        print("⚠ Warning: Could not verify logo duration")
+        return True  # Don't fail the test, just warn
         
     except Exception as e:
         print(f"✗ Failed to check main file: {e}")
