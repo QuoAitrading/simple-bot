@@ -1151,13 +1151,13 @@ def heartbeat():
                         stored_device = user[0]
                         last_heartbeat = user[1]
                         
-                        # Check if another device is active (heartbeat within 2 minutes)
+                        # Check if another device is active (heartbeat within 30 seconds)
                         if stored_device and stored_device != device_fingerprint:
                             # Check if the stored device is still active
                             from datetime import datetime, timedelta
                             if last_heartbeat:
                                 time_since_last = datetime.now() - last_heartbeat
-                                if time_since_last < timedelta(minutes=2):
+                                if time_since_last < timedelta(seconds=30):
                                     # SESSION CONFLICT: Another device is active
                                     logging.warning(f"⚠️ Session conflict for {license_key}: Device {device_fingerprint} tried to connect while {stored_device} is active")
                                     return jsonify({
@@ -1202,6 +1202,114 @@ def heartbeat():
         
     except Exception as e:
         logging.error(f"Heartbeat error: {e}")
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+
+@app.route('/api/session/release', methods=['POST'])
+def release_session():
+    """Release session lock when bot shuts down"""
+    try:
+        data = request.get_json()
+        license_key = data.get('license_key')
+        device_fingerprint = data.get('device_fingerprint')
+        
+        if not license_key:
+            return jsonify({"status": "error", "message": "License key required"}), 400
+        
+        if not device_fingerprint:
+            return jsonify({"status": "error", "message": "Device fingerprint required"}), 400
+        
+        # Validate license
+        is_valid, message, _ = validate_license(license_key)
+        if not is_valid:
+            return jsonify({"status": "error", "message": message}), 403
+        
+        # Release session lock
+        conn = get_db_connection()
+        if conn:
+            try:
+                with conn.cursor() as cursor:
+                    # Only release if this device owns the session
+                    cursor.execute("""
+                        UPDATE users 
+                        SET device_fingerprint = NULL,
+                            last_heartbeat = NULL
+                        WHERE license_key = %s 
+                        AND device_fingerprint = %s
+                    """, (license_key, device_fingerprint))
+                    
+                    rows_affected = cursor.rowcount
+                    conn.commit()
+                    
+                    if rows_affected > 0:
+                        logging.info(f"✅ Session released for {license_key} from device {device_fingerprint[:8]}...")
+                        return jsonify({
+                            "status": "success",
+                            "message": "Session released successfully"
+                        }), 200
+                    else:
+                        # Device doesn't own the session or session already released
+                        return jsonify({
+                            "status": "info",
+                            "message": "No active session found for this device"
+                        }), 200
+            finally:
+                return_connection(conn)
+        
+        return jsonify({"status": "error", "message": "Database error"}), 500
+        
+    except Exception as e:
+        logging.error(f"Session release error: {e}")
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+
+@app.route('/api/session/clear', methods=['POST'])
+def clear_stale_sessions():
+    """Clear stale sessions (admin endpoint or auto-cleanup for sessions older than 5 minutes)"""
+    try:
+        data = request.get_json()
+        license_key = data.get('license_key')
+        
+        if not license_key:
+            return jsonify({"status": "error", "message": "License key required"}), 400
+        
+        # Validate license
+        is_valid, message, _ = validate_license(license_key)
+        if not is_valid:
+            return jsonify({"status": "error", "message": message}), 403
+        
+        # Clear stale sessions (older than 5 minutes)
+        conn = get_db_connection()
+        if conn:
+            try:
+                with conn.cursor() as cursor:
+                    from datetime import datetime, timedelta
+                    
+                    # Clear sessions with last heartbeat older than 30 seconds
+                    cursor.execute("""
+                        UPDATE users 
+                        SET device_fingerprint = NULL,
+                            last_heartbeat = NULL
+                        WHERE license_key = %s 
+                        AND (last_heartbeat IS NULL OR last_heartbeat < NOW() - INTERVAL '30 seconds')
+                    """, (license_key,))
+                    
+                    rows_affected = cursor.rowcount
+                    conn.commit()
+                    
+                    logging.info(f"✅ Cleared {rows_affected} stale session(s) for {license_key}")
+                    return jsonify({
+                        "status": "success",
+                        "message": f"Cleared {rows_affected} stale session(s)",
+                        "sessions_cleared": rows_affected
+                    }), 200
+            finally:
+                return_connection(conn)
+        
+        return jsonify({"status": "error", "message": "Database error"}), 500
+        
+    except Exception as e:
+        logging.error(f"Clear stale sessions error: {e}")
         return jsonify({"status": "error", "message": str(e)}), 500
 
 

@@ -14,8 +14,9 @@ from dotenv import load_dotenv
 # Determine project root directory (parent of src/)
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
-# Load environment variables from .env file
-load_dotenv()
+# Load environment variables from .env file in project root
+env_path = os.path.join(PROJECT_ROOT, '.env')
+load_dotenv(dotenv_path=env_path)
 
 # Import bot modules
 from config import load_config, log_config

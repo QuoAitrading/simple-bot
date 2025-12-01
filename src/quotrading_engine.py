@@ -59,6 +59,15 @@ import statistics  # For calculating statistics like mean, median, etc.
 import asyncio
 import hashlib
 
+# Load environment variables at module import time
+from dotenv import load_dotenv
+from pathlib import Path
+
+# Determine project root and load .env
+PROJECT_ROOT = Path(__file__).parent.parent
+env_path = PROJECT_ROOT / '.env'
+load_dotenv(dotenv_path=env_path)
+
 # ===== EXE-COMPATIBLE FILE PATH HELPERS =====
 # These ensure files are saved in the correct location whether running as:
 # - Python script (development)
@@ -459,6 +468,60 @@ def initialize_broker() -> None:
                         logger.error("Your license has expired. Please renew to continue trading.")
                     logger.error("Contact: support@quotrading.com")
                     logger.error("=" * 70)
+                    sys.exit(1)
+            elif response.status_code == 403:
+                # Check if it's a session conflict
+                data = response.json()
+                if data.get("session_conflict"):
+                    logger.warning("⚠️ Session conflict detected - attempting to clear stale session...")
+                    
+                    # Try to clear stale sessions
+                    try:
+                        clear_response = requests.post(
+                            f"{api_url}/api/session/clear",
+                            json={"license_key": license_key},
+                            timeout=10
+                        )
+                        
+                        if clear_response.status_code == 200:
+                            logger.info("✅ Stale session cleared, retrying validation...")
+                            
+                            # Retry validation
+                            retry_response = requests.post(
+                                f"{api_url}/api/main",
+                                json={
+                                    "license_key": license_key,
+                                    "device_fingerprint": get_device_fingerprint()
+                                },
+                                timeout=10
+                            )
+                            
+                            if retry_response.status_code == 200:
+                                retry_data = retry_response.json()
+                                if retry_data.get("license_valid"):
+                                    logger.info(f"Γ£à License validated - {retry_data.get('message', 'Access Granted')}")
+                                else:
+                                    logger.error("License validation failed after clearing stale session")
+                                    sys.exit(1)
+                            else:
+                                logger.error("License validation failed after clearing stale session")
+                                sys.exit(1)
+                        else:
+                            # Stale session clear failed, still a real conflict
+                            logger.error("=" * 70)
+                            logger.error("LICENSE ALREADY IN USE")
+                            logger.error(f"Active device: {data.get('active_device', 'Unknown')}")
+                            logger.error("Another device is actively using this license.")
+                            logger.error("Please stop the bot on the other device first.")
+                            logger.error("Contact: support@quotrading.com")
+                            logger.error("=" * 70)
+                            sys.exit(1)
+                    except Exception as clear_error:
+                        logger.error(f"Failed to clear stale session: {clear_error}")
+                        sys.exit(1)
+                else:
+                    logger.error(f"Γ¥î License validation failed - HTTP {response.status_code}")
+                    logger.error("Please contact support@quotrading.com")
                     sys.exit(1)
             else:
                 logger.error(f"Γ¥î License validation failed - HTTP {response.status_code}")
@@ -7997,6 +8060,27 @@ def handle_shutdown_event(data: Dict[str, Any]) -> None:
 def cleanup_on_shutdown() -> None:
     """Cleanup tasks on shutdown"""
     logger.info("Running cleanup tasks...")
+    
+    # Release session lock on cloud API
+    try:
+        import requests
+        license_key = os.getenv("QUOTRADING_LICENSE_KEY")
+        if license_key:
+            api_url = os.getenv("QUOTRADING_API_URL", "https://quotrading-flask-api.azurewebsites.net")
+            response = requests.post(
+                f"{api_url}/api/session/release",
+                json={
+                    "license_key": license_key,
+                    "device_fingerprint": get_device_fingerprint()
+                },
+                timeout=5
+            )
+            if response.status_code == 200:
+                logger.info("Session lock released successfully")
+            else:
+                logger.warning(f"Failed to release session lock: HTTP {response.status_code}")
+    except Exception as e:
+        logger.warning(f"Error releasing session lock: {e}")
     
     # Send bot shutdown alert
     try:
