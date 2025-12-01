@@ -51,9 +51,9 @@ ADMIN_API_KEY = os.environ.get("ADMIN_API_KEY", "ADMIN-DEV-KEY-2026")  # For cre
 
 # Session locking configuration
 # A session is considered "active" if heartbeat received within this threshold
-# Heartbeats are sent every 30 seconds by the bot
-# Session expires after 2 minutes (120 seconds) of no heartbeat - allows detection of crashes while preventing false timeouts
-SESSION_TIMEOUT_SECONDS = 120  # 2 minutes - session expires if no heartbeat for 2 minutes
+# Heartbeats are sent every 20 seconds by the bot
+# Session expires after 60 seconds of no heartbeat - 3x heartbeat interval for crash detection while tolerating network issues
+SESSION_TIMEOUT_SECONDS = 60  # 60 seconds - session expires if no heartbeat for 60 seconds (3x heartbeat interval)
 WHOP_API_BASE_URL = "https://api.whop.com/api/v5"
 
 # Email configuration (for SendGrid or SMTP)
@@ -1166,7 +1166,7 @@ def validate_license_endpoint():
         if conn:
             try:
                 with conn.cursor() as cursor:
-                    # Get current session info
+                    # Get current session info FIRST (before any clearing)
                     cursor.execute("""
                         SELECT device_fingerprint, last_heartbeat, license_type
                         FROM users
@@ -1181,42 +1181,47 @@ def validate_license_endpoint():
                         
                         # If there's a stored session, check if it's active
                         if stored_device:
-                            # If it's the SAME device, allow reconnection
-                            if stored_device == device_fingerprint:
-                                # Same device - allow (reconnection after crash/restart)
-                                pass
-                            else:
-                                # Different device - check if the stored session is still alive
-                                from datetime import datetime, timedelta
-                                if last_heartbeat:
-                                    time_since_last = datetime.now() - last_heartbeat
-                                    if time_since_last < timedelta(seconds=SESSION_TIMEOUT_SECONDS):
-                                        # Active session exists - BLOCK
-                                        logging.warning(f"⚠️ BLOCKED - License {license_key} already in use by {stored_device[:20]}... (tried: {device_fingerprint[:20]}...)")
+                            from datetime import datetime, timedelta
+                            
+                            # STRICT ENFORCEMENT: Check heartbeat EXISTS first, then check age
+                            # This prevents bypassing restrictions - we don't blindly clear sessions
+                            # Prevents API key sharing on same OR different devices
+                            if last_heartbeat:
+                                # Heartbeat EXISTS - calculate age
+                                time_since_last = datetime.now() - last_heartbeat
+                                
+                                # If heartbeat exists and is recent (< SESSION_TIMEOUT_SECONDS)
+                                # Block ALL logins regardless of device - NO EXCEPTIONS
+                                if time_since_last < timedelta(seconds=SESSION_TIMEOUT_SECONDS):
+                                    # Session is still within timeout window - BLOCK
+                                    # This ensures ONLY ONE active instance per API key
+                                    if stored_device == device_fingerprint:
+                                        logging.warning(f"⚠️ BLOCKED - Same device {device_fingerprint[:8]}... but session EXISTS (last heartbeat {int(time_since_last.total_seconds())}s ago). Only 1 instance allowed per API key.")
                                         return jsonify({
                                             "license_valid": False,
                                             "session_conflict": True,
-                                            "message": "LICENSE ALREADY IN USE - Only one instance allowed per API key",
-                                            "active_device": stored_device[:20] + "..."
+                                            "message": "Instance Already Running - Another session is currently active on this device. If the previous instance crashed or was force-closed, please wait approximately 60 seconds before trying again.",
+                                            "active_device": stored_device[:20] + "...",
+                                            "estimated_wait_seconds": max(0, SESSION_TIMEOUT_SECONDS - int(time_since_last.total_seconds()))
                                         }), 403
                                     else:
-                                        # Session expired (no heartbeat for 2+ minutes) - clear and allow new session
-                                        logging.info(f"🧹 Auto-clearing expired session for {license_key} (last seen {time_since_last.total_seconds():.0f}s ago)")
-                                        cursor.execute("""
-                                            UPDATE users 
-                                            SET device_fingerprint = NULL, last_heartbeat = NULL
-                                            WHERE license_key = %s
-                                        """, (license_key,))
-                                        conn.commit()
+                                        # Different device - BLOCK
+                                        logging.warning(f"⚠️ BLOCKED - License {license_key} already in use by {stored_device[:20]}... (tried: {device_fingerprint[:20]}..., last seen {int(time_since_last.total_seconds())}s ago)")
+                                        return jsonify({
+                                            "license_valid": False,
+                                            "session_conflict": True,
+                                            "message": "License In Use - This license is currently active on another device. Only one active session is allowed per license.",
+                                            "active_device": stored_device[:20] + "...",
+                                            "estimated_wait_seconds": max(0, SESSION_TIMEOUT_SECONDS - int(time_since_last.total_seconds()))
+                                        }), 403
+                                
+                                # Session fully expired (>= 60s) - allow takeover
+                                # Only after checking heartbeat EXISTS and is OLD do we allow login
                                 else:
-                                    # No heartbeat timestamp - clear stale session
-                                    logging.info(f"🧹 Clearing session with no heartbeat for {license_key}")
-                                    cursor.execute("""
-                                        UPDATE users 
-                                        SET device_fingerprint = NULL, last_heartbeat = NULL
-                                        WHERE license_key = %s
-                                    """, (license_key,))
-                                    conn.commit()
+                                    logging.info(f"🧹 Expired session (last seen {int(time_since_last.total_seconds())}s ago) - allowing takeover by {device_fingerprint[:8]}...")
+                            else:
+                                # No heartbeat timestamp - session was cleanly released, allow login
+                                logging.info(f"✅ No heartbeat found - allowing {device_fingerprint[:8]}...")
                     
                     # No conflict detected
                     if check_only:
@@ -1541,25 +1546,14 @@ def main():
             }), 403
         
         # Session locking - check if another device is using this license
+        # NOTE: /api/main is used by launcher for validation ONLY - it does NOT create sessions
+        # Only the bot creates sessions via /api/validate-license
         if device_fingerprint:
             conn = get_db_connection()
             if conn:
                 try:
                     with conn.cursor(cursor_factory=RealDictCursor) as cursor:
-                        # First, automatically clear stale sessions (older than SESSION_TIMEOUT_SECONDS)
-                        cursor.execute("""
-                            UPDATE users 
-                            SET device_fingerprint = NULL,
-                                last_heartbeat = NULL
-                            WHERE license_key = %s 
-                            AND last_heartbeat < NOW() - make_interval(secs => %s)
-                        """, (license_key, SESSION_TIMEOUT_SECONDS))
-                        
-                        stale_cleared = cursor.rowcount
-                        if stale_cleared > 0:
-                            logging.info(f"🧹 Auto-cleared {stale_cleared} stale session(s) for {license_key} at /api/main (older than {SESSION_TIMEOUT_SECONDS}s)")
-                        
-                        # Now check for active sessions
+                        # Check for active sessions (do NOT clear or modify)
                         cursor.execute("""
                             SELECT device_fingerprint, last_heartbeat
                             FROM users
@@ -1568,30 +1562,16 @@ def main():
                         
                         user = cursor.fetchone()
                         
-                        if user and user['device_fingerprint']:
-                            # Check if another device is active (heartbeat within SESSION_TIMEOUT_SECONDS)
-                            if user['last_heartbeat']:
-                                time_since_heartbeat = (datetime.now() - user['last_heartbeat']).total_seconds()
-                                
-                                if time_since_heartbeat < SESSION_TIMEOUT_SECONDS and user['device_fingerprint'] != device_fingerprint:
-                                    # Another device is actively using this license
-                                    logging.warning(f"⚠️ /api/main blocked - Session conflict for {license_key}: Device {device_fingerprint[:8]}... tried to connect while {user['device_fingerprint'][:8]}... is active (last seen {int(time_since_heartbeat)}s ago)")
-                                    return jsonify({
-                                        "status": "error",
-                                        "message": "License already in use on another device. Please stop the bot on the other computer first.",
-                                        "license_valid": False,
-                                        "session_conflict": True
-                                    }), 403
+                        if user and user['device_fingerprint'] and user['last_heartbeat']:
+                            # Check if any session exists (for info only, don't block launcher validation)
+                            time_since_heartbeat = (datetime.now() - user['last_heartbeat']).total_seconds()
+                            
+                            # Just log if session exists - launcher can still validate
+                            # The actual blocking happens when bot tries to start via /api/validate-license
+                            logging.info(f"ℹ️ /api/main - License {license_key} has existing session (device {user['device_fingerprint'][:8]}..., last seen {int(time_since_heartbeat)}s ago)")
                         
-                        # Update device fingerprint for this session
-                        cursor.execute("""
-                            UPDATE users
-                            SET device_fingerprint = %s,
-                                last_heartbeat = NOW()
-                            WHERE license_key = %s
-                        """, (device_fingerprint, license_key))
-                        
-                        conn.commit()
+                        # DO NOT create or update session here - launcher is just validating
+                        # Session creation happens when bot starts via /api/validate-license
                         
                 finally:
                     return_connection(conn)

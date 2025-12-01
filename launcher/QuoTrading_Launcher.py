@@ -47,21 +47,19 @@ CLOUD_SIGNAL_POLL_INTERVAL = 5  # Seconds between signal polls
 def get_device_fingerprint() -> str:
     """
     Generate a unique device fingerprint for session locking.
-    Prevents license key sharing across multiple computers AND multiple instances on same machine.
+    One session per machine/user - shared between launcher and bot.
     
     Components:
-    - Machine ID (from platform UUID)
-    - Username
-    - Platform name
-    - Process ID (ensures uniqueness per instance)
+    - Machine ID (MAC address via uuid.getnode)
+    - Username (from getpass)
+    - Platform name (Windows/Linux/Darwin)
     
     Returns:
         Unique device fingerprint (hashed for privacy)
     
-    Security Note: Including PID makes each launcher/bot instance unique, preventing:
-    - Multiple launchers on same computer with same license key
-    - Users deleting local lock files to bypass protection
-    - Users modifying device fingerprint to create fake instances
+    Security Note: Launcher creates session, bot reconnects to same session.
+    This prevents multiple instances while allowing launcher → bot handoff.
+    PID is NOT included so launcher and bot share the same fingerprint.
     """
     # Get platform-specific machine ID
     try:
@@ -78,13 +76,11 @@ def get_device_fingerprint() -> str:
     # Get platform info
     platform_name = platform.system()  # Windows, Darwin (Mac), Linux
     
-    # Get process ID (makes each instance unique)
-    pid = os.getpid()
+    # Combine all components WITHOUT PID - one session per machine/user, not per process
+    # This allows launcher and bot to share the same session
+    fingerprint_raw = f"{machine_id}:{username}:{platform_name}"
     
-    # Combine all components INCLUDING PID for per-instance uniqueness
-    fingerprint_raw = f"{machine_id}:{username}:{platform_name}:{pid}"
-    
-    # Hash for privacy (don't send raw MAC address/PID to server)
+    # Hash for privacy (don't send raw MAC address to server)
     fingerprint_hash = hashlib.sha256(fingerprint_raw.encode()).hexdigest()[:16]
     
     return fingerprint_hash
@@ -615,8 +611,9 @@ class QuoTradingLauncher:
                             "Your license key is currently active on another device.\n"
                             "Only one device can use a license at a time.\n\n"
                             "Please stop the bot on the other device first.\n\n"
-                            "If you recently stopped the bot on another device,\n"
-                            "wait 90 seconds and try again."
+                            "If you recently stopped the bot, it may take up to\n"
+                            "2 minutes for the session to auto-clear. Please wait\n"
+                            "and try again."
                         )
                     else:
                         error_msg = error_data.get("message", "License validation failed - Access Forbidden")

@@ -379,8 +379,8 @@ class TimerManager:
                         {"time": current_time}
                     )
                 
-                # Connection health check (every 30 seconds)
-                if self._should_check("connection_health", current_time, 30):
+                # Connection health check (every 20 seconds)
+                if self._should_check("connection_health", current_time, 20):
                     self.event_loop.post_event(
                         EventType.CONNECTION_HEALTH,
                         EventPriority.HIGH,

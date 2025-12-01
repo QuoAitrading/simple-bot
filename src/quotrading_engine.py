@@ -147,14 +147,8 @@ def get_device_fingerprint() -> str:
     # This allows launcher and bot to share the same session
     fingerprint_raw = f"{machine_id}:{username}:{platform_name}"
     
-    # Debug logging
-    logging.info(f"BOT Fingerprint components: MAC={machine_id}, user={username}, platform={platform_name}")
-    logging.info(f"BOT Raw fingerprint: {fingerprint_raw}")
-    
     # Hash for privacy (don't send raw MAC address to server)
     fingerprint_hash = hashlib.sha256(fingerprint_raw.encode()).hexdigest()[:16]
-    
-    logging.info(f"BOT Final fingerprint: {fingerprint_hash}")
     
     return fingerprint_hash
 
@@ -507,68 +501,20 @@ def validate_license_at_startup() -> None:
             # Check if it's a session conflict
             data = response.json()
             if data.get("session_conflict"):
-                logger.warning("⚠️ Session conflict detected - attempting to release session...")
-                
-                # Try to release the session (clears immediately, not just stale)
-                try:
-                    clear_response = requests.post(
-                        f"{api_url}/api/session/release",
-                        json={
-                            "license_key": license_key,
-                            "device_fingerprint": device_fp
-                        },
-                        timeout=10
-                    )
-                    
-                    if clear_response.status_code == 200:
-                        logger.info("✅ Session released, retrying validation...")
-                        
-                        # Brief delay to ensure database update completes
-                        time_module.sleep(0.5)
-                        
-                        # Retry validation
-                        retry_response = requests.post(
-                            f"{api_url}/api/validate-license",
-                            json={
-                                "license_key": license_key,
-                                "device_fingerprint": get_device_fingerprint(),
-                                "check_only": False  # Create/claim session
-                            },
-                            timeout=10
-                        )
-                        
-                        if retry_response.status_code == 200:
-                            retry_data = retry_response.json()
-                            logger.info(f"🔍 Retry response status: {retry_response.status_code}")
-                            logger.info(f"🔍 Retry response data: {retry_data}")
-                            logger.info(f"🔍 license_valid field: {retry_data.get('license_valid')}")
-                            
-                            if retry_data.get("license_valid"):
-                                logger.info(f"✅ License validated - {retry_data.get('message', 'Access Granted')}")
-                            else:
-                                logger.critical(f"❌ License validation failed after releasing session")
-                                logger.critical(f"Response: {retry_data}")
-                                sys.exit(1)
-                        else:
-                            logger.critical(f"❌ License validation retry failed - HTTP {retry_response.status_code}")
-                            logger.critical(f"Response: {retry_response.text}")
-                            sys.exit(1)
-                    else:
-                        # Stale session clear failed, still a real conflict
-                        logger.critical("=" * 70)
-                        logger.critical("")
-                        logger.critical("  ⚠️ LICENSE ALREADY IN USE")
-                        logger.critical("")
-                        logger.critical("  Your license key is currently active on another device.")
-                        logger.critical("  Only one device can use a license at a time.")
-                        logger.critical("")
-                        logger.critical("  Contact: support@quotrading.com")
-                        logger.critical("")
-                        logger.critical("=" * 70)
-                        sys.exit(1)
-                except Exception as clear_error:
-                    logger.critical(f"Failed to clear stale session: {clear_error}")
-                    sys.exit(1)
+                # Session conflict - another device is ACTIVELY using this license
+                # Server already auto-clears stale sessions, so this is a real conflict
+                logger.critical("=" * 70)
+                logger.critical("")
+                logger.critical("  ⚠️ LICENSE ALREADY IN USE")
+                logger.critical("")
+                logger.critical("  Your license key is currently active on another device.")
+                logger.critical("  Only one device can use a license at a time.")
+                logger.critical("")
+                logger.critical("  If the other device is not running, wait a moment and try again.")
+                logger.critical("  Contact: support@quotrading.com")
+                logger.critical("")
+                logger.critical("=" * 70)
+                sys.exit(1)
             else:
                 logger.critical(f"License validation failed - HTTP {response.status_code}")
                 logger.critical("Please contact support@quotrading.com")
@@ -630,7 +576,7 @@ def initialize_broker() -> None:
 def check_azure_time_service() -> str:
     """
     Check Azure time service for trading permission.
-    Called every 30 seconds alongside kill switch check.
+    Called every 20 seconds alongside kill switch check.
     
     Azure provides single source of truth for:
     - Current UTC time (timezone-accurate)
@@ -698,7 +644,7 @@ def check_broker_connection() -> None:
     """
     Periodic health check for broker connection AND cloud services.
     Verifies connection is alive and attempts reconnection if needed.
-    Called every 30 seconds by timer manager.
+    Called every 20 seconds by timer manager.
     Only logs when there's an issue to avoid spam.
     """
     global broker
@@ -7735,7 +7681,7 @@ def handle_connection_health_event(data: Dict[str, Any]) -> None:
     """
     Handle periodic connection health check event.
     Verifies broker connection is alive and reconnects if needed.
-    Runs every 30 seconds.
+    Runs every 20 seconds.
     """
     check_broker_connection()
 
@@ -8040,7 +7986,7 @@ def handle_license_check_event(data: Dict[str, Any]) -> None:
 def send_heartbeat() -> None:
     """
     Send bot heartbeat to cloud API for online status tracking.
-    Called every 30 seconds to show bot is alive.
+    Called every 20 seconds to show bot is alive.
     Admin dashboard uses this to show online users and performance.
     """
     global broker
