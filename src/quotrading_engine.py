@@ -1621,12 +1621,33 @@ def update_1min_bar(symbol: str, price: float, volume: int, dt: datetime) -> Non
         if current_bar is not None:
             state[symbol]["bars_1min"].append(current_bar)
             bar_count = len(state[symbol]["bars_1min"])
-            pass  # Silent - bar completion is internal process
             
             # Calculate VWAP after new bar is added
             calculate_vwap(symbol)
             
-            # 5-minute status removed - customers don't need periodic status spam
+            # Show market status every 15 minutes (professional monitoring without spam)
+            if bar_count % 15 == 0:
+                vwap_data = state[symbol].get("vwap", {})
+                position_dict = state[symbol]["position"]
+                position_qty = position_dict.get("quantity", 0) if isinstance(position_dict, dict) else 0
+                position_side = position_dict.get("side", "FLAT") if isinstance(position_dict, dict) and position_qty > 0 else "FLAT"
+                market_cond = state[symbol].get("market_condition", "UNKNOWN")
+                
+                # Build professional status message
+                status_parts = []
+                status_parts.append(f"📈 Market Status: {symbol}")
+                status_parts.append(f"Bars: {bar_count} | Price: ${current_bar['close']:.2f} | Vol: {current_bar['volume']}")
+                
+                if vwap_data and isinstance(vwap_data, dict):
+                    vwap_val = vwap_data.get('vwap', 0)
+                    std_dev = vwap_data.get('std_dev', 0)
+                    if vwap_val > 0:
+                        status_parts.append(f"VWAP: ${vwap_val:.2f} ± ${std_dev:.2f}")
+                
+                status_parts.append(f"Condition: {market_cond}")
+                status_parts.append(f"Position: {position_qty} contracts {position_side}")
+                
+                logger.info(" | ".join(status_parts))
             
             # Update current regime after bar completion
             update_current_regime(symbol)
@@ -6709,7 +6730,7 @@ def format_time_statistics(stats: Dict[str, Any]) -> None:
     
     if force_flatten_pct > 30:
         logger.warning("  >30% force-flattened - trade duration too long for time window")
-        logger.warning("   Consider: earlier entry cutoff or faster profit targets")
+        logger.warning("   Consider: earlier entry cutoff or tighter trailing stops")
     else:
         logger.info(" <30% force-flattened - acceptable duration")
     
@@ -6744,13 +6765,13 @@ def format_risk_metrics() -> None:
     
     logger.info(SEPARATOR_LINE)
     logger.info("FLATTEN MODE EXIT ANALYSIS (Phase 10)")
-    logger.info(f"Target Wait Wins: {bot_status['target_wait_wins']}")
-    logger.info(f"Target Wait Losses: {bot_status['target_wait_losses']}")
+    logger.info(f"Trailing Stop Wins: {bot_status['target_wait_wins']}")
+    logger.info(f"Trailing Stop Losses: {bot_status['target_wait_losses']}")
     logger.info(f"Early Close Saves: {bot_status['early_close_saves']}")
     if bot_status["target_wait_wins"] > 0:
-        target_success_rate = (bot_status["target_wait_wins"] / 
+        trailing_success_rate = (bot_status["target_wait_wins"] / 
                                (bot_status["target_wait_wins"] + bot_status["target_wait_losses"]) * 100)
-        logger.info(f"Target Wait Success Rate: {target_success_rate:.1f}%")
+        logger.info(f"Trailing Stop Success Rate: {trailing_success_rate:.1f}%")
 
 
 def log_session_summary(symbol: str) -> None:
@@ -7212,7 +7233,7 @@ Being in a position when you shouldn't be is the #1 futures trading killer.
 VALIDATION:
 - Phase 20 statistics tell you if your strategy fits the time windows
 - If >30% force-flattened: strategy incompatible with time constraints
-- Adjust entry cutoff earlier OR use faster profit targets
+- Adjust entry cutoff earlier OR use tighter trailing stops
 - After-noon entries especially risky - limited time to work
 """
 
@@ -7435,7 +7456,14 @@ def handle_tick_event(event) -> None:
     state[symbol]["total_ticks_received"] += 1
     total_ticks = state[symbol]["total_ticks_received"]
     
-    # Tick logging removed - customers don't need tick-by-tick updates
+    # Log market snapshot periodically (every 5000 ticks for professional monitoring)
+    if total_ticks % 5000 == 0:
+        # Get current bid/ask from bid_ask_manager if available
+        if bid_ask_manager is not None:
+            quote = bid_ask_manager.get_current_quote(symbol)
+            if quote:
+                spread = quote.ask_price - quote.bid_price
+                logger.info(f"📊 Market: {symbol} @ ${price:.2f} | Bid: ${quote.bid_price:.2f} x {quote.bid_size} | Ask: ${quote.ask_price:.2f} x {quote.ask_size} | Spread: ${spread:.2f}")
     
     # Create tick object
     tick = {
@@ -7704,7 +7732,7 @@ def handle_license_check_event(data: Dict[str, Any]) -> None:
                     logger.warning("⏳ LICENSE GRACE PERIOD ACTIVATED")
                     logger.warning("License expired but position is active")
                     logger.warning("Bot will continue managing position until it closes")
-                    logger.warning("Position will close via normal exit rules (target/stop/time)")
+                    logger.warning("Position will close via normal exit rules (trailing stop/time)")
                     logger.warning("No new trades will be allowed")
                     logger.warning("=" * 70)
                     
