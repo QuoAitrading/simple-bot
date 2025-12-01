@@ -51,9 +51,9 @@ ADMIN_API_KEY = os.environ.get("ADMIN_API_KEY", "ADMIN-DEV-KEY-2026")  # For cre
 
 # Session locking configuration
 # A session is considered "active" if heartbeat received within this threshold
-# Heartbeats are sent every 30 seconds by the bot
-# Session expires after 60 seconds of no heartbeat - 2x heartbeat interval for crash detection while tolerating network issues
-SESSION_TIMEOUT_SECONDS = 60  # 1 minute - session expires if no heartbeat for 60 seconds (2x heartbeat interval)
+# Heartbeats are sent every 20 seconds by the bot
+# Session expires after 40 seconds of no heartbeat - 2x heartbeat interval for crash detection while tolerating network issues
+SESSION_TIMEOUT_SECONDS = 40  # 40 seconds - session expires if no heartbeat for 40 seconds (2x heartbeat interval)
 WHOP_API_BASE_URL = "https://api.whop.com/api/v5"
 
 # Email configuration (for SendGrid or SMTP)
@@ -1200,8 +1200,9 @@ def validate_license_endpoint():
                                         return jsonify({
                                             "license_valid": False,
                                             "session_conflict": True,
-                                            "message": "SESSION ALREADY ACTIVE - Only one instance allowed per API key. Close the other instance first.",
-                                            "active_device": stored_device[:20] + "..."
+                                            "message": "Instance Already Running - Another session is currently active. Please wait approximately 40 seconds after closing the other instance before trying again.",
+                                            "active_device": stored_device[:20] + "...",
+                                            "estimated_wait_seconds": max(0, SESSION_TIMEOUT_SECONDS - int(time_since_last.total_seconds()))
                                         }), 403
                                     else:
                                         # Different device - BLOCK
@@ -1209,11 +1210,12 @@ def validate_license_endpoint():
                                         return jsonify({
                                             "license_valid": False,
                                             "session_conflict": True,
-                                            "message": "LICENSE ALREADY IN USE - Only one instance allowed per API key. Close the other instance first.",
-                                            "active_device": stored_device[:20] + "..."
+                                            "message": "License In Use - This license is currently active on another device. Only one active session is allowed per license.",
+                                            "active_device": stored_device[:20] + "...",
+                                            "estimated_wait_seconds": max(0, SESSION_TIMEOUT_SECONDS - int(time_since_last.total_seconds()))
                                         }), 403
                                 
-                                # Session fully expired (>= 60s) - allow takeover
+                                # Session fully expired (>= 40s) - allow takeover
                                 # Only after checking heartbeat EXISTS and is OLD do we allow login
                                 else:
                                     logging.info(f"🧹 Expired session (last seen {int(time_since_last.total_seconds())}s ago) - allowing takeover by {device_fingerprint[:8]}...")

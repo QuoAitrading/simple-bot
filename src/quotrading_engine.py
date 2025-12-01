@@ -576,7 +576,7 @@ def initialize_broker() -> None:
 def check_azure_time_service() -> str:
     """
     Check Azure time service for trading permission.
-    Called every 30 seconds alongside kill switch check.
+    Called every 20 seconds alongside kill switch check.
     
     Azure provides single source of truth for:
     - Current UTC time (timezone-accurate)
@@ -644,7 +644,7 @@ def check_broker_connection() -> None:
     """
     Periodic health check for broker connection AND cloud services.
     Verifies connection is alive and attempts reconnection if needed.
-    Called every 30 seconds by timer manager.
+    Called every 20 seconds by timer manager.
     Only logs when there's an issue to avoid spam.
     """
     global broker
@@ -7681,7 +7681,7 @@ def handle_connection_health_event(data: Dict[str, Any]) -> None:
     """
     Handle periodic connection health check event.
     Verifies broker connection is alive and reconnects if needed.
-    Runs every 30 seconds.
+    Runs every 20 seconds.
     """
     check_broker_connection()
 
@@ -7986,7 +7986,7 @@ def handle_license_check_event(data: Dict[str, Any]) -> None:
 def send_heartbeat() -> None:
     """
     Send bot heartbeat to cloud API for online status tracking.
-    Called every 30 seconds to show bot is alive.
+    Called every 20 seconds to show bot is alive.
     Admin dashboard uses this to show online users and performance.
     """
     global broker
