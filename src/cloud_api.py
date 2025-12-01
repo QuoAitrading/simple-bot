@@ -111,22 +111,24 @@ class CloudAPIClient:
                 total_exp = data.get('total_experiences', '?')
                 win_rate = data.get('win_rate', 0) * 100
                 pass  # Silent - cloud sync is transparent
+                return True
             else:
                 logger.warning(f"⚠️ Failed to report outcome: HTTP {response.status_code}")
                 return False
                 
         except Exception as e:
-            logger.debug(f"Non-critical: Could not report outcome to cloud: {e}")
             pass  # Silent - cloud sync failure is non-critical
+            return False
 
     async def report_trade_outcome_async(self, state: Dict, took_trade: bool, pnl: float, duration: float, execution_data: Optional[Dict] = None) -> bool:
         """
         Async version of report_trade_outcome using aiohttp.
         """
         # Skip reporting if license is invalid
+        # Skip reporting if license is invalid
         if not self.license_valid:
-            logger.debug("License invalid - skipping outcome report")
             pass  # Silent - license check internal (async)
+            return False
         
         try:
             # FLAT FORMAT: All 24 fields at root level (no nesting)
@@ -157,15 +159,15 @@ class CloudAPIClient:
                         data = await response.json()
                         total_exp = data.get('total_experiences', '?')
                         win_rate = data.get('win_rate', 0) * 100
-                pass  # Silent - cloud sync is transparent
+                        pass  # Silent - cloud sync is transparent
                         return True
                     else:
                         logger.warning(f"⚠️ Failed to report outcome: HTTP {response.status}")
                         return False
                 
         except Exception as e:
-            logger.debug(f"Non-critical: Could not report outcome to cloud: {e}")
             pass  # Silent - cloud sync failure is non-critical (async)
+            return False
     
     def set_license_valid(self, valid: bool):
         """
