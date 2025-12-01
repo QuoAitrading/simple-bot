@@ -48,6 +48,11 @@ DB_PORT = os.environ.get("DB_PORT", "5432")
 WHOP_API_KEY = os.environ.get("WHOP_API_KEY", "")
 WHOP_WEBHOOK_SECRET = os.environ.get("WHOP_WEBHOOK_SECRET", "")
 ADMIN_API_KEY = os.environ.get("ADMIN_API_KEY", "ADMIN-DEV-KEY-2026")  # For creating licenses
+
+# Session locking configuration
+# A session is considered "active" if heartbeat received within this threshold
+# Heartbeats are sent every 30 seconds, so 90 seconds = 3 missed heartbeats
+SESSION_TIMEOUT_SECONDS = 90
 WHOP_API_BASE_URL = "https://api.whop.com/api/v5"
 
 # Email configuration (for SendGrid or SMTP)
@@ -1154,7 +1159,21 @@ def validate_license_endpoint():
         if conn:
             try:
                 with conn.cursor() as cursor:
-                    # Check for existing active session AND get license info
+                    # First, automatically clear stale sessions (older than SESSION_TIMEOUT_SECONDS)
+                    # This prevents false positives when a device crashed or lost connection
+                    cursor.execute("""
+                        UPDATE users 
+                        SET device_fingerprint = NULL,
+                            last_heartbeat = NULL
+                        WHERE license_key = %s 
+                        AND last_heartbeat < NOW() - make_interval(secs => %s)
+                    """, (license_key, SESSION_TIMEOUT_SECONDS))
+                    
+                    stale_cleared = cursor.rowcount
+                    if stale_cleared > 0:
+                        logging.info(f"🧹 Auto-cleared {stale_cleared} stale session(s) for {license_key} (older than {SESSION_TIMEOUT_SECONDS}s)")
+                    
+                    # Now check for existing active session AND get license info
                     cursor.execute("""
                         SELECT device_fingerprint, last_heartbeat, license_type
                         FROM users
@@ -1167,14 +1186,14 @@ def validate_license_endpoint():
                         last_heartbeat = user[1]
                         license_type = user[2] if len(user) > 2 else 'STANDARD'
                         
-                        # Check if another device is active (heartbeat within 30 seconds)
+                        # Check if another device is active (heartbeat within SESSION_TIMEOUT_SECONDS)
                         if stored_device and stored_device != device_fingerprint:
                             from datetime import datetime, timedelta
                             if last_heartbeat:
                                 time_since_last = datetime.now() - last_heartbeat
-                                if time_since_last < timedelta(seconds=30):
+                                if time_since_last < timedelta(seconds=SESSION_TIMEOUT_SECONDS):
                                     # SESSION CONFLICT: Another device is active
-                                    logging.warning(f"⚠️ Login blocked - Session conflict for {license_key}: Device {device_fingerprint[:8]}... tried to login while {stored_device[:8]}... is active")
+                                    logging.warning(f"⚠️ Login blocked - Session conflict for {license_key}: Device {device_fingerprint[:8]}... tried to login while {stored_device[:8]}... is active (last seen {int(time_since_last.total_seconds())}s ago)")
                                     return jsonify({
                                         "license_valid": False,
                                         "session_conflict": True,
@@ -1245,7 +1264,7 @@ def heartbeat():
         if conn:
             try:
                 with conn.cursor() as cursor:
-                    # Check for existing active session (last heartbeat within 2 minutes)
+                    # Check for existing active session (last heartbeat within SESSION_TIMEOUT_SECONDS)
                     cursor.execute("""
                         SELECT device_fingerprint, last_heartbeat
                         FROM users
@@ -1257,15 +1276,15 @@ def heartbeat():
                         stored_device = user[0]
                         last_heartbeat = user[1]
                         
-                        # Check if another device is active (heartbeat within 30 seconds)
+                        # Check if another device is active (heartbeat within SESSION_TIMEOUT_SECONDS)
                         if stored_device and stored_device != device_fingerprint:
                             # Check if the stored device is still active
                             from datetime import datetime, timedelta
                             if last_heartbeat:
                                 time_since_last = datetime.now() - last_heartbeat
-                                if time_since_last < timedelta(seconds=30):
+                                if time_since_last < timedelta(seconds=SESSION_TIMEOUT_SECONDS):
                                     # SESSION CONFLICT: Another device is active
-                                    logging.warning(f"⚠️ Session conflict for {license_key}: Device {device_fingerprint} tried to connect while {stored_device} is active")
+                                    logging.warning(f"⚠️ Runtime session conflict for {license_key}: Device {device_fingerprint[:8]}... tried heartbeat while {stored_device[:8]}... is active (last seen {int(time_since_last.total_seconds())}s ago)")
                                     return jsonify({
                                         "status": "error",
                                         "session_conflict": True,
@@ -1371,7 +1390,7 @@ def release_session():
 
 @app.route('/api/session/clear', methods=['POST'])
 def clear_stale_sessions():
-    """Clear stale sessions (admin endpoint or auto-cleanup for sessions older than 5 minutes)"""
+    """Clear stale sessions (sessions older than SESSION_TIMEOUT_SECONDS)"""
     try:
         data = request.get_json()
         license_key = data.get('license_key')
@@ -1384,26 +1403,26 @@ def clear_stale_sessions():
         if not is_valid:
             return jsonify({"status": "error", "message": message}), 403
         
-        # Clear stale sessions (older than 5 minutes)
+        # Clear stale sessions (older than SESSION_TIMEOUT_SECONDS)
         conn = get_db_connection()
         if conn:
             try:
                 with conn.cursor() as cursor:
                     from datetime import datetime, timedelta
                     
-                    # Clear sessions with last heartbeat older than 30 seconds
+                    # Clear sessions with last heartbeat older than SESSION_TIMEOUT_SECONDS
                     cursor.execute("""
                         UPDATE users 
                         SET device_fingerprint = NULL,
                             last_heartbeat = NULL
                         WHERE license_key = %s 
-                        AND (last_heartbeat IS NULL OR last_heartbeat < NOW() - INTERVAL '30 seconds')
-                    """, (license_key,))
+                        AND (last_heartbeat IS NULL OR last_heartbeat < NOW() - make_interval(secs => %s))
+                    """, (license_key, SESSION_TIMEOUT_SECONDS))
                     
                     rows_affected = cursor.rowcount
                     conn.commit()
                     
-                    logging.info(f"✅ Cleared {rows_affected} stale session(s) for {license_key}")
+                    logging.info(f"✅ Cleared {rows_affected} stale session(s) for {license_key} (older than {SESSION_TIMEOUT_SECONDS}s)")
                     return jsonify({
                         "status": "success",
                         "message": f"Cleared {rows_affected} stale session(s)",
@@ -1445,6 +1464,20 @@ def main():
             if conn:
                 try:
                     with conn.cursor(cursor_factory=RealDictCursor) as cursor:
+                        # First, automatically clear stale sessions (older than SESSION_TIMEOUT_SECONDS)
+                        cursor.execute("""
+                            UPDATE users 
+                            SET device_fingerprint = NULL,
+                                last_heartbeat = NULL
+                            WHERE license_key = %s 
+                            AND last_heartbeat < NOW() - make_interval(secs => %s)
+                        """, (license_key, SESSION_TIMEOUT_SECONDS))
+                        
+                        stale_cleared = cursor.rowcount
+                        if stale_cleared > 0:
+                            logging.info(f"🧹 Auto-cleared {stale_cleared} stale session(s) for {license_key} at /api/main (older than {SESSION_TIMEOUT_SECONDS}s)")
+                        
+                        # Now check for active sessions
                         cursor.execute("""
                             SELECT device_fingerprint, last_heartbeat
                             FROM users
@@ -1454,12 +1487,13 @@ def main():
                         user = cursor.fetchone()
                         
                         if user and user['device_fingerprint']:
-                            # Check if another device is active (heartbeat within last 2 minutes)
+                            # Check if another device is active (heartbeat within SESSION_TIMEOUT_SECONDS)
                             if user['last_heartbeat']:
                                 time_since_heartbeat = (datetime.now() - user['last_heartbeat']).total_seconds()
                                 
-                                if time_since_heartbeat < 120 and user['device_fingerprint'] != device_fingerprint:
+                                if time_since_heartbeat < SESSION_TIMEOUT_SECONDS and user['device_fingerprint'] != device_fingerprint:
                                     # Another device is actively using this license
+                                    logging.warning(f"⚠️ /api/main blocked - Session conflict for {license_key}: Device {device_fingerprint[:8]}... tried to connect while {user['device_fingerprint'][:8]}... is active (last seen {int(time_since_heartbeat)}s ago)")
                                     return jsonify({
                                         "status": "error",
                                         "message": "License already in use on another device. Please stop the bot on the other computer first.",

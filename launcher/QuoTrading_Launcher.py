@@ -27,6 +27,9 @@ import time
 import requests  # For cloud API calls
 import platform  # For cross-platform mouse wheel support
 import psutil  # For process checking (stale lock detection)
+import hashlib  # For device fingerprint generation
+import getpass  # For username in device fingerprint
+import uuid  # For machine ID in device fingerprint
 
 # ========================================
 # CONFIGURATION
@@ -39,6 +42,43 @@ USE_CLOUD_SIGNALS = True  # Set to True for production (cloud ML/RL)
 # The bot (src/quotrading_engine.py) handles all cloud ML/RL communication
 CLOUD_API_BASE_URL = os.getenv("QUOTRADING_API_URL", "https://quotrading-flask-api.azurewebsites.net")
 CLOUD_SIGNAL_POLL_INTERVAL = 5  # Seconds between signal polls
+
+
+def get_device_fingerprint() -> str:
+    """
+    Generate a unique device fingerprint for session locking.
+    Prevents license key sharing across multiple computers.
+    
+    Components:
+    - Machine ID (from platform UUID)
+    - Username
+    - Platform name
+    
+    Returns:
+        Unique device fingerprint (hashed for privacy)
+    """
+    # Get platform-specific machine ID
+    try:
+        machine_id = str(uuid.getnode())  # MAC address as unique ID
+    except:
+        machine_id = "unknown"
+    
+    # Get username
+    try:
+        username = getpass.getuser()
+    except:
+        username = "unknown"
+    
+    # Get platform info
+    platform_name = platform.system()  # Windows, Darwin (Mac), Linux
+    
+    # Combine all components
+    fingerprint_raw = f"{machine_id}:{username}:{platform_name}"
+    
+    # Hash for privacy (don't send raw MAC address to server)
+    fingerprint_hash = hashlib.sha256(fingerprint_raw.encode()).hexdigest()[:16]
+    
+    return fingerprint_hash
 
 
 class QuoTradingLauncher:
@@ -398,9 +438,13 @@ class QuoTradingLauncher:
                 api_url = os.getenv("QUOTRADING_API_URL", "https://quotrading-flask-api.azurewebsites.net")
                 
                 # Call cloud API to validate license - server validates key, checks status and expiration
+                # Include device fingerprint for session locking
                 response = requests.post(
                     f"{api_url}/api/main",
-                    json={"license_key": api_key},
+                    json={
+                        "license_key": api_key,
+                        "device_fingerprint": get_device_fingerprint()  # For session locking
+                    },
                     timeout=10
                 )
                 
@@ -432,6 +476,24 @@ class QuoTradingLauncher:
                     self.save_config()
                     
                     self.root.after(0, lambda: success_callback(license_data))
+                    
+                elif response.status_code == 403:
+                    # Check if it's a session conflict
+                    error_data = response.json()
+                    if error_data.get("session_conflict"):
+                        # Session conflict - another device is actively using this license
+                        error_msg = (
+                            "LICENSE ALREADY IN USE\n\n"
+                            "Your license key is currently active on another device.\n"
+                            "Only one device can use a license at a time.\n\n"
+                            "Please stop the bot on the other device first.\n\n"
+                            "If you recently stopped the bot on another device,\n"
+                            "wait 90 seconds and try again."
+                        )
+                    else:
+                        error_msg = error_data.get("message", "License validation failed - Access Forbidden")
+                    self.root.after(0, lambda: error_callback(error_msg))
+                    
                 else:
                     error_data = response.json()
                     error_msg = error_data.get("message", "License validation failed")
