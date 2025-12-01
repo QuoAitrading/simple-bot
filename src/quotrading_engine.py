@@ -488,7 +488,7 @@ def initialize_broker() -> None:
                             
                             # Retry validation
                             retry_response = requests.post(
-                                f"{api_url}/api/main",
+                                f"{api_url}/api/validate-license",
                                 json={
                                     "license_key": license_key,
                                     "device_fingerprint": get_device_fingerprint()
@@ -7679,13 +7679,16 @@ def handle_license_check_event(data: Dict[str, Any]) -> None:
             logger.warning("No license key configured - cannot validate")
             return
         
-        # Validate license via API
+        # Validate license via API (also acts as heartbeat to keep session alive)
         import requests
         api_url = os.getenv("QUOTRADING_API_URL", "https://quotrading-flask-api.azurewebsites.net")
         
         response = requests.post(
-            f"{api_url}/api/main",
-            json={"license_key": license_key},
+            f"{api_url}/api/validate-license",
+            json={
+                "license_key": license_key,
+                "device_fingerprint": get_device_fingerprint()
+            },
             timeout=10
         )
         
@@ -7877,13 +7880,45 @@ def handle_license_check_event(data: Dict[str, Any]) -> None:
                     # Clear near expiry mode if we have more than 2 hours
                     bot_status["near_expiry_mode"] = False
         
-        elif response.status_code == 401 or response.status_code == 403:
-            # Unauthorized - license likely expired
-            logger.critical("≡ƒÜ¿ LICENSE VALIDATION FAILED - Unauthorized")
+        elif response.status_code == 401:
+            # Unauthorized - invalid license key  
+            logger.critical("LICENSE VALIDATION FAILED - Invalid License Key")
             bot_status["license_expired"] = True
             bot_status["trading_enabled"] = False
             bot_status["emergency_stop"] = True
-            bot_status["stop_reason"] = "License validation failed - unauthorized"
+            bot_status["stop_reason"] = "License validation failed - invalid key"
+        
+        elif response.status_code == 403:
+            # Session conflict - another device is using this license
+            try:
+                data = response.json()
+                if data.get("session_conflict"):
+                    logger.critical("=" * 70)
+                    logger.critical("")
+                    logger.critical("  LICENSE ALREADY IN USE")
+                    logger.critical("")
+                    logger.critical("  Your license key is currently active on another device.")
+                    logger.critical("  Only one device can use a license at a time.")
+                    logger.critical("")
+                    logger.critical("  Contact: support@quotrading.com")
+                    logger.critical("")
+                    logger.critical("=" * 70)
+                    bot_status["license_expired"] = True
+                    bot_status["trading_enabled"] = False
+                    bot_status["emergency_stop"] = True
+                    bot_status["stop_reason"] = "License in use on another device"
+                else:
+                    logger.critical("LICENSE VALIDATION FAILED - Forbidden")
+                    bot_status["license_expired"] = True
+                    bot_status["trading_enabled"] = False
+                    bot_status["emergency_stop"] = True
+                    bot_status["stop_reason"] = "License validation failed - forbidden"
+            except:
+                logger.critical("LICENSE VALIDATION FAILED - Forbidden")
+                bot_status["license_expired"] = True
+                bot_status["trading_enabled"] = False
+                bot_status["emergency_stop"] = True
+                bot_status["stop_reason"] = "License validation failed - forbidden"
         
         else:
             # Other error - log but don't stop trading (could be temporary API issue)
