@@ -1,6 +1,6 @@
 """
 Rainbow ASCII Art Logo for QuoTrading AI
-Displays animated "QUO AI" logo with rainbow colors that slowly transition
+Displays animated "QuoTrading AI" logo with rainbow colors that slowly transition
 """
 
 import time
@@ -150,13 +150,13 @@ def display_logo_line(line, color_offset=0, center_width=80):
     print(" " * padding + colored_line)
 
 
-def display_animated_logo(duration=3.0, fps=15, with_headers=True):
+def display_animated_logo(duration=8.0, fps=15, with_headers=True):
     """
-    Display the QUO AI logo with animated rainbow colors and fade-in subtitle.
+    Display the QuoTrading AI logo with animated rainbow colors and fade-in subtitle.
     Professional splash screen - shows logo ONCE with flowing rainbow and fading subtitle.
     
     Args:
-        duration: How long to display in seconds (default: 3.0)
+        duration: How long to display in seconds (default: 8.0)
         fps: Frames per second for animation (default: 15, higher = smoother)
         with_headers: Whether to show header/footer text (default: True)
     """
@@ -237,7 +237,7 @@ def display_static_logo():
 
 if __name__ == "__main__":
     # Test the logo display
-    print("Testing QUO AI Rainbow Logo...")
+    print("Testing QuoTrading AI Rainbow Logo...")
     print("=" * 60)
     display_animated_logo(duration=5.0, fps=15)
     print("=" * 60)
