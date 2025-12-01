@@ -30,7 +30,7 @@ class Colors:
     MAGENTA = '\033[35m'
 
 
-# ASCII Art for "QUO AI" - Extra Large professional version
+# ASCII Art for "QUO AI TRADING" - Extra Large professional version
 QUO_AI_LOGO = [
     "      ███████╗  ██╗   ██╗  ██╗   ██╗   ██████╗        █████╗   ██╗",
     "     ██╔═══██╗ ██║   ██║  ██║   ██║  ██╔═══██╗      ██╔══██╗  ██║",
