@@ -563,11 +563,13 @@ class QuoTradingLauncher:
                 
                 # Call cloud API to validate license - server validates key, checks status and expiration
                 # Include device fingerprint for session locking
+                # Use /api/validate-license with check_only=True to check for active bot sessions
                 response = requests.post(
-                    f"{api_url}/api/main",
+                    f"{api_url}/api/validate-license",
                     json={
                         "license_key": api_key,
-                        "device_fingerprint": get_device_fingerprint()  # For session locking
+                        "device_fingerprint": get_device_fingerprint(),  # For session locking
+                        "check_only": True  # Don't create session, just validate and check conflicts
                     },
                     timeout=10
                 )
@@ -581,22 +583,30 @@ class QuoTradingLauncher:
                         self.root.after(0, lambda: error_callback(error_msg))
                         return
                     
-                    # Extract license type from server message (e.g., "Valid standard license")
-                    message = license_data.get("message", "")
-                    license_type = "standard"  # default
-                    if "admin" in message.lower():
-                        license_type = "admin"
-                    elif "pro" in message.lower():
-                        license_type = "pro"
-                    elif "premium" in message.lower():
-                        license_type = "premium"
+                    # Get license type from response (now directly from API)
+                    license_type = license_data.get("license_type", "standard")
+                    
+                    # Get expiry date and calculate days/hours until expiration
+                    expiry_date_str = license_data.get("expiry_date")
+                    days_until_expiration = None
+                    hours_until_expiration = None
+                    
+                    if expiry_date_str:
+                        from datetime import datetime
+                        try:
+                            expiry_date = datetime.fromisoformat(expiry_date_str.replace('Z', '+00:00'))
+                            time_until_expiration = expiry_date - datetime.now(expiry_date.tzinfo)
+                            days_until_expiration = time_until_expiration.days
+                            hours_until_expiration = time_until_expiration.total_seconds() / 3600
+                        except:
+                            pass
                     
                     # Server-side subscription configuration (no hardcoded limits)
                     # These values come from license_type in database
                     self.config["license_type"] = license_type
-                    self.config["license_expiration"] = license_data.get("license_expiration")
-                    self.config["days_until_expiration"] = license_data.get("days_until_expiration")
-                    self.config["hours_until_expiration"] = license_data.get("hours_until_expiration")
+                    self.config["license_expiration"] = expiry_date_str
+                    self.config["days_until_expiration"] = days_until_expiration
+                    self.config["hours_until_expiration"] = hours_until_expiration
                     self.save_config()
                     
                     self.root.after(0, lambda: success_callback(license_data))
@@ -605,15 +615,27 @@ class QuoTradingLauncher:
                     # Check if it's a session conflict
                     error_data = response.json()
                     if error_data.get("session_conflict"):
-                        # Session conflict - another device is actively using this license
+                        # Session conflict - bot is already running with this API key
+                        # Get the server's detailed message
+                        server_message = error_data.get("message", "License already in use")
+                        estimated_wait = error_data.get("estimated_wait_seconds", 60)
+                        
                         error_msg = (
-                            "LICENSE ALREADY IN USE\n\n"
-                            "Your license key is currently active on another device.\n"
-                            "Only one device can use a license at a time.\n\n"
-                            "Please stop the bot on the other device first.\n\n"
-                            "If you recently stopped the bot, it may take up to\n"
-                            "2 minutes for the session to auto-clear. Please wait\n"
-                            "and try again."
+                            "⚠️ API KEY ALREADY IN USE ⚠️\n\n"
+                            f"{server_message}\n\n"
+                            "Only ONE instance can run per API key at a time.\n\n"
+                        )
+                        
+                        if estimated_wait > 0:
+                            error_msg += (
+                                f"Please wait approximately {estimated_wait} seconds\n"
+                                "for the current session to expire, or stop the\n"
+                                "running instance manually.\n\n"
+                            )
+                        
+                        error_msg += (
+                            "If you recently stopped the bot and can't login,\n"
+                            "please wait up to 60 seconds for the session to clear."
                         )
                     else:
                         error_msg = error_data.get("message", "License validation failed - Access Forbidden")
