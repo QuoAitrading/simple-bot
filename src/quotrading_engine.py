@@ -7261,15 +7261,6 @@ def main(symbol_override: str = None) -> None:
     """
     global event_loop, timer_manager, bid_ask_manager, cloud_api_client, rl_brain
     
-    # Display animated rainbow logo while bot is getting ready
-    # This shows in the PowerShell terminal when the bot starts
-    if RAINBOW_LOGO_AVAILABLE:
-        try:
-            display_animated_logo(duration=3.0, fps=15)
-        except Exception as e:
-            # Logo display failed - log it but continue (not critical)
-            logger.warning(f"Could not display rainbow logo: {e}")
-    
     # CRITICAL: Validate license FIRST, before any initialization
     # This is the "login screen" - fail fast if license invalid or session conflict
     validate_license_at_startup()
@@ -8232,4 +8223,21 @@ def cleanup_on_shutdown() -> None:
 
 
 if __name__ == "__main__":
+    # Display rainbow logo immediately when PowerShell opens (before any logs)
+    # This creates a splash screen effect while the bot initializes
+    if RAINBOW_LOGO_AVAILABLE:
+        try:
+            # Clear screen first for clean presentation
+            import os
+            os.system('cls' if os.name == 'nt' else 'clear')
+            
+            # Show logo without headers - full screen splash
+            display_animated_logo(duration=3.0, fps=15, with_headers=False)
+            
+            # Clear screen after logo to make room for logs
+            os.system('cls' if os.name == 'nt' else 'clear')
+        except Exception:
+            # Logo display failed - continue without it (not critical)
+            pass
+    
     main()

@@ -98,7 +98,7 @@ def display_logo_line(line, color_offset=0):
     print(colored_line)
 
 
-def display_animated_logo(duration=3.0, fps=15):
+def display_animated_logo(duration=3.0, fps=15, with_headers=True):
     """
     Display the QUO AI logo with animated rainbow colors.
     Colors slowly transition across the logo.
@@ -106,6 +106,7 @@ def display_animated_logo(duration=3.0, fps=15):
     Args:
         duration: How long to animate in seconds (default: 3.0)
         fps: Frames per second for animation (default: 15, higher = smoother)
+        with_headers: Whether to show header/footer text (default: True)
     """
     # Don't clear screen - just display the logo with animation
     frames = int(duration * fps)
@@ -114,10 +115,14 @@ def display_animated_logo(duration=3.0, fps=15):
     # Pre-calculate ANSI clear sequence for efficiency
     clear_sequence = '\033[F\033[K' * len(QUO_AI_LOGO)
     
-    # Print a header before the logo
-    print("\n" + "=" * 60)
-    print(" " * 15 + "QUOTRADING AI - STARTING UP")
-    print("=" * 60 + "\n")
+    # Print a header before the logo (optional)
+    if with_headers:
+        print("\n" + "=" * 60)
+        print(" " * 15 + "QUOTRADING AI - STARTING UP")
+        print("=" * 60 + "\n")
+    else:
+        # Add some spacing for centered full-screen effect
+        print("\n" * 3)
     
     for frame in range(frames):
         # Move cursor up to overwrite previous frame (only after first frame)
@@ -139,10 +144,13 @@ def display_animated_logo(duration=3.0, fps=15):
         if frame < frames - 1:  # Don't sleep on last frame
             time.sleep(delay)
     
-    # Print footer after logo
-    print("\n" + "=" * 60)
-    print(" " * 20 + "INITIALIZING...")
-    print("=" * 60 + "\n")
+    # Print footer after logo (optional)
+    if with_headers:
+        print("\n" + "=" * 60)
+        print(" " * 20 + "INITIALIZING...")
+        print("=" * 60 + "\n")
+    else:
+        print("\n" * 2)
 
 
 def display_static_logo():
