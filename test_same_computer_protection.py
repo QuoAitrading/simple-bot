@@ -5,7 +5,7 @@ This test specifically addresses the user's concern that same-device
 reconnection could allow API key sharing on the same computer.
 
 User requirement: "i do not want api key sharing thats what im trying to prevent
-nooo 2 api keys should be alowed to login past the 1st screen of gui no matterrr
+no 2 api keys should be allowed to login past the 1st screen of gui no matter
 how long if bot is running or gui is logged in past 2nd screen"
 """
 
