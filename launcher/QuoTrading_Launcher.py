@@ -43,6 +43,10 @@ USE_CLOUD_SIGNALS = True  # Set to True for production (cloud ML/RL)
 CLOUD_API_BASE_URL = os.getenv("QUOTRADING_API_URL", "https://quotrading-flask-api.azurewebsites.net")
 CLOUD_SIGNAL_POLL_INTERVAL = 5  # Seconds between signal polls
 
+# Multi-symbol launch configuration
+# Delay between launching each symbol to prevent session race conditions
+MULTI_SYMBOL_LAUNCH_DELAY_SECONDS = 3
+
 
 def get_device_fingerprint() -> str:
     """
@@ -2124,7 +2128,7 @@ class QuoTradingLauncher:
         
         # Settings display
         settings_frame = tk.Frame(inner_frame, bg=self.colors['secondary'], relief=tk.FLAT)
-        settings_frame.pack(fill=tk.BOTH, expand=True, padx=20, pady=10)
+        settings_frame.pack(fill=tk.X, padx=20, pady=10)
         
         tk.Label(
             settings_frame,
@@ -2234,7 +2238,9 @@ Shadow Mode: {shadow_mode}
             self.bot_processes = []
             
             # Launch a SEPARATE PowerShell window for each symbol
-            for symbol in selected_symbols:
+            # MULTI-SYMBOL FIX: Add small delay between launches to avoid session race conditions
+            # Each bot creates its own symbol-specific session with the server
+            for i, symbol in enumerate(selected_symbols):
                 # PowerShell command to run the QuoTrading AI bot with symbol argument
                 # Each window gets its own symbol via command-line argument
                 ps_command = [
@@ -2252,6 +2258,12 @@ Shadow Mode: {shadow_mode}
                 )
                 
                 self.bot_processes.append((symbol, process))
+                
+                # MULTI-SYMBOL FIX: Wait between launching each symbol
+                # This ensures each bot completes its session registration before the next starts
+                # Prevents race conditions where multiple bots try to create sessions simultaneously
+                if i < len(selected_symbols) - 1:  # Don't wait after the last symbol
+                    time.sleep(MULTI_SYMBOL_LAUNCH_DELAY_SECONDS)
             
             # CREATE ACCOUNT LOCK with ALL bot PIDs
             # Lock tracks all processes so stale lock detection works properly
