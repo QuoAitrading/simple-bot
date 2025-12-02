@@ -8347,7 +8347,7 @@ if __name__ == "__main__":
         try:
             # Show logo immediately without clearing first - instant display
             # This creates a professional loading screen effect
-            display_animated_logo(duration=3.0, fps=20, with_headers=False)
+            display_animated_logo(duration=8.0, fps=20, with_headers=False)
             
             # Clear screen after logo to make room for logs
             if os.name == 'nt':
