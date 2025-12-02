@@ -2120,12 +2120,14 @@ class QuoTradingLauncher:
         max_trades = self.trades_var.get()
         confidence = self.confidence_var.get()
         shadow_mode = "ON" if self.shadow_mode_var.get() else "OFF"
+        max_loss_per_trade = self.config.get("max_loss_per_trade", 200)
         
         settings_text = f"""
 Broker: {broker}
 Account: {account}
 Symbols: {symbols_str}
 Contracts Per Trade: {contracts}
+Max Loss Per Trade: ${max_loss_per_trade}
 Daily Loss Limit: ${loss_limit}
 Max Trades/Day: {max_trades}
 Confidence Threshold: {confidence}%

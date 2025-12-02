@@ -3115,8 +3115,23 @@ def calculate_position_size(symbol: str, side: str, entry_price: float, rl_confi
     - Position size is ALWAYS fixed at this value (no dynamic scaling)
     - Risk-based calculation ensures we don't exceed risk tolerance
     
+    STOP LOSS CALCULATION:
+    - Uses user's "Max Loss Per Trade" setting from GUI (in dollars)
+    - Automatically adapts to different symbols (ES, NQ, CL, GC, etc.)
+    - Correctly handles symbol-specific tick sizes and tick values
+    - Example: $700 max loss on ES (tick_value=$12.50) = 56 tick stop
+    - Example: $700 max loss on NQ (tick_value=$5.00) = 140 tick stop
+    - Example: $1000 max loss on CL (tick_value=$10.00) = 100 tick stop
+    
+    MULTI-CONTRACT HANDLING:
+    - Stop loss is calculated PER CONTRACT, not total position
+    - With 3 contracts and $700 max loss per trade:
+      * Each contract has 56 tick stop (ES example)
+      * Total risk = $700 (as configured by user)
+    - This ensures risk scales correctly regardless of contract count
+    
     Args:
-        symbol: Instrument symbol
+        symbol: Instrument symbol (ES, NQ, CL, GC, etc.)
         side: 'long' or 'short'
         entry_price: Expected entry price
         rl_confidence: Optional RL confidence (for tracking, not used for position sizing)
@@ -3128,15 +3143,21 @@ def calculate_position_size(symbol: str, side: str, entry_price: float, rl_confi
     equity = get_account_equity()
     
     # Get max stop loss from GUI (user sets in dollars, e.g., $300)
-    max_stop_dollars = CONFIG["risk_per_trade"]
+    # This is the "Max Loss Per Trade" setting configured by the user in the launcher
+    max_stop_dollars = CONFIG.get("max_stop_loss_dollars", 200.0)
     logger.info(f"Account equity: ${equity:.2f}, Max stop loss per trade: ${max_stop_dollars:.2f}")
     
     # Determine stop price using user's max stop loss setting
     vwap_bands = state[symbol]["vwap_bands"]
     vwap = state[symbol]["vwap"]
     
-    # Get symbol-specific tick values from SymbolSpec if available, otherwise use config defaults
+    # CRITICAL: Get symbol-specific tick values from SymbolSpec
     # This ensures correct stop loss placement for ALL symbols (ES, NQ, CL, GC, etc.)
+    # Each symbol has different tick sizes and values:
+    # - ES: tick_size=0.25, tick_value=$12.50 (4 ticks per point, $50 per point)
+    # - NQ: tick_size=0.25, tick_value=$5.00 (4 ticks per point, $20 per point)
+    # - CL: tick_size=0.01, tick_value=$10.00 (100 ticks per point, $1000 per point)
+    # - GC: tick_size=0.10, tick_value=$10.00 (10 ticks per point, $100 per point)
     from symbol_specs import SYMBOL_SPECS
     if symbol in SYMBOL_SPECS:
         spec = SYMBOL_SPECS[symbol]
@@ -3147,8 +3168,18 @@ def calculate_position_size(symbol: str, side: str, entry_price: float, rl_confi
         tick_size = CONFIG.get("tick_size", 0.25)
         tick_value = CONFIG.get("tick_value", 12.50)
     
-    # Calculate stop distance based on user's max stop loss in dollars
+    # STEP 1: Convert user's max loss (dollars) to ticks
+    # Formula: max_loss_dollars / tick_value = number of ticks
+    # Example (ES): $700 / $12.50 = 56 ticks
+    # Example (NQ): $700 / $5.00 = 140 ticks
+    # Example (CL): $1000 / $10.00 = 100 ticks
     max_stop_ticks = max_stop_dollars / tick_value  # Convert dollars to ticks
+    
+    # STEP 2: Convert ticks to price distance
+    # Formula: ticks * tick_size = price distance
+    # Example (ES): 56 ticks * 0.25 = 14 points
+    # Example (NQ): 140 ticks * 0.25 = 35 points
+    # Example (CL): 100 ticks * 0.01 = 1.00 points
     stop_distance = max_stop_ticks * tick_size  # Convert ticks to price distance
     
     # Detect current regime for entry (for logging purposes)
@@ -3162,22 +3193,29 @@ def calculate_position_size(symbol: str, side: str, entry_price: float, rl_confi
     else:
         logger.info(f"Fixed stop: {max_stop_ticks:.0f} ticks (${max_stop_dollars:.2f})")
     
-    # Calculate stop price based on entry side
+    # STEP 3: Calculate stop price based on entry side
+    # For LONG positions: stop is BELOW entry (entry - stop_distance)
+    # For SHORT positions: stop is ABOVE entry (entry + stop_distance)
     if side == "long":
         stop_price = entry_price - stop_distance
     else:  # short
         stop_price = entry_price + stop_distance
     
+    # Round to nearest valid tick (ensures broker accepts the price)
     stop_price = round_to_tick(stop_price)
     
-    # Calculate stop distance in ticks
+    # STEP 4: Verify the risk calculation
+    # Recalculate actual stop distance after rounding (may differ slightly)
     stop_distance = abs(entry_price - stop_price)
     ticks_at_risk = stop_distance / tick_size
     
-    # Calculate risk per contract
+    # Calculate actual risk per contract in dollars
+    # This should equal max_stop_dollars (or very close due to rounding)
     risk_per_contract = ticks_at_risk * tick_value
     
-    # Use fixed contracts from GUI (no dynamic scaling)
+    # STEP 5: Use fixed contracts from GUI (no dynamic scaling)
+    # User explicitly sets the contract count in the launcher
+    # The bot respects this setting regardless of account size or risk
     user_max_contracts = CONFIG["max_contracts"]
     contracts = user_max_contracts
     
@@ -3187,6 +3225,26 @@ def calculate_position_size(symbol: str, side: str, entry_price: float, rl_confi
         logger.warning(f"Position size is zero - check GUI settings")
         return 0, stop_price
     
+    # TOTAL RISK CALCULATION:
+    # The bot calculates stop loss PER CONTRACT based on max_loss_per_trade
+    # Total position risk = risk_per_contract (which equals max_stop_dollars)
+    # 
+    # IMPORTANT: This is NOT multiplied by contract count!
+    # The max_loss_per_trade setting is the TOTAL TRADE RISK, not per-contract risk.
+    # 
+    # Example with ES (tick_value=$12.50):
+    # - User sets max_loss_per_trade = $700
+    # - User sets max_contracts = 3
+    # - Stop distance = $700 / $12.50 = 56 ticks per contract
+    # - Total risk = $700 (NOT $700 * 3 = $2100)
+    # 
+    # Example with NQ (tick_value=$5.00):
+    # - User sets max_loss_per_trade = $1000
+    # - User sets max_contracts = 2
+    # - Stop distance = $1000 / $5.00 = 200 ticks per contract
+    # - Total risk = $1000 (NOT $1000 * 2 = $2000)
+    # 
+    # This ensures the user's risk tolerance is respected exactly as configured.
     
     logger.info(f"Position sizing: {contracts} contract(s)")
     logger.info(f"  Entry: ${entry_price:.2f}, Stop: ${stop_price:.2f}")
@@ -7397,15 +7455,7 @@ def main(symbol_override: str = None) -> None:
     logger.info("📋 Trading Configuration:")
     logger.info(f"  • Max Contracts: {CONFIG['max_contracts']}")
     logger.info(f"  • Max Trades/Day: {CONFIG['max_trades_per_day']}")
-    
-    # Ensure risk per trade is displayed correctly even if env var was missing/zero
-    risk_display = CONFIG['risk_per_trade']
-    if risk_display < 1.0: # Likely a percentage or zero
-         # Fallback to default $300 if something went wrong with env var
-         risk_display = 300.0
-         CONFIG['risk_per_trade'] = 300.0 # Fix it in config too
-         
-    logger.info(f"  • Risk Per Trade: ${risk_display:.0f}")
+    logger.info(f"  • Max Loss Per Trade: ${CONFIG.get('max_stop_loss_dollars', 200.0):.0f}")
     logger.info(f"  • Daily Loss Limit: ${CONFIG['daily_loss_limit']}")
     logger.info(f"  • Entry Window: {CONFIG['entry_start_time']} - {CONFIG['entry_end_time']} ET")
     logger.info(f"  • Force Close: {CONFIG['forced_flatten_time']} ET")

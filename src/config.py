@@ -455,6 +455,8 @@ class BotConfiguration:
             "rl_exploration_decay": self.rl_exploration_decay,
             # Account Settings
             "account_size": self.account_size,
+            # Stop Loss Configuration
+            "max_stop_loss_dollars": self.max_stop_loss_dollars,
         }
 
 
