@@ -7,6 +7,21 @@ import os
 import asyncio
 from datetime import datetime, timedelta
 import pytz
+import logging
+
+# Suppress project_x_py loggers before importing the SDK
+class _SuppressProjectXLoggers(logging.Filter):
+    def filter(self, record):
+        return not record.name.startswith('project_x_py')
+
+logging.getLogger().addFilter(_SuppressProjectXLoggers())
+
+_px_logger = logging.getLogger('project_x_py')
+_px_logger.setLevel(logging.CRITICAL + 1)
+_px_logger.propagate = False
+_px_logger.handlers = []
+_px_logger.addHandler(logging.NullHandler())
+_px_logger.disabled = True
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(__file__)), 'src'))
 
