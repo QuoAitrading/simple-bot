@@ -1352,11 +1352,17 @@ class QuoTradingLauncher:
             highlightthickness=2,
             highlightbackground=self.colors['border'],
             highlightcolor=self.colors['success'],
+            readonlybackground=self.colors['input_bg'],  # Match theme in readonly state
             state='readonly'  # Make account size field readonly - shows selected account balance
         )
         self.account_entry.pack(fill=tk.X, ipady=2, padx=2)
-        # Use textvariable for readonly field
-        self.account_var = tk.StringVar(value=self.config.get("account_size", "10000"))
+        # Use textvariable for readonly field - format with cents
+        account_size_val = self.config.get("account_size", "10000")
+        try:
+            formatted_account = f"{float(account_size_val):.2f}"
+        except (ValueError, TypeError):
+            formatted_account = "10000.00"
+        self.account_var = tk.StringVar(value=formatted_account)
         self.account_entry.configure(textvariable=self.account_var)
         
         # Daily Loss Limit
@@ -1657,9 +1663,12 @@ class QuoTradingLauncher:
             selected_account = next((acc for acc in accounts if acc['id'] == account_id), None)
             
             if selected_account:
-                # Update account size field with selected account's balance
+                # Update account size field with selected account's balance (show cents)
                 balance = selected_account['balance']
-                self.account_var.set(str(int(balance)))
+                try:
+                    self.account_var.set(f"{float(balance):.2f}")
+                except (ValueError, TypeError):
+                    self.account_var.set("10000.00")
                 
                 # Update info label
                 info_text = f"✓ {selected_account['id']} | Balance: ${selected_account['balance']:,.2f}"
@@ -2166,8 +2175,8 @@ Shadow Mode: {shadow_mode}
         
         cancel_btn = tk.Button(
             inner_frame,
-            text="❌ CANCEL",
-            font=("Segoe UI", 12, "bold"),
+            text="  CANCEL  ",
+            font=("Segoe UI", 11, "bold"),
             bg=self.colors['error'],
             fg='white',
             activebackground='#B91C1C',
@@ -2176,10 +2185,10 @@ Shadow Mode: {shadow_mode}
             bd=0,
             command=cancel_launch,
             cursor="hand2",
-            width=20,
-            height=3
+            padx=30,
+            pady=10
         )
-        cancel_btn.pack(pady=(10, 20))
+        cancel_btn.pack(pady=(15, 20))
         
         # Countdown logic
         countdown_value = 8  # Use simple variable with nonlocal
