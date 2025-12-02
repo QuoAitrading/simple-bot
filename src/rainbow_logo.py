@@ -303,6 +303,98 @@ def get_rainbow_bot_art_with_message():
     return colored_lines
 
 
+# Thank you message constants
+THANK_YOU_MESSAGE = "Thanks for using QuoTrading AI"
+SUPPORT_MESSAGE = "Any issues? Reach out to: support@quotrading.com"
+
+
+def display_animated_thank_you(duration=3.0, fps=15):
+    """
+    Display animated rainbow "Thanks for using QuoTrading AI" message.
+    Colors flow/cycle through the text for a smooth animation effect.
+    
+    Note: This function manipulates terminal cursor position to create animation.
+    It overwrites previous output lines during the animation loop.
+    
+    Args:
+        duration: How long to animate in seconds (default: 3.0)
+        fps: Frames per second for animation (default: 15)
+    """
+    frames = int(duration * fps)
+    delay = 1.0 / fps
+    rainbow = get_rainbow_colors()
+    
+    # Get terminal width for centering
+    try:
+        terminal_size = os.get_terminal_size()
+        terminal_width = terminal_size.columns
+    except OSError:
+        terminal_width = 80
+    
+    # Calculate padding for centering
+    msg_padding = max(0, (terminal_width - len(THANK_YOU_MESSAGE)) // 2)
+    support_padding = max(0, (terminal_width - len(SUPPORT_MESSAGE)) // 2)
+    
+    # Initial blank lines for vertical spacing
+    print("\n\n")
+    
+    for frame in range(frames):
+        # Calculate color offset for flowing rainbow effect
+        color_offset = frame % len(rainbow)
+        
+        # Move cursor up to overwrite previous frame (2 lines: message + support)
+        if frame > 0:
+            sys.stdout.write('\033[2A')  # Move up 2 lines
+        
+        # Clear line and display rainbow message with offset
+        sys.stdout.write('\033[2K')  # Clear line
+        colored_message = ''.join(
+            f"{rainbow[(i + color_offset) % len(rainbow)]}{char}{Colors.RESET}" 
+            for i, char in enumerate(THANK_YOU_MESSAGE)
+        )
+        sys.stdout.write(" " * msg_padding + colored_message + "\n")
+        
+        # Display support line with same rainbow offset
+        sys.stdout.write('\033[2K')  # Clear line
+        colored_support = ''.join(
+            f"{rainbow[(i + color_offset) % len(rainbow)]}{char}{Colors.RESET}" 
+            for i, char in enumerate(SUPPORT_MESSAGE)
+        )
+        sys.stdout.write(" " * support_padding + colored_support + "\n")
+        
+        sys.stdout.flush()
+        
+        if frame < frames - 1:
+            time.sleep(delay)
+    
+    # Final newline for spacing
+    print()
+
+
+def display_static_thank_you():
+    """
+    Display static rainbow "Thanks for using QuoTrading AI" message.
+    Used as fallback when animation is not possible.
+    """
+    rainbow = get_rainbow_colors()
+    
+    # Color each character with rainbow gradient
+    colored_message = ''.join(
+        f"{rainbow[i % len(rainbow)]}{char}{Colors.RESET}" 
+        for i, char in enumerate(THANK_YOU_MESSAGE)
+    )
+    colored_support = ''.join(
+        f"{rainbow[i % len(rainbow)]}{char}{Colors.RESET}" 
+        for i, char in enumerate(SUPPORT_MESSAGE)
+    )
+    
+    print()
+    print(colored_message)
+    print()
+    print(colored_support)
+    print()
+
+
 def get_rainbow_bot_art():
     """
     Get bot ASCII art with rainbow colors applied.

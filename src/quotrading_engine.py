@@ -90,7 +90,7 @@ load_dotenv(dotenv_path=env_path)
 
 # Import rainbow logo display - with fallback if not available
 try:
-    from rainbow_logo import display_animated_logo, Colors, get_rainbow_bot_art, get_rainbow_bot_art_with_message
+    from rainbow_logo import display_animated_logo, Colors, get_rainbow_bot_art, get_rainbow_bot_art_with_message, display_animated_thank_you, display_static_thank_you
     RAINBOW_LOGO_AVAILABLE = True
 except ImportError:
     RAINBOW_LOGO_AVAILABLE = False
@@ -98,6 +98,8 @@ except ImportError:
     Colors = None
     get_rainbow_bot_art = None
     get_rainbow_bot_art_with_message = None
+    display_animated_thank_you = None
+    display_static_thank_you = None
 
 # Startup logo configuration
 STARTUP_LOGO_DURATION = 8.0  # Seconds to display startup logo
@@ -7090,6 +7092,17 @@ def log_session_summary(symbol: str, logout_success: bool = True, show_logout_st
         else:
             logger.info("\033[91m✗ Logout completed with errors\033[0m")  # Red
         logger.info("")
+    
+    # Display animated rainbow "Thanks for using QuoTrading AI" message
+    # Only show when bot art is enabled (not during maintenance mode)
+    if show_bot_art and display_animated_thank_you:
+        try:
+            display_animated_thank_you(duration=3.0, fps=15)
+        except Exception as e:
+            # Fallback to static display if animation fails
+            logger.debug(f"Animation failed, using static display: {e}")
+            if display_static_thank_you:
+                display_static_thank_you()
     
     # Send daily summary alert
     try:
