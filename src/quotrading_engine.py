@@ -49,6 +49,21 @@ For Multi-User Subscriptions:
 import os
 import sys
 import logging
+
+# CRITICAL: Suppress ALL project_x_py loggers BEFORE any other imports
+# Install a filter on the root logger to block all project_x_py child loggers
+class _SuppressProjectXLoggers(logging.Filter):
+    def filter(self, record):
+        return not record.name.startswith('project_x_py')
+
+logging.getLogger().addFilter(_SuppressProjectXLoggers())
+
+# Also suppress the parent logger directly
+_project_x_root = logging.getLogger('project_x_py')
+_project_x_root.setLevel(logging.CRITICAL)
+_project_x_root.propagate = False
+_project_x_root.handlers = []
+
 from datetime import datetime, timedelta
 from datetime import time as datetime_time  # Alias to avoid conflict with time.time()
 from collections import deque
@@ -313,13 +328,84 @@ bot_status: Dict[str, Any] = {
 
 def setup_logging() -> logging.Logger:
     """Configure logging for the bot - Console only (no log files for customers)"""
+    
+    # CRITICAL: Suppress ALL project_x_py loggers with root-level filter
+    class SuppressProjectXLoggers(logging.Filter):
+        def filter(self, record):
+            return not record.name.startswith('project_x_py')
+    
+    # Install filter on root logger FIRST
+    logging.getLogger().addFilter(SuppressProjectXLoggers())
+    
+    # Also suppress the parent logger directly
+    project_x_root = logging.getLogger('project_x_py')
+    project_x_root.setLevel(logging.CRITICAL)
+    project_x_root.propagate = False
+    project_x_root.handlers = []
+    
     logging.basicConfig(
         level=logging.INFO,
-        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+        format='%(message)s',  # Clean format - no timestamps or module names for customer UI
         handlers=[
             logging.StreamHandler()  # Console output only - customers don't need log files
         ]
     )
+    
+    # Suppress technical noise per LOGGING_SPECIFICATION.md Section "🚫 LOGS THAT SHOULD BE SUPPRESSED"
+    
+    # 1. Third-party libraries (SDK internals, HTTP, WebSocket)
+    logging.getLogger('httpx').setLevel(logging.ERROR)
+    
+    # Suppress ALL project_x_py loggers by disabling propagation at root level
+    project_x_logger = logging.getLogger('project_x_py')
+    project_x_logger.setLevel(logging.CRITICAL)  # Only show critical errors
+    project_x_logger.propagate = False  # Don't propagate to root logger
+    project_x_logger.handlers = []  # Clear all handlers to prevent JSON output
+    
+    logging.getLogger('signalrcore').setLevel(logging.ERROR)
+    
+    # Suppress all nested project_x_py loggers (they use deeply nested child loggers)
+    # These loggers output JSON which clutters customer UI
+    for logger_name in ['project_x_py.statistics', 
+                        'project_x_py.statistics.bounded_statistics',
+                        'project_x_py.statistics.bounded_statistics.bounded_stats',
+                        'project_x_py.order_manager', 
+                        'project_x_py.order_manager.core',
+                        'project_x_py.position_manager',
+                        'project_x_py.position_manager.core',
+                        'project_x_py.trading_suite',
+                        'project_x_py.data_manager', 
+                        'project_x_py.risk_manager']:
+        child_logger = logging.getLogger(logger_name)
+        child_logger.setLevel(logging.CRITICAL)
+        child_logger.propagate = False
+        child_logger.handlers = []  # Clear all handlers
+    
+    # 2. Initialization & Setup (RL brain, bid/ask manager, event loop, broker SDK details)
+    logging.getLogger('signal_confidence').setLevel(logging.WARNING)  # RL brain initialization
+    logging.getLogger('bid_ask_manager').setLevel(logging.WARNING)  # Bid/ask manager initialization
+    logging.getLogger('event_loop').setLevel(logging.ERROR)  # Event loop initialization & stats (suppress warnings)
+    logging.getLogger('broker_interface').setLevel(logging.ERROR)  # Broker SDK initialization details (suppress warnings)
+    
+    # 3. Order Management (order placement confirmations, IDs, internals)
+    # broker_interface already handles this at WARNING level
+    
+    # 4. Broker Communication (heartbeats, websocket, health checks)
+    logging.getLogger('broker_websocket').setLevel(logging.WARNING)  # WebSocket connection details
+    
+    # 5. Cloud & Data Sync (cloud API sync, heartbeats, file operations)
+    logging.getLogger('cloud_api').setLevel(logging.WARNING)  # Cloud API communication
+    
+    # 6. State Management (file saves, serialization, session fingerprints)
+    logging.getLogger('session_state').setLevel(logging.WARNING)  # State serialization details
+    
+    # 7. Non-Critical Errors (notification failures, alert delivery errors)
+    logging.getLogger('notifications').setLevel(logging.WARNING)  # Notification send failures
+    logging.getLogger('error_recovery').setLevel(logging.WARNING)  # Non-critical error handling
+    
+    # 8. Regime Detection Internals (algorithm details, thresholds - show only changes)
+    logging.getLogger('regime_detection').setLevel(logging.WARNING)  # Regime detection internals
+    
     return logging.getLogger(__name__)
 
 
@@ -1625,31 +1711,40 @@ def update_1min_bar(symbol: str, price: float, volume: int, dt: datetime) -> Non
             # Calculate VWAP after new bar is added
             calculate_vwap(symbol)
             
-            # Show market status every 15 minutes (professional monitoring without spam)
-            if bar_count % 15 == 0:
-                vwap_data = state[symbol].get("vwap", {})
-                position_dict = state[symbol]["position"]
-                position_qty = position_dict.get("quantity", 0) if isinstance(position_dict, dict) else 0
-                position_side = position_dict.get("side", "FLAT") if isinstance(position_dict, dict) and position_qty > 0 else "FLAT"
-                market_cond = state[symbol].get("market_condition", "UNKNOWN")
-                current_regime = state[symbol].get("current_regime", "NORMAL")
-                
-                # Build professional status message
-                status_parts = []
-                status_parts.append(f"📈 Market Status: {symbol}")
-                status_parts.append(f"Bars: {bar_count} | Price: ${current_bar['close']:.2f} | Vol: {current_bar['volume']}")
-                
-                if vwap_data and isinstance(vwap_data, dict):
-                    vwap_val = vwap_data.get('vwap', 0)
-                    std_dev = vwap_data.get('std_dev', 0)
-                    if vwap_val > 0:
-                        status_parts.append(f"VWAP: ${vwap_val:.2f} ± ${std_dev:.2f}")
-                
-                status_parts.append(f"Condition: {market_cond}")
-                status_parts.append(f"Regime: {current_regime}")
-                status_parts.append(f"Position: {position_qty} contracts {position_side}")
-                
-                logger.info(" | ".join(status_parts))
+            # Classify market condition on every bar if bid_ask_manager available
+            if bid_ask_manager is not None:
+                try:
+                    condition, _ = bid_ask_manager.classify_market_condition(symbol)
+                    state[symbol]["market_condition"] = condition
+                except Exception as e:
+                    logger.debug(f"Could not classify market condition: {e}")
+                    state[symbol]["market_condition"] = "UNKNOWN"
+            
+            # Display market snapshot on every 1-minute bar close
+            vwap_data = state[symbol].get("vwap", {})
+            market_cond = state[symbol].get("market_condition", "UNKNOWN")
+            current_regime = state[symbol].get("current_regime", "NORMAL")
+            
+            # Get current bid/ask from bid_ask_manager if available
+            quote_info = ""
+            if bid_ask_manager is not None:
+                quote = bid_ask_manager.get_current_quote(symbol)
+                if quote:
+                    spread = quote.ask_price - quote.bid_price
+                    quote_info = f" | Bid: ${quote.bid_price:.2f} x {quote.bid_size} | Ask: ${quote.ask_price:.2f} x {quote.ask_size} | Spread: ${spread:.2f}"
+            
+            # Get latest bar volume
+            vol_info = f" | Vol: {current_bar['volume']}"
+            
+            # Get VWAP if available
+            vwap_info = ""
+            if vwap_data and isinstance(vwap_data, dict):
+                vwap_val = vwap_data.get('vwap', 0)
+                std_dev = vwap_data.get('std_dev', 0)
+                if vwap_val > 0:
+                    vwap_info = f" | VWAP: ${vwap_val:.2f} ± ${std_dev:.2f}"
+            
+            logger.info(f"📊 Market: {symbol} @ ${current_bar['close']:.2f}{quote_info}{vol_info} | Bars: {bar_count}{vwap_info} | Condition: {market_cond} | Regime: {current_regime}")
             
             # Update current regime after bar completion
             update_current_regime(symbol)
@@ -2437,6 +2532,9 @@ def validate_signal_requirements(symbol: str, bar_time: datetime) -> Tuple[bool,
             condition, condition_reason = bid_ask_manager.classify_market_condition(symbol)
             pass  # Silent - market condition check (internal filter)
             
+            # Save market condition to state for monitoring display
+            state[symbol]["market_condition"] = condition
+            
             # Skip trading in stressed markets
             if condition == "stressed":
                 logger.warning("Market is stressed - skipping trade")
@@ -2902,7 +3000,7 @@ def check_for_signals(symbol: str) -> None:
     # Validate signal requirements
     is_valid, reason = validate_signal_requirements(symbol, bar_time)
     if not is_valid:
-        logger.info(f"[SIGNAL CHECK] Validation failed: {reason} at {bar_time}")
+        pass  # Silent - signal validation is internal check
         return
     
     # Get bars for signal check
@@ -2929,7 +3027,7 @@ def check_for_signals(symbol: str) -> None:
         
         if not take_signal:
             # Show rejected signal professionally for customer awareness
-            logger.info(f"⚠️  Signal Declined: {side.upper()} at ${market_state.get('price', 0):.2f} - {reason} (confidence: {confidence:.0%})")
+            logger.info(f"⚠️  Signal Declined: LONG at ${market_state.get('price', 0):.2f} - {reason} (confidence: {confidence:.0%})")
             # Store the rejected signal state for potential future learning
             state[symbol]["last_rejected_signal"] = {
                 "time": get_current_time(),
@@ -2942,7 +3040,9 @@ def check_for_signals(symbol: str) -> None:
         
         # RL approved - adjust position size based on confidence
         regime = market_state.get('regime', 'NORMAL')
-        pass  # Silent - RL approval logged with entry signal
+        
+        # Show approved signal with confidence
+        logger.info(f"✅ LONG SIGNAL APPROVED | Price: ${market_state.get('price', 0):.2f} | AI Confidence: {confidence:.0%} | Regime: {regime}")
         
         # Store market state for outcome recording
         state[symbol]["entry_market_state"] = market_state
@@ -2963,7 +3063,7 @@ def check_for_signals(symbol: str) -> None:
         
         if not take_signal:
             # Show rejected signal professionally for customer awareness
-            logger.info(f"⚠️  Signal Declined: {side.upper()} at ${market_state.get('price', 0):.2f} - {reason} (confidence: {confidence:.0%})")
+            logger.info(f"⚠️  Signal Declined: SHORT at ${market_state.get('price', 0):.2f} - {reason} (confidence: {confidence:.0%})")
             # Store the rejected signal state for potential future learning
             state[symbol]["last_rejected_signal"] = {
                 "time": get_current_time(),
@@ -2976,7 +3076,9 @@ def check_for_signals(symbol: str) -> None:
         
         # RL approved - adjust position size based on confidence
         regime = market_state.get('regime', 'NORMAL')
-        pass  # Silent - RL approval logged with entry signal
+        
+        # Show approved signal with confidence
+        logger.info(f"✅ SHORT SIGNAL APPROVED | Price: ${market_state.get('price', 0):.2f} | AI Confidence: {confidence:.0%} | Regime: {regime}")
         
         # Store market state for outcome recording
         state[symbol]["entry_market_state"] = market_state
@@ -3011,70 +3113,64 @@ def calculate_position_size(symbol: str, side: str, entry_price: float, rl_confi
     # Get account equity
     equity = get_account_equity()
     
-    # Calculate risk allowance (1.2% of equity)
-    risk_dollars = equity * CONFIG["risk_per_trade"]
-    logger.info(f"Account equity: ${equity:.2f}, Risk allowance: ${risk_dollars:.2f}")
+    # Get max stop loss from GUI (user sets in dollars, e.g., $300)
+    max_stop_dollars = CONFIG["risk_per_trade"]
+    logger.info(f"Account equity: ${equity:.2f}, Max stop loss per trade: ${max_stop_dollars:.2f}")
     
-    # Determine stop price using regime-based approach
+    # Determine stop price using user's max stop loss setting
     vwap_bands = state[symbol]["vwap_bands"]
     vwap = state[symbol]["vwap"]
-    tick_size = CONFIG["tick_size"]
     
-    # Detect current regime for entry
+    # Get symbol-specific tick values from SymbolSpec if available, otherwise use config defaults
+    # This ensures correct stop loss placement for ALL symbols (ES, NQ, CL, GC, etc.)
+    from symbol_specs import SYMBOL_SPECS
+    if symbol in SYMBOL_SPECS:
+        spec = SYMBOL_SPECS[symbol]
+        tick_size = spec.tick_size
+        tick_value = spec.tick_value
+    else:
+        # Fallback to config defaults (usually ES)
+        tick_size = CONFIG.get("tick_size", 0.25)
+        tick_value = CONFIG.get("tick_value", 12.50)
+    
+    # Calculate stop distance based on user's max stop loss in dollars
+    max_stop_ticks = max_stop_dollars / tick_value  # Convert dollars to ticks
+    stop_distance = max_stop_ticks * tick_size  # Convert ticks to price distance
+    
+    # Detect current regime for entry (for logging purposes)
     regime_detector = get_regime_detector()
     bars = state[symbol]["bars_1min"]
     atr = calculate_atr_1min(symbol, CONFIG.get("atr_period", 14))
     
-    if atr is None:
-        # Fallback to fixed stops if ATR can't be calculated
-        logger.warning("ATR calculation failed, using fixed stops as fallback")
-        max_stop_ticks = 11
-        if side == "long":
-            stop_price = entry_price - (max_stop_ticks * tick_size)
-        else:
-            stop_price = entry_price + (max_stop_ticks * tick_size)
-        stop_price = round_to_tick(stop_price)
-    else:
-        # Use regime-based stop loss calculation
+    if atr is not None:
         entry_regime = regime_detector.detect_regime(bars, atr, CONFIG.get("atr_period", 14))
-        
-        # CONFIGURABLE STOP: Read from config (GUI sets via BOT_MAX_LOSS_PER_TRADE)
-        max_stop_dollars = CONFIG.get("max_stop_loss_dollars", 200.0)
-        tick_value = CONFIG["tick_value"]
-        max_stop_ticks = max_stop_dollars / tick_value  # Ticks based on user's max loss per trade
-        stop_distance = max_stop_ticks * tick_size
-        
         logger.info(f"Fixed stop: {max_stop_ticks:.0f} ticks (${max_stop_dollars:.2f}) - Regime: {entry_regime.name}")
-        
-        if side == "long":
-            stop_price = entry_price - stop_distance
-        else:  # short
-            stop_price = entry_price + stop_distance
-        
-        stop_price = round_to_tick(stop_price)
+    else:
+        logger.info(f"Fixed stop: {max_stop_ticks:.0f} ticks (${max_stop_dollars:.2f})")
+    
+    # Calculate stop price based on entry side
+    if side == "long":
+        stop_price = entry_price - stop_distance
+    else:  # short
+        stop_price = entry_price + stop_distance
+    
+    stop_price = round_to_tick(stop_price)
     
     # Calculate stop distance in ticks
     stop_distance = abs(entry_price - stop_price)
     ticks_at_risk = stop_distance / tick_size
     
     # Calculate risk per contract
-    tick_value = CONFIG["tick_value"]
     risk_per_contract = ticks_at_risk * tick_value
     
-    # Calculate number of contracts based on risk (baseline calculation)
-    if risk_per_contract > 0:
-        contracts = int(risk_dollars / risk_per_contract)
-    else:
-        contracts = 0
-    
-    # Get user's max contracts limit and apply it (FIXED - no dynamic scaling)
+    # Use fixed contracts from GUI (no dynamic scaling)
     user_max_contracts = CONFIG["max_contracts"]
-    contracts = min(contracts, user_max_contracts)
+    contracts = user_max_contracts
     
-    logger.info(f"[FIXED CONTRACTS] Using fixed max of {user_max_contracts} contracts")
+    logger.info(f"[FIXED CONTRACTS] Using {contracts} contract(s) as set in GUI")
     
     if contracts == 0:
-        logger.warning(f"Position size too small: risk=${risk_per_contract:.2f}, allowance=${risk_dollars:.2f}")
+        logger.warning(f"Position size is zero - check GUI settings")
         return 0, stop_price
     
     
@@ -6126,7 +6222,7 @@ def check_vwap_reset(symbol: str, current_time: datetime) -> None:
     if state[symbol]["vwap_day"] is None:
         # First run - initialize VWAP day
         state[symbol]["vwap_day"] = current_date
-        logger.info(f"Trading day initialized: {current_date}")
+        pass  # Silent - VWAP day initialization
         return
     
     # If it's a new day and we're past 6:00 PM ET, reset VWAP
@@ -6197,7 +6293,7 @@ def check_daily_reset(symbol: str, current_time: datetime) -> None:
     else:
         # First run - initialize trading day
         state[symbol]["trading_day"] = current_date
-        logger.info(f"Trading day initialized: {current_date}")
+        pass  # Silent - trading day initialization
 
 
 def perform_daily_reset(symbol: str, new_date: Any) -> None:
@@ -6995,21 +7091,8 @@ def validate_timezone_configuration() -> None:
     tz = pytz.timezone('US/Eastern')
     current_time = datetime.now(tz)
     
-    logger.info(SEPARATOR_LINE)
-    logger.info("TIMEZONE CONFIGURATION VALIDATION")
-    logger.info(SEPARATOR_LINE)
-    logger.info(f"Configured Timezone: US/Eastern (CME Futures Standard)")
-    logger.info(f"Current Time (ET): {current_time.strftime('%Y-%m-%d %H:%M:%S %Z')}")
-    logger.info(f"UTC Offset: {current_time.strftime('%z')}")
-    logger.info(f"DST Active: {bool(current_time.dst())}")
-    logger.info(f"CME Futures Schedule (Wall-Clock Times - Never Change):")
-    logger.info(f"  - Market Open: 6:00 PM Eastern")
-    logger.info(f"  - Force Close: 4:45 PM Eastern daily")
-    logger.info(f"  - Maintenance: 4:45-6:00 PM Eastern")
-    logger.info(f"  - Friday Close: 5:00 PM Eastern")
-    logger.info(f"  - Sunday Open: 6:00 PM Eastern")
-    logger.info(f"NOTE: pytz handles EST/EDT automatically - same wall-clock times year-round")
-    logger.info(SEPARATOR_LINE)
+    # Show timezone info per LOGGING_SPECIFICATION.md startup section
+    logger.info(f"Timezone: US/Eastern | Current: {current_time.strftime('%Y-%m-%d %H:%M:%S %Z')}")
 
 
 def log_time_based_action(action: str, reason: str, details: Optional[Dict[str, Any]] = None) -> None:
@@ -7239,7 +7322,15 @@ def main(symbol_override: str = None) -> None:
     logger.info("📋 Trading Configuration:")
     logger.info(f"  • Max Contracts: {CONFIG['max_contracts']}")
     logger.info(f"  • Max Trades/Day: {CONFIG['max_trades_per_day']}")
-    logger.info(f"  • Risk Per Trade: ${CONFIG['risk_per_trade']:.0f}")
+    
+    # Ensure risk per trade is displayed correctly even if env var was missing/zero
+    risk_display = CONFIG['risk_per_trade']
+    if risk_display < 1.0: # Likely a percentage or zero
+         # Fallback to default $300 if something went wrong with env var
+         risk_display = 300.0
+         CONFIG['risk_per_trade'] = 300.0 # Fix it in config too
+         
+    logger.info(f"  • Risk Per Trade: ${risk_display:.0f}")
     logger.info(f"  • Daily Loss Limit: ${CONFIG['daily_loss_limit']}")
     logger.info(f"  • Entry Window: {CONFIG['entry_start_time']} - {CONFIG['entry_end_time']} ET")
     logger.info(f"  • Force Close: {CONFIG['forced_flatten_time']} ET")
@@ -7302,6 +7393,8 @@ def main(symbol_override: str = None) -> None:
     # Update header with broker connection status and starting equity
     logger.info(f"✅ Broker Connected | Starting Equity: ${bot_status['starting_equity']:.2f}")
     logger.info("")
+    logger.info("📊 Waiting for market data... (Bars and quotes will appear once data flows)")
+    logger.info("")
     
     # Initialize state for instrument (use override symbol if provided)
     initialize_state(trading_symbol)
@@ -7339,7 +7432,6 @@ def main(symbol_override: str = None) -> None:
     
     # Register signal handlers for Ctrl+C, SIGTERM, etc.
     def signal_handler(signum, frame):
-        logger.info(f"Signal {signum} received, releasing session and shutting down...")
         release_session()
         sys.exit(0)
     
@@ -7370,8 +7462,11 @@ def main(symbol_override: str = None) -> None:
     # Only the dev (Kevin) gets the experience data saved to cloud
     pass  # Silent - RL cloud mode (not customer-facing)
     
+    # Show current date/time before starting
+    current_time = datetime.now(tz)
+    logger.info(f"📅 {current_time.strftime('%A, %B %d, %Y at %I:%M %p %Z')}")
+    logger.info("")
     logger.info("🚀 Bot Ready - Monitoring for Signals")
-    logger.info("Press Ctrl+C for graceful shutdown")
     logger.info("")
     
     # Run event loop (blocks until shutdown signal)
@@ -7424,16 +7519,8 @@ def handle_tick_event(event) -> None:
     if "total_ticks_received" not in state[symbol]:
         state[symbol]["total_ticks_received"] = 0
     state[symbol]["total_ticks_received"] += 1
-    total_ticks = state[symbol]["total_ticks_received"]
     
-    # Log market snapshot periodically (every 1000 ticks for professional monitoring)
-    if total_ticks % 1000 == 0:
-        # Get current bid/ask from bid_ask_manager if available
-        if bid_ask_manager is not None:
-            quote = bid_ask_manager.get_current_quote(symbol)
-            if quote:
-                spread = quote.ask_price - quote.bid_price
-                logger.info(f"📊 Market: {symbol} @ ${price:.2f} | Bid: ${quote.bid_price:.2f} x {quote.bid_size} | Ask: ${quote.ask_price:.2f} x {quote.ask_size} | Spread: ${spread:.2f}")
+    # Market monitoring is now done on every 1-minute bar close (see update_bars_1min function)
     
     # Create tick object
     tick = {
@@ -7612,12 +7699,8 @@ def handle_position_reconciliation_event(data: Dict[str, Any]) -> None:
             # send_telegram_alert(f"Position mismatch: Broker={broker_position}, Bot={bot_position}")
             
         else:
-            # Positions match - log success every hour only to avoid spam
-            current_time = time_module.time()
-            last_log = state[symbol].get("last_reconciliation_log", 0)
-            if current_time - last_log > 3600:  # 1 hour
-                logger.info(f"[RECONCILIATION] Position sync OK: {broker_position} contracts")
-                state[symbol]["last_reconciliation_log"] = current_time
+            # Positions match - silent per LOGGING_SPECIFICATION.md
+            pass  # Silent - position reconciliation
     
     except Exception as e:
         logger.error(f"Error during position reconciliation: {e}", exc_info=True)
@@ -8012,9 +8095,7 @@ def send_heartbeat() -> None:
             }
         }
         
-        import os as os_mod
-        pid = os_mod.getpid()
-        logger.info(f"📱 Sending heartbeat with fingerprint: {payload['device_fingerprint']} (PID: {pid})")
+        pass  # Silent - heartbeat is internal health check
         
         response = requests.post(
             f"{api_url}/api/heartbeat",
@@ -8121,16 +8202,16 @@ def release_session() -> None:
                 timeout=5
             )
             if response.status_code == 200:
-                logger.info("✅ Session lock released successfully")
+                pass  # Silent - session released
             else:
-                logger.warning(f"⚠️ Failed to release session lock: HTTP {response.status_code}")
+                pass  # Silent - release failed
     except Exception as e:
         logger.warning(f"⚠️ Error releasing session lock: {e}")
 
 
 def cleanup_on_shutdown() -> None:
     """Cleanup tasks on shutdown"""
-    logger.info("Running cleanup tasks...")
+    # Silent cleanup
     
     # Release session lock
     release_session()
@@ -8149,25 +8230,25 @@ def cleanup_on_shutdown() -> None:
     if recovery_manager:
         try:
             recovery_manager.save_state(state)
-            logger.info("State saved successfully")
+            pass  # Silent - state saved
         except Exception as e:
-            logger.error(f"Error saving state: {e}")
+            pass  # Silent - save failed
     
     # Disconnect broker
     if broker and broker.is_connected():
         try:
             broker.disconnect()
-            logger.info("Broker disconnected")
+            pass  # Silent - broker disconnected
         except Exception as e:
-            logger.error(f"Error disconnecting broker: {e}")
+            pass  # Silent - disconnect failed
     
     # Stop timer manager
     if timer_manager:
         try:
             timer_manager.stop()
-            logger.info("Timer manager stopped")
+            pass  # Silent - timer stopped
         except Exception as e:
-            logger.error(f"Error stopping timer manager: {e}")
+            pass  # Silent - stop failed
     
     # Log session summary
     symbol = CONFIG["instrument"]

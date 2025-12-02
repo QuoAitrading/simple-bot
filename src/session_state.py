@@ -38,7 +38,7 @@ class SessionStateManager:
             try:
                 with open(self.state_file, 'r', encoding='utf-8') as f:
                     state = json.load(f)
-                    logger.info(f"Loaded session state from {self.state_file}")
+                    pass  # Silent - Session state loaded
                     return state
             except Exception as e:
                 logger.error(f"Failed to load session state: {e}")
@@ -74,7 +74,7 @@ class SessionStateManager:
             self.state["last_updated"] = datetime.now().isoformat()
             with open(self.state_file, 'w', encoding='utf-8') as f:
                 json.dump(self.state, f, indent=2)
-            logger.debug(f"Saved session state to {self.state_file}")
+            pass  # Silent - Session state saved
         except Exception as e:
             logger.error(f"Failed to save session state: {e}")
     

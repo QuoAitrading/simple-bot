@@ -11,6 +11,21 @@ import logging
 import time
 import asyncio
 
+# CRITICAL: Suppress ALL project_x_py loggers BEFORE importing the SDK
+# This catches the root logger and all child loggers (statistics, order_manager, position_manager, etc.)
+class _SuppressProjectXLoggers(logging.Filter):
+    def filter(self, record):
+        return not record.name.startswith('project_x_py')
+
+# Install filter on root logger to catch ALL project_x_py loggers
+logging.getLogger().addFilter(_SuppressProjectXLoggers())
+
+# Also suppress the parent logger directly
+_px_logger = logging.getLogger('project_x_py')
+_px_logger.setLevel(logging.CRITICAL)
+_px_logger.propagate = False
+_px_logger.handlers = []
+
 # Import broker SDKs (optional dependencies)
 # NOTE: Moved imports inside methods to avoid initialization errors at module import time
 BROKER_SDK_AVAILABLE = False
@@ -254,6 +269,27 @@ class BrokerSDKImplementation(BrokerInterface):
         from project_x_py import ProjectX, ProjectXConfig, TradingSuite, TradingSuiteConfig
         from project_x_py.realtime.core import ProjectXRealtimeClient
         
+        # Helper to forcefully suppress JSON spam loggers
+        def _suppress_spam_loggers():
+            import logging
+            # Suppress root project_x_py logger
+            px_logger = logging.getLogger('project_x_py')
+            px_logger.setLevel(logging.CRITICAL)
+            px_logger.propagate = False
+            px_logger.handlers = []
+            
+            # Iterate over all existing loggers and suppress any from project_x_py
+            # This catches child loggers like project_x_py.statistics.bounded_statistics
+            for name in list(logging.Logger.manager.loggerDict.keys()):
+                if name.startswith('project_x_py'):
+                    try:
+                        logger = logging.getLogger(name)
+                        logger.setLevel(logging.CRITICAL)
+                        logger.propagate = False
+                        logger.handlers = []
+                    except Exception:
+                        pass
+
         if self.circuit_breaker_open:
             logger.error("Circuit breaker is open - cannot connect")
             return False
@@ -275,6 +311,9 @@ class BrokerSDKImplementation(BrokerInterface):
                     config=ProjectXConfig()
                 )
                 
+                # Suppress logs immediately after client init
+                _suppress_spam_loggers()
+                
                 # Authenticate first (async method)
                 pass  # Silent authentication
                 try:
@@ -293,6 +332,9 @@ class BrokerSDKImplementation(BrokerInterface):
                         # Will retry
                         logger.warning("Authentication failed, will retry...")
                         continue
+                
+                # Suppress logs again after authentication
+                _suppress_spam_loggers()
                 
                 # Test connection by getting account info first
                 try:
@@ -345,6 +387,10 @@ class BrokerSDKImplementation(BrokerInterface):
                             realtime_client=realtime_client,
                             config=TradingSuiteConfig(instrument=self.instrument)
                         )
+                        
+                        # Suppress logs FINAL time after TradingSuite init (which creates the noisy managers)
+                        _suppress_spam_loggers()
+                        
                         pass  # Silent - trading suite initialized
                     else:
                         logger.warning("Missing JWT token or account ID - order placement disabled")

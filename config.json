@@ -1,8 +1,8 @@
 {
-  "license_type": "standard",
+  "license_type": "STANDARD",
   "license_expiration": "2025-12-30T02:56:39.672897",
   "days_until_expiration": 28,
-  "hours_until_expiration": 687.0864046344444,
+  "hours_until_expiration": 677.1103909955556,
   "topstep_starting_balances": {
     "14797846": 18.64,
     "14955666": 49980.26
@@ -16,7 +16,7 @@
       "id": "50KTC-V2-430672-29952795",
       "name": "50KTC-V2-430672-29952795",
       "balance": 49980.26,
-      "equity": 49980.26,
+      "equity": 49887.16,
       "type": "prop_firm"
     }
   ],
@@ -30,8 +30,8 @@
   "symbols": [
     "ES"
   ],
-  "daily_loss_limit": 1050.0,
-  "max_loss_per_trade": 300.0,
+  "daily_loss_limit": 1000.0,
+  "max_loss_per_trade": 350.0,
   "max_contracts": 1,
   "max_trades": 8,
   "confidence_threshold": 50.0,
