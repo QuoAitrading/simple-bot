@@ -89,11 +89,12 @@ load_dotenv(dotenv_path=env_path)
 
 # Import rainbow logo display - with fallback if not available
 try:
-    from rainbow_logo import display_animated_logo
+    from rainbow_logo import display_animated_logo, Colors
     RAINBOW_LOGO_AVAILABLE = True
 except ImportError:
     RAINBOW_LOGO_AVAILABLE = False
     display_animated_logo = None
+    Colors = None
 
 # ===== EXE-COMPATIBLE FILE PATH HELPERS =====
 # These ensure files are saved in the correct location whether running as:
@@ -8262,21 +8263,24 @@ def cleanup_on_shutdown() -> None:
     if symbol in state:
         log_session_summary(symbol)
     
-    # Rainbow-colored thank you message
-    from rainbow_logo import Colors
-    rainbow = [Colors.RED, Colors.ORANGE, Colors.YELLOW, Colors.GREEN, Colors.CYAN, Colors.BLUE, Colors.PURPLE, Colors.MAGENTA]
-    
-    # Create rainbow text for "Thanks for using QuoTrading AI"
-    message = "Thanks for using QuoTrading AI"
-    colored_message = ""
-    for i, char in enumerate(message):
-        color = rainbow[i % len(rainbow)]
-        colored_message += f"{color}{char}{Colors.RESET}"
-    
-    logger.info("")
-    logger.info(colored_message)
-    logger.info("Any issues? Reach out to support: support@quotrading.com")
-    logger.info("")
+    # Rainbow-colored thank you message (only if Colors available)
+    if Colors:
+        rainbow = [Colors.RED, Colors.ORANGE, Colors.YELLOW, Colors.GREEN, Colors.CYAN, Colors.BLUE, Colors.PURPLE, Colors.MAGENTA]
+        
+        # Create rainbow text for "Thanks for using QuoTrading AI"
+        message = "Thanks for using QuoTrading AI"
+        colored_message = ''.join(f"{rainbow[i % len(rainbow)]}{char}{Colors.RESET}" for i, char in enumerate(message))
+        
+        logger.info("")
+        logger.info(colored_message)
+        logger.info("Any issues? Reach out to support: support@quotrading.com")
+        logger.info("")
+    else:
+        # Fallback if Colors not available
+        logger.info("")
+        logger.info("Thanks for using QuoTrading AI")
+        logger.info("Any issues? Reach out to support: support@quotrading.com")
+        logger.info("")
 
 
 if __name__ == "__main__":
