@@ -1006,20 +1006,20 @@ class QuoTradingLauncher:
                                 stored_balances = self.config.get("topstep_starting_balances", {})
                                 if internal_id in stored_balances:
                                     starting_balance = stored_balances[internal_id]
-                                    equity = current_balance
                                 else:
+                                    # First time seeing this account - store its starting balance
                                     starting_balance = current_balance
-                                    equity = current_balance
-                                    # Store starting balance for this account
                                     if "topstep_starting_balances" not in self.config:
                                         self.config["topstep_starting_balances"] = {}
                                     self.config["topstep_starting_balances"][internal_id] = starting_balance
                                 
+                                # Always show current balance in GUI (not cached starting balance)
                                 accounts = [{
                                     "id": account_id,  # Display name
                                     "name": account_name,
-                                    "balance": starting_balance,
-                                    "equity": equity,
+                                    "balance": current_balance,  # Show current balance
+                                    "equity": current_balance,   # Equity is current balance
+                                    "starting_balance": starting_balance,  # Track starting for P&L
                                     "type": acc_type
                                 }]
                             else:
@@ -1030,17 +1030,17 @@ class QuoTradingLauncher:
                             stored_starting_balance = self.config.get("topstep_starting_balance")
                             if stored_starting_balance:
                                 starting_balance = stored_starting_balance
-                                equity = current_equity
                             else:
                                 starting_balance = current_equity
-                                equity = current_equity
                                 self.config["topstep_starting_balance"] = starting_balance
                             
+                            # Always show current balance in GUI (not cached starting balance)
                             accounts = [{
                                 "id": "TOPSTEP_MAIN",
                                 "name": f"TopStep Account ({username})",
-                                "balance": starting_balance,
-                                "equity": equity,
+                                "balance": current_equity,  # Show current balance
+                                "equity": current_equity,   # Equity is current balance
+                                "starting_balance": starting_balance,  # Track starting for P&L
                                 "type": "prop_firm"
                             }]
                         
@@ -1318,7 +1318,7 @@ class QuoTradingLauncher:
         
         tk.Label(
             shadow_mode_frame,
-            text="Shadow trading - signals trades for manual execution",
+            text="Show trade opportunities for manual execution",
             font=("Segoe UI", 7, "bold"),
             bg=self.colors['card'],
             fg=self.colors['text_light']
