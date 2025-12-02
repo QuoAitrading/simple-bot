@@ -2931,7 +2931,8 @@ def check_for_signals(symbol: str) -> None:
         take_signal, confidence, reason = get_ml_confidence(market_state, "long")
         
         if not take_signal:
-            pass  # Silent - signal rejected by RL (not customer-facing)
+            # Show rejected signal professionally for customer awareness
+            logger.info(f"⚠️  Signal Declined: {side.upper()} at ${market_state.get('price', 0):.2f} - {reason} (confidence: {confidence:.0%})")
             # Store the rejected signal state for potential future learning
             state[symbol]["last_rejected_signal"] = {
                 "time": get_current_time(),
@@ -2964,7 +2965,8 @@ def check_for_signals(symbol: str) -> None:
         take_signal, confidence, reason = get_ml_confidence(market_state, "short")
         
         if not take_signal:
-            pass  # Silent - signal rejected by RL (not customer-facing)
+            # Show rejected signal professionally for customer awareness
+            logger.info(f"⚠️  Signal Declined: {side.upper()} at ${market_state.get('price', 0):.2f} - {reason} (confidence: {confidence:.0%})")
             # Store the rejected signal state for potential future learning
             state[symbol]["last_rejected_signal"] = {
                 "time": get_current_time(),
@@ -3766,6 +3768,7 @@ def execute_entry(symbol: str, side: str, entry_price: float) -> None:
         logger.warning(f"ATR not calculable, using fallback value: {DEFAULT_FALLBACK_ATR}")
     
     entry_regime = regime_detector.detect_regime(bars, atr, CONFIG.get("atr_period", 14))
+    base_trail = CONFIG.get("trailing_stop_distance_ticks", 8)
     logger.info(f"")
     logger.info(f"  ≡ƒôè PROFESSIONAL RISK MANAGEMENT")
     logger.info(f"  Entry Regime: {entry_regime.name}")
@@ -3775,15 +3778,10 @@ def execute_entry(symbol: str, side: str, entry_price: float) -> None:
     logger.info(f"    Stop Distance: {stop_distance_ticks:.1f} ticks (${abs(actual_fill_price - stop_price):.2f})")
     logger.info(f"    Stop Price: ${stop_price:.2f}")
     logger.info(f"")
-    logger.info(f"  Breakeven Protection:")
-    logger.info(f"    BE Multiplier: {entry_regime.breakeven_mult}x")
-    logger.info(f"    Trigger: {stop_distance_ticks * entry_regime.breakeven_mult:.1f} ticks profit (1:1 risk-reward)")
-    logger.info(f"    Locks: ${actual_fill_price + (2 * CONFIG['tick_size']) if side == 'long' else actual_fill_price - (2 * CONFIG['tick_size']):.2f} (+$50 profit)")
-    logger.info(f"")
-    logger.info(f"  Trailing Stop:")
-    logger.info(f"    Trail Multiplier: {entry_regime.trailing_mult}x")
-    base_trail = CONFIG.get("trailing_stop_distance_ticks", 8)
-    logger.info(f"    Trail Distance: {base_trail * entry_regime.trailing_mult:.1f} ticks behind peak")
+    logger.info(f"  Target (Trailing Stop Activation):")
+    logger.info(f"    Activation: {stop_distance_ticks * entry_regime.breakeven_mult:.1f} ticks profit (1:1 risk-reward)")
+    logger.info(f"    After activation: Trailing stop {base_trail * entry_regime.trailing_mult:.1f} ticks behind peak")
+    logger.info(f"    Locks minimum: +$50 profit at breakeven")
     logger.info(f"")
     logger.info(f"  Timeout Protection:")
     logger.info(f"    Sideways: {entry_regime.sideways_timeout} minutes")
