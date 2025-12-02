@@ -6844,18 +6844,19 @@ def format_risk_metrics() -> None:
         logger.info(f"Trailing Stop Success Rate: {trailing_success_rate:.1f}%")
 
 
-def log_session_summary(symbol: str) -> None:
+def log_session_summary(symbol: str, logout_success: bool = True) -> None:
     """
     Log comprehensive session summary at end of trading day.
     Coordinates summary formatting through helper functions.
-    Displays with rainbow bot logo and thank you message on the right side.
+    Displays with rainbow thank you message on the right side.
     
     Args:
         symbol: Instrument symbol
+        logout_success: Whether cleanup/logout was successful
     """
     stats = state[symbol]["session_stats"]
     
-    # Display rainbow bot logo with thank you message on the right side if available
+    # Display rainbow thank you message on the right side if available
     if get_rainbow_bot_art_with_message:
         bot_lines = get_rainbow_bot_art_with_message()
         bot_line_idx = 0
@@ -6924,6 +6925,14 @@ def log_session_summary(symbol: str) -> None:
         format_time_statistics(stats)
         
         logger.info(SEPARATOR_LINE)
+    
+    # Log logout status right after session summary
+    logger.info("")
+    if logout_success:
+        logger.info("\033[92m✓ Logged out successfully\033[0m")  # Green
+    else:
+        logger.info("\033[91m✗ Logout completed with errors\033[0m")  # Red
+    logger.info("")
     
     # Send daily summary alert
     try:
@@ -8273,10 +8282,15 @@ def release_session() -> None:
 
 def cleanup_on_shutdown() -> None:
     """Cleanup tasks on shutdown"""
-    # Silent cleanup
+    # Track cleanup success
+    cleanup_success = True
     
     # Release session lock
-    release_session()
+    try:
+        release_session()
+    except Exception as e:
+        cleanup_success = False
+        logger.debug(f"Failed to release session: {e}")
     
     # Send bot shutdown alert
     try:
@@ -8294,6 +8308,7 @@ def cleanup_on_shutdown() -> None:
             recovery_manager.save_state(state)
             pass  # Silent - state saved
         except Exception as e:
+            cleanup_success = False
             pass  # Silent - save failed
     
     # Disconnect broker
@@ -8302,6 +8317,7 @@ def cleanup_on_shutdown() -> None:
             broker.disconnect()
             pass  # Silent - broker disconnected
         except Exception as e:
+            cleanup_success = False
             pass  # Silent - disconnect failed
     
     # Stop timer manager
@@ -8310,17 +8326,21 @@ def cleanup_on_shutdown() -> None:
             timer_manager.stop()
             pass  # Silent - timer stopped
         except Exception as e:
+            cleanup_success = False
             pass  # Silent - stop failed
     
-    # Log session summary
+    # Log session summary with logout status
     symbol = CONFIG["instrument"]
     if symbol in state:
-        log_session_summary(symbol)
-    
-    # Simple green checkmark logout message
-    logger.info("")
-    logger.info("\033[92m✓ Logged out successfully\033[0m")  # Green color
-    logger.info("")
+        log_session_summary(symbol, cleanup_success)
+    else:
+        # No session to summarize, just log logout status
+        logger.info("")
+        if cleanup_success:
+            logger.info("\033[92m✓ Logged out successfully\033[0m")  # Green
+        else:
+            logger.info("\033[91m✗ Logout completed with errors\033[0m")  # Red
+        logger.info("")
 
 
 if __name__ == "__main__":
