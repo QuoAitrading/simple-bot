@@ -697,6 +697,8 @@ def load_config(environment: Optional[str] = None, backtest_mode: bool = False) 
         env_vars_set.add("daily_loss_limit")
     if os.getenv("BOT_DAILY_LOSS_PERCENT"):
         env_vars_set.add("daily_loss_percent")
+    if os.getenv("BOT_MAX_LOSS_PER_TRADE"):
+        env_vars_set.add("max_stop_loss_dollars")
     if os.getenv("BOT_AUTO_CALCULATE_LIMITS") or os.getenv("BOT_USE_TOPSTEP_RULES"):
         env_vars_set.add("auto_calculate_limits")
     if os.getenv("ACCOUNT_SIZE"):
