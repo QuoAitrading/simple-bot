@@ -310,8 +310,7 @@ def get_rainbow_bot_art_with_message():
     # Add support info
     colored_lines.append("Any issues?")
     colored_lines.append("Reach out to:")
-    colored_lines.append("support@")
-    colored_lines.append("quotrading.com")
+    colored_lines.append("support@quotrading.com")
     
     return colored_lines
 

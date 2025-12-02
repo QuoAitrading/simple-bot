@@ -8307,6 +8307,7 @@ def cleanup_on_shutdown() -> None:
     # Stop timer manager
     if timer_manager:
         try:
+            timer_manager.stop()
             pass  # Silent - timer stopped
         except Exception as e:
             pass  # Silent - stop failed
