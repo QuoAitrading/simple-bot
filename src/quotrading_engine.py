@@ -6994,15 +6994,19 @@ def log_session_summary(symbol: str, logout_success: bool = True, show_logout_st
         bot_lines = get_rainbow_bot_art_with_message()
         bot_line_idx = 0
         
+        # Save original logger.info BEFORE defining log_with_bot
+        original_info = logger.info
+        
         def log_with_bot(message):
             """Helper to log a line with bot art on the right"""
             nonlocal bot_line_idx
             if bot_line_idx < len(bot_lines):
                 # Pad message to 60 characters and add bot art
-                logger.info(f"{message:<60}    {bot_lines[bot_line_idx]}")
+                # CRITICAL: Use original_info to avoid recursion
+                original_info(f"{message:<60}    {bot_lines[bot_line_idx]}")
                 bot_line_idx += 1
             else:
-                logger.info(message)
+                original_info(message)
         
         # Log session summary with bot on the right
         log_with_bot(SEPARATOR_LINE)
@@ -7021,7 +7025,6 @@ def log_session_summary(symbol: str, logout_success: bool = True, show_logout_st
         
         # The helper functions will still call logger.info directly,
         # so we temporarily patch logger.info to use our wrapper
-        original_info = logger.info
         logger.info = log_with_bot
         
         try:
