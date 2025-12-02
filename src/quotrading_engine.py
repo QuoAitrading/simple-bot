@@ -785,7 +785,7 @@ def check_broker_connection() -> None:
                 error_type="Connection Error"
             )
         except Exception as e:
-        pass  # Silent - notification error not customer-facing
+            pass  # Silent - notification error not customer-facing
         
         try:
             # Immediate reconnect with 3 retries
@@ -2063,7 +2063,6 @@ def update_macd(symbol: str) -> None:
     if macd_data is not None:
         state[symbol]["macd"] = macd_data
         pass  # Silent - MACD value internal
-                    f"Histogram: {macd_data['histogram']:.2f}")
 
 
 def update_volume_average(symbol: str) -> None:
@@ -2243,8 +2242,6 @@ def calculate_vwap(symbol: str) -> None:
     bar_count = len(bars)
     if bar_count % 10 == 0:
         pass  # Silent - VWAP calculation internal
-                   f"U2: ${state[symbol]['vwap_bands']['upper_2']:.2f} | "
-                   f"L2: ${state[symbol]['vwap_bands']['lower_2']:.2f}")
     else:
         logger.debug(f"VWAP: {vwap:.2f}, StdDev: {std_dev:.2f}")
         logger.debug(f"Bands - U3: {state[symbol]['vwap_bands']['upper_3']:.2f}, "
