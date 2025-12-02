@@ -237,6 +237,32 @@ class BrokerSDKImplementation(BrokerInterface):
             logger.error("Install with: pip install project-x-py")
             raise RuntimeError("TopStep SDK not available")
     
+    def _get_instrument_symbol(self, instrument: Any) -> str:
+        """
+        Get the symbol from an SDK Instrument object.
+        
+        The SDK may use different attribute names (symbolId vs symbol).
+        This helper handles both cases with a safe fallback.
+        
+        Args:
+            instrument: SDK Instrument object
+            
+        Returns:
+            Symbol string, or empty string if not found
+        """
+        # Try symbolId first (newer SDK versions)
+        symbol = getattr(instrument, 'symbolId', None)
+        if symbol:
+            return symbol
+        
+        # Fall back to symbol (older SDK versions)
+        symbol = getattr(instrument, 'symbol', None)
+        if symbol:
+            return symbol
+        
+        # Return empty string as last resort
+        return ''
+    
     def connect(self, max_retries: int = None) -> bool:
         """
         Connect to TopStep SDK with retry logic.
@@ -627,7 +653,9 @@ class BrokerSDKImplementation(BrokerInterface):
                 try:
                     positions = loop.run_until_complete(self.sdk_client.search_open_positions())
                     for pos in positions:
-                        if pos.instrument.symbol == symbol:
+                        # Use helper method to get instrument symbol
+                        pos_symbol = self._get_instrument_symbol(pos.instrument)
+                        if pos_symbol == symbol:
                             # Return signed quantity (positive for long, negative for short)
                             qty = int(pos.quantity)
                             return qty if pos.position_type.value == "LONG" else -qty
@@ -1075,7 +1103,9 @@ class BrokerSDKImplementation(BrokerInterface):
             if instruments and len(instruments) > 0:
                 # Find exact match or closest match
                 for instr in instruments:
-                    if instr.symbol == clean_symbol or instr.symbol.startswith(clean_symbol):
+                    # Use helper method to get instrument symbol
+                    instr_symbol = self._get_instrument_symbol(instr)
+                    if instr_symbol == clean_symbol or instr_symbol.startswith(clean_symbol):
                         contract_id = instr.contract_id
                         self._contract_id_cache[symbol] = contract_id
                         pass  # Silent - contract ID cached
