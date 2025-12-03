@@ -5747,17 +5747,31 @@ def check_regime_change(symbol: str, current_price: float) -> None:
         # PROFESSIONAL APPROACH: Place new stop FIRST, then cancel old
         stop_side = "SELL" if side == "long" else "BUY"
         contracts = position["quantity"]
+        
+        # ANTI-SPAM: Track consecutive stop order failures to prevent log spam
+        stop_fail_count = position.get("stop_order_fail_count", 0)
+        if stop_fail_count >= 3:
+            # Already failed 3+ times - silently skip to prevent spam
+            # Log only once every 10 failures
+            if stop_fail_count % 10 == 0:
+                logger.warning(f"Stop order placement still failing ({stop_fail_count} attempts) - connection may be dead")
+            position["stop_order_fail_count"] = stop_fail_count + 1
+            return
+        
         new_stop_order = place_stop_order(symbol, stop_side, contracts, new_stop_price)
         
         if new_stop_order:
+            # Reset failure counter on success
+            position["stop_order_fail_count"] = 0
+            
             # New regime-adjusted stop confirmed - now safe to cancel old stop
             old_stop_order_id = position.get("stop_order_id")
             if old_stop_order_id:
                 cancel_success = cancel_order(symbol, old_stop_order_id)
                 if cancel_success:
-                    logger.info(f"  Γ£ô Replaced stop order: {old_stop_order_id} ΓåÆ {new_stop_order.get('order_id')}")
+                    logger.info(f"  ✔ Replaced stop order: {old_stop_order_id} → {new_stop_order.get('order_id')}")
                 else:
-                    logger.warning(f"  ΓÜá∩╕Å New stop active but failed to cancel old stop {old_stop_order_id}")
+                    logger.warning(f"  ⚠️ New stop active but failed to cancel old stop {old_stop_order_id}")
         
         if new_stop_order:
             old_stop = position["stop_price"]
@@ -5793,7 +5807,10 @@ def check_regime_change(symbol: str, current_price: float) -> None:
             
             logger.info("=" * 60)
         else:
-            logger.error("Failed to update stop after regime change")
+            # Increment failure counter
+            position["stop_order_fail_count"] = stop_fail_count + 1
+            if stop_fail_count == 0:  # Only log first failure
+                logger.error("Failed to update stop after regime change")
     else:
         # Stop would move backward - log but don't update
         old_regime = REGIME_DEFINITIONS[entry_regime_name]
