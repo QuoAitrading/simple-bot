@@ -770,9 +770,10 @@ class BrokerSDKImplementation(BrokerInterface):
                         pos_symbol = self._get_position_symbol(pos)
                         if pos_symbol == symbol or pos_symbol == symbol.lstrip('/'):
                             # Return signed quantity (positive for long, negative for short)
-                            qty = int(pos.quantity)
+                            # SDK uses 'size' attribute (not 'quantity') and 'is_long' property (not position_type.value)
+                            qty = int(pos.size)
                             self._record_success()  # Successful position query
-                            return qty if pos.position_type.value == "LONG" else -qty
+                            return qty if pos.is_long else -qty
                     self._record_success()  # Successful query (no position)
                     return 0  # No position found
                 finally:
@@ -845,8 +846,9 @@ class BrokerSDKImplementation(BrokerInterface):
             result = []
             for pos in positions:
                 pos_symbol = self._get_position_symbol(pos)
-                qty = int(pos.quantity)
-                side = "long" if pos.position_type.value == "LONG" else "short"
+                # SDK uses 'size' attribute (not 'quantity') and 'is_long' property (not position_type.value)
+                qty = int(pos.size)
+                side = "long" if pos.is_long else "short"
                 signed_qty = qty if side == "long" else -qty
                 
                 # Try to get the actual entry price from the position object
