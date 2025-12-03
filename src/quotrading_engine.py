@@ -8034,7 +8034,7 @@ def main(symbol_override: str = None) -> None:
             except Exception as e:
                 logger.debug(f"Failed to subscribe to quotes for {trading_symbol}: {e}")
         
-        logger.info(f"🤖 AI MODE: Managing positions for {trading_symbol}")
+        pass  # AI MODE managing message will be shown after date
     else:
         # LIVE MODE: Subscribe to market data (trades) - use trading_symbol
         subscribe_market_data(trading_symbol, on_tick)
@@ -8077,6 +8077,7 @@ def main(symbol_override: str = None) -> None:
     logger.info(f"📅 {current_time.strftime('%A, %B %d, %Y at %I:%M %p %Z')}")
     logger.info("")
     if _bot_config.ai_mode:
+        logger.info(f"🤖 AI MODE: Managing positions for {trading_symbol}")
         logger.info("🤖 AI MODE Ready - Waiting for your trades...")
         logger.info("")
     else:
@@ -8152,16 +8153,14 @@ def handle_tick_event(event) -> None:
     update_15min_bar(symbol, price, volume, dt)
     
     # AI MODE: Check for positions periodically for instant detection
-    # Use global tick counter to avoid redundant scans from multiple symbols
+    # Use function attribute as tick counter to avoid redundant scans from multiple symbols
     if CONFIG.get("ai_mode", False):
-        global _ai_mode_tick_counter
-        if '_ai_mode_tick_counter' not in dir():
-            _ai_mode_tick_counter = 0
-        _ai_mode_tick_counter = getattr(handle_tick_event, '_tick_counter', 0) + 1
-        handle_tick_event._tick_counter = _ai_mode_tick_counter
+        # Increment tick counter using function attribute for persistent storage
+        tick_counter = getattr(handle_tick_event, '_tick_counter', 0) + 1
+        handle_tick_event._tick_counter = tick_counter
         
         # Check every 50 global ticks (roughly every 2-3 seconds regardless of symbols)
-        if _ai_mode_tick_counter % 50 == 0:
+        if tick_counter % 50 == 0:
             _handle_ai_mode_position_scan()
 
 
@@ -8299,8 +8298,8 @@ def _handle_ai_mode_position_scan() -> None:
             # Use symbols_match() to handle different symbol formats from broker
             # (e.g., broker returns "F.US.MNQEP" or contract_id, user configured "MNQ")
             if not symbols_match(broker_symbol, configured_symbol):
-                # Log skipped positions at debug level to help diagnose issues
-                logger.debug(f"🤖 AI MODE: Skipping position - symbol mismatch: broker={broker_symbol}, configured={configured_symbol}")
+                # Log skipped positions at INFO level to help diagnose symbol matching issues
+                logger.info(f"🤖 AI MODE: Position found but symbol doesn't match - broker returned '{broker_symbol}', you configured '{configured_symbol}'")
                 continue
             
             # Use the configured symbol for consistency in state management
