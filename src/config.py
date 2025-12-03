@@ -16,6 +16,12 @@ from dataclasses import dataclass, field
 import pytz
 
 # Default configuration constants
+# The default max stop loss is $400 for capitulation strategy which requires wider stops
+# because we're entering after large flushes (20+ ticks) and need to place stops
+# 2-4 ticks beyond the flush extreme. This is a higher risk per trade but is offset by:
+# 1. Lower trade frequency (only trading real capitulation events)
+# 2. Higher win rate from exhaustion confirmation
+# 3. Better risk/reward targeting VWAP as mean reversion destination
 DEFAULT_MAX_STOP_LOSS_DOLLARS = 400.0  # Default max loss per trade in dollars (capitulation needs wider stops)
 
 
@@ -310,7 +316,12 @@ class BotConfiguration:
     # Time Stop - CAPITULATION REVERSAL STRATEGY
     max_hold_bars: int = 20  # Exit if trade hasn't worked after 20 bars (20 minutes)
     
-    # Partial Exits (static R-multiples) - Optional for capitulation strategy
+    # Partial Exits (static R-multiples) - Capitulation Strategy exits
+    # For capitulation trades, VWAP is the primary target. Partial exits work as follows:
+    # - 50% exit at 1.5R (approximately halfway to VWAP from entry)
+    # - 30% exit at 2.0R (near VWAP or slightly beyond)
+    # - 20% runner for extended moves
+    # Note: The R-multiples are based on initial risk (stop distance), not VWAP distance
     partial_exits_enabled: bool = True  # ENABLED - Take 50% at halfway to VWAP
     partial_exit_1_percentage: float = 0.50  # 50% exit at first level
     partial_exit_1_r_multiple: float = 1.5  # Exit at 1.5R (halfway to VWAP)

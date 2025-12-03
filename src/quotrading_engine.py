@@ -3165,6 +3165,11 @@ def check_long_signal_conditions(symbol: str, prev_bar: Dict[str, Any],
         logger.debug(f"Long rejected - regime {current_regime} not tradeable (need HIGH_VOL)")
         return False
     
+    # CRITICAL: VWAP is required for capitulation strategy (it's the target)
+    if vwap is None or vwap <= 0:
+        logger.debug("Long rejected - VWAP not available (required for mean reversion target)")
+        return False
+    
     # Get capitulation detector
     tick_size = CONFIG.get("tick_size", 0.25)
     tick_value = CONFIG.get("tick_value", 12.50)
@@ -3191,7 +3196,7 @@ def check_long_signal_conditions(symbol: str, prev_bar: Dict[str, Any],
         rsi=rsi,
         avg_volume=avg_volume,
         current_price=current_bar["close"],
-        vwap=vwap if vwap else current_bar["close"]
+        vwap=vwap
     )
     
     # Only accept LONG signals (after flush DOWN)
@@ -3269,6 +3274,11 @@ def check_short_signal_conditions(symbol: str, prev_bar: Dict[str, Any],
         logger.debug(f"Short rejected - regime {current_regime} not tradeable (need HIGH_VOL)")
         return False
     
+    # CRITICAL: VWAP is required for capitulation strategy (it's the target)
+    if vwap is None or vwap <= 0:
+        logger.debug("Short rejected - VWAP not available (required for mean reversion target)")
+        return False
+    
     # Get capitulation detector
     tick_size = CONFIG.get("tick_size", 0.25)
     tick_value = CONFIG.get("tick_value", 12.50)
@@ -3295,7 +3305,7 @@ def check_short_signal_conditions(symbol: str, prev_bar: Dict[str, Any],
         rsi=rsi,
         avg_volume=avg_volume,
         current_price=current_bar["close"],
-        vwap=vwap if vwap else current_bar["close"]
+        vwap=vwap
     )
     
     # Only accept SHORT signals (after flush UP)

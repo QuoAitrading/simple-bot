@@ -83,12 +83,18 @@ class CapitulationDetector:
     
     # Stop loss configuration
     STOP_BUFFER_TICKS = 3  # 2-4 ticks buffer beyond flush extreme
+    MIN_STOP_DISTANCE_TICKS = 4  # Minimum stop distance for valid risk/reward
     
     # Trade management
     BREAKEVEN_TRIGGER_TICKS = 12  # Move stop to entry after 12 ticks profit
     TRAILING_TRIGGER_TICKS = 15  # Start trailing after 15 ticks profit
     TRAILING_DISTANCE_TICKS = 9  # Trail 8-10 ticks behind
     MAX_HOLD_BARS = 20  # Time stop after 20 bars
+    
+    # Candle pattern thresholds
+    DOJI_BODY_THRESHOLD = 0.15  # Body < 15% of total range = doji
+    ENGULFING_BODY_THRESHOLD = 0.6  # Body > 60% of total range = engulfing
+    WICK_RATIO_THRESHOLD = 2.0  # Wick must be 2x body for hammer/shooting star
     
     def __init__(self, tick_size: float = 0.25, tick_value: float = 12.50):
         """
@@ -126,6 +132,7 @@ class CapitulationDetector:
             FlushEvent if flush detected, None otherwise
         """
         if len(bars) < self.FLUSH_LOOKBACK_BARS:
+            logger.debug(f"Cannot detect flush: insufficient bars ({len(bars)}/{self.FLUSH_LOOKBACK_BARS})")
             return None
         
         if current_atr is None or current_atr <= 0:
@@ -248,13 +255,17 @@ class CapitulationDetector:
         prev_bar = recent_bars[-1] if recent_bars else None
         
         # 1. Check volume pattern (spike then decline)
-        bar_volumes = [bar["volume"] for bar in recent_bars]
+        bar_volumes = [bar.get("volume", 0) for bar in recent_bars if bar.get("volume", 0) > 0]
         if len(bar_volumes) >= 3:
             # Peak should be in the middle, current should be lower
-            peak_idx = bar_volumes.index(max(bar_volumes))
-            current_vol = current_bar.get("volume", 0)
-            volume_declining = (peak_idx < len(bar_volumes) - 1 and 
-                               current_vol < bar_volumes[peak_idx])
+            max_volume = max(bar_volumes)
+            if max_volume > 0:
+                peak_idx = bar_volumes.index(max_volume)
+                current_vol = current_bar.get("volume", 0)
+                volume_declining = (peak_idx < len(bar_volumes) - 1 and 
+                                   current_vol < max_volume)
+            else:
+                volume_declining = False
         else:
             volume_declining = False
         
@@ -351,30 +362,30 @@ class CapitulationDetector:
         # Body as percentage of total range
         body_pct = body / total_range
         
-        # Check for Doji (very small body)
-        if body_pct < 0.15:
+        # Check for Doji (very small body) - using class constant
+        if body_pct < self.DOJI_BODY_THRESHOLD:
             return True, "doji"
         
         if flush_direction == "DOWN":
             # After flush DOWN, look for BULLISH reversal
             
             # Hammer: Long lower wick, small upper wick, body at top
-            if lower_wick > body * 2 and upper_wick < body * 0.5:
+            if lower_wick > body * self.WICK_RATIO_THRESHOLD and upper_wick < body * 0.5:
                 return True, "hammer"
             
             # Bullish engulfing: Large bullish candle
-            if close_price > open_price and body_pct > 0.6:
+            if close_price > open_price and body_pct > self.ENGULFING_BODY_THRESHOLD:
                 return True, "bullish_engulfing"
         
         else:  # flush_direction == "UP"
             # After flush UP, look for BEARISH reversal
             
             # Inverted hammer/shooting star: Long upper wick
-            if upper_wick > body * 2 and lower_wick < body * 0.5:
+            if upper_wick > body * self.WICK_RATIO_THRESHOLD and lower_wick < body * 0.5:
                 return True, "shooting_star"
             
             # Bearish engulfing: Large bearish candle
-            if close_price < open_price and body_pct > 0.6:
+            if close_price < open_price and body_pct > self.ENGULFING_BODY_THRESHOLD:
                 return True, "bearish_engulfing"
         
         return False, None
@@ -489,8 +500,12 @@ class CapitulationDetector:
         distance_to_vwap = abs(current_price - vwap)
         distance_to_stop = abs(current_price - stop_price)
         
-        if distance_to_stop == 0:
-            entry_details["reason"] = "Invalid stop distance"
+        # Convert stop distance to ticks for validation
+        stop_distance_ticks = distance_to_stop / self.tick_size if self.tick_size > 0 else 0
+        
+        # Validate minimum stop distance (avoid trades with unreliable risk/reward)
+        if stop_distance_ticks < self.MIN_STOP_DISTANCE_TICKS:
+            entry_details["reason"] = f"Stop distance too small: {stop_distance_ticks:.1f} ticks (min {self.MIN_STOP_DISTANCE_TICKS})"
             return False, None, entry_details
         
         risk_reward = distance_to_vwap / distance_to_stop
