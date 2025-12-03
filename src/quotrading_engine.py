@@ -345,6 +345,104 @@ def get_symbol_tick_specs(symbol: str) -> Tuple[float, float]:
     return CONFIG.get("tick_size", 0.25), CONFIG.get("tick_value", 12.50)
 
 
+def normalize_symbol_to_standard(symbol: str) -> Optional[str]:
+    """
+    Normalize any symbol format to the standard trading symbol.
+    
+    Handles various symbol formats from different brokers:
+    - Standard: "ES", "NQ", "MNQ" -> returns as-is
+    - TopStep broker format: "F.US.EP" -> "ES", "F.US.MNQEP" -> "MNQ"
+    - Contract IDs: "CON.F.US.EP.Z25" -> "ES", "CON.F.US.MNQEP.Z25" -> "MNQ"
+    
+    This is critical for AI Mode which needs to match positions from the broker
+    with the symbol the user configured in the GUI.
+    
+    Args:
+        symbol: Trading symbol in any format
+        
+    Returns:
+        Standard trading symbol (e.g., "ES", "MNQ") or None if not found
+    """
+    if not symbol:
+        return None
+    
+    try:
+        from symbol_specs import SYMBOL_SPECS
+        symbol_upper = symbol.upper()
+        
+        # Direct lookup - already a standard symbol
+        if symbol_upper in SYMBOL_SPECS:
+            return symbol_upper
+        
+        # Check broker symbol mappings to find the standard symbol
+        # This reverses the mapping: broker format -> standard symbol
+        for std_symbol, spec in SYMBOL_SPECS.items():
+            if not hasattr(spec, 'broker_symbols') or not spec.broker_symbols:
+                continue
+            
+            topstep_symbol = spec.broker_symbols.get('topstep', '')
+            if not topstep_symbol:
+                continue
+            
+            topstep_upper = topstep_symbol.upper()
+            
+            # Check if the broker symbol matches or is contained in the input
+            # E.g., "F.US.MNQEP" in "CON.F.US.MNQEP.Z25"
+            if topstep_upper in symbol_upper:
+                return std_symbol
+            
+            # Also check for the key part (e.g., "MNQEP" in ".MNQEP.")
+            broker_parts = topstep_upper.split('.')
+            if len(broker_parts) >= 2:
+                key_part = broker_parts[-1]  # Last part like "MNQEP" or "EP"
+                if f".{key_part}." in symbol_upper or symbol_upper.endswith(f".{key_part}"):
+                    return std_symbol
+        
+        # Check if a standard symbol name is directly in the input
+        # E.g., "MNQ" in "MNQZ24" or "MNQ" in some format
+        for std_symbol in SYMBOL_SPECS.keys():
+            if std_symbol in symbol_upper:
+                return std_symbol
+        
+    except Exception:
+        pass
+    
+    return None
+
+
+def symbols_match(symbol1: str, symbol2: str) -> bool:
+    """
+    Check if two symbols refer to the same trading instrument.
+    
+    Handles cases where broker returns symbol in a different format
+    than what the user configured. For example:
+    - User configures "MNQ" in GUI
+    - Broker returns position with symbol "F.US.MNQEP" or contract_id
+    
+    Args:
+        symbol1: First symbol (e.g., from broker position)
+        symbol2: Second symbol (e.g., user's configured symbol)
+        
+    Returns:
+        True if both symbols refer to the same instrument
+    """
+    if not symbol1 or not symbol2:
+        return False
+    
+    # Direct comparison (case-insensitive)
+    if symbol1.upper() == symbol2.upper():
+        return True
+    
+    # Normalize both to standard symbols and compare
+    std1 = normalize_symbol_to_standard(symbol1)
+    std2 = normalize_symbol_to_standard(symbol2)
+    
+    if std1 and std2:
+        return std1 == std2
+    
+    return False
+
+
 # String constants
 MSG_LIVE_TRADING_NOT_IMPLEMENTED = "Live trading not implemented - SDK integration required"
 SEPARATOR_LINE = "=" * 60
@@ -7924,8 +8022,9 @@ def main(symbol_override: str = None) -> None:
                 for pos in existing_positions:
                     pos_symbol = pos.get("symbol", "")
                     # Only adopt positions for the configured symbol
-                    if pos_symbol and pos_symbol == trading_symbol:
-                        logger.info(f"🤖 Found existing position on {pos_symbol} - adopting...")
+                    # Use symbols_match() to handle different symbol formats from broker
+                    if pos_symbol and symbols_match(pos_symbol, trading_symbol):
+                        logger.info(f"🤖 Found existing position on {pos_symbol} (configured: {trading_symbol}) - adopting...")
                         # Run position scan to adopt
                         _handle_ai_mode_position_scan()
                         break
@@ -8156,13 +8255,21 @@ def _handle_ai_mode_position_scan() -> None:
         
         # Check each broker position - only manage the configured symbol
         for pos in all_positions:
-            symbol = pos.get("symbol", "")
-            if not symbol:
+            broker_symbol = pos.get("symbol", "")
+            if not broker_symbol:
                 continue
             
             # ONLY manage positions for the configured symbol
-            if symbol != configured_symbol:
+            # Use symbols_match() to handle different symbol formats from broker
+            # (e.g., broker returns "F.US.MNQEP" or contract_id, user configured "MNQ")
+            if not symbols_match(broker_symbol, configured_symbol):
+                # Log skipped positions at debug level to help diagnose issues
+                logger.debug(f"🤖 AI MODE: Skipping position - symbol mismatch: broker={broker_symbol}, configured={configured_symbol}")
                 continue
+            
+            # Use the configured symbol for consistency in state management
+            # This ensures state[configured_symbol] is always used, even if broker returns different format
+            symbol = configured_symbol
             
             qty = pos.get("quantity", 0)
             signed_qty = pos.get("signed_quantity", qty)
