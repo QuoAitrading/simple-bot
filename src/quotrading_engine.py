@@ -8159,9 +8159,14 @@ def _handle_ai_mode_position_scan() -> None:
             if symbol not in state:
                 initialize_state(symbol)
                 # Subscribe to market data for this newly detected symbol
+                # AI Mode: This enables position management (exits, trailing stops)
                 try:
                     if broker is not None:
                         subscribe_market_data(symbol, on_tick)
+                        # Also subscribe to quotes for better price data
+                        if hasattr(broker, 'subscribe_quotes'):
+                            broker.subscribe_quotes(symbol, on_quote)
+                        logger.info(f"🤖 AI MODE: Subscribed to market data for {symbol}")
                 except Exception as e:
                     logger.debug(f"Could not subscribe to market data for {symbol}: {e}")
             

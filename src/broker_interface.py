@@ -278,6 +278,53 @@ class BrokerSDKImplementation(BrokerInterface):
         # Return empty string as last resort
         return ''
     
+    def _extract_trading_symbol_from_contract_id(self, contract_id: str) -> Optional[str]:
+        """
+        Extract trading symbol from TopStep contract_id.
+        
+        Contract IDs look like "CON.F.US.EP.Z25" where:
+        - CON = Contract prefix
+        - F = Futures type
+        - US = Country/region
+        - EP = Broker symbol code (e.g., EP=ES, NP=NQ)
+        - Z25 = Expiration month and year
+        
+        AI Mode uses this to identify the trading symbol for ANY position
+        the user opens, regardless of which symbol was configured.
+        
+        Returns the standard trading symbol (e.g., "ES", "NQ") or None if cannot extract.
+        """
+        if not contract_id:
+            return None
+        
+        # Try to load symbol specs for reverse lookup
+        try:
+            from symbol_specs import SYMBOL_SPECS
+        except ImportError:
+            return None
+        
+        contract_upper = contract_id.upper()
+        
+        # Look for broker symbol patterns in the contract_id
+        for symbol, spec in SYMBOL_SPECS.items():
+            if hasattr(spec, 'broker_symbols') and spec.broker_symbols:
+                topstep_symbol = spec.broker_symbols.get('topstep', '')
+                if topstep_symbol:
+                    topstep_upper = topstep_symbol.upper()
+                    # Check if the broker symbol is contained in the contract_id
+                    # E.g., "F.US.EP" is in "CON.F.US.EP.Z25"
+                    if topstep_upper in contract_upper:
+                        return symbol
+                    # Also check for individual parts (e.g., ".EP." in contract)
+                    broker_parts = topstep_upper.split('.')
+                    if len(broker_parts) >= 2:
+                        # Check if the key part (like "EP") is in the contract
+                        key_part = broker_parts[-1]  # Last part is usually the symbol code
+                        if f".{key_part}." in contract_upper or contract_upper.endswith(f".{key_part}"):
+                            return symbol
+        
+        return None
+    
     def _get_position_symbol(self, position: Any) -> str:
         """
         Get the symbol from an SDK Position object.
@@ -286,6 +333,9 @@ class BrokerSDKImplementation(BrokerInterface):
         - contract_id: The contract identifier
         - instrument: An instrument object with symbol info
         - symbol/symbolId: Direct symbol attribute
+        
+        For AI Mode: This must work with ANY symbol the user trades,
+        not just the configured symbol. Uses contract_id extraction.
         
         Args:
             position: SDK Position object
@@ -301,7 +351,14 @@ class BrokerSDKImplementation(BrokerInterface):
             for symbol, cached_id in self._contract_id_cache.items():
                 if cached_id == contract_id:
                     return symbol
-            # If not in cache, return the contract_id as-is
+            
+            # If not in cache, try to extract trading symbol from contract_id pattern
+            # This is critical for AI Mode which can trade ANY symbol
+            extracted_symbol = self._extract_trading_symbol_from_contract_id(str(contract_id))
+            if extracted_symbol:
+                return extracted_symbol
+            
+            # If cannot extract, return the contract_id as-is (fallback)
             return str(contract_id)
         
         # Try instrument attribute (if Position has embedded instrument)
