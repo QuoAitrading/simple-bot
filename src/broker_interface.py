@@ -94,6 +94,19 @@ class BrokerInterface(ABC):
         """
         pass
     
+    def get_all_open_positions(self) -> List[Dict[str, Any]]:
+        """
+        Get all open positions from broker (for AI Mode).
+        
+        AI Mode needs to detect any position the user has opened, regardless
+        of symbol, to manage stops and exits.
+        
+        Returns:
+            List of position dicts with keys: symbol, quantity, side, entry_price
+            Empty list if no positions or not supported
+        """
+        return []  # Default implementation - override in subclasses
+    
     @abstractmethod
     def place_market_order(self, symbol: str, side: str, quantity: int) -> Optional[Dict[str, Any]]:
         """
@@ -723,6 +736,55 @@ class BrokerSDKImplementation(BrokerInterface):
             logger.error(f"Error getting position quantity: {e}")
             self._record_failure()
             return 0
+    
+    def get_all_open_positions(self) -> List[Dict[str, Any]]:
+        """
+        Get all open positions from TopStep (for AI Mode).
+        
+        AI Mode needs to detect any position the user has opened, regardless
+        of symbol, to manage stops and exits.
+        
+        Returns:
+            List of position dicts with keys: symbol, quantity, side
+            Empty list if no positions
+        """
+        if not self.connected or not self.sdk_client:
+            return []
+        
+        try:
+            import asyncio
+            try:
+                loop = asyncio.get_running_loop()
+                # If loop is already running, we can't use run_until_complete
+                return []
+            except RuntimeError:
+                # No running loop, safe to create one
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                try:
+                    positions = loop.run_until_complete(self.sdk_client.search_open_positions())
+                    result = []
+                    for pos in positions:
+                        pos_symbol = self._get_position_symbol(pos)
+                        qty = int(pos.quantity)
+                        side = "long" if pos.position_type.value == "LONG" else "short"
+                        signed_qty = qty if side == "long" else -qty
+                        
+                        result.append({
+                            "symbol": pos_symbol,
+                            "quantity": qty,
+                            "signed_quantity": signed_qty,
+                            "side": side
+                        })
+                    
+                    self._record_success()
+                    return result
+                finally:
+                    loop.close()
+        except Exception as e:
+            if "Event loop is closed" not in str(e):
+                logger.debug(f"Error getting all positions: {e}")
+            return []
     
     def place_market_order(self, symbol: str, side: str, quantity: int) -> Optional[Dict[str, Any]]:
         """Place market order using TopStep SDK."""

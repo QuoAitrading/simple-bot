@@ -283,6 +283,68 @@ except Exception as e:
     # Symbol specs not available - will use defaults from config
     pass
 
+
+def get_symbol_tick_specs(symbol: str) -> Tuple[float, float]:
+    """
+    Get tick_size and tick_value for any symbol.
+    
+    Dynamically looks up symbol specs to support AI Mode's ability to
+    manage any position on any symbol the user opens.
+    
+    Handles various symbol formats:
+    - Standard: "ES", "NQ", "CL"
+    - TopStep: "F.US.EP", "F.US.NP", "F.US.CL"
+    - Tradovate: "ESZ24", "NQZ24"
+    - Contract IDs: "CON.F.US.EP.Z25"
+    
+    Args:
+        symbol: Trading symbol in any format
+        
+    Returns:
+        Tuple of (tick_size, tick_value)
+        Falls back to CONFIG defaults if symbol not found
+    """
+    try:
+        from symbol_specs import SYMBOL_SPECS
+        symbol_upper = symbol.upper()
+        
+        # Try direct lookup
+        if symbol in SYMBOL_SPECS:
+            spec = SYMBOL_SPECS[symbol]
+            return spec.tick_size, spec.tick_value
+        
+        # Also try uppercase
+        if symbol_upper in SYMBOL_SPECS:
+            spec = SYMBOL_SPECS[symbol_upper]
+            return spec.tick_size, spec.tick_value
+        
+        # Check broker symbol mappings (e.g., "F.US.EP" -> "ES")
+        for spec_symbol, spec in SYMBOL_SPECS.items():
+            if hasattr(spec, 'broker_symbols') and spec.broker_symbols:
+                for broker_name, broker_symbol in spec.broker_symbols.items():
+                    broker_symbol_upper = broker_symbol.upper()
+                    # Exact match
+                    if broker_symbol_upper == symbol_upper:
+                        return spec.tick_size, spec.tick_value
+                    # Symbol ends with broker symbol (e.g., "F.US.EP" ends with "EP")
+                    if symbol_upper.endswith("." + broker_symbol_upper):
+                        return spec.tick_size, spec.tick_value
+                    # Symbol contains broker symbol (e.g., "CON.F.US.EP.Z25" contains "EP")
+                    if "." + broker_symbol_upper + "." in symbol_upper or symbol_upper.endswith("." + broker_symbol_upper):
+                        return spec.tick_size, spec.tick_value
+        
+        # Check if standard symbol is contained in the input (e.g., "ESZ24" contains "ES")
+        for spec_symbol, spec in SYMBOL_SPECS.items():
+            if spec_symbol in symbol_upper:
+                return spec.tick_size, spec.tick_value
+        
+    except Exception:
+        pass
+    
+    # Fallback to config defaults (ES-like values)
+    return CONFIG.get("tick_size", 0.25), CONFIG.get("tick_value", 12.50)
+
+
 # String constants
 MSG_LIVE_TRADING_NOT_IMPLEMENTED = "Live trading not implemented - SDK integration required"
 SEPARATOR_LINE = "=" * 60
@@ -1358,6 +1420,30 @@ def get_position_quantity(symbol: str) -> int:
             {"error": str(e), "function": "get_position_quantity"}
         )
         return 0
+
+
+def get_all_open_positions() -> List[Dict[str, Any]]:
+    """
+    Get all open positions from broker (for AI Mode).
+    
+    AI Mode needs to detect any position the user has opened, regardless
+    of symbol, to manage stops and exits. This function returns all positions
+    so the bot can dynamically adopt any symbol the user is trading.
+    
+    Returns:
+        List of position dicts with keys: symbol, quantity, side
+        Empty list if no positions or broker not available
+    """
+    if broker is None:
+        return []
+    
+    try:
+        if hasattr(broker, 'get_all_open_positions'):
+            return broker.get_all_open_positions()
+        return []
+    except Exception as e:
+        logger.debug(f"Error getting all positions: {e}")
+        return []
 
 
 def subscribe_market_data(symbol: str, callback: Callable[[str, float, int, int], None]) -> None:
@@ -7594,27 +7680,45 @@ def main(symbol_override: str = None) -> None:
     else:
         mode_str = "LIVE TRADING"
     logger.info(f"Mode: {mode_str}")
-    logger.info(f"Symbol: {trading_symbol}")
+    
+    # AI Mode: Symbol is optional - will detect from broker positions
+    if _bot_config.ai_mode and not trading_symbol:
+        logger.info("Symbol: Auto-detect (will manage any position)")
+    else:
+        logger.info(f"Symbol: {trading_symbol}")
     
     # Show broker connection status (will be updated after broker connects)
     logger.info("Broker: Connecting...")
     
     # Display GUI Settings in professional format
-    logger.info("")
-    logger.info("📋 Trading Configuration:")
-    logger.info(f"  • Max Contracts: {CONFIG['max_contracts']}")
-    logger.info(f"  • Max Trades/Day: {CONFIG['max_trades_per_day']}")
-    logger.info(f"  • Max Loss Per Trade: ${CONFIG.get('max_stop_loss_dollars', DEFAULT_MAX_STOP_LOSS_DOLLARS):.0f}")
-    logger.info(f"  • Daily Loss Limit: ${CONFIG['daily_loss_limit']}")
-    logger.info(f"  • Entry Window: {CONFIG['entry_start_time']} - {CONFIG['entry_end_time']} ET")
-    logger.info(f"  • Force Close: {CONFIG['forced_flatten_time']} ET")
-    logger.info("=" * 80)
-    logger.info("")
+    # AI Mode: Only show what matters - max loss per trade
+    if _bot_config.ai_mode:
+        logger.info("")
+        logger.info("📋 AI Mode Configuration:")
+        logger.info(f"  • Max Loss Per Trade: ${CONFIG.get('max_stop_loss_dollars', DEFAULT_MAX_STOP_LOSS_DOLLARS):.0f}")
+        logger.info(f"  • Daily Loss Limit: ${CONFIG['daily_loss_limit']}")
+        logger.info("=" * 80)
+        logger.info("")
+    else:
+        logger.info("")
+        logger.info("📋 Trading Configuration:")
+        logger.info(f"  • Max Contracts: {CONFIG['max_contracts']}")
+        logger.info(f"  • Max Trades/Day: {CONFIG['max_trades_per_day']}")
+        logger.info(f"  • Max Loss Per Trade: ${CONFIG.get('max_stop_loss_dollars', DEFAULT_MAX_STOP_LOSS_DOLLARS):.0f}")
+        logger.info(f"  • Daily Loss Limit: ${CONFIG['daily_loss_limit']}")
+        logger.info(f"  • Entry Window: {CONFIG['entry_start_time']} - {CONFIG['entry_end_time']} ET")
+        logger.info(f"  • Force Close: {CONFIG['forced_flatten_time']} ET")
+        logger.info("=" * 80)
+        logger.info("")
     
-    # Initialize local RL brain for both LIVE and BACKTEST modes
+    # Initialize local RL brain for LIVE and BACKTEST modes (NOT AI Mode)
+    # AI Mode: Skip RL brain - users manually trade, AI just manages positions
     # LIVE MODE: Reads from local symbol-specific folder for pattern matching, saves to cloud only
     # BACKTEST MODE: Reads and saves to local symbol-specific folder
-    if is_backtest_mode() or CONFIG.get("backtest_mode", False):
+    if _bot_config.ai_mode:
+        # AI Mode: No RL brain needed - user makes all trading decisions
+        pass
+    elif is_backtest_mode() or CONFIG.get("backtest_mode", False):
         pass  # Silent - backtest mode initialization
     else:
         pass  # Silent - live mode initialization
@@ -7888,6 +7992,121 @@ def handle_time_check_event(data: Dict[str, Any]) -> None:
         check_no_overnight_positions(symbol)
 
 
+def _handle_ai_mode_position_scan() -> None:
+    """
+    AI MODE: Scan all broker positions and adopt any for management.
+    
+    This allows AI Mode to detect and manage any position the user opens
+    on ANY symbol, not just the configured symbol.
+    """
+    try:
+        # Get ALL positions from broker
+        all_positions = get_all_open_positions()
+        
+        if not all_positions:
+            # No positions - check if we had any we were tracking
+            for symbol in list(state.keys()):
+                if state[symbol]["position"]["active"]:
+                    # Position was closed externally
+                    logger.info(f"🤖 AI MODE: Position {symbol} closed by user")
+                    
+                    # Calculate P&L if possible
+                    entry_price = state[symbol]["position"].get("entry_price", 0)
+                    if state[symbol]["bars_1min"]:
+                        exit_price = state[symbol]["bars_1min"][-1]["close"]
+                        side = state[symbol]["position"]["side"]
+                        qty = state[symbol]["position"]["quantity"]
+                        tick_size, tick_value = get_symbol_tick_specs(symbol)
+                        
+                        if side == "long":
+                            pnl_ticks = (exit_price - entry_price) / tick_size
+                        else:
+                            pnl_ticks = (entry_price - exit_price) / tick_size
+                        
+                        pnl_dollars = pnl_ticks * tick_value * qty
+                        result = "WIN" if pnl_dollars >= 0 else "LOSS"
+                        logger.info(f"  Result: {result} | P&L: ${pnl_dollars:.2f}")
+                    
+                    # Clear position state
+                    state[symbol]["position"]["active"] = False
+                    state[symbol]["position"]["quantity"] = 0
+                    state[symbol]["position"]["side"] = None
+            return
+        
+        # Check each broker position
+        for pos in all_positions:
+            symbol = pos.get("symbol", "")
+            if not symbol:
+                continue
+            
+            qty = pos.get("quantity", 0)
+            signed_qty = pos.get("signed_quantity", qty)
+            side = pos.get("side", "long")
+            
+            # Ensure state exists for this symbol
+            if symbol not in state:
+                initialize_state(symbol)
+            
+            # Check if we're already tracking this position
+            bot_active = state[symbol]["position"]["active"]
+            bot_qty = state[symbol]["position"]["quantity"] if bot_active else 0
+            
+            if not bot_active and qty > 0:
+                # New position detected - adopt it!
+                logger.info("=" * 60)
+                logger.info("🤖 AI MODE: New Position Detected")
+                logger.info(f"  {qty} {'LONG' if side == 'long' else 'SHORT'} @ {symbol}")
+                
+                # Get current price for entry estimate
+                current_price = None
+                if state[symbol]["bars_1min"]:
+                    current_price = state[symbol]["bars_1min"][-1]["close"]
+                elif bid_ask_manager is not None:
+                    quote = bid_ask_manager.get_current_quote(symbol)
+                    if quote:
+                        current_price = (quote.bid_price + quote.ask_price) / 2
+                
+                if current_price is None or current_price <= 0:
+                    logger.info("  Waiting for price data...")
+                    logger.info("=" * 60)
+                    continue
+                
+                # Adopt the position
+                state[symbol]["position"]["active"] = True
+                state[symbol]["position"]["quantity"] = qty
+                state[symbol]["position"]["side"] = side
+                state[symbol]["position"]["entry_price"] = current_price
+                state[symbol]["position"]["entry_time"] = get_current_time()
+                
+                # Calculate stop loss using max_loss_per_trade
+                tick_size, tick_value = get_symbol_tick_specs(symbol)
+                max_stop_dollars = CONFIG.get("max_stop_loss_dollars", DEFAULT_MAX_STOP_LOSS_DOLLARS)
+                max_stop_ticks = max_stop_dollars / tick_value
+                stop_distance = max_stop_ticks * tick_size
+                
+                if side == "long":
+                    stop_price = current_price - stop_distance
+                else:
+                    stop_price = current_price + stop_distance
+                
+                # Round to tick
+                stop_price = round(stop_price / tick_size) * tick_size
+                
+                state[symbol]["position"]["stop_price"] = stop_price
+                state[symbol]["position"]["trailing_stop"] = stop_price
+                state[symbol]["position"]["ai_mode_adopted"] = True
+                
+                logger.info(f"  Entry: ${current_price:.2f} | Stop: ${stop_price:.2f}")
+                logger.info(f"  Max Loss: ${max_stop_dollars:.0f} ({max_stop_ticks:.0f} ticks)")
+                logger.info("=" * 60)
+                
+                # Save position state for recovery
+                save_position_state(symbol)
+    
+    except Exception as e:
+        logger.debug(f"AI Mode position scan error: {e}")
+
+
 def handle_vwap_reset_event(data: Dict[str, Any]) -> None:
     """Handle VWAP reset event"""
     symbol = CONFIG["instrument"]
@@ -7901,7 +8120,14 @@ def handle_position_reconciliation_event(data: Dict[str, Any]) -> None:
     Handle periodic position reconciliation check.
     Verifies bot's position state matches broker's actual position.
     Runs every 5 minutes to detect and correct any desyncs.
+    
+    AI MODE: Scans ALL positions from broker to detect any position on any symbol.
     """
+    # AI MODE: Check ALL positions from broker, not just configured symbol
+    if CONFIG.get("ai_mode", False):
+        _handle_ai_mode_position_scan()
+        return
+    
     symbol = CONFIG["instrument"]
     
     if symbol not in state:
@@ -7943,11 +8169,10 @@ def handle_position_reconciliation_event(data: Dict[str, Any]) -> None:
                 # Broker has position but bot thinks it's flat
                 # AI MODE: Adopt the external position and manage it
                 if CONFIG.get("ai_mode", False):
+                    # AI Mode: Minimal logging - only show trade results
                     logger.info("=" * 60)
-                    logger.info("🤖 AI MODE: External Position Detected")
-                    logger.info("=" * 60)
-                    logger.info(f"  Position: {abs(broker_position)} contracts {'LONG' if broker_position > 0 else 'SHORT'}")
-                    logger.info("  Action: ADOPTING position for AI management")
+                    logger.info("🤖 AI MODE: Position Detected")
+                    logger.info(f"  {abs(broker_position)} {'LONG' if broker_position > 0 else 'SHORT'} @ {symbol}")
                     
                     # Get current price for entry price (best estimate since we don't know actual entry)
                     # Use current bar close, or fallback to bid/ask manager, or log warning if no price available
@@ -7960,8 +8185,7 @@ def handle_position_reconciliation_event(data: Dict[str, Any]) -> None:
                             current_price = (quote.bid_price + quote.ask_price) / 2
                     
                     if current_price is None or current_price <= 0:
-                        logger.warning("  ⚠️ Cannot determine current price - unable to adopt position safely")
-                        logger.warning("  Waiting for market data before adopting position")
+                        logger.info("  Waiting for price data...")
                         logger.info("=" * 60)
                         return
                     
@@ -7973,41 +8197,31 @@ def handle_position_reconciliation_event(data: Dict[str, Any]) -> None:
                     state[symbol]["position"]["entry_price"] = current_price
                     state[symbol]["position"]["entry_time"] = get_current_time()
                     
-                    # Calculate initial stop loss based on regime and settings
-                    current_regime = state[symbol].get("current_regime", "NORMAL")
-                    regime_params = REGIME_DEFINITIONS.get(current_regime, REGIME_DEFINITIONS["NORMAL"])
-                    atr = calculate_atr(symbol)
-                    if atr is None:
-                        atr = DEFAULT_FALLBACK_ATR
+                    # Get symbol-specific tick specs for accurate stop loss calculation
+                    # This allows AI Mode to work with ANY symbol on TopStep
+                    tick_size, tick_value = get_symbol_tick_specs(symbol)
                     
-                    # Set initial stop loss using regime parameters
-                    stop_distance = atr * regime_params.stop_mult
+                    # Calculate stop loss using ONLY max_loss_per_trade setting
+                    # In AI Mode, this is the primary control - no regime ATR needed
                     max_stop_dollars = CONFIG.get("max_stop_loss_dollars", DEFAULT_MAX_STOP_LOSS_DOLLARS)
-                    tick_value = CONFIG.get("tick_value", 12.50)
                     max_stop_ticks = max_stop_dollars / tick_value
-                    tick_size = CONFIG.get("tick_size", 0.25)
-                    max_stop_distance = max_stop_ticks * tick_size
-                    
-                    # Cap stop distance to max loss per trade
-                    if stop_distance > max_stop_distance:
-                        stop_distance = max_stop_distance
+                    stop_distance = max_stop_ticks * tick_size
                     
                     if position_side == "long":
                         stop_price = current_price - stop_distance
                     else:
                         stop_price = current_price + stop_distance
                     
+                    # Round to tick
+                    stop_price = round(stop_price / tick_size) * tick_size
+                    
                     state[symbol]["position"]["stop_price"] = stop_price
                     state[symbol]["position"]["trailing_stop"] = stop_price
-                    # Mark position as adopted by AI Mode for tracking purposes
-                    # This allows the engine to distinguish AI-adopted positions from regular entries
                     state[symbol]["position"]["ai_mode_adopted"] = True
                     
-                    logger.info(f"  Entry Price (estimated): ${current_price:.2f}")
-                    logger.info(f"  Stop Loss: ${stop_price:.2f}")
-                    logger.info(f"  Regime: {current_regime}")
-                    logger.info("  AI will manage: stops, trailing, regime changes, exits")
-                    logger.info("  Note: AI Mode can manage multiple positions simultaneously")
+                    # Minimal trade result output for AI Mode
+                    logger.info(f"  Entry: ${current_price:.2f} | Stop: ${stop_price:.2f}")
+                    logger.info(f"  Max Loss: ${max_stop_dollars:.0f} ({max_stop_ticks:.0f} ticks)")
                     logger.info("=" * 60)
                 else:
                     # Normal mode: Close unexpected position

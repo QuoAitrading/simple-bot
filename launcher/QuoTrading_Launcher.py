@@ -1983,15 +1983,21 @@ class QuoTradingLauncher:
     
     def start_bot(self):
         """Validate settings and start the trading AI."""
-        # Validate at least one symbol selected
+        # Validate at least one symbol selected (unless AI mode is enabled)
         selected_symbols = [code for code, var in self.symbol_vars.items() if var.get()]
         
-        if not selected_symbols:
+        # AI Mode: Symbol is optional - bot will detect from broker positions
+        if not selected_symbols and not self.ai_mode_var.get():
             messagebox.showerror(
                 "No Symbols Selected",
                 "Please select at least one trading symbol."
             )
             return
+        
+        # AI Mode without symbol: use default ES for data feed subscription
+        # The bot will detect and manage any position the user opens
+        if not selected_symbols and self.ai_mode_var.get():
+            selected_symbols = [self.DEFAULT_SYMBOL]  # ES as default for data feed
         
         # Validate account size
         try:
