@@ -3278,8 +3278,9 @@ def check_for_signals(symbol: str) -> None:
         take_signal, confidence, reason = get_ml_confidence(market_state, "long")
         
         if not take_signal:
-            # Show rejected signal professionally for customer awareness
-            logger.info(f"⚠️  Signal Declined: LONG at ${market_state.get('price', 0):.2f} - {reason} (confidence: {confidence:.0%})")
+            # SHADOW MODE: Only show approved signals, not rejected ones
+            if not _bot_config.shadow_mode:
+                logger.info(f"⚠️  Signal Declined: LONG at ${market_state.get('price', 0):.2f} - {reason} (confidence: {confidence:.0%})")
             # Store the rejected signal state for potential future learning
             state[symbol]["last_rejected_signal"] = {
                 "time": get_current_time(),
@@ -3314,8 +3315,9 @@ def check_for_signals(symbol: str) -> None:
         take_signal, confidence, reason = get_ml_confidence(market_state, "short")
         
         if not take_signal:
-            # Show rejected signal professionally for customer awareness
-            logger.info(f"⚠️  Signal Declined: SHORT at ${market_state.get('price', 0):.2f} - {reason} (confidence: {confidence:.0%})")
+            # SHADOW MODE: Only show approved signals, not rejected ones
+            if not _bot_config.shadow_mode:
+                logger.info(f"⚠️  Signal Declined: SHORT at ${market_state.get('price', 0):.2f} - {reason} (confidence: {confidence:.0%})")
             # Store the rejected signal state for potential future learning
             state[symbol]["last_rejected_signal"] = {
                 "time": get_current_time(),
@@ -7694,7 +7696,6 @@ def main(symbol_override: str = None) -> None:
         logger.info("")
         logger.info("📋 AI Mode Configuration:")
         logger.info(f"  • Max Loss Per Trade: ${CONFIG.get('max_stop_loss_dollars', DEFAULT_MAX_STOP_LOSS_DOLLARS):.0f}")
-        logger.info(f"  • Daily Loss Limit: ${CONFIG['daily_loss_limit']}")
         logger.info("=" * 80)
         logger.info("")
     else:
