@@ -5766,7 +5766,6 @@ def check_exit_conditions(symbol: str) -> None:
                     # Flatten has been pending too long - clear and retry
                     logger.warning(f"Flatten pending for {elapsed:.1f}s - clearing flag and retrying")
                     clear_flatten_flags()
-                    clear_flatten_flags()
         
         logger.critical(SEPARATOR_LINE)
         logger.critical("MARKET CLOSING - AUTO-FLATTENING POSITION")
