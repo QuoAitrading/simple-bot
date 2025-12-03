@@ -361,6 +361,10 @@ class QueuePositionMonitor:
         - Checks if filled every 500ms
         - Returns status for decision to go aggressive
         
+        CRITICAL FIX: When cancellation fails due to asyncio errors, we return
+        "cancel_failed" to prevent the caller from placing a duplicate order.
+        The original order may still be pending at the broker.
+        
         Args:
             symbol: Instrument symbol
             order_id: Broker order ID
@@ -368,13 +372,14 @@ class QueuePositionMonitor:
             side: "long" or "short"
             get_quote_func: Function to get current quote
             is_filled_func: Function to check if order filled (returns bool)
-            cancel_order_func: Function to cancel order
+            cancel_order_func: Function to cancel order (returns bool - True if cancelled)
         
         Returns:
             Tuple of (was_filled, reason)
             - (True, "filled") - Order filled successfully
-            - (False, "price_moved_away") - Price moved, cancelled
-            - (False, "timeout") - Timeout, cancelled, go aggressive
+            - (False, "price_moved_away") - Price moved, cancelled successfully
+            - (False, "timeout") - Timeout, cancelled successfully, safe to go aggressive
+            - (False, "cancel_failed") - Cancel failed, DO NOT place another order
         """
         import time
         
@@ -413,11 +418,21 @@ class QueuePositionMonitor:
                     
                     if price_distance > price_move_threshold:
                         logger.warning(f"  ⚠️ Price moved away {price_distance:.1f} ticks - cancelling")
+                        cancel_succeeded = False
                         try:
-                            cancel_order_func(order_id)
+                            cancel_result = cancel_order_func(order_id)
+                            # cancel_order_func returns True if cancelled successfully
+                            cancel_succeeded = cancel_result is True or cancel_result is None
                         except Exception as e:
                             logger.error(f"  Failed to cancel order: {e}")
-                        return False, "price_moved_away"
+                            cancel_succeeded = False
+                        
+                        if cancel_succeeded:
+                            return False, "price_moved_away"
+                        else:
+                            # CRITICAL: Cancel failed - do not place another order!
+                            logger.error(f"  [ERROR] Cancel failed - original order may still be pending!")
+                            return False, "cancel_failed"
             except Exception as e:
                 logger.debug(f"  Error checking price movement: {e}")
             
@@ -427,12 +442,24 @@ class QueuePositionMonitor:
         # Timeout - cancel and go aggressive
         elapsed = time.time() - start_time
         logger.warning(f"  ⏱️ Queue timeout after {elapsed:.1f}s ({check_count} checks)")
+        
+        cancel_succeeded = False
         try:
-            cancel_order_func(order_id)
+            cancel_result = cancel_order_func(order_id)
+            # cancel_order_func returns True if cancelled successfully
+            cancel_succeeded = cancel_result is True or cancel_result is None
         except Exception as e:
             logger.error(f"  Failed to cancel order: {e}")
+            cancel_succeeded = False
         
-        return False, "timeout"
+        if cancel_succeeded:
+            return False, "timeout"
+        else:
+            # CRITICAL: Cancel failed - do not place another order!
+            # The original passive order may still be pending and could fill
+            logger.error(f"  [ERROR] Cancel failed - original order may still be pending!")
+            logger.error(f"  [WARN] Not switching to aggressive to avoid duplicate orders")
+            return False, "cancel_failed"
     
     def should_cancel_and_reroute(self, quote: BidAskQuote, side: str, 
                                    queue_size: int, time_in_queue: float) -> Tuple[bool, str]:
