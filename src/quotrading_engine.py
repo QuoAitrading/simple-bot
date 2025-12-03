@@ -2024,8 +2024,11 @@ def update_1min_bar(symbol: str, price: float, volume: int, dt: datetime) -> Non
             # Only display if bot has been running for at least 1 minute to avoid confusion
             # with rapid bar creation during startup
             # SILENCE DURING MAINTENANCE - no spam in logs
+            # SILENCE IN AI MODE - AI Mode just silently waits for user trades
             if bot_status.get("maintenance_idle", False):
                 pass  # Silent during maintenance - no market updates
+            elif CONFIG.get("ai_mode", False):
+                pass  # AI MODE: Silent - just waiting for user trades, no market spam
             elif bot_status.get("session_start_time"):
                 time_since_start = (get_current_time() - bot_status["session_start_time"]).total_seconds()
                 if time_since_start < 60:
@@ -2058,30 +2061,32 @@ def update_1min_bar(symbol: str, price: float, volume: int, dt: datetime) -> Non
                     logger.info(f"📊 Market: {symbol} @ ${current_bar['close']:.2f}{quote_info}{vol_info} | Bars: {bar_count}{vwap_info} | Condition: {market_cond} | Regime: {current_regime}")
             else:
                 # Fallback if session_start_time not set (shouldn't happen)
-                vwap_data = state[symbol].get("vwap", {})
-                market_cond = state[symbol].get("market_condition", "UNKNOWN")
-                current_regime = state[symbol].get("current_regime", "NORMAL")
-                
-                # Get current bid/ask from bid_ask_manager if available
-                quote_info = ""
-                if bid_ask_manager is not None:
-                    quote = bid_ask_manager.get_current_quote(symbol)
-                    if quote:
-                        spread = quote.ask_price - quote.bid_price
-                        quote_info = f" | Bid: ${quote.bid_price:.2f} x {quote.bid_size} | Ask: ${quote.ask_price:.2f} x {quote.ask_size} | Spread: ${spread:.2f}"
-                
-                # Get latest bar volume
-                vol_info = f" | Vol: {current_bar['volume']}"
-                
-                # Get VWAP if available
-                vwap_info = ""
-                if vwap_data and isinstance(vwap_data, dict):
-                    vwap_val = vwap_data.get('vwap', 0)
-                    std_dev = vwap_data.get('std_dev', 0)
-                    if vwap_val > 0:
-                        vwap_info = f" | VWAP: ${vwap_val:.2f} ± ${std_dev:.2f}"
-                
-                logger.info(f"📊 Market: {symbol} @ ${current_bar['close']:.2f}{quote_info}{vol_info} | Bars: {bar_count}{vwap_info} | Condition: {market_cond} | Regime: {current_regime}")
+                # Also suppress in AI Mode
+                if not CONFIG.get("ai_mode", False):
+                    vwap_data = state[symbol].get("vwap", {})
+                    market_cond = state[symbol].get("market_condition", "UNKNOWN")
+                    current_regime = state[symbol].get("current_regime", "NORMAL")
+                    
+                    # Get current bid/ask from bid_ask_manager if available
+                    quote_info = ""
+                    if bid_ask_manager is not None:
+                        quote = bid_ask_manager.get_current_quote(symbol)
+                        if quote:
+                            spread = quote.ask_price - quote.bid_price
+                            quote_info = f" | Bid: ${quote.bid_price:.2f} x {quote.bid_size} | Ask: ${quote.ask_price:.2f} x {quote.ask_size} | Spread: ${spread:.2f}"
+                    
+                    # Get latest bar volume
+                    vol_info = f" | Vol: {current_bar['volume']}"
+                    
+                    # Get VWAP if available
+                    vwap_info = ""
+                    if vwap_data and isinstance(vwap_data, dict):
+                        vwap_val = vwap_data.get('vwap', 0)
+                        std_dev = vwap_data.get('std_dev', 0)
+                        if vwap_val > 0:
+                            vwap_info = f" | VWAP: ${vwap_val:.2f} ± ${std_dev:.2f}"
+                    
+                    logger.info(f"📊 Market: {symbol} @ ${current_bar['close']:.2f}{quote_info}{vol_info} | Bars: {bar_count}{vwap_info} | Condition: {market_cond} | Regime: {current_regime}")
             
             # Update current regime after bar completion
             update_current_regime(symbol)

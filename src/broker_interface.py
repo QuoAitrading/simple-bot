@@ -810,45 +810,66 @@ class BrokerSDKImplementation(BrokerInterface):
         
         try:
             import asyncio
+            from concurrent.futures import ThreadPoolExecutor
+            
+            # Define the async query function
+            async def query_positions_async():
+                return await self.sdk_client.search_open_positions()
+            
+            # Define the sync wrapper that runs in a thread
+            def run_in_thread():
+                thread_loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(thread_loop)
+                try:
+                    return thread_loop.run_until_complete(query_positions_async())
+                finally:
+                    thread_loop.close()
+            
             try:
                 loop = asyncio.get_running_loop()
-                # If loop is already running, we can't use run_until_complete
-                return []
+                # If loop is already running, use ThreadPoolExecutor to run in a separate thread
+                # This is critical for AI Mode which runs position scans from event handlers
+                with ThreadPoolExecutor(max_workers=1) as executor:
+                    future = executor.submit(run_in_thread)
+                    positions = future.result(timeout=10)
             except RuntimeError:
-                # No running loop, safe to create one
+                # No running loop, safe to create one directly
                 loop = asyncio.new_event_loop()
                 asyncio.set_event_loop(loop)
                 try:
-                    positions = loop.run_until_complete(self.sdk_client.search_open_positions())
-                    result = []
-                    for pos in positions:
-                        pos_symbol = self._get_position_symbol(pos)
-                        qty = int(pos.quantity)
-                        side = "long" if pos.position_type.value == "LONG" else "short"
-                        signed_qty = qty if side == "long" else -qty
-                        
-                        # Try to get the actual entry price from the position object
-                        # TopStep SDK typically provides avg_price or average_price
-                        entry_price = None
-                        for price_attr in ['avg_price', 'average_price', 'avgPrice', 'averagePrice', 'entry_price', 'entryPrice', 'price']:
-                            if hasattr(pos, price_attr):
-                                entry_price = getattr(pos, price_attr)
-                                if entry_price and float(entry_price) > 0:
-                                    entry_price = float(entry_price)
-                                    break
-                        
-                        result.append({
-                            "symbol": pos_symbol,
-                            "quantity": qty,
-                            "signed_quantity": signed_qty,
-                            "side": side,
-                            "entry_price": entry_price  # Actual entry price from broker
-                        })
-                    
-                    self._record_success()
-                    return result
+                    positions = loop.run_until_complete(query_positions_async())
                 finally:
                     loop.close()
+            
+            # Process positions
+            result = []
+            for pos in positions:
+                pos_symbol = self._get_position_symbol(pos)
+                qty = int(pos.quantity)
+                side = "long" if pos.position_type.value == "LONG" else "short"
+                signed_qty = qty if side == "long" else -qty
+                
+                # Try to get the actual entry price from the position object
+                # TopStep SDK typically provides avg_price or average_price
+                entry_price = None
+                for price_attr in ['avg_price', 'average_price', 'avgPrice', 'averagePrice', 'entry_price', 'entryPrice', 'price']:
+                    if hasattr(pos, price_attr):
+                        entry_price = getattr(pos, price_attr)
+                        if entry_price and float(entry_price) > 0:
+                            entry_price = float(entry_price)
+                            break
+                
+                result.append({
+                    "symbol": pos_symbol,
+                    "quantity": qty,
+                    "signed_quantity": signed_qty,
+                    "side": side,
+                    "entry_price": entry_price  # Actual entry price from broker
+                })
+            
+            self._record_success()
+            return result
+                
         except Exception as e:
             if "Event loop is closed" not in str(e):
                 logger.debug(f"Error getting all positions: {e}")
