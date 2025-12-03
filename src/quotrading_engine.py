@@ -7915,11 +7915,17 @@ def handle_tick_event(event) -> None:
     # Update 15-minute bars
     update_15min_bar(symbol, price, volume, dt)
     
-    # AI MODE: Check for positions on every 10th tick for instant detection
-    # This ensures we detect user's manual trades within 1-2 seconds
+    # AI MODE: Check for positions periodically for instant detection
+    # Use global tick counter to avoid redundant scans from multiple symbols
     if CONFIG.get("ai_mode", False):
-        tick_count = state[symbol].get("total_ticks_received", 0)
-        if tick_count % 10 == 0:  # Check every 10 ticks (roughly every 1-2 seconds)
+        global _ai_mode_tick_counter
+        if '_ai_mode_tick_counter' not in dir():
+            _ai_mode_tick_counter = 0
+        _ai_mode_tick_counter = getattr(handle_tick_event, '_tick_counter', 0) + 1
+        handle_tick_event._tick_counter = _ai_mode_tick_counter
+        
+        # Check every 50 global ticks (roughly every 2-3 seconds regardless of symbols)
+        if _ai_mode_tick_counter % 50 == 0:
             _handle_ai_mode_position_scan()
 
 
@@ -8056,7 +8062,7 @@ def _handle_ai_mode_position_scan() -> None:
                 # Subscribe to market data for this newly detected symbol
                 try:
                     if broker is not None:
-                        subscribe_market_data(symbol, on_tick_data)
+                        subscribe_market_data(symbol, on_tick)
                 except Exception as e:
                     logger.debug(f"Could not subscribe to market data for {symbol}: {e}")
             
@@ -8087,7 +8093,13 @@ def _handle_ai_mode_position_scan() -> None:
                         if hasattr(broker, 'get_quote'):
                             quote = broker.get_quote(symbol)
                             if quote:
-                                current_price = quote.get('last_price') or quote.get('mid_price')
+                                # Handle both dict-like and object quote formats
+                                if hasattr(quote, 'get'):
+                                    current_price = quote.get('last_price') or quote.get('mid_price')
+                                elif hasattr(quote, 'last_price'):
+                                    current_price = quote.last_price
+                                elif hasattr(quote, 'mid_price'):
+                                    current_price = quote.mid_price
                     except Exception:
                         pass
                 
