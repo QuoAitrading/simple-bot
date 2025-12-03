@@ -1660,7 +1660,19 @@ def cancel_order(symbol: str, order_id: str) -> bool:
         else:
             logger.error(f"Failed to cancel order {order_id}")
             return False
+    except AttributeError as e:
+        # Handle 'NoneType' object has no attribute 'send' - asyncio shutdown issue
+        # This is expected during bot shutdown and not a real error
+        if "'NoneType' object has no attribute 'send'" in str(e):
+            logger.debug(f"Cancel order skipped - asyncio shutdown in progress (order {order_id})")
+            return False
+        logger.error(f"Error cancelling order {order_id}: {e}")
+        return False
     except Exception as e:
+        # Suppress event loop closed errors during shutdown
+        if "Event loop is closed" in str(e):
+            logger.debug(f"Event loop closed during cancel order {order_id}")
+            return False
         logger.error(f"Error cancelling order {order_id}: {e}")
         return False
 
@@ -3173,7 +3185,38 @@ def check_long_signal_conditions(symbol: str, prev_bar: Dict[str, Any],
         logger.debug(f"Long rejected - not a bullish bar: close {current_bar['close']:.2f} <= open {current_bar['open']:.2f}")
         return False
     
-    logger.info(f" LONG SIGNAL: Price reversal at {current_bar['close']:.2f} (entry zone: {vwap_bands['lower_2']:.2f})")
+    # Build detailed signal log with all confirmed conditions
+    signal_details = []
+    signal_details.append(f"Price: ${current_bar['close']:.2f}")
+    signal_details.append(f"VWAP Band: ${vwap_bands['lower_2']:.2f}")
+    
+    # Add RSI if available
+    rsi = state[symbol].get("rsi")
+    if rsi is not None:
+        signal_details.append(f"RSI: {rsi:.1f}")
+    
+    # Add VWAP distance
+    if vwap is not None:
+        vwap_distance = ((current_bar['close'] - vwap) / vwap) * 100
+        signal_details.append(f"VWAP Dist: {vwap_distance:+.2f}%")
+    
+    # Add trend if tracked
+    trend = state[symbol].get("trend_direction")
+    if trend:
+        signal_details.append(f"Trend: {trend.upper()}")
+    
+    # Add volume ratio
+    bars_1min = state[symbol]["bars_1min"]
+    if len(bars_1min) >= 20:
+        recent_volumes = [bar["volume"] for bar in list(bars_1min)[-20:]]
+        avg_volume_1min = sum(recent_volumes) / len(recent_volumes)
+        current_volume = current_bar["volume"]
+        if avg_volume_1min > 0:
+            vol_ratio = current_volume / avg_volume_1min
+            signal_details.append(f"Vol: {vol_ratio:.1f}x")
+    
+    logger.info(f"📈 LONG SIGNAL: Price reversal at ${current_bar['close']:.2f}")
+    logger.info(f"  └─ {' | '.join(signal_details)}")
     return True
 
 
@@ -3251,7 +3294,38 @@ def check_short_signal_conditions(symbol: str, prev_bar: Dict[str, Any],
         logger.debug(f"Short rejected - not a bearish bar: close {current_bar['close']:.2f} >= open {current_bar['open']:.2f}")
         return False
     
-    logger.info(f" SHORT SIGNAL: Price reversal at {current_bar['close']:.2f} (entry zone: {vwap_bands['upper_2']:.2f})")
+    # Build detailed signal log with all confirmed conditions
+    signal_details = []
+    signal_details.append(f"Price: ${current_bar['close']:.2f}")
+    signal_details.append(f"VWAP Band: ${vwap_bands['upper_2']:.2f}")
+    
+    # Add RSI if available
+    rsi = state[symbol].get("rsi")
+    if rsi is not None:
+        signal_details.append(f"RSI: {rsi:.1f}")
+    
+    # Add VWAP distance
+    if vwap is not None:
+        vwap_distance = ((current_bar['close'] - vwap) / vwap) * 100
+        signal_details.append(f"VWAP Dist: {vwap_distance:+.2f}%")
+    
+    # Add trend if tracked
+    trend = state[symbol].get("trend_direction")
+    if trend:
+        signal_details.append(f"Trend: {trend.upper()}")
+    
+    # Add volume ratio
+    bars_1min = state[symbol]["bars_1min"]
+    if len(bars_1min) >= 20:
+        recent_volumes = [bar["volume"] for bar in list(bars_1min)[-20:]]
+        avg_volume_1min = sum(recent_volumes) / len(recent_volumes)
+        current_volume = current_bar["volume"]
+        if avg_volume_1min > 0:
+            vol_ratio = current_volume / avg_volume_1min
+            signal_details.append(f"Vol: {vol_ratio:.1f}x")
+    
+    logger.info(f"📉 SHORT SIGNAL: Price reversal at ${current_bar['close']:.2f}")
+    logger.info(f"  └─ {' | '.join(signal_details)}")
     return True
 
 
@@ -4473,9 +4547,8 @@ def execute_entry(symbol: str, side: str, entry_price: float) -> None:
     try:
         actual_fill_from_broker = get_last_fill_price(symbol)
         if actual_fill_from_broker and actual_fill_from_broker != actual_fill_price:
-            # Calculate entry slippage
-            tick_size = CONFIG["tick_size"]
-            tick_value = CONFIG["tick_value"]
+            # Calculate entry slippage using symbol-specific tick values
+            tick_size, tick_value = get_symbol_tick_specs(symbol)
             entry_slippage = abs(actual_fill_from_broker - actual_fill_price)
             entry_slippage_ticks = entry_slippage / tick_size
             entry_slippage_cost = entry_slippage_ticks * tick_value * contracts
@@ -4809,14 +4882,15 @@ def check_breakeven_protection(symbol: str, current_price: float) -> None:
     
     side = position["side"]
     entry_price = position["entry_price"]
-    tick_size = CONFIG["tick_size"]
+    # Use symbol-specific tick values for accurate P&L calculation across different instruments
+    tick_size, tick_value = get_symbol_tick_specs(symbol)
     
     # Get regime-based breakeven threshold
     # PROFESSIONAL APPROACH: Base threshold = initial stop distance (1:1 risk-reward)
     # This adapts to each trade's actual risk and adjusts per regime
     entry_price = position["entry_price"]
     original_stop = position["original_stop_price"]
-    tick_size = CONFIG["tick_size"]
+    # Note: tick_size and tick_value already obtained from get_symbol_tick_specs() on line ~4885
     
     # Calculate initial stop distance in ticks
     initial_stop_distance_ticks = abs(entry_price - original_stop) / tick_size
@@ -4828,6 +4902,15 @@ def check_breakeven_protection(symbol: str, current_price: float) -> None:
     # Apply regime multiplier to actual stop distance (professional standard)
     # NORMAL = 1.0x (move at 1:1), CHOPPY = 0.75-0.95x (faster), TRENDING = 1.0x (standard)
     breakeven_threshold_ticks = initial_stop_distance_ticks * current_regime.breakeven_mult
+    
+    # FIX: Cap breakeven threshold to prevent unreasonably high values
+    # This is especially important for micro contracts (MNQ, MES) where tick_value is small
+    # causing the stop distance in ticks to be very large (e.g., $200/$0.50 = 400 ticks)
+    # A reasonable breakeven threshold should be 8-20 ticks for most day trading
+    max_breakeven_threshold_ticks = CONFIG.get("max_breakeven_threshold_ticks", 20.0)
+    if breakeven_threshold_ticks > max_breakeven_threshold_ticks:
+        logger.debug(f"Breakeven threshold capped: {breakeven_threshold_ticks:.1f} -> {max_breakeven_threshold_ticks:.1f} ticks")
+        breakeven_threshold_ticks = max_breakeven_threshold_ticks
     
     # Place stop +2 ticks in profit (not exactly breakeven) - locks in small profit
     breakeven_offset_ticks = 2  # Always lock in $50 profit minimum
@@ -4876,9 +4959,9 @@ def check_breakeven_protection(symbol: str, current_price: float) -> None:
         if new_stop_order.get("order_id"):
             position["stop_order_id"] = new_stop_order.get("order_id")
         
-        # Calculate profit locked in
+        # Calculate profit locked in (tick_value obtained from get_symbol_tick_specs() at function start)
         profit_locked_ticks = (new_stop_price - entry_price) / tick_size if side == "long" else (entry_price - new_stop_price) / tick_size
-        profit_locked_dollars = profit_locked_ticks * CONFIG["tick_value"] * contracts
+        profit_locked_dollars = profit_locked_ticks * tick_value * contracts
         
         # Step 6 - Log activation
         logger.info("=" * 60)
@@ -4929,7 +5012,8 @@ def check_trailing_stop(symbol: str, current_price: float) -> None:
     
     side = position["side"]
     entry_price = position["entry_price"]
-    tick_size = CONFIG["tick_size"]
+    # Use symbol-specific tick values for accurate P&L calculation across different instruments
+    tick_size, tick_value = get_symbol_tick_specs(symbol)
     
     # Get regime-based trailing distance
     # Base distance from config, scaled by regime trailing multiplier
@@ -5025,9 +5109,9 @@ def check_trailing_stop(symbol: str, current_price: float) -> None:
         if new_stop_order.get("order_id"):
             position["stop_order_id"] = new_stop_order.get("order_id")
         
-        # Calculate profit now locked in
+        # Calculate profit now locked in (tick_value obtained from get_symbol_tick_specs() at function start)
         profit_locked_ticks = (new_trailing_stop - entry_price) / tick_size if side == "long" else (entry_price - new_trailing_stop) / tick_size
-        profit_locked_dollars = profit_locked_ticks * CONFIG["tick_value"] * contracts
+        profit_locked_dollars = profit_locked_ticks * tick_value * contracts
         
         # Step 6 - Log updates
         logger.info("=" * 60)
@@ -5218,7 +5302,8 @@ def check_underwater_timeout(symbol: str, current_price: float, current_time: da
     side = position["side"]
     entry_price = position["entry_price"]
     entry_time = position.get("entry_time")
-    tick_size = CONFIG["tick_size"]
+    # Use symbol-specific tick values for accurate P&L calculation across different instruments
+    tick_size, tick_value = get_symbol_tick_specs(symbol)
     
     if not entry_time:
         return False, None
@@ -5248,7 +5333,7 @@ def check_underwater_timeout(symbol: str, current_price: float, current_time: da
     # This means: if trade has been alive for 7 minutes total and underwater timeout is 6 min, exit
     if total_elapsed_minutes >= underwater_timeout_minutes:
         # Total time since entry exceeds underwater timeout while position is losing
-        tick_value = CONFIG["tick_value"]
+        # tick_value already obtained from get_symbol_tick_specs() above
         loss_dollars = pnl_ticks * tick_value * position["quantity"]
         
         # Enhanced logging for backtesting
@@ -5306,8 +5391,8 @@ def check_time_decay_tightening(symbol: str, current_time: datetime) -> None:
     
     side = position["side"]
     entry_price = position["entry_price"]
-    tick_size = CONFIG["tick_size"]
-    tick_value = CONFIG["tick_value"]
+    # Use symbol-specific tick values for accurate calculations across different instruments
+    tick_size, tick_value = get_symbol_tick_specs(symbol)
     
     # Step 1 - Calculate time percentage
     # Max holding period: use time until flatten mode (conservative)
@@ -5461,8 +5546,8 @@ def check_partial_exits(symbol: str, current_price: float) -> None:
     
     side = position["side"]
     entry_price = position["entry_price"]
-    tick_size = CONFIG["tick_size"]
-    tick_value = CONFIG["tick_value"]
+    # Use symbol-specific tick values for accurate P&L calculation across different instruments
+    tick_size, tick_value = get_symbol_tick_specs(symbol)
     
     # Get initial risk
     initial_risk_ticks = position["initial_risk_ticks"]
@@ -5541,8 +5626,8 @@ def execute_partial_exit(symbol: str, contracts: int, exit_price: float, r_multi
     """
     position = state[symbol]["position"]
     side = position["side"]
-    tick_size = CONFIG["tick_size"]
-    tick_value = CONFIG["tick_value"]
+    # Use symbol-specific tick values for accurate P&L calculation across different instruments
+    tick_size, tick_value = get_symbol_tick_specs(symbol)
     entry_price = position["entry_price"]
     
     # Calculate profit for this partial
@@ -6205,21 +6290,27 @@ def get_flatten_price(symbol: str, side: str, current_price: float) -> float:
     return round_to_tick(flatten_price)
 
 
-def calculate_pnl(position: Dict[str, Any], exit_price: float) -> Tuple[float, float]:
+def calculate_pnl(position: Dict[str, Any], exit_price: float, symbol: str = None) -> Tuple[float, float]:
     """
     Calculate profit/loss for the exit - PRODUCTION READY with slippage and commissions.
     
     Args:
         position: Position dictionary
         exit_price: Exit price (before slippage)
+        symbol: Instrument symbol for accurate tick calculations (optional, falls back to CONFIG)
     
     Returns:
         Tuple of (ticks, pnl_dollars after all costs)
     """
     entry_price = position["entry_price"]
     contracts = position["quantity"]
-    tick_size = CONFIG["tick_size"]
-    tick_value = CONFIG["tick_value"]
+    # Use symbol-specific tick values for accurate P&L calculation across different instruments
+    if symbol:
+        tick_size, tick_value = get_symbol_tick_specs(symbol)
+    else:
+        # Fallback to CONFIG for backward compatibility
+        tick_size = CONFIG["tick_size"]
+        tick_value = CONFIG["tick_value"]
     
     actual_exit_price = exit_price
     
@@ -6599,8 +6690,8 @@ def execute_exit(symbol: str, exit_price: float, reason: str) -> None:
     logger.info(f"  Reason: {reason.replace('_', ' ').title()}")
     logger.info(f"  Time: {exit_time.strftime('%Y-%m-%d %H:%M:%S %Z')}")
     
-    # Calculate P&L
-    ticks, pnl = calculate_pnl(position, exit_price)
+    # Calculate P&L with symbol-specific tick values
+    ticks, pnl = calculate_pnl(position, exit_price, symbol)
     
     logger.info(f"  Entry: ${position['entry_price']:.2f}, Exit: ${exit_price:.2f}")
     logger.info(f"  Ticks: {ticks:+.1f}, P&L: ${pnl:+.2f}")
@@ -6633,8 +6724,8 @@ def execute_exit(symbol: str, exit_price: float, reason: str) -> None:
             
             # Calculate MFE (Max Favorable Excursion) and MAE (Max Adverse Excursion)
             entry_price = position.get("entry_price", exit_price)
-            tick_size = CONFIG.get("tick_size", 0.25)
-            tick_value = CONFIG.get("tick_value", 12.50)
+            # Use symbol-specific tick values for accurate P&L calculation across different instruments
+            tick_size, tick_value = get_symbol_tick_specs(symbol)
             
             # Get from position tracking (if available)
             if position["side"] == "long":
@@ -6657,11 +6748,10 @@ def execute_exit(symbol: str, exit_price: float, reason: str) -> None:
             # Get execution quality metrics for RL learning
             order_type_used = position.get("order_type_used", "unknown")
             
-            # Calculate entry slippage if we have the data
+            # Calculate entry slippage if we have the data (tick_size from get_symbol_tick_specs() on line ~6718)
             entry_slippage_ticks = 0
             if position.get("actual_entry_price") and position.get("original_entry_price"):
                 entry_slippage = abs(position.get("actual_entry_price", 0) - position.get("original_entry_price", 0))
-                tick_size = CONFIG.get("tick_size", 0.25)
                 entry_slippage_ticks = entry_slippage / tick_size if tick_size > 0 else 0
             
             # Record market state + outcomes to local RL brain (backtest) or cloud (live)
@@ -8862,8 +8952,13 @@ def _handle_ai_mode_position_scan() -> None:
                         else:
                             stop_distance_ticks = (stop_price - current_price) / tick_size
                         
+                        # Get breakeven/trailing status
+                        breakeven_status = "BE" if position.get("breakeven_active", False) else "Initial"
+                        if position.get("trailing_stop_active", False):
+                            breakeven_status = "Trailing"
+                        
                         logger.info(f"🤖 AI MODE Status: {qty} {'LONG' if side == 'long' else 'SHORT'} @ {symbol}")
-                        logger.info(f"  {pnl_emoji} P&L: ${pnl_dollars:+.2f} ({pnl_ticks:+.1f} ticks) | Stop: {stop_distance_ticks:.1f} ticks away | Regime: {current_regime}")
+                        logger.info(f"  {pnl_emoji} P&L: ${pnl_dollars:+.2f} ({pnl_ticks:+.1f} ticks) | Stop: {stop_distance_ticks:.1f} ticks ({breakeven_status}) | Regime: {current_regime}")
     
     except Exception as e:
         logger.debug(f"AI Mode position scan error: {e}")
