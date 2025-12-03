@@ -8235,6 +8235,7 @@ def _handle_ai_mode_position_scan() -> None:
                 max_stop_dollars = CONFIG.get("max_stop_loss_dollars", DEFAULT_MAX_STOP_LOSS_DOLLARS)
                 max_stop_ticks = max_stop_dollars / tick_value
                 stop_distance = max_stop_ticks * tick_size
+                stop_distance_ticks = max_stop_ticks
                 
                 if side == "long":
                     stop_price = entry_price - stop_distance
@@ -8247,6 +8248,31 @@ def _handle_ai_mode_position_scan() -> None:
                 state[symbol]["position"]["stop_price"] = stop_price
                 state[symbol]["position"]["trailing_stop"] = stop_price
                 state[symbol]["position"]["ai_mode_adopted"] = True
+                
+                # CRITICAL FIX: Set all fields needed for trade management (breakeven, trailing, etc.)
+                # These fields were missing, causing breakeven/trailing stops to not work
+                state[symbol]["position"]["original_stop_price"] = stop_price  # Needed for breakeven calculation
+                state[symbol]["position"]["breakeven_active"] = False
+                state[symbol]["position"]["breakeven_activated_time"] = None
+                state[symbol]["position"]["trailing_stop_active"] = False
+                state[symbol]["position"]["trailing_stop_price"] = None
+                state[symbol]["position"]["trailing_activated_time"] = None
+                # MFE/MAE tracking
+                state[symbol]["position"]["highest_price_reached"] = entry_price if side == "long" else None
+                state[symbol]["position"]["lowest_price_reached"] = entry_price if side == "short" else None
+                # Time-decay and partial exits
+                state[symbol]["position"]["time_decay_50_triggered"] = False
+                state[symbol]["position"]["time_decay_75_triggered"] = False
+                state[symbol]["position"]["time_decay_90_triggered"] = False
+                state[symbol]["position"]["original_stop_distance_ticks"] = stop_distance_ticks
+                state[symbol]["position"]["current_stop_distance_ticks"] = stop_distance_ticks
+                state[symbol]["position"]["initial_risk_ticks"] = stop_distance_ticks
+                state[symbol]["position"]["partial_exit_1_completed"] = False
+                state[symbol]["position"]["partial_exit_2_completed"] = False
+                state[symbol]["position"]["partial_exit_3_completed"] = False
+                state[symbol]["position"]["original_quantity"] = qty
+                state[symbol]["position"]["remaining_quantity"] = qty
+                state[symbol]["position"]["partial_exit_history"] = []
                 
                 logger.info(f"  Entry: ${entry_price:.2f} | Stop: ${stop_price:.2f}")
                 logger.info(f"  Max Loss: ${max_stop_dollars:.0f} ({max_stop_ticks:.0f} ticks)")
