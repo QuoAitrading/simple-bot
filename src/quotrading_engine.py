@@ -594,6 +594,44 @@ def set_flatten_flags(symbol: str) -> None:
     bot_status["flatten_in_progress_symbol"] = symbol
 
 
+def verify_broker_position_for_flatten(symbol: str, expected_side: str, expected_quantity: int) -> Tuple[bool, int, str]:
+    """
+    Verify with broker that we have a position to flatten.
+    
+    This safeguard prevents over-flattening that could create opposite positions.
+    
+    Args:
+        symbol: Symbol to check
+        expected_side: Expected position side ('long' or 'short')
+        expected_quantity: Expected position quantity
+        
+    Returns:
+        Tuple of (can_flatten, actual_quantity, reason)
+        - can_flatten: True if we should proceed with flatten
+        - actual_quantity: The actual quantity to flatten (from broker)
+        - reason: Description of any mismatch or issue
+    """
+    broker_position = get_position_quantity(symbol)
+    
+    # No position at broker
+    if broker_position == 0:
+        return False, 0, "Position already flat at broker"
+    
+    # Determine broker side and quantity
+    broker_side = "long" if broker_position > 0 else "short"
+    broker_quantity = abs(broker_position)
+    
+    # Verify side matches
+    if broker_side != expected_side:
+        return False, 0, f"Position side mismatch: bot={expected_side}, broker={broker_side}"
+    
+    # Log quantity mismatch but still proceed with broker's quantity
+    if broker_quantity != expected_quantity:
+        logger.warning(f"Position quantity mismatch: bot={expected_quantity}, broker={broker_quantity} - using broker quantity")
+    
+    return True, broker_quantity, "Position verified"
+
+
 def setup_logging() -> logging.Logger:
     """Configure logging for the bot - Console only (no log files for customers)"""
     
@@ -5741,19 +5779,20 @@ def check_exit_conditions(symbol: str) -> None:
         
         # SAFEGUARD: Verify with broker that we actually have this position before flattening
         # This prevents over-flattening if multiple flatten attempts are made
-        broker_position = get_position_quantity(symbol)
-        if broker_position == 0:
-            logger.warning("Position already flat at broker - skipping flatten order")
+        can_flatten, actual_quantity, verify_reason = verify_broker_position_for_flatten(
+            symbol, side, position["quantity"]
+        )
+        
+        if not can_flatten:
+            logger.warning(f"Skipping flatten: {verify_reason}")
             position["active"] = False
             position["flatten_pending"] = False
             clear_flatten_flags()
             return
         
-        # Use the actual broker position quantity (in case it differs from bot state)
-        actual_quantity = abs(broker_position)
+        # Update position quantity if it differs from broker
         if actual_quantity != position["quantity"]:
-            logger.warning(f"Position quantity mismatch: bot={position['quantity']}, broker={actual_quantity} - using broker quantity")
-            position["quantity"] = actual_quantity  # Update to use broker's actual quantity
+            position["quantity"] = actual_quantity
         
         # Force close immediately
         close_side = "sell" if side == "long" else "buy"
@@ -5794,12 +5833,18 @@ def check_exit_conditions(symbol: str) -> None:
                 return
             
             # SAFEGUARD: Verify with broker that we actually have this position
-            broker_position_check = get_position_quantity(symbol)
-            if broker_position_check == 0:
-                logger.warning("Position already flat at broker - skipping emergency flatten")
+            can_flatten, actual_quantity, verify_reason = verify_broker_position_for_flatten(
+                symbol, side, position["quantity"]
+            )
+            if not can_flatten:
+                logger.warning(f"Skipping emergency flatten: {verify_reason}")
                 position["active"] = False
                 position["flatten_pending"] = False
                 return
+            
+            # Update position quantity if it differs from broker
+            if actual_quantity != position["quantity"]:
+                position["quantity"] = actual_quantity
             
             logger.warning(SEPARATOR_LINE)
             logger.warning("MARKET CLOSED - EMERGENCY POSITION FLATTEN")
@@ -5814,12 +5859,12 @@ def check_exit_conditions(symbol: str) -> None:
             else:
                 price_change = entry_price - current_bar["close"]
             ticks = price_change / tick_size
-            unrealized_pnl = ticks * tick_value * position["quantity"]
+            unrealized_pnl = ticks * tick_value * actual_quantity
             
             flatten_details = {
                 "reason": "Market closed - maintenance/weekend",
                 "side": position["side"],
-                "quantity": position["quantity"],
+                "quantity": actual_quantity,
                 "entry_price": f"${position['entry_price']:.2f}",
                 "current_price": f"${current_bar['close']:.2f}",
                 "unrealized_pnl": f"${unrealized_pnl:+.2f}",
