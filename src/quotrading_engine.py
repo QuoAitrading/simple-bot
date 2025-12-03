@@ -576,6 +576,11 @@ FLATTEN_IN_PROGRESS_TIMEOUT = 30
 # to be detected as "new" multiple times after close
 AI_MODE_POSITION_COOLDOWN_SECONDS = 60
 
+# AI MODE: Grace period before considering a position closed (seconds)
+# Prevents "closed by user" spam when broker API returns inconsistent data
+# If position disappears from broker API for less than this time, we wait
+AI_MODE_CLOSE_GRACE_PERIOD_SECONDS = 10
+
 # AI MODE: Price tolerance for matching recently closed positions (0.5% = 0.005)
 # Positions within this tolerance are considered the same position
 AI_MODE_PRICE_MATCH_TOLERANCE = 0.005
@@ -585,6 +590,10 @@ AI_MODE_PRICE_MATCH_TOLERANCE = 0.005
 # This prevents re-adopting a position that was just closed due to API latency
 # Note: This is accessed from a single event loop, so thread safety is not required
 _recently_closed_positions: Dict[str, Dict[str, Any]] = {}
+
+# AI MODE: Track when position was last seen in broker API
+# Used to implement grace period before considering position as "closed"
+_last_position_seen: Dict[str, datetime] = {}
 
 
 def _mark_position_closed(symbol: str, entry_price: float, side: str) -> None:
@@ -8561,13 +8570,26 @@ def _handle_ai_mode_position_scan() -> None:
         all_positions = get_all_open_positions()
         
         if not all_positions:
-            # No positions - check if we had any we were tracking for configured symbol
+            # No positions from broker - check if we had any we were tracking for configured symbol
             # Add null checks to prevent KeyError on partially initialized state
             if (configured_symbol in state and 
                 state[configured_symbol].get("position") and 
                 (state[configured_symbol]["position"].get("active") or 
                  state[configured_symbol]["position"].get("flatten_pending"))):
-                # Position was closed externally or by flatten
+                
+                # FIX: Implement grace period before considering position as "closed"
+                # This prevents rapid open/close spam when broker API returns inconsistent data
+                if configured_symbol in _last_position_seen:
+                    last_seen = _last_position_seen[configured_symbol]
+                    elapsed = (datetime.now() - last_seen).total_seconds()
+                    
+                    if elapsed < AI_MODE_CLOSE_GRACE_PERIOD_SECONDS:
+                        # Position was seen recently - wait before declaring it closed
+                        # This handles broker API hiccups where position briefly disappears
+                        logger.debug(f"AI MODE: Position missing but within grace period ({elapsed:.1f}s < {AI_MODE_CLOSE_GRACE_PERIOD_SECONDS}s)")
+                        return
+                
+                # Grace period expired or no record of last seen - position is actually closed
                 was_flatten_pending = state[configured_symbol]["position"].get("flatten_pending", False)
                 
                 if was_flatten_pending:
@@ -8604,6 +8626,10 @@ def _handle_ai_mode_position_scan() -> None:
                 state[configured_symbol]["position"]["side"] = None
                 state[configured_symbol]["position"]["flatten_pending"] = False
                 
+                # FIX: Clear the last seen timestamp now that position is confirmed closed
+                if configured_symbol in _last_position_seen:
+                    del _last_position_seen[configured_symbol]
+                
                 # FIX: Clear flatten in progress flag now that position is confirmed closed
                 clear_flatten_flags()
             return
@@ -8634,6 +8660,10 @@ def _handle_ai_mode_position_scan() -> None:
             # Ensure state exists for this symbol (should already be initialized at startup)
             if symbol not in state:
                 initialize_state(symbol)
+            
+            # FIX: Track when position was last seen in broker API
+            # This is used for grace period before declaring position as "closed"
+            _last_position_seen[symbol] = datetime.now()
             
             # Check if we're already tracking this position
             bot_active = state[symbol]["position"]["active"]
