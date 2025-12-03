@@ -803,6 +803,15 @@ class BrokerSDKImplementation(BrokerInterface):
             logger.error("Cannot place order: not connected")
             return None
         
+        # CRITICAL FIX: Verify connection is still alive before placing order
+        # This prevents errors when websocket has silently disconnected
+        if not self.verify_connection():
+            logger.warning("[ORDER] Connection dead - attempting reconnect before order")
+            if not self.connect():
+                logger.error("[ORDER] Reconnect failed - cannot place order")
+                return None
+            logger.info("[ORDER] Reconnected successfully - proceeding with order")
+        
         try:
             import asyncio
             # Import order enums here to avoid module-level import issues
@@ -892,6 +901,15 @@ class BrokerSDKImplementation(BrokerInterface):
         if not self.connected or self.trading_suite is None:
             logger.error("Cannot place order: not connected")
             return None
+        
+        # CRITICAL FIX: Verify connection is still alive before placing order
+        # This prevents errors when websocket has silently disconnected
+        if not self.verify_connection():
+            logger.warning("[ORDER] Connection dead - attempting reconnect before order")
+            if not self.connect():
+                logger.error("[ORDER] Reconnect failed - cannot place order")
+                return None
+            logger.info("[ORDER] Reconnected successfully - proceeding with order")
         
         try:
             import asyncio
@@ -1047,6 +1065,15 @@ class BrokerSDKImplementation(BrokerInterface):
         if not self.connected or self.trading_suite is None:
             logger.error("Cannot place order: not connected")
             return None
+        
+        # CRITICAL FIX: Verify connection is still alive before placing order
+        # This prevents errors when websocket has silently disconnected
+        if not self.verify_connection():
+            logger.warning("[ORDER] Connection dead - attempting reconnect before order")
+            if not self.connect():
+                logger.error("[ORDER] Reconnect failed - cannot place order")
+                return None
+            logger.info("[ORDER] Reconnected successfully - proceeding with order")
         
         try:
             import asyncio
