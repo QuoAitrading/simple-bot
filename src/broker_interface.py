@@ -217,7 +217,9 @@ class BrokerSDKImplementation(BrokerInterface):
         self.connected = False
         self.circuit_breaker_open = False
         self.failure_count = 0
-        self.circuit_breaker_threshold = 5
+        self.circuit_breaker_threshold = 10  # Increased from 5 - more resilient
+        self.circuit_breaker_reset_time = None  # Track when to auto-reset
+        self.circuit_breaker_cooldown_seconds = 30  # Auto-reset after 30 seconds
         
         # TopStep SDK client (Project-X)
         self.sdk_client: Optional[ProjectX] = None
@@ -261,6 +263,46 @@ class BrokerSDKImplementation(BrokerInterface):
             return symbol
         
         # Return empty string as last resort
+        return ''
+    
+    def _get_position_symbol(self, position: Any) -> str:
+        """
+        Get the symbol from an SDK Position object.
+        
+        Position objects may use different attribute names depending on SDK version:
+        - contract_id: The contract identifier
+        - instrument: An instrument object with symbol info
+        - symbol/symbolId: Direct symbol attribute
+        
+        Args:
+            position: SDK Position object
+            
+        Returns:
+            Symbol string, or empty string if not found
+        """
+        # Try contract_id first (most common for Position objects)
+        contract_id = getattr(position, 'contract_id', None)
+        if contract_id:
+            # contract_id might be like "CON.F.US.EP.Z25" - extract symbol
+            # Try to get symbol from cache reverse lookup
+            for symbol, cached_id in self._contract_id_cache.items():
+                if cached_id == contract_id:
+                    return symbol
+            # If not in cache, return the contract_id as-is
+            return str(contract_id)
+        
+        # Try instrument attribute (if Position has embedded instrument)
+        instrument = getattr(position, 'instrument', None)
+        if instrument:
+            return self._get_instrument_symbol(instrument)
+        
+        # Try direct symbol attributes
+        for attr in ['symbol', 'symbolId', 'symbol_id']:
+            symbol = getattr(position, attr, None)
+            if symbol:
+                return str(symbol)
+        
+        # Last resort - return empty string
         return ''
     
     def connect(self, max_retries: int = None) -> bool:
@@ -653,12 +695,15 @@ class BrokerSDKImplementation(BrokerInterface):
                 try:
                     positions = loop.run_until_complete(self.sdk_client.search_open_positions())
                     for pos in positions:
-                        # Use helper method to get instrument symbol
-                        pos_symbol = self._get_instrument_symbol(pos.instrument)
-                        if pos_symbol == symbol:
+                        # Get symbol from position - try multiple attribute names
+                        # Position may use contract_id, instrument, symbol, or symbolId
+                        pos_symbol = self._get_position_symbol(pos)
+                        if pos_symbol == symbol or pos_symbol == symbol.lstrip('/'):
                             # Return signed quantity (positive for long, negative for short)
                             qty = int(pos.quantity)
+                            self._record_success()  # Successful position query
                             return qty if pos.position_type.value == "LONG" else -qty
+                    self._record_success()  # Successful query (no position)
                     return 0  # No position found
                 finally:
                     loop.close()
@@ -671,6 +716,10 @@ class BrokerSDKImplementation(BrokerInterface):
             self._record_failure()
             return 0
         except Exception as e:
+            # Handle event loop closed errors gracefully - don't count as failure
+            if "Event loop is closed" in str(e):
+                logger.debug("Event loop closed during position query - using cached state")
+                return 0  # Don't record failure for shutdown issues
             logger.error(f"Error getting position quantity: {e}")
             self._record_failure()
             return 0
@@ -721,24 +770,42 @@ class BrokerSDKImplementation(BrokerInterface):
                 # No running loop - safe to use asyncio.run
                 order_response = asyncio.run(place_order_async())
             
-            logger.info(f"Order response: {order_response}")
+            logger.debug(f"Order response: {order_response}")
             
-            if order_response and order_response.success:
-                pass  # Silent - order success logged at higher level
-                return {
-                    "order_id": order_response.orderId,
-                    "symbol": symbol,
-                    "side": side,
-                    "quantity": quantity,
-                    "type": "MARKET",
-                    "status": "SUBMITTED",
-                    "filled_quantity": 0
-                }
-            else:
-                error_msg = order_response.errorMessage if order_response else "Unknown error"
-                logger.error(f"Market order placement failed: {error_msg}")
-                self._record_failure()
-                return None
+            # Check for success - SDK may return different response formats
+            if order_response:
+                if hasattr(order_response, 'success') and order_response.success:
+                    result = {
+                        "order_id": getattr(order_response, 'orderId', 'unknown'),
+                        "symbol": symbol,
+                        "side": side,
+                        "quantity": quantity,
+                        "type": "MARKET",
+                        "status": "SUBMITTED",
+                        "filled_quantity": 0
+                    }
+                    self._record_success()  # Successful order
+                    return result
+                elif hasattr(order_response, 'order') and order_response.order:
+                    # Alternative response format
+                    order = order_response.order
+                    result = {
+                        "order_id": getattr(order, 'order_id', 'unknown'),
+                        "symbol": symbol,
+                        "side": side,
+                        "quantity": quantity,
+                        "type": "MARKET",
+                        "status": getattr(order.status, 'value', 'SUBMITTED') if hasattr(order, 'status') else 'SUBMITTED',
+                        "filled_quantity": 0
+                    }
+                    self._record_success()  # Successful order
+                    return result
+            
+            # Order failed
+            error_msg = getattr(order_response, 'errorMessage', None) if order_response else None
+            logger.error(f"Market order placement failed: {error_msg or 'Unknown error'}")
+            self._record_failure()
+            return None
                 
         except Exception as e:
             logger.error(f"Error placing market order: {e}")
@@ -794,32 +861,49 @@ class BrokerSDKImplementation(BrokerInterface):
                 # No running loop - safe to use asyncio.run
                 order_response = asyncio.run(place_order_async())
             
-            logger.info(f"Order response: {order_response}")
+            logger.debug(f"Order response: {order_response}")
             
-            if order_response and order_response.success:
-                pass  # Silent - order success logged at higher level
-                return {
-                    "order_id": order_response.orderId,
-                    "symbol": symbol,
-                    "side": side,
-                    "quantity": quantity,
-                    "type": "LIMIT",
-                    "limit_price": limit_price,
-                    "status": "SUBMITTED",
-                    "filled_quantity": 0
-                }
-            else:
-                error_msg = order_response.errorMessage if order_response else "Unknown error"
-                logger.error(f"Limit order placement failed: {error_msg}")
-                self._record_failure()
-                return None
+            # Check for success - SDK may return different response formats
+            if order_response:
+                if hasattr(order_response, 'success') and order_response.success:
+                    result = {
+                        "order_id": getattr(order_response, 'orderId', 'unknown'),
+                        "symbol": symbol,
+                        "side": side,
+                        "quantity": quantity,
+                        "type": "LIMIT",
+                        "limit_price": limit_price,
+                        "status": "SUBMITTED",
+                        "filled_quantity": 0
+                    }
+                    self._record_success()  # Successful order
+                    return result
+                elif hasattr(order_response, 'order') and order_response.order:
+                    # Alternative response format
+                    order = order_response.order
+                    result = {
+                        "order_id": getattr(order, 'order_id', 'unknown'),
+                        "symbol": symbol,
+                        "side": side,
+                        "quantity": quantity,
+                        "type": "LIMIT",
+                        "limit_price": limit_price,
+                        "status": getattr(order.status, 'value', 'SUBMITTED') if hasattr(order, 'status') else 'SUBMITTED',
+                        "filled_quantity": 0
+                    }
+                    self._record_success()  # Successful order
+                    return result
+            
+            # Order failed
+            error_msg = getattr(order_response, 'errorMessage', None) if order_response else None
+            logger.error(f"Limit order placement failed: {error_msg or 'Unknown error'}")
+            self._record_failure()
+            return None
                 
         except Exception as e:
             logger.error(f"Error placing limit order: {e}")
             import traceback
             traceback.print_exc()
-            self._record_failure()
-            return None
             self._record_failure()
             return None
     
@@ -834,6 +918,8 @@ class BrokerSDKImplementation(BrokerInterface):
             
             # Define async wrapper
             async def cancel_order_async():
+                # Refresh token if needed
+                await self._ensure_token_fresh()
                 return await self.trading_suite.orders.cancel_order(order_id=order_id)
             
             # Run async order cancellation - check for existing event loop
@@ -844,11 +930,21 @@ class BrokerSDKImplementation(BrokerInterface):
                     cancel_response = pool.submit(
                         lambda: asyncio.run(cancel_order_async())
                     ).result()
-            except RuntimeError:
-                cancel_response = asyncio.run(cancel_order_async())
+            except RuntimeError as e:
+                # Handle "Event loop is closed" error gracefully
+                if "Event loop is closed" in str(e):
+                    logger.warning("Event loop closed during cancel - creating new loop")
+                    loop = asyncio.new_event_loop()
+                    asyncio.set_event_loop(loop)
+                    try:
+                        cancel_response = loop.run_until_complete(cancel_order_async())
+                    finally:
+                        loop.close()
+                else:
+                    cancel_response = asyncio.run(cancel_order_async())
             
             if cancel_response and cancel_response.success:
-                pass  # Silent - order cancelled logged at higher level
+                self._record_success()  # Successful cancellation
                 return True
             else:
                 error_msg = cancel_response.errorMessage if cancel_response else "Unknown error"
@@ -856,7 +952,19 @@ class BrokerSDKImplementation(BrokerInterface):
                 self._record_failure()
                 return False
                 
+        except AttributeError as e:
+            # Handle 'NoneType' object has no attribute 'send' - asyncio shutdown issue
+            if "'NoneType' object has no attribute 'send'" in str(e):
+                logger.warning("Cancel order skipped - asyncio shutdown in progress")
+                return False  # Don't record failure for shutdown issues
+            logger.error(f"Error cancelling order: {e}")
+            self._record_failure()
+            return False
         except Exception as e:
+            # Handle event loop closed errors gracefully
+            if "Event loop is closed" in str(e):
+                logger.warning("Event loop closed during cancel order - order may still be pending")
+                return False  # Don't record failure for shutdown issues
             logger.error(f"Error cancelling order: {e}")
             self._record_failure()
             return False
@@ -872,15 +980,24 @@ class BrokerSDKImplementation(BrokerInterface):
             # Import order enums here to avoid module-level import issues
             from project_x_py import OrderSide, OrderType
             
+            # Get contract ID for the symbol dynamically (same as market orders)
+            contract_id = self._get_contract_id_sync(symbol)
+            if not contract_id:
+                logger.error(f"Failed to resolve contract ID for {symbol}")
+                return None
+            
             # Convert side to SDK enum
             order_side = OrderSide.BUY if side.upper() == "BUY" else OrderSide.SELL
             
-            # Define async wrapper
+            # Define async wrapper - use contract_id and size (not symbol and quantity)
             async def place_order_async():
+                # Refresh token if needed (for long-running bots)
+                await self._ensure_token_fresh()
+                
                 return await self.trading_suite.orders.place_stop_order(
-                    symbol=symbol,
+                    contract_id=contract_id,
                     side=order_side,
-                    quantity=quantity,
+                    size=quantity,
                     stop_price=stop_price
                 )
             
@@ -895,21 +1012,41 @@ class BrokerSDKImplementation(BrokerInterface):
             except RuntimeError:
                 order_response = asyncio.run(place_order_async())
             
-            if order_response and order_response.order:
-                order = order_response.order
-                return {
-                    "order_id": order.order_id,
-                    "symbol": symbol,
-                    "side": side,
-                    "quantity": quantity,
-                    "type": "STOP",
-                    "stop_price": stop_price,
-                    "status": order.status.value
-                }
-            else:
-                logger.error("Stop order placement failed")
-                self._record_failure()
-                return None
+            # Check for success - SDK may return different response formats
+            # Try order_response.order first, then order_response.success + orderId
+            if order_response:
+                if hasattr(order_response, 'order') and order_response.order:
+                    order = order_response.order
+                    result = {
+                        "order_id": order.order_id,
+                        "symbol": symbol,
+                        "side": side,
+                        "quantity": quantity,
+                        "type": "STOP",
+                        "stop_price": stop_price,
+                        "status": getattr(order.status, 'value', 'SUBMITTED')
+                    }
+                    self._record_success()  # Successful order
+                    return result
+                elif hasattr(order_response, 'success') and order_response.success:
+                    # Alternative response format (like market/limit orders)
+                    result = {
+                        "order_id": getattr(order_response, 'orderId', 'unknown'),
+                        "symbol": symbol,
+                        "side": side,
+                        "quantity": quantity,
+                        "type": "STOP",
+                        "stop_price": stop_price,
+                        "status": "SUBMITTED"
+                    }
+                    self._record_success()  # Successful order
+                    return result
+            
+            # Order failed
+            error_msg = getattr(order_response, 'errorMessage', None) if order_response else None
+            logger.error(f"Stop order placement failed: {error_msg or 'Unknown error'}")
+            self._record_failure()
+            return None
                 
         except Exception as e:
             logger.error(f"Error placing stop order: {e}")
@@ -1177,19 +1314,43 @@ class BrokerSDKImplementation(BrokerInterface):
             return []
     def is_connected(self) -> bool:
         """Check if connected to TopStep SDK."""
+        # Auto-reset circuit breaker after cooldown period
+        self._check_circuit_breaker_cooldown()
         return self.connected and not self.circuit_breaker_open
+    
+    def _check_circuit_breaker_cooldown(self) -> None:
+        """Check if circuit breaker should auto-reset after cooldown."""
+        import time
+        if self.circuit_breaker_open and self.circuit_breaker_reset_time:
+            current_time = time.time()
+            if current_time >= self.circuit_breaker_reset_time:
+                logger.info("Circuit breaker auto-reset after cooldown period")
+                self.reset_circuit_breaker()
     
     def _record_failure(self) -> None:
         """Record a failure and potentially open circuit breaker."""
+        import time
         self.failure_count += 1
         if self.failure_count >= self.circuit_breaker_threshold:
-            self.circuit_breaker_open = True
-            logger.critical(f"Circuit breaker opened after {self.failure_count} failures")
+            if not self.circuit_breaker_open:
+                self.circuit_breaker_open = True
+                self.circuit_breaker_reset_time = time.time() + self.circuit_breaker_cooldown_seconds
+                logger.critical(f"Circuit breaker opened after {self.failure_count} failures - will auto-reset in {self.circuit_breaker_cooldown_seconds}s")
+    
+    def _record_success(self) -> None:
+        """Record a successful operation - reduce failure count."""
+        if self.failure_count > 0:
+            self.failure_count = max(0, self.failure_count - 1)
+        # If circuit breaker was open but we had a success, reset it
+        if self.circuit_breaker_open:
+            logger.info("Circuit breaker reset due to successful operation")
+            self.reset_circuit_breaker()
     
     def reset_circuit_breaker(self) -> None:
-        """Reset circuit breaker (manual recovery)."""
+        """Reset circuit breaker (manual or automatic recovery)."""
         self.circuit_breaker_open = False
         self.failure_count = 0
+        self.circuit_breaker_reset_time = None
         pass  # Silent - circuit breaker reset
 
 

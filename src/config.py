@@ -256,6 +256,7 @@ class BotConfiguration:
     
     # Operational Parameters
     shadow_mode: bool = False  # Signal-only mode - shows trading signals without executing trades (manual trading)
+    ai_mode: bool = False  # AI position management mode - user trades manually, AI manages stops/exits
     max_bars_storage: int = 200
     
     # Bid/Ask Trading Strategy Parameters
@@ -439,6 +440,7 @@ class BotConfiguration:
             "tick_size": self.tick_size,
             "tick_value": self.tick_value,
             "shadow_mode": self.shadow_mode,
+            "ai_mode": self.ai_mode,
             "max_bars_storage": self.max_bars_storage,
             # Advanced Exit Management (baseline parameters)
             "breakeven_enabled": self.breakeven_enabled,
@@ -553,6 +555,9 @@ def load_from_env() -> BotConfiguration:
     
     if os.getenv("BOT_SHADOW_MODE"):
         config.shadow_mode = os.getenv("BOT_SHADOW_MODE").lower() in ("true", "1", "yes")
+    
+    if os.getenv("BOT_AI_MODE"):
+        config.ai_mode = os.getenv("BOT_AI_MODE").lower() in ("true", "1", "yes")
     
     if os.getenv("BOT_ENVIRONMENT"):
         config.environment = os.getenv("BOT_ENVIRONMENT")
@@ -713,6 +718,8 @@ def load_config(environment: Optional[str] = None, backtest_mode: bool = False) 
         env_vars_set.add("dry_run")
     if os.getenv("BOT_SHADOW_MODE"):
         env_vars_set.add("shadow_mode")
+    if os.getenv("BOT_AI_MODE"):
+        env_vars_set.add("ai_mode")
     if os.getenv("BOT_ENVIRONMENT"):
         env_vars_set.add("environment")
     if os.getenv("BOT_BROKER") or os.getenv("BROKER"):

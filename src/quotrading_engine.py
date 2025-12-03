@@ -406,7 +406,18 @@ def setup_logging() -> logging.Logger:
     project_x_logger.addHandler(logging.NullHandler())  # Add null handler to absorb any logs
     project_x_logger.disabled = True  # Completely disable the logger
     
-    logging.getLogger('signalrcore').setLevel(logging.ERROR)
+    # SignalR WebSocket logging - only show warnings and above (not connection close tracebacks)
+    # Connection close errors during maintenance are expected and handled in broker_websocket.py
+    signalr_logger = logging.getLogger('signalrcore')
+    signalr_logger.setLevel(logging.WARNING)  # Only warnings and above
+    
+    # SignalRCoreClient is the internal logger that logs tracebacks - set to WARNING
+    signalr_client_logger = logging.getLogger('SignalRCoreClient')
+    signalr_client_logger.setLevel(logging.WARNING)  # Suppress DEBUG/INFO but keep warnings
+    
+    # Websocket library - connection errors during maintenance are expected
+    websocket_logger = logging.getLogger('websocket')
+    websocket_logger.setLevel(logging.WARNING)  # Only warnings and above
     
     # Suppress all nested project_x_py loggers (they use deeply nested child loggers)
     # These loggers output JSON which clutters customer UI
@@ -509,6 +520,8 @@ async def save_trade_experience_async(
     
     LIVE MODE: Saves to cloud ONLY (reads local for pattern matching, but doesn't save local)
     BACKTEST MODE: Saves to local RL brain only
+    SHADOW MODE: Does NOT send to cloud (signal-only mode)
+    AI MODE: Does NOT send to cloud (position management mode)
     """
     global cloud_api_client, rl_brain
     
@@ -516,6 +529,11 @@ async def save_trade_experience_async(
     if is_backtest_mode() or CONFIG.get("backtest_mode", False):
         if rl_brain is not None:
             rl_brain.record_outcome(rl_state, True, pnl, duration_minutes, execution_data)
+        return
+    
+    # SHADOW MODE & AI MODE: Do NOT send data to cloud RL database
+    # These modes are for user experimentation and should not pollute the training data
+    if CONFIG.get("shadow_mode", False) or CONFIG.get("ai_mode", False):
         return
     
     # LIVE MODE: Report to cloud ONLY (don't save locally)
@@ -881,29 +899,9 @@ def check_broker_connection() -> None:
     
     # Display idle status message every 5 minutes during maintenance/weekend
     elif trading_state == "closed" and bot_status.get("maintenance_idle", False):
-        eastern_tz = pytz.timezone('US/Eastern')
-        if current_time.tzinfo is None:
-            current_time = eastern_tz.localize(current_time)
-        eastern_time = current_time.astimezone(eastern_tz)
-        
-        last_msg_time = bot_status.get("last_idle_message_time")
-        idle_type = bot_status.get("idle_type", "MAINTENANCE")
-        
-        # Increment heartbeat counter for animated dots
-        heartbeat_count = bot_status.get("idle_heartbeat_count", 0)
-        heartbeat_count += 1
-        bot_status["idle_heartbeat_count"] = heartbeat_count
-        
-        # Animated dots (cycles through . .. ... every 3 heartbeats)
-        dots = "." * ((heartbeat_count % 3) + 1)
-        
-        # Heartbeat symbol (alternates between ♥ and ♡)
-        heartbeat = "♥" if heartbeat_count % 2 == 0 else "♡"
-        
-        # Show status message every 30 seconds with animated dots
-        if last_msg_time is None or (eastern_time - last_msg_time).total_seconds() >= 30:
-            logger.info(f"\033[93m{heartbeat} Market {idle_type} - Waiting for market data{dots}\033[0m")
-            bot_status["last_idle_message_time"] = eastern_time
+        # SILENT DURING MAINTENANCE - no spam in logs
+        # The initial maintenance message was already shown when entering maintenance
+        # Next log will be when market reopens
         return  # Skip broker health check during idle period
     
     # AUTO-RECONNECT: Reconnect broker when market reopens at 6:00 PM ET
@@ -1490,6 +1488,7 @@ def initialize_state(symbol: str) -> None:
         "trading_day": None,
         "daily_trade_count": 0,
         "daily_pnl": 0.0,
+        "warmup_complete": False,  # Track when 114 bars collected for regime detection
         
         # Session tracking (Phase 13)
         "session_stats": {
@@ -1803,7 +1802,10 @@ def update_1min_bar(symbol: str, price: float, volume: int, dt: datetime) -> Non
             # Display market snapshot on every 1-minute bar close
             # Only display if bot has been running for at least 1 minute to avoid confusion
             # with rapid bar creation during startup
-            if bot_status.get("session_start_time"):
+            # SILENCE DURING MAINTENANCE - no spam in logs
+            if bot_status.get("maintenance_idle", False):
+                pass  # Silent during maintenance - no market updates
+            elif bot_status.get("session_start_time"):
                 time_since_start = (get_current_time() - bot_status["session_start_time"]).total_seconds()
                 if time_since_start < 60:
                     # Skip display for first minute of runtime
@@ -2585,6 +2587,43 @@ def validate_signal_requirements(symbol: str, bar_time: datetime) -> Tuple[bool,
         pass  # Silent - signal check skipped (not enough bars)
         return False, "Insufficient bars"
     
+    # ========================================================================
+    # WARMUP PERIOD: Block signals until enough bars for regime detection
+    # ========================================================================
+    # Regime detection requires 114 bars for accurate classification
+    # During warmup, we use NORMAL regime as fallback but should not trade
+    WARMUP_BARS_REQUIRED = 114
+    current_bar_count = len(state[symbol]["bars_1min"])
+    
+    if current_bar_count < WARMUP_BARS_REQUIRED:
+        # Log warmup progress every 10 bars (clean professional logs)
+        if current_bar_count % 10 == 0 or current_bar_count == 1:
+            bars_remaining = WARMUP_BARS_REQUIRED - current_bar_count
+            minutes_remaining = bars_remaining  # 1-min bars = 1 minute each
+            progress_pct = (current_bar_count / WARMUP_BARS_REQUIRED) * 100
+            
+            # Create progress bar
+            filled = int(progress_pct / 5)  # 20 chars total
+            bar = "█" * filled + "░" * (20 - filled)
+            
+            logger.info(f"⏳ WARMUP [{bar}] {progress_pct:.0f}% | Bars: {current_bar_count}/{WARMUP_BARS_REQUIRED} | ~{minutes_remaining} min remaining")
+            logger.info(f"   Collecting data for accurate regime detection. Signals blocked until warmup complete.")
+        
+        return False, f"Warmup ({current_bar_count}/{WARMUP_BARS_REQUIRED} bars)"
+    
+    # Log warmup completion once
+    if not state[symbol].get("warmup_complete", False):
+        state[symbol]["warmup_complete"] = True
+        current_regime = state[symbol].get("current_regime", "NORMAL")
+        logger.info("=" * 60)
+        logger.info("✅ WARMUP COMPLETE - TRADING ENABLED")
+        logger.info("=" * 60)
+        logger.info(f"   📊 Bars collected: {current_bar_count}")
+        logger.info(f"   🎯 Regime detection: ACTIVE")
+        logger.info(f"   📈 Current regime: {current_regime}")
+        logger.info(f"   🚀 Signal generation: ENABLED")
+        logger.info("=" * 60)
+    
     # Check VWAP bands
     vwap_bands = state[symbol]["vwap_bands"]
     if any(v is None for v in vwap_bands.values()):
@@ -3094,13 +3133,26 @@ def check_for_signals(symbol: str) -> None:
     Check for trading signals on each completed 1-minute bar.
     Coordinates signal detection through helper functions.
     
+    In AI Mode: Signal generation is DISABLED. User trades manually.
+    AI Mode still provides FULL trade management (stop loss, trailing stops,
+    regime-aware exits, underwater timeout, etc.) - just no entry signals.
+    AI Mode can also manage multiple positions simultaneously.
+    
     Args:
         symbol: Instrument symbol
     """
+    # AI Mode: Skip signal generation only - user trades manually
+    # All position management (stops, trailing, regime changes) still works normally
+    # AI Mode can manage multiple positions opened by user
+    if CONFIG.get("ai_mode", False):
+        return
+    
     # Check safety conditions first
     is_safe, reason = check_safety_conditions(symbol)
     if not is_safe:
-        logger.info(f"[SIGNAL CHECK] Safety check failed: {reason}")
+        # SILENCE DURING MAINTENANCE - no spam in logs
+        if not bot_status.get("maintenance_idle", False):
+            logger.info(f"[SIGNAL CHECK] Safety check failed: {reason}")
         return
     
     # Get the latest bar
@@ -5133,10 +5185,11 @@ def update_current_regime(symbol: str) -> None:
     state[symbol]["current_regime"] = detected_regime.name
     
     # Log regime changes for customers (not just backtest)
-    if prev_regime != detected_regime.name:
+    # SILENCE DURING MAINTENANCE - no spam in logs
+    if prev_regime != detected_regime.name and not bot_status.get("maintenance_idle", False):
         logger.info(f"📊 Market Regime Changed: {prev_regime} → {detected_regime.name}")
     else:
-        pass  # Silent - no regime change
+        pass  # Silent - no regime change or in maintenance
 
 
 def check_regime_change(symbol: str, current_price: float) -> None:
@@ -7534,7 +7587,12 @@ def main(symbol_override: str = None) -> None:
     logger.info("=" * 80)
     
     # Display mode and connection
-    mode_str = "SIGNAL-ONLY MODE (Manual Trading)" if _bot_config.shadow_mode else "LIVE TRADING"
+    if _bot_config.ai_mode:
+        mode_str = "AI MODE (Position Management Only)"
+    elif _bot_config.shadow_mode:
+        mode_str = "SIGNAL-ONLY MODE (Manual Trading)"
+    else:
+        mode_str = "LIVE TRADING"
     logger.info(f"Mode: {mode_str}")
     logger.info(f"Symbol: {trading_symbol}")
     
@@ -7883,15 +7941,85 @@ def handle_position_reconciliation_event(data: Dict[str, Any]) -> None:
                 
             elif broker_position != 0 and bot_position == 0:
                 # Broker has position but bot thinks it's flat
-                logger.error("  Cause: Position opened externally or bot missed entry fill")
-                logger.error("  Action: CLOSING UNEXPECTED POSITION at market")
-                
-                # Emergency flatten the unexpected position
-                side = "sell" if broker_position > 0 else "buy"
-                quantity = abs(broker_position)
-                
-                logger.warning(f"Placing emergency market order: {side} {quantity} {symbol}")
-                broker.place_market_order(symbol, side, quantity)
+                # AI MODE: Adopt the external position and manage it
+                if CONFIG.get("ai_mode", False):
+                    logger.info("=" * 60)
+                    logger.info("🤖 AI MODE: External Position Detected")
+                    logger.info("=" * 60)
+                    logger.info(f"  Position: {abs(broker_position)} contracts {'LONG' if broker_position > 0 else 'SHORT'}")
+                    logger.info("  Action: ADOPTING position for AI management")
+                    
+                    # Get current price for entry price (best estimate since we don't know actual entry)
+                    # Use current bar close, or fallback to bid/ask manager, or log warning if no price available
+                    current_price = None
+                    if state[symbol]["bars_1min"]:
+                        current_price = state[symbol]["bars_1min"][-1]["close"]
+                    elif bid_ask_manager is not None:
+                        quote = bid_ask_manager.get_current_quote(symbol)
+                        if quote:
+                            current_price = (quote.bid_price + quote.ask_price) / 2
+                    
+                    if current_price is None or current_price <= 0:
+                        logger.warning("  ⚠️ Cannot determine current price - unable to adopt position safely")
+                        logger.warning("  Waiting for market data before adopting position")
+                        logger.info("=" * 60)
+                        return
+                    
+                    # Adopt the position
+                    position_side = "long" if broker_position > 0 else "short"
+                    state[symbol]["position"]["active"] = True
+                    state[symbol]["position"]["quantity"] = abs(broker_position)
+                    state[symbol]["position"]["side"] = position_side
+                    state[symbol]["position"]["entry_price"] = current_price
+                    state[symbol]["position"]["entry_time"] = get_current_time()
+                    
+                    # Calculate initial stop loss based on regime and settings
+                    current_regime = state[symbol].get("current_regime", "NORMAL")
+                    regime_params = REGIME_DEFINITIONS.get(current_regime, REGIME_DEFINITIONS["NORMAL"])
+                    atr = calculate_atr(symbol)
+                    if atr is None:
+                        atr = DEFAULT_FALLBACK_ATR
+                    
+                    # Set initial stop loss using regime parameters
+                    stop_distance = atr * regime_params.stop_mult
+                    max_stop_dollars = CONFIG.get("max_stop_loss_dollars", DEFAULT_MAX_STOP_LOSS_DOLLARS)
+                    tick_value = CONFIG.get("tick_value", 12.50)
+                    max_stop_ticks = max_stop_dollars / tick_value
+                    tick_size = CONFIG.get("tick_size", 0.25)
+                    max_stop_distance = max_stop_ticks * tick_size
+                    
+                    # Cap stop distance to max loss per trade
+                    if stop_distance > max_stop_distance:
+                        stop_distance = max_stop_distance
+                    
+                    if position_side == "long":
+                        stop_price = current_price - stop_distance
+                    else:
+                        stop_price = current_price + stop_distance
+                    
+                    state[symbol]["position"]["stop_price"] = stop_price
+                    state[symbol]["position"]["trailing_stop"] = stop_price
+                    # Mark position as adopted by AI Mode for tracking purposes
+                    # This allows the engine to distinguish AI-adopted positions from regular entries
+                    state[symbol]["position"]["ai_mode_adopted"] = True
+                    
+                    logger.info(f"  Entry Price (estimated): ${current_price:.2f}")
+                    logger.info(f"  Stop Loss: ${stop_price:.2f}")
+                    logger.info(f"  Regime: {current_regime}")
+                    logger.info("  AI will manage: stops, trailing, regime changes, exits")
+                    logger.info("  Note: AI Mode can manage multiple positions simultaneously")
+                    logger.info("=" * 60)
+                else:
+                    # Normal mode: Close unexpected position
+                    logger.error("  Cause: Position opened externally or bot missed entry fill")
+                    logger.error("  Action: CLOSING UNEXPECTED POSITION at market")
+                    
+                    # Emergency flatten the unexpected position
+                    side = "sell" if broker_position > 0 else "buy"
+                    quantity = abs(broker_position)
+                    
+                    logger.warning(f"Placing emergency market order: {side} {quantity} {symbol}")
+                    broker.place_market_order(symbol, side, quantity)
                 
             else:
                 # Both have positions but quantities don't match
@@ -7907,6 +8035,10 @@ def handle_position_reconciliation_event(data: Dict[str, Any]) -> None:
             if recovery_manager:
                 recovery_manager.save_state(state)
                 logger.info("Corrected position state saved to disk")
+            
+            # AI Mode: Also save position state for recovery
+            if CONFIG.get("ai_mode", False):
+                save_position_state(symbol)
             
             logger.error("=" * 60)
             

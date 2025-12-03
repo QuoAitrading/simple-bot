@@ -1328,6 +1328,32 @@ class QuoTradingLauncher:
             fg=self.colors['text_light']
         ).pack(anchor=tk.W, padx=(20, 0))
         
+        # AI Mode (Position Management Mode)
+        ai_mode_frame = tk.Frame(modes_section, bg=self.colors['card'])
+        ai_mode_frame.pack(fill=tk.X, pady=(0, 5))
+        
+        self.ai_mode_var = tk.BooleanVar(value=self.config.get("ai_mode", False))
+        tk.Checkbutton(
+            ai_mode_frame,
+            text="🤖 AI Mode",
+            variable=self.ai_mode_var,
+            font=("Segoe UI", 8, "bold"),
+            bg=self.colors['card'],
+            fg=self.colors['text'],
+            selectcolor=self.colors['secondary'],
+            activebackground=self.colors['card'],
+            activeforeground=self.colors['success'],
+            cursor="hand2"
+        ).pack(anchor=tk.W)
+        
+        tk.Label(
+            ai_mode_frame,
+            text="You trade, AI manages stops and exits",
+            font=("Segoe UI", 7, "bold"),
+            bg=self.colors['card'],
+            fg=self.colors['text_light']
+        ).pack(anchor=tk.W, padx=(20, 0))
+        
         
         # Account Settings Row - COMPACT
         settings_row = tk.Frame(content, bg=self.colors['card'])
@@ -2022,6 +2048,7 @@ class QuoTradingLauncher:
         self.config["max_trades"] = self.trades_var.get()
         self.config["confidence_threshold"] = self.confidence_var.get()
         self.config["shadow_mode"] = self.shadow_mode_var.get()
+        self.config["ai_mode"] = self.ai_mode_var.get()
         self.config["selected_account"] = self.account_dropdown_var.get()
         
         # Get selected account ID - parse from dropdown display format
@@ -2146,6 +2173,7 @@ class QuoTradingLauncher:
         max_trades = self.trades_var.get()
         confidence = self.confidence_var.get()
         shadow_mode = "ON" if self.shadow_mode_var.get() else "OFF"
+        ai_mode = "ON" if self.ai_mode_var.get() else "OFF"
         max_loss_per_trade = self.config.get("max_loss_per_trade", 200)
         
         settings_text = f"""
@@ -2158,6 +2186,7 @@ Daily Loss Limit: ${loss_limit}
 Max Trades/Day: {max_trades}
 Confidence Threshold: {confidence}%
 Shadow Mode: {shadow_mode}
+AI Mode: {ai_mode}
         """
         
         settings_label = tk.Label(
@@ -3250,6 +3279,10 @@ BOT_CONFIDENCE_THRESHOLD={self.confidence_var.get()}
 # Trading Mode (Shadow Trading / Shadow Mode)
 BOT_SHADOW_MODE={'true' if self.shadow_mode_var.get() else 'false'}
 # When true: Bot provides signals only, no automatic trade execution (manual trading)
+
+# AI Mode (Position Management Mode)
+BOT_AI_MODE={'true' if self.ai_mode_var.get() else 'false'}
+# When true: User trades manually, AI manages positions (stop loss, trailing stops, exits)
 
 # Account Selection
 SELECTED_ACCOUNT={self.config.get("selected_account", "Default Account")}
