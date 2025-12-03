@@ -3421,8 +3421,16 @@ def get_volatility_regime(atr: float, symbol: str) -> str:
 
 def capture_market_state(symbol: str, current_price: float) -> Dict[str, Any]:
     """
-    Capture comprehensive market state snapshot for analysis and learning.
-    This replaces the old RL state structure with a flat market state structure.
+    Capture comprehensive market state snapshot for CAPITULATION REVERSAL analysis.
+    
+    NEW EXPERIENCE RECORD STRUCTURE (per user request):
+    - timestamp, symbol, price
+    - flush_size_ticks, flush_velocity, flush_direction, bars_since_flush_start
+    - distance_from_flush_low/high (ticks)
+    - rsi, volume_climax_ratio, vwap_distance_ticks
+    - reversal_candle (bool), no_new_extreme (bool)
+    - atr, hour, session, regime
+    - stop_distance_ticks, target_distance_ticks, risk_reward_ratio
     
     Args:
         symbol: Instrument symbol
@@ -3432,17 +3440,7 @@ def capture_market_state(symbol: str, current_price: float) -> Dict[str, Any]:
         Dictionary with market state features (flat structure)
     """
     vwap = state[symbol].get("vwap", current_price)
-    vwap_bands = state[symbol].get("vwap_bands", {})
     rsi = state[symbol].get("rsi", 50)
-    
-    # Calculate VWAP standard deviation
-    vwap_std = 0
-    if vwap_bands:
-        upper = vwap_bands.get("upper_1", vwap)
-        vwap_std = abs(upper - vwap) if upper != vwap else 0
-    
-    # Calculate VWAP distance in standard deviations
-    vwap_distance = abs(current_price - vwap) / vwap_std if vwap_std > 0 else 0
     
     # Get ATR (use 1min bars for consistency)
     atr = calculate_atr_1min(symbol, CONFIG.get("atr_period", 14))
@@ -3450,74 +3448,6 @@ def capture_market_state(symbol: str, current_price: float) -> Dict[str, Any]:
         atr = calculate_atr(symbol, CONFIG.get("atr_period", 14))
         if atr is None:
             atr = 0
-    
-    # Calculate volume ratio (current 1min bar vs avg of recent 1min bars)
-    bars_1min = state[symbol]["bars_1min"]
-    if len(bars_1min) >= 20:
-        recent_volumes = [bar["volume"] for bar in list(bars_1min)[-20:]]
-        avg_volume_1min = sum(recent_volumes) / len(recent_volumes)
-        current_bar = bars_1min[-1]
-        volume_ratio = current_bar["volume"] / avg_volume_1min if avg_volume_1min > 0 else 1.0
-    else:
-        volume_ratio = 1.0
-    
-    # Calculate returns (price change)
-    if len(bars_1min) >= 2:
-        prev_close = bars_1min[-2]["close"]
-        returns = (current_price - prev_close) / prev_close if prev_close > 0 else 0.0
-    else:
-        returns = 0.0
-    
-    # Calculate VWAP slope
-    if len(bars_1min) >= 10:
-        recent_vwaps = []
-        # Recalculate VWAP for each recent bar (simplified)
-        for bar in list(bars_1min)[-10:]:
-            recent_vwaps.append(bar["close"])  # Simplified: use close as proxy
-        vwap_slope = calculate_slope(recent_vwaps, 5)
-    else:
-        vwap_slope = 0.0
-    
-    # Calculate ATR slope
-    if len(bars_1min) >= 20:
-        atr_values = []
-        recent_bars = list(bars_1min)[-20:]
-        for i in range(14, len(recent_bars)):
-            bars_slice = recent_bars[i-14:i+1]
-            true_ranges = []
-            for j in range(1, len(bars_slice)):
-                high = bars_slice[j]["high"]
-                low = bars_slice[j]["low"]
-                prev_close = bars_slice[j-1]["close"]
-                tr = max(high - low, abs(high - prev_close), abs(low - prev_close))
-                true_ranges.append(tr)
-            if true_ranges:
-                atr_values.append(sum(true_ranges) / len(true_ranges))
-        
-        if len(atr_values) >= 5:
-            atr_slope = calculate_slope(atr_values, 5)
-        else:
-            atr_slope = 0.0
-    else:
-        atr_slope = 0.0
-    
-    # Get MACD histogram
-    macd_data = state[symbol].get("macd")
-    if macd_data:
-        macd_hist = macd_data.get("histogram", 0.0)
-    else:
-        macd_hist = 0.0
-    
-    # Calculate Stochastic
-    stoch = calculate_stochastic(bars_1min, 14, 3)
-    stoch_k = stoch["k"]
-    
-    # Calculate volume slope
-    if len(bars_1min) >= 10:
-        recent_volumes = [bar["volume"] for bar in list(bars_1min)[-10:]]
-        volume_slope = calculate_slope(recent_volumes, 5)
-    else:
-        volume_slope = 0.0
     
     # Get current time and session
     current_time = get_current_time()
@@ -3527,64 +3457,116 @@ def capture_market_state(symbol: str, current_price: float) -> Dict[str, Any]:
     # Get regime
     regime = state[symbol].get("current_regime", "NORMAL")
     
-    # Get volatility regime
-    volatility_regime = get_volatility_regime(atr, symbol)
-    
-    # CAPITULATION STRATEGY FEATURES
-    # These features help the RL system learn capitulation reversal patterns
-    
-    # Get capitulation detector state
+    # Get tick size
     tick_size = CONFIG.get("tick_size", 0.25)
     tick_value = CONFIG.get("tick_value", 12.50)
+    
+    # Calculate volume_climax_ratio (current volume vs 20-bar average)
+    bars_1min = state[symbol]["bars_1min"]
+    if len(bars_1min) >= 20:
+        recent_volumes = [bar.get("volume", 0) for bar in list(bars_1min)[-20:]]
+        avg_volume_20 = sum(recent_volumes) / len(recent_volumes) if recent_volumes else 1
+        current_bar = bars_1min[-1] if bars_1min else {"volume": 0}
+        volume_climax_ratio = current_bar.get("volume", 0) / avg_volume_20 if avg_volume_20 > 0 else 1.0
+    else:
+        volume_climax_ratio = 1.0
+        avg_volume_20 = 1
+    
+    # Distance from VWAP in ticks
+    vwap_actual = state[symbol].get("vwap", current_price)
+    vwap_distance_ticks = (current_price - vwap_actual) / tick_size if tick_size > 0 else 0
+    
+    # Get capitulation detector state for flush metrics
     cap_detector = get_capitulation_detector(tick_size, tick_value)
     
-    # Flush detection features
+    # Initialize flush-related fields
     flush_size_ticks = 0.0
     flush_velocity = 0.0
-    bars_since_flush = cap_detector.bars_since_flush
+    flush_direction = "NONE"
+    bars_since_flush_start = 0
+    distance_from_flush_low = 0.0
+    distance_from_flush_high = 0.0
     
     if cap_detector.last_flush:
         flush = cap_detector.last_flush
         flush_size_ticks = flush.flush_size_ticks
         flush_velocity = flush.flush_velocity
+        flush_direction = flush.direction
+        bars_since_flush_start = cap_detector.bars_since_flush
+        distance_from_flush_low = (current_price - flush.flush_low) / tick_size if tick_size > 0 else 0
+        distance_from_flush_high = (flush.flush_high - current_price) / tick_size if tick_size > 0 else 0
     
-    # Distance from VWAP in ticks
-    vwap_actual = state[symbol].get("vwap", current_price)
-    distance_from_vwap_ticks = abs(current_price - vwap_actual) / tick_size if tick_size > 0 else 0
+    # Reversal candle detection (current bar closes green for longs, red for shorts)
+    reversal_candle = False
+    no_new_extreme = False
     
-    # Reversal candle detection
-    reversal_candle_present = False
-    if cap_detector.last_exhaustion:
-        reversal_candle_present = cap_detector.last_exhaustion.reversal_candle
+    if len(bars_1min) >= 2:
+        current_bar = bars_1min[-1]
+        prev_bar = bars_1min[-2]
+        
+        if flush_direction == "DOWN":
+            # For long: green candle and stopped making new lows
+            reversal_candle = current_bar["close"] > current_bar["open"]
+            no_new_extreme = current_bar["low"] >= prev_bar["low"]
+        elif flush_direction == "UP":
+            # For short: red candle and stopped making new highs
+            reversal_candle = current_bar["close"] < current_bar["open"]
+            no_new_extreme = current_bar["high"] <= prev_bar["high"]
     
-    # Check if regime is tradeable
-    regime_tradeable = is_regime_tradeable(regime)
+    # Calculate stop and target distances for risk/reward
+    stop_distance_ticks = 0.0
+    target_distance_ticks = 0.0
+    risk_reward_ratio = 0.0
     
+    if cap_detector.last_flush and vwap_actual:
+        flush = cap_detector.last_flush
+        if flush.direction == "DOWN":
+            # Long setup: stop below flush low, target at VWAP
+            stop_price = flush.flush_low - (2 * tick_size)  # 2 ticks buffer
+            stop_distance_ticks = (current_price - stop_price) / tick_size if tick_size > 0 else 0
+            target_distance_ticks = (vwap_actual - current_price) / tick_size if tick_size > 0 else 0
+        elif flush.direction == "UP":
+            # Short setup: stop above flush high, target at VWAP
+            stop_price = flush.flush_high + (2 * tick_size)  # 2 ticks buffer
+            stop_distance_ticks = (stop_price - current_price) / tick_size if tick_size > 0 else 0
+            target_distance_ticks = (current_price - vwap_actual) / tick_size if tick_size > 0 else 0
+        
+        if stop_distance_ticks > 0:
+            risk_reward_ratio = target_distance_ticks / stop_distance_ticks
+    
+    # Build the new experience record structure
     market_state = {
+        # Basic info
         "timestamp": current_time.isoformat(),
         "symbol": symbol,
         "price": current_price,
-        "returns": returns,
-        "vwap_distance": vwap_distance,
-        "vwap_slope": vwap_slope,
-        "atr": atr,
-        "atr_slope": atr_slope,
-        "rsi": rsi if rsi is not None else 50,
-        "macd_hist": macd_hist,
-        "stoch_k": stoch_k,
-        "volume_ratio": volume_ratio,
-        "volume_slope": volume_slope,
+        
+        # Flush metrics
+        "flush_size_ticks": round(flush_size_ticks, 1),
+        "flush_velocity": round(flush_velocity, 2),
+        "flush_direction": flush_direction,
+        "bars_since_flush_start": bars_since_flush_start,
+        "distance_from_flush_low": round(distance_from_flush_low, 1),
+        
+        # Key indicators
+        "rsi": round(rsi, 1) if rsi is not None else 50,
+        "volume_climax_ratio": round(volume_climax_ratio, 2),
+        "vwap_distance_ticks": round(vwap_distance_ticks, 1),
+        
+        # Reversal confirmation
+        "reversal_candle": reversal_candle,
+        "no_new_extreme": no_new_extreme,
+        
+        # Context
+        "atr": round(atr, 4) if atr else 0,
         "hour": hour,
         "session": session,
         "regime": regime,
-        "volatility_regime": volatility_regime,
-        # Capitulation-specific features
-        "flush_size_ticks": flush_size_ticks,
-        "flush_velocity": flush_velocity,
-        "distance_from_vwap_ticks": distance_from_vwap_ticks,
-        "bars_since_flush": bars_since_flush,
-        "reversal_candle_present": reversal_candle_present,
-        "regime_tradeable": regime_tradeable
+        
+        # Risk/Reward
+        "stop_distance_ticks": round(stop_distance_ticks, 1),
+        "target_distance_ticks": round(target_distance_ticks, 1),
+        "risk_reward_ratio": round(risk_reward_ratio, 2)
     }
     
     return market_state
