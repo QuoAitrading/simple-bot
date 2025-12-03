@@ -625,6 +625,9 @@ def load_from_env() -> BotConfiguration:
     if os.getenv("BOT_AI_MODE"):
         config.ai_mode = os.getenv("BOT_AI_MODE").lower() in ("true", "1", "yes")
     
+    if os.getenv("BOT_TIME_EXIT_ENABLED"):
+        config.time_stop_enabled = os.getenv("BOT_TIME_EXIT_ENABLED").lower() in ("true", "1", "yes")
+    
     if os.getenv("BOT_ENVIRONMENT"):
         config.environment = os.getenv("BOT_ENVIRONMENT")
     
