@@ -38,6 +38,10 @@ class RegimeParameters:
         return f"RegimeParameters({self.name}, stop={self.stop_mult}x, be={self.breakeven_mult}x, trail={self.trailing_mult}x)"
 
 
+# Tradeable regimes for Capitulation Reversal Strategy
+# Only HIGH_VOL regimes have real flushes - others have fake moves, no edge
+TRADEABLE_REGIMES = {"HIGH_VOL_TRENDING", "HIGH_VOL_CHOPPY"}
+
 # Seven regime definitions - Adjusted for consistent ~$300 max risk (12 ticks)
 # Target: Max loss ~$300 (0.6% of $50k account) across ALL regimes
 REGIME_DEFINITIONS = {
@@ -292,6 +296,32 @@ class RegimeDetector:
                    f"trailing={current_regime.trailing_mult:.2f}x")
         
         return True, current_regime
+
+
+def is_regime_tradeable(regime_name: str) -> bool:
+    """
+    Check if a regime is tradeable for the Capitulation Reversal Strategy.
+    
+    The strategy only trades in HIGH_VOL regimes where real flushes happen.
+    Other regimes have fake moves with no follow-through.
+    
+    Args:
+        regime_name: Name of the regime to check
+    
+    Returns:
+        True if the regime is tradeable
+    """
+    return regime_name in TRADEABLE_REGIMES
+
+
+def get_tradeable_regimes() -> set:
+    """
+    Get the set of tradeable regimes.
+    
+    Returns:
+        Set of regime names that are tradeable
+    """
+    return TRADEABLE_REGIMES.copy()
 
 
 # Singleton instance

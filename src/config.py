@@ -1,6 +1,11 @@
 """
-Configuration Management for VWAP Bounce Bot
+Configuration Management for Capitulation Reversal Bot
 Supports multiple environments with validation and environment variable overrides.
+
+STRATEGY: Capitulation Reversal
+- Wait for panic selling/buying (flush)
+- Enter on exhaustion confirmation
+- Target VWAP for mean reversion
 """
 
 import os
@@ -11,12 +16,12 @@ from dataclasses import dataclass, field
 import pytz
 
 # Default configuration constants
-DEFAULT_MAX_STOP_LOSS_DOLLARS = 200.0  # Default max loss per trade in dollars
+DEFAULT_MAX_STOP_LOSS_DOLLARS = 400.0  # Default max loss per trade in dollars (capitulation needs wider stops)
 
 
 @dataclass
 class BotConfiguration:
-    """Type-safe configuration for the VWAP Bounce Bot."""
+    """Type-safe configuration for the Capitulation Reversal Bot."""
     
     # Default account size constant
     DEFAULT_ACCOUNT_SIZE: float = 50000.0
@@ -54,25 +59,26 @@ class BotConfiguration:
     trend_ema_period: int = 21  # Optimizer best
     trend_threshold: float = 0.0001
     
-    # Technical Filters - ITERATION 3
-    use_trend_filter: bool = False  # Trend filter OFF (optimizer found better without)
-    use_rsi_filter: bool = True
-    use_vwap_direction_filter: bool = True  # VWAP direction filter ON (optimizer confirmed)
-    use_volume_filter: bool = False  # Don't use volume filter - blocks overnight trades
+    # Technical Filters - CAPITULATION REVERSAL STRATEGY
+    # Filters are handled by CapitulationDetector, not config toggles
+    use_trend_filter: bool = False  # Disabled - regime filter handles this
+    use_rsi_filter: bool = True  # RSI used for exhaustion confirmation
+    use_vwap_direction_filter: bool = True  # VWAP is target, not filter
+    use_volume_filter: bool = True  # Volume spike is key exhaustion signal
     use_macd_filter: bool = False
     
-    # RSI Settings - ITERATION 3 (Conservative, Selective)
-    rsi_period: int = 10  # Iteration 3
-    rsi_oversold: int = 35  # Iteration 3 - selective entry
-    rsi_overbought: int = 65  # Iteration 3 - selective entry
+    # RSI Settings - CAPITULATION REVERSAL (Extreme thresholds)
+    rsi_period: int = 14  # Standard RSI period
+    rsi_oversold: int = 20  # Extreme oversold for capitulation detection
+    rsi_overbought: int = 80  # Extreme overbought for capitulation detection
     
     # MACD - Keep for reference but disabled
     macd_fast: int = 12
     macd_slow: int = 26
     macd_signal: int = 9
     
-    # Volume Filter - DISABLED (futures have inconsistent volume)
-    volume_spike_multiplier: float = 1.5
+    # Volume Filter - ENABLED for capitulation detection
+    volume_spike_multiplier: float = 2.0  # 2x volume for flush detection
     volume_lookback: int = 20
     
     # Time Windows (US Eastern - CME Futures Wall-Clock Schedule)
@@ -291,19 +297,27 @@ class BotConfiguration:
     # Advanced Exit Management Parameters
     # Static exit management using config values
     
-    # Breakeven Protection - ITERATION 3 (PROVEN WINNER!)
-    breakeven_enabled: bool = True  # ENABLED - Uses static config values
-    breakeven_profit_threshold_ticks: int = 9  # Iteration 3 - proven optimal
+    # Breakeven Protection - CAPITULATION REVERSAL STRATEGY
+    breakeven_enabled: bool = True  # ENABLED - Move stop to entry after profit
+    breakeven_profit_threshold_ticks: int = 12  # Move stop to entry after 12 ticks profit
     breakeven_stop_offset_ticks: int = 1  # Static offset from entry
     
-    # Partial Exits (static R-multiples)
-    partial_exits_enabled: bool = False  # DISABLED - Bot exits all contracts at once (no runners)
+    # Trailing Stop - CAPITULATION REVERSAL STRATEGY
+    trailing_stop_enabled: bool = True  # ENABLED - Trail after 15+ ticks profit
+    trailing_stop_trigger_ticks: int = 15  # Start trailing after 15 ticks
+    trailing_stop_distance_ticks: int = 9  # Trail 8-10 ticks behind peak
+    
+    # Time Stop - CAPITULATION REVERSAL STRATEGY
+    max_hold_bars: int = 20  # Exit if trade hasn't worked after 20 bars (20 minutes)
+    
+    # Partial Exits (static R-multiples) - Optional for capitulation strategy
+    partial_exits_enabled: bool = True  # ENABLED - Take 50% at halfway to VWAP
     partial_exit_1_percentage: float = 0.50  # 50% exit at first level
-    partial_exit_1_r_multiple: float = 2.0  # Exit at 2.0R
+    partial_exit_1_r_multiple: float = 1.5  # Exit at 1.5R (halfway to VWAP)
     partial_exit_2_percentage: float = 0.30  # 30% exit at second level
-    partial_exit_2_r_multiple: float = 3.0  # Exit at 3.0R
+    partial_exit_2_r_multiple: float = 2.0  # Exit at 2.0R (near VWAP)
     partial_exit_3_percentage: float = 0.20  # 20% exit at third level
-    partial_exit_3_r_multiple: float = 5.0  # Exit at 5.0R
+    partial_exit_3_r_multiple: float = 3.0  # Exit at 3.0R (runner)
     
     # Reinforcement Learning Parameters
     # RL confidence filtering - uses RL experience to filter out low-confidence signals
@@ -446,6 +460,13 @@ class BotConfiguration:
             "breakeven_enabled": self.breakeven_enabled,
             "breakeven_profit_threshold_ticks": self.breakeven_profit_threshold_ticks,
             "breakeven_stop_offset_ticks": self.breakeven_stop_offset_ticks,
+            # Trailing Stop Settings (Capitulation Strategy)
+            "trailing_stop_enabled": self.trailing_stop_enabled,
+            "trailing_stop_trigger_ticks": self.trailing_stop_trigger_ticks,
+            "trailing_stop_distance_ticks": self.trailing_stop_distance_ticks,
+            # Time Stop Settings (Capitulation Strategy)
+            "max_hold_bars": self.max_hold_bars,
+            # Partial Exits
             "partial_exits_enabled": self.partial_exits_enabled,
             "partial_exit_1_percentage": self.partial_exit_1_percentage,
             "partial_exit_1_r_multiple": self.partial_exit_1_r_multiple,

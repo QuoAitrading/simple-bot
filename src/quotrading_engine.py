@@ -1,6 +1,25 @@
 """
-VWAP Bounce Bot - Mean Reversion Trading Strategy
-Event-driven bot that trades bounces off VWAP standard deviation bands
+Capitulation Reversal Bot - Mean Reversion Trading Strategy
+Event-driven bot that trades reversals after panic selling/buying flushes
+
+THE EDGE:
+Wait for panic selling or panic buying. When everyone is rushing for the exits
+(or FOMO buying), step in the opposite direction and ride the snapback to VWAP.
+
+STRATEGY FLOW:
+1. DETECT THE FLUSH - Price dropped/pumped 20+ ticks in 5-10 min (2x ATR)
+2. CONFIRM EXHAUSTION - Volume spike then decline, extreme RSI, momentum fading
+3. ENTRY TRIGGER - Reversal candle closes, price stretched from VWAP
+4. STOP LOSS - 2-4 ticks below/above flush low/high
+5. PROFIT TARGET - VWAP (mean reversion destination)
+6. TRADE MANAGEMENT - Breakeven at 12 ticks, trail after 15 ticks
+
+TRADEABLE REGIMES:
+- HIGH_VOL_TRENDING: Big moves happen, good for this strategy
+- HIGH_VOL_CHOPPY: Still has flushes, just choppier
+
+SKIP THESE REGIMES:
+- NORMAL, NORMAL_CHOPPY, LOW_VOL: Not enough volatility for real flushes
 
 ========================================================================
 24/7 MULTI-USER READY ARCHITECTURE - US EASTERN TIME (DST-AWARE)
@@ -222,7 +241,8 @@ from error_recovery import ErrorRecoveryManager, ErrorType as RecoveryErrorType
 from bid_ask_manager import BidAskManager, BidAskQuote
 from notifications import get_notifier
 from signal_confidence import SignalConfidenceRL
-from regime_detection import get_regime_detector, REGIME_DEFINITIONS
+from regime_detection import get_regime_detector, REGIME_DEFINITIONS, is_regime_tradeable
+from capitulation_detector import get_capitulation_detector, CapitulationDetector, FlushEvent
 from cloud_api import CloudAPIClient
 
 # Conditionally import broker (only needed for live trading, not backtesting)
@@ -3114,9 +3134,18 @@ def validate_signal_requirements(symbol: str, bar_time: datetime) -> Tuple[bool,
 def check_long_signal_conditions(symbol: str, prev_bar: Dict[str, Any], 
                                  current_bar: Dict[str, Any]) -> bool:
     """
-    Check if long signal conditions are met - WITH-TREND MEAN REVERSION.
+    Check if long signal conditions are met - CAPITULATION REVERSAL STRATEGY.
     
-    Strategy: Buy dips in uptrends (fade to VWAP from below)
+    Strategy: Wait for panic selling (flush DOWN), then enter long when exhaustion
+    confirmed. Target: Mean reversion to VWAP.
+    
+    Entry conditions:
+    1. Flush detected (price dropped 20+ ticks in 5-10 min, 2x ATR)
+    2. Regime is tradeable (HIGH_VOL_TRENDING or HIGH_VOL_CHOPPY)
+    3. Exhaustion confirmed (60%+ score)
+    4. Bullish reversal candle formed
+    5. RSI < 20 (extreme oversold)
+    6. Price stretched from VWAP
     
     Args:
         symbol: Instrument symbol
@@ -3124,108 +3153,103 @@ def check_long_signal_conditions(symbol: str, prev_bar: Dict[str, Any],
         current_bar: Current 1-minute bar
     
     Returns:
-        True if long signal detected
+        True if long signal detected (after flush down + exhaustion)
     """
-    vwap_bands = state[symbol]["vwap_bands"]
     vwap = state[symbol]["vwap"]
+    bars = state[symbol]["bars_1min"]
+    rsi = state[symbol]["rsi"]
     
-    # TREND FILTER: Skip longs in downtrend (but allow in neutral/uptrend)
-    use_trend = CONFIG.get("use_trend_filter", False)
-    if use_trend:
-        trend = state[symbol]["trend_direction"]
-        if trend == "down":
-            logger.debug(f"Long rejected - trend is {trend}, counter to downtrend")
-            return False
-        logger.debug(f"Trend filter: {trend}  (allows longs)")
-    
-    # PRIMARY: VWAP bounce condition (2.0 std dev)
-    touched_lower = prev_bar["low"] <= vwap_bands["lower_2"]
-    bounced_back = current_bar["close"] > vwap_bands["lower_2"]
-    
-    if not (touched_lower and bounced_back):
+    # STEP 0: Check regime - only trade in HIGH_VOL regimes
+    current_regime = state[symbol].get("current_regime", "NORMAL")
+    if not is_regime_tradeable(current_regime):
+        logger.debug(f"Long rejected - regime {current_regime} not tradeable (need HIGH_VOL)")
         return False
     
-    # FILTER 1: VWAP Direction - price should be BELOW VWAP (discount/oversold)
-    use_vwap_direction = CONFIG.get("use_vwap_direction_filter", False)
-    if use_vwap_direction and vwap is not None:
-        if current_bar["close"] >= vwap:
-            logger.debug(f"Long rejected - price above VWAP: {current_bar['close']:.2f} >= {vwap:.2f}")
-            return False
-        logger.debug(f"Price below VWAP: {current_bar['close']:.2f} < {vwap:.2f} ")
+    # Get capitulation detector
+    tick_size = CONFIG.get("tick_size", 0.25)
+    tick_value = CONFIG.get("tick_value", 12.50)
+    cap_detector = get_capitulation_detector(tick_size, tick_value)
     
-    # FILTER 2: RSI - extreme oversold (ITERATION 3)
-    use_rsi = CONFIG.get("use_rsi_filter", True)
-    rsi_oversold = CONFIG.get("rsi_oversold", 35.0)  # Iteration 3 - selective entry
-    if use_rsi:
-        rsi = state[symbol]["rsi"]
-        if rsi is not None:
-            if rsi >= rsi_oversold:
-                logger.debug(f"Long rejected - RSI not extreme: {rsi:.2f} >= {rsi_oversold}")
-                return False
-            logger.debug(f"RSI extreme oversold: {rsi:.2f} < {rsi_oversold} ")
-    
-    # FILTER 3: Volume spike - confirmation of interest
-    use_volume = CONFIG.get("use_volume_filter", True)
-    volume_mult = CONFIG.get("volume_spike_multiplier", 1.5)
-    if use_volume:
-        # Use 1-min bar average (same as RL volume_ratio calculation)
-        bars_1min = state[symbol]["bars_1min"]
-        if len(bars_1min) >= 20:
-            recent_volumes = [bar["volume"] for bar in list(bars_1min)[-20:]]
-            avg_volume_1min = sum(recent_volumes) / len(recent_volumes)
-            current_volume = current_bar["volume"]
-            if current_volume < avg_volume_1min * volume_mult:
-                logger.debug(f"Long rejected - no volume spike: {current_volume:.0f} < {avg_volume_1min * volume_mult:.0f}")
-                return False
-            logger.debug(f"Volume spike: {current_volume:.0f} >= {avg_volume_1min * volume_mult:.0f}")
-    
-    # FILTER 4: Bullish bar confirmation - current bar must be bullish (close > open)
-    # This ensures the reversal is happening with buying pressure, not selling into the bounce
-    if current_bar["close"] <= current_bar["open"]:
-        logger.debug(f"Long rejected - not a bullish bar: close {current_bar['close']:.2f} <= open {current_bar['open']:.2f}")
+    # Get current ATR
+    atr = calculate_atr_1min(symbol, CONFIG.get("atr_period", 14))
+    if atr is None:
+        logger.debug("Long rejected - ATR not available")
         return False
     
-    # Build detailed signal log with all confirmed conditions
+    # Calculate average volume
+    if len(bars) >= 20:
+        recent_volumes = [bar["volume"] for bar in list(bars)[-20:]]
+        avg_volume = sum(recent_volumes) / len(recent_volumes)
+    else:
+        avg_volume = current_bar.get("volume", 1)
+    
+    # STEP 1: Check for capitulation entry signal
+    should_enter, side, entry_details = cap_detector.get_entry_signal(
+        bars=bars,
+        current_bar=current_bar,
+        current_atr=atr,
+        rsi=rsi,
+        avg_volume=avg_volume,
+        current_price=current_bar["close"],
+        vwap=vwap if vwap else current_bar["close"]
+    )
+    
+    # Only accept LONG signals (after flush DOWN)
+    if not should_enter or side != "long":
+        if entry_details.get("reason"):
+            logger.debug(f"Long rejected: {entry_details['reason']}")
+        return False
+    
+    # Store flush and entry details for position management
+    state[symbol]["last_flush"] = entry_details.get("flush")
+    state[symbol]["entry_details"] = entry_details
+    
+    # Build detailed signal log
+    flush = entry_details.get("flush")
+    exhaustion = entry_details.get("exhaustion")
+    
     signal_details = []
     signal_details.append(f"Price: ${current_bar['close']:.2f}")
-    signal_details.append(f"VWAP Band: ${vwap_bands['lower_2']:.2f}")
     
-    # Add RSI if available
-    rsi = state[symbol].get("rsi")
+    if flush:
+        signal_details.append(f"Flush: {flush.flush_size_ticks:.0f} ticks DOWN")
+        signal_details.append(f"ATR: {flush.atr_multiple:.1f}x")
+    
+    if exhaustion:
+        signal_details.append(f"Exhaustion: {exhaustion.exhaustion_score:.0%}")
+        if exhaustion.reversal_candle_type:
+            signal_details.append(f"Pattern: {exhaustion.reversal_candle_type}")
+    
     if rsi is not None:
         signal_details.append(f"RSI: {rsi:.1f}")
     
-    # Add VWAP distance
     if vwap is not None:
-        vwap_distance = ((current_bar['close'] - vwap) / vwap) * 100
-        signal_details.append(f"VWAP Dist: {vwap_distance:+.2f}%")
+        vwap_dist = abs(current_bar["close"] - vwap) / tick_size
+        signal_details.append(f"VWAP Dist: {vwap_dist:.0f} ticks")
     
-    # Add trend if tracked
-    trend = state[symbol].get("trend_direction")
-    if trend:
-        signal_details.append(f"Trend: {trend.upper()}")
+    signal_details.append(f"Regime: {current_regime}")
     
-    # Add volume ratio
-    bars_1min = state[symbol]["bars_1min"]
-    if len(bars_1min) >= 20:
-        recent_volumes = [bar["volume"] for bar in list(bars_1min)[-20:]]
-        avg_volume_1min = sum(recent_volumes) / len(recent_volumes)
-        current_volume = current_bar["volume"]
-        if avg_volume_1min > 0:
-            vol_ratio = current_volume / avg_volume_1min
-            signal_details.append(f"Vol: {vol_ratio:.1f}x")
-    
-    logger.info(f"📈 LONG SIGNAL: Price reversal at ${current_bar['close']:.2f}")
+    logger.info(f"🚨📈 CAPITULATION LONG SIGNAL: Flush exhaustion reversal")
     logger.info(f"  └─ {' | '.join(signal_details)}")
+    
     return True
 
 
 def check_short_signal_conditions(symbol: str, prev_bar: Dict[str, Any], 
                                   current_bar: Dict[str, Any]) -> bool:
     """
-    Check if short signal conditions are met - WITH-TREND MEAN REVERSION.
+    Check if short signal conditions are met - CAPITULATION REVERSAL STRATEGY.
     
-    Strategy: Sell rallies in downtrends (fade to VWAP from above)
+    Strategy: Wait for panic buying (flush UP), then enter short when exhaustion
+    confirmed. Target: Mean reversion to VWAP.
+    
+    Entry conditions:
+    1. Flush detected (price pumped 20+ ticks in 5-10 min, 2x ATR)
+    2. Regime is tradeable (HIGH_VOL_TRENDING or HIGH_VOL_CHOPPY)
+    3. Exhaustion confirmed (60%+ score)
+    4. Bearish reversal candle formed
+    5. RSI > 80 (extreme overbought)
+    6. Price stretched from VWAP
     
     Args:
         symbol: Instrument symbol
@@ -3233,99 +3257,85 @@ def check_short_signal_conditions(symbol: str, prev_bar: Dict[str, Any],
         current_bar: Current 1-minute bar
     
     Returns:
-        True if short signal detected
+        True if short signal detected (after flush up + exhaustion)
     """
-    vwap_bands = state[symbol]["vwap_bands"]
     vwap = state[symbol]["vwap"]
+    bars = state[symbol]["bars_1min"]
+    rsi = state[symbol]["rsi"]
     
-    # TREND FILTER: Skip shorts in uptrend (but allow in neutral/downtrend)
-    use_trend = CONFIG.get("use_trend_filter", False)
-    if use_trend:
-        trend = state[symbol]["trend_direction"]
-        if trend == "up":
-            logger.debug(f"Short rejected - trend is {trend}, counter to uptrend")
-            return False
-        logger.debug(f"Trend filter: {trend}  (allows shorts)")
-    
-    # PRIMARY: VWAP bounce condition (2.0 std dev)
-    touched_upper = prev_bar["high"] >= vwap_bands["upper_2"]
-    bounced_back = current_bar["close"] < vwap_bands["upper_2"]
-    
-    if not (touched_upper and bounced_back):
+    # STEP 0: Check regime - only trade in HIGH_VOL regimes
+    current_regime = state[symbol].get("current_regime", "NORMAL")
+    if not is_regime_tradeable(current_regime):
+        logger.debug(f"Short rejected - regime {current_regime} not tradeable (need HIGH_VOL)")
         return False
     
-    # FILTER 1: VWAP Direction - price should be ABOVE VWAP (premium/overbought)
-    use_vwap_direction = CONFIG.get("use_vwap_direction_filter", False)
-    if use_vwap_direction and vwap is not None:
-        if current_bar["close"] <= vwap:
-            logger.debug(f"Short rejected - price below VWAP: {current_bar['close']:.2f} <= {vwap:.2f}")
-            return False
-        logger.debug(f"Price above VWAP: {current_bar['close']:.2f} > {vwap:.2f} ")
+    # Get capitulation detector
+    tick_size = CONFIG.get("tick_size", 0.25)
+    tick_value = CONFIG.get("tick_value", 12.50)
+    cap_detector = get_capitulation_detector(tick_size, tick_value)
     
-    # FILTER 2: RSI - extreme overbought (ITERATION 3)
-    use_rsi = CONFIG.get("use_rsi_filter", True)
-    rsi_overbought = CONFIG.get("rsi_overbought", 65.0)  # Iteration 3 - selective entry
-    if use_rsi:
-        rsi = state[symbol]["rsi"]
-        if rsi is not None:
-            if rsi <= rsi_overbought:
-                logger.debug(f"Short rejected - RSI not extreme: {rsi:.2f} <= {rsi_overbought}")
-                return False
-            logger.debug(f"RSI extreme overbought: {rsi:.2f} > {rsi_overbought} ")
-    
-    # FILTER 3: Volume spike - confirmation of interest
-    use_volume = CONFIG.get("use_volume_filter", True)
-    volume_mult = CONFIG.get("volume_spike_multiplier", 1.5)
-    if use_volume:
-        # Use 1-min bar average (same as RL volume_ratio calculation)
-        bars_1min = state[symbol]["bars_1min"]
-        if len(bars_1min) >= 20:
-            recent_volumes = [bar["volume"] for bar in list(bars_1min)[-20:]]
-            avg_volume_1min = sum(recent_volumes) / len(recent_volumes)
-            current_volume = current_bar["volume"]
-            if current_volume < avg_volume_1min * volume_mult:
-                logger.debug(f"Short rejected - no volume spike: {current_volume:.0f} < {avg_volume_1min * volume_mult:.0f}")
-                return False
-            logger.debug(f"Volume spike: {current_volume} >= {avg_volume_1min * volume_mult:.0f}")
-    
-    # FILTER 4: Bearish bar confirmation - current bar must be bearish (close < open)
-    # This ensures the reversal is happening with selling pressure, not buying into the drop
-    if current_bar["close"] >= current_bar["open"]:
-        logger.debug(f"Short rejected - not a bearish bar: close {current_bar['close']:.2f} >= open {current_bar['open']:.2f}")
+    # Get current ATR
+    atr = calculate_atr_1min(symbol, CONFIG.get("atr_period", 14))
+    if atr is None:
+        logger.debug("Short rejected - ATR not available")
         return False
     
-    # Build detailed signal log with all confirmed conditions
+    # Calculate average volume
+    if len(bars) >= 20:
+        recent_volumes = [bar["volume"] for bar in list(bars)[-20:]]
+        avg_volume = sum(recent_volumes) / len(recent_volumes)
+    else:
+        avg_volume = current_bar.get("volume", 1)
+    
+    # STEP 1: Check for capitulation entry signal
+    should_enter, side, entry_details = cap_detector.get_entry_signal(
+        bars=bars,
+        current_bar=current_bar,
+        current_atr=atr,
+        rsi=rsi,
+        avg_volume=avg_volume,
+        current_price=current_bar["close"],
+        vwap=vwap if vwap else current_bar["close"]
+    )
+    
+    # Only accept SHORT signals (after flush UP)
+    if not should_enter or side != "short":
+        if entry_details.get("reason"):
+            logger.debug(f"Short rejected: {entry_details['reason']}")
+        return False
+    
+    # Store flush and entry details for position management
+    state[symbol]["last_flush"] = entry_details.get("flush")
+    state[symbol]["entry_details"] = entry_details
+    
+    # Build detailed signal log
+    flush = entry_details.get("flush")
+    exhaustion = entry_details.get("exhaustion")
+    
     signal_details = []
     signal_details.append(f"Price: ${current_bar['close']:.2f}")
-    signal_details.append(f"VWAP Band: ${vwap_bands['upper_2']:.2f}")
     
-    # Add RSI if available
-    rsi = state[symbol].get("rsi")
+    if flush:
+        signal_details.append(f"Flush: {flush.flush_size_ticks:.0f} ticks UP")
+        signal_details.append(f"ATR: {flush.atr_multiple:.1f}x")
+    
+    if exhaustion:
+        signal_details.append(f"Exhaustion: {exhaustion.exhaustion_score:.0%}")
+        if exhaustion.reversal_candle_type:
+            signal_details.append(f"Pattern: {exhaustion.reversal_candle_type}")
+    
     if rsi is not None:
         signal_details.append(f"RSI: {rsi:.1f}")
     
-    # Add VWAP distance
     if vwap is not None:
-        vwap_distance = ((current_bar['close'] - vwap) / vwap) * 100
-        signal_details.append(f"VWAP Dist: {vwap_distance:+.2f}%")
+        vwap_dist = abs(current_bar["close"] - vwap) / tick_size
+        signal_details.append(f"VWAP Dist: {vwap_dist:.0f} ticks")
     
-    # Add trend if tracked
-    trend = state[symbol].get("trend_direction")
-    if trend:
-        signal_details.append(f"Trend: {trend.upper()}")
+    signal_details.append(f"Regime: {current_regime}")
     
-    # Add volume ratio
-    bars_1min = state[symbol]["bars_1min"]
-    if len(bars_1min) >= 20:
-        recent_volumes = [bar["volume"] for bar in list(bars_1min)[-20:]]
-        avg_volume_1min = sum(recent_volumes) / len(recent_volumes)
-        current_volume = current_bar["volume"]
-        if avg_volume_1min > 0:
-            vol_ratio = current_volume / avg_volume_1min
-            signal_details.append(f"Vol: {vol_ratio:.1f}x")
-    
-    logger.info(f"📉 SHORT SIGNAL: Price reversal at ${current_bar['close']:.2f}")
+    logger.info(f"🚨📉 CAPITULATION SHORT SIGNAL: Flush exhaustion reversal")
     logger.info(f"  └─ {' | '.join(signal_details)}")
+    
     return True
 
 
@@ -3574,6 +3584,36 @@ def capture_market_state(symbol: str, current_price: float) -> Dict[str, Any]:
     # Get volatility regime
     volatility_regime = get_volatility_regime(atr, symbol)
     
+    # CAPITULATION STRATEGY FEATURES
+    # These features help the RL system learn capitulation reversal patterns
+    
+    # Get capitulation detector state
+    tick_size = CONFIG.get("tick_size", 0.25)
+    tick_value = CONFIG.get("tick_value", 12.50)
+    cap_detector = get_capitulation_detector(tick_size, tick_value)
+    
+    # Flush detection features
+    flush_size_ticks = 0.0
+    flush_velocity = 0.0
+    bars_since_flush = cap_detector.bars_since_flush
+    
+    if cap_detector.last_flush:
+        flush = cap_detector.last_flush
+        flush_size_ticks = flush.flush_size_ticks
+        flush_velocity = flush.flush_velocity
+    
+    # Distance from VWAP in ticks
+    vwap_actual = state[symbol].get("vwap", current_price)
+    distance_from_vwap_ticks = abs(current_price - vwap_actual) / tick_size if tick_size > 0 else 0
+    
+    # Reversal candle detection
+    reversal_candle_present = False
+    if cap_detector.last_exhaustion:
+        reversal_candle_present = cap_detector.last_exhaustion.reversal_candle
+    
+    # Check if regime is tradeable
+    regime_tradeable = is_regime_tradeable(regime)
+    
     market_state = {
         "timestamp": current_time.isoformat(),
         "symbol": symbol,
@@ -3591,7 +3631,14 @@ def capture_market_state(symbol: str, current_price: float) -> Dict[str, Any]:
         "hour": hour,
         "session": session,
         "regime": regime,
-        "volatility_regime": volatility_regime
+        "volatility_regime": volatility_regime,
+        # Capitulation-specific features
+        "flush_size_ticks": flush_size_ticks,
+        "flush_velocity": flush_velocity,
+        "distance_from_vwap_ticks": distance_from_vwap_ticks,
+        "bars_since_flush": bars_since_flush,
+        "reversal_candle_present": reversal_candle_present,
+        "regime_tradeable": regime_tradeable
     }
     
     return market_state
