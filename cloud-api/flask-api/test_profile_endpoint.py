@@ -11,7 +11,13 @@ BASE_URL = os.getenv("QUOTRADING_API_URL", "https://quotrading-flask-api.azurewe
 # BASE_URL = "http://localhost:5000"  # Uncomment for local testing
 
 # Test license key from environment variable (for security)
-TEST_LICENSE_KEY = os.getenv("TEST_LICENSE_KEY", "TEST-LICENSE-KEY-123")
+# Set TEST_LICENSE_KEY environment variable before running tests
+TEST_LICENSE_KEY = os.getenv("TEST_LICENSE_KEY")
+if not TEST_LICENSE_KEY:
+    print("⚠️  WARNING: TEST_LICENSE_KEY environment variable not set!")
+    print("    Tests will run with a placeholder key and likely fail.")
+    print("    Set it with: export TEST_LICENSE_KEY='your-real-key'")
+    TEST_LICENSE_KEY = "PLACEHOLDER-WILL-FAIL"
 
 def test_profile_endpoint():
     """Test the /api/profile endpoint with various scenarios"""

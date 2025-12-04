@@ -3542,6 +3542,11 @@ def get_user_profile():
                 winning_trades = int(trade_stats['winning_trades']) if trade_stats['winning_trades'] else 0
                 win_rate_percent = (winning_trades / total_trades * 100) if total_trades > 0 else 0.0
                 
+                # Extract values for reuse
+                total_pnl = float(trade_stats['total_pnl']) if trade_stats['total_pnl'] else 0.0
+                device_fp = user.get('device_fingerprint', '')
+                device_display = device_fp[:8] + "..." if len(device_fp) >= 8 else (device_fp if device_fp else None)
+                
                 # Build response
                 profile_data = {
                     "status": "success",
@@ -3559,7 +3564,7 @@ def get_user_profile():
                     },
                     "trading_stats": {
                         "total_trades": total_trades,
-                        "total_pnl": float(trade_stats['total_pnl']) if trade_stats['total_pnl'] else 0.0,
+                        "total_pnl": total_pnl,
                         "avg_pnl_per_trade": float(trade_stats['avg_pnl']) if trade_stats['avg_pnl'] else 0.0,
                         "winning_trades": winning_trades,
                         "losing_trades": int(trade_stats['losing_trades']) if trade_stats['losing_trades'] else 0,
@@ -3571,12 +3576,12 @@ def get_user_profile():
                         "api_calls_today": int(api_today['api_calls_today']) if api_today['api_calls_today'] else 0,
                         "api_calls_total": int(api_stats['api_calls_total']) if api_stats['api_calls_total'] else 0,
                         "last_heartbeat": user['last_heartbeat'].isoformat() if user['last_heartbeat'] else None,
-                        "current_device": user['device_fingerprint'][:8] + "..." if user.get('device_fingerprint') and len(user.get('device_fingerprint', '')) >= 8 else (user.get('device_fingerprint') if user.get('device_fingerprint') else None),
+                        "current_device": device_display,
                         "symbols_traded": symbols_list
                     }
                 }
                 
-                logging.info(f"✅ Profile accessed: {mask_email(user['email'])}, {total_trades} trades, ${float(trade_stats['total_pnl']) if trade_stats['total_pnl'] else 0.0:.2f} PnL")
+                logging.info(f"✅ Profile accessed: {mask_email(user['email'])}, {total_trades} trades, ${total_pnl:.2f} PnL")
                 return jsonify(profile_data), 200
                 
         except Exception as e:
