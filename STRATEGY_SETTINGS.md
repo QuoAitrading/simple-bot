@@ -1,16 +1,18 @@
 # Daily Reversal Strategy Settings
 
-These are the optimized settings for the daily reversal trading strategy. The strategy catches big moves and plays the reversal, targeting ~1 trade per day.
+These are the optimized settings for the daily reversal trading strategy. The strategy catches big moves and plays the reversal, targeting **4-5 trades per day** for maximum profit.
 
-## 88-Day Backtest Results
+## 88-Day Backtest Results (Current Settings)
 ```
 Period:           2025-08-31 to 2025-11-27
-Total Trades:     71 (Wins: 50, Losses: 21)
-Win Rate:         70.4%
-Profit Factor:    4.32
-Net P&L:          +$17,430.00 (+34.86%)
-Max Drawdown:     $1,042.50 (1.54%)
-Avg Trade:        31.7 minutes
+Total Trades:     416 (Wins: 275, Losses: 141)
+Trades/Day:       4.7
+Win Rate:         66.1%
+Profit Factor:    3.57
+Net P&L:          +$95,704.24 (+191.41%)
+Max Drawdown:     $1,155.00 (0.79%)
+Avg Win:          $483.59
+Avg Loss:         $264.41
 ```
 
 ---
@@ -20,21 +22,21 @@ Avg Trade:        31.7 minutes
 ### Flush/Move Detection
 | Parameter | Value | Description |
 |-----------|-------|-------------|
-| `MIN_FLUSH_TICKS` | 12 | Minimum move size (12 ticks = $3 on ES) |
-| `MIN_VELOCITY_TICKS_PER_BAR` | 2 | Speed of move (2 ticks per 1-min bar) |
+| `MIN_FLUSH_TICKS` | 8 | Minimum move size (8 ticks = $2 on ES) |
+| `MIN_VELOCITY_TICKS_PER_BAR` | 1.5 | Speed of move (1.5 ticks per 1-min bar) |
 | `FLUSH_LOOKBACK_BARS` | 7 | Look at last 7 one-minute bars |
-| `NEAR_EXTREME_TICKS` | 8 | Entry must be within 8 ticks of extreme |
+| `NEAR_EXTREME_TICKS` | 12 | Entry must be within 12 ticks of extreme |
 
 ### RSI Thresholds
 | Parameter | Value | Description |
 |-----------|-------|-------------|
-| `RSI_OVERSOLD_EXTREME` | 35 | RSI < 35 for LONG entry |
-| `RSI_OVERBOUGHT_EXTREME` | 65 | RSI > 65 for SHORT entry |
+| `RSI_OVERSOLD_EXTREME` | 45 | RSI < 45 for LONG entry |
+| `RSI_OVERBOUGHT_EXTREME` | 55 | RSI > 55 for SHORT entry |
 
 ### Volume Confirmation
 | Parameter | Value | Description |
 |-----------|-------|-------------|
-| `VOLUME_SPIKE_THRESHOLD` | 1.5 | Current volume >= 1.5x 20-bar average |
+| `VOLUME_SPIKE_THRESHOLD` | 1.2 | Current volume >= 1.2x 20-bar average |
 
 ### Allowed Market Regimes
 - `HIGH_VOL_TRENDING`
@@ -74,22 +76,22 @@ Avg Trade:        31.7 minutes
 ## Entry Conditions (All 9 Must Be TRUE)
 
 ### For LONG Entry (After Flush Down):
-1. ✅ Flush Happened - Range of last 7 bars >= 12 ticks
-2. ✅ Flush Was Fast - Velocity >= 2 ticks per bar
-3. ✅ Near Bottom - Within 8 ticks of flush low
-4. ✅ RSI Oversold - RSI < 35
-5. ✅ Volume Spike - Current volume >= 1.5x average
+1. ✅ Flush Happened - Range of last 7 bars >= 8 ticks
+2. ✅ Flush Was Fast - Velocity >= 1.5 ticks per bar
+3. ✅ Near Bottom - Within 12 ticks of flush low
+4. ✅ RSI Oversold - RSI < 45
+5. ✅ Volume Spike - Current volume >= 1.2x average
 6. ✅ Stopped Making New Lows - Current bar low >= previous bar low
 7. ✅ Reversal Candle - Current bar closes green (close > open)
 8. ✅ Below VWAP - Buying at discount
 9. ✅ Regime Allows - HIGH_VOL or NORMAL regime
 
 ### For SHORT Entry (After Flush Up):
-1. ✅ Pump Happened - Range of last 7 bars >= 12 ticks
-2. ✅ Pump Was Fast - Velocity >= 2 ticks per bar
-3. ✅ Near Top - Within 8 ticks of flush high
-4. ✅ RSI Overbought - RSI > 65
-5. ✅ Volume Spike - Current volume >= 1.5x average
+1. ✅ Pump Happened - Range of last 7 bars >= 8 ticks
+2. ✅ Pump Was Fast - Velocity >= 1.5 ticks per bar
+3. ✅ Near Top - Within 12 ticks of flush high
+4. ✅ RSI Overbought - RSI > 55
+5. ✅ Volume Spike - Current volume >= 1.2x average
 6. ✅ Stopped Making New Highs - Current bar high <= previous bar high
 7. ✅ Reversal Candle - Current bar closes red (close < open)
 8. ✅ Above VWAP - Selling at premium
