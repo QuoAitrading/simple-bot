@@ -75,15 +75,15 @@ class CapitulationDetector:
     All 9 conditions must be TRUE to enter a trade.
     """
     
-    # Configuration constants - RELAXED TO CATCH MORE REVERSAL MOVES
-    # These thresholds are tuned to catch 5-6 moves per day like user sees on chart
-    MIN_FLUSH_TICKS = 10  # Minimum 10 ticks (2.50 dollars on ES) - catches smaller V-reversals
-    MIN_VELOCITY_TICKS_PER_BAR = 2  # Flush must be at least 2 ticks per bar
+    # Configuration constants - AGGRESSIVE TO CATCH 5-6 MOVES PER DAY
+    # These thresholds are tuned for higher frequency with quality filters
+    MIN_FLUSH_TICKS = 8  # Minimum 8 ticks (2 dollars on ES) - catches more V-reversals
+    MIN_VELOCITY_TICKS_PER_BAR = 1.5  # Flush must be at least 1.5 ticks per bar - more lenient
     FLUSH_LOOKBACK_BARS = 7  # Look at last 7 one-minute bars
-    NEAR_EXTREME_TICKS = 10  # Must be within 10 ticks of flush extreme - more flexibility on entry
-    VOLUME_SPIKE_THRESHOLD = 1.5  # 1.5x 20-bar average volume - easier to trigger
-    RSI_OVERSOLD_EXTREME = 40  # RSI < 40 for long entry - catches moderate reversals
-    RSI_OVERBOUGHT_EXTREME = 60  # RSI > 60 for short entry - catches moderate reversals
+    NEAR_EXTREME_TICKS = 12  # Must be within 12 ticks of flush extreme - more entry flexibility
+    VOLUME_SPIKE_THRESHOLD = 1.2  # 1.2x 20-bar average volume - easier to trigger
+    RSI_OVERSOLD_EXTREME = 45  # RSI < 45 for long entry - catches more reversals
+    RSI_OVERBOUGHT_EXTREME = 55  # RSI > 55 for short entry - catches more reversals
     
     # Stop loss configuration
     STOP_BUFFER_TICKS = 2  # 2 ticks beyond flush extreme
