@@ -4445,7 +4445,8 @@ def check_time_based_exits(symbol: str, current_bar: Dict[str, Any], position: D
     ONLY checks for:
     1. Emergency forced flatten at 4:45 PM ET (market close before maintenance)
     
-    All other exits are regime-based (stops, timeouts, breakeven, trailing).
+    All other exits use fixed rules (stops, breakeven, trailing) - NOT regime-based.
+    Trade management parameters are set at entry and never change.
     
     Args:
         symbol: Instrument symbol
@@ -4717,205 +4718,6 @@ def check_trailing_stop(symbol: str, current_price: float) -> None:
             logger.error("  [FAIL] EMERGENCY CLOSE ALSO FAILED - MANUAL INTERVENTION REQUIRED!")
             logger.error(f"  Position: {side.upper()} {contracts} contracts at ${entry_price:.2f}")
             logger.error(f"  Current Price: ${current_price:.2f}, Profit at Risk: ${profit_locked_dollars:+.2f}")
-
-
-# ============================================================================
-# PHASE FOUR-B: Regime-Based Timeout Exits
-# ============================================================================
-
-def check_sideways_timeout(symbol: str, current_price: float, current_time: datetime) -> Tuple[bool, Optional[float]]:
-    """
-    Check if position should exit due to sideways timeout (stagnant price action).
-    
-    Uses regime-based sideways_timeout parameter (8-18 minutes depending on regime).
-    
-    APPLIES ONLY WHEN:
-    - P&L is zero or positive (not losing)
-    - Trailing stop has NOT activated yet
-    
-    Once trailing stop activates, this check is skipped entirely (trailing becomes sole exit mechanism).
-    Timeout clock resets when regime changes.
-    
-    Args:
-        symbol: Instrument symbol
-        current_price: Current market price
-        current_time: Current datetime
-    
-    Returns:
-        Tuple of (should_exit, exit_price)
-    """
-    position = state[symbol]["position"]
-    
-    if not position["active"]:
-        return False, None
-    
-    # PRIORITY CHECK: If trailing stop active, skip sideways timeout entirely
-    if position.get("trailing_stop_active", False):
-        return False, None
-    
-    # Calculate current P&L
-    side = position["side"]
-    entry_price = position["entry_price"]
-    tick_size = CONFIG["tick_size"]
-    
-    if side == "long":
-        pnl_ticks = (current_price - entry_price) / tick_size
-    else:
-        pnl_ticks = (entry_price - current_price) / tick_size
-    
-    # Sideways timeout only applies when P&L >= 0 (zero or positive)
-    if pnl_ticks < 0:
-        # Position losing - sideways timeout disabled
-        return False, None
-    
-    # Position is zero/positive P&L and trailing not active - sideways timeout is ACTIVE
-    # Get current regime and its sideways timeout
-    current_regime_name = position.get("current_regime", position.get("entry_regime", "NORMAL"))
-    current_regime = REGIME_DEFINITIONS.get(current_regime_name, REGIME_DEFINITIONS["NORMAL"])
-    sideways_timeout_minutes = current_regime.sideways_timeout
-    
-    # Determine start time for timeout measurement
-    # Use regime change time if available, otherwise entry time
-    regime_change_time = position.get("regime_change_time")
-    start_time = regime_change_time if regime_change_time else position["entry_time"]
-    
-    if start_time is None:
-        return False, None
-    
-    # Calculate time elapsed
-    time_elapsed_minutes = (current_time - start_time).total_seconds() / 60.0
-    
-    # Check if exceeded sideways timeout
-    if time_elapsed_minutes < sideways_timeout_minutes:
-        return False, None
-    
-    # Track price extremes during the timeout period to measure range
-    # Initialize tracking if not present
-    if "sideways_high" not in position or regime_change_time:
-        # Reset tracking on regime change or first check
-        position["sideways_high"] = current_price
-        position["sideways_low"] = current_price
-        position["sideways_last_reset"] = current_time
-        return False, None
-    
-    # Update price extremes
-    position["sideways_high"] = max(position.get("sideways_high", current_price), current_price)
-    position["sideways_low"] = min(position.get("sideways_low", current_price), current_price)
-    
-    # Calculate price range during timeout period
-    price_range_ticks = (position["sideways_high"] - position["sideways_low"]) / tick_size
-    
-    # Define "stagnant" as narrow range (< 5 ticks) regardless of distance from entry
-    # This catches positions that are profitable but stuck in tight range
-    stagnant_range_threshold_ticks = 5.0
-    
-    if price_range_ticks < stagnant_range_threshold_ticks:
-        # Price stuck in narrow range and timeout exceeded
-        # Enhanced logging for backtesting
-        if is_backtest_mode():
-            logger.info("=" * 60)
-            logger.info("[EXIT] SIDEWAYS TIMEOUT - EXITING STAGNANT POSITION")
-            logger.info("=" * 60)
-            logger.info(f"  Regime: {current_regime_name}")
-            logger.info(f"  Timeout: {sideways_timeout_minutes} minutes")
-            logger.info(f"  Time Elapsed: {time_elapsed_minutes:.1f} minutes")
-            logger.info(f"  Price Range: {price_range_ticks:.1f} ticks")
-            logger.info(f"  Entry: ${entry_price:.2f}, Current: ${current_price:.2f}")
-            logger.info(f"  Current P&L: {pnl_ticks:+.1f} ticks (profitable)")
-            logger.info("=" * 60)
-        else:
-            logger.warning("=" * 60)
-            logger.warning("SIDEWAYS TIMEOUT - EXITING STAGNANT POSITION")
-            logger.warning("=" * 60)
-            logger.warning(f"  Regime: {current_regime_name}")
-            logger.warning(f"  Timeout: {sideways_timeout_minutes} minutes")
-            logger.warning(f"  Time Elapsed: {time_elapsed_minutes:.1f} minutes")
-            logger.warning(f"  Price Range: {price_range_ticks:.1f} ticks (High: ${position['sideways_high']:.2f}, Low: ${position['sideways_low']:.2f})")
-            logger.warning(f"  Entry: ${entry_price:.2f}, Current: ${current_price:.2f}")
-            logger.warning(f"  Current P&L: {pnl_ticks:+.1f} ticks (profitable)")
-            logger.warning(f"  Reason: Position stuck in narrow range - not developing momentum")
-            logger.warning("=" * 60)
-        
-        return True, current_price
-    
-    return False, None
-
-
-def check_underwater_timeout(symbol: str, current_price: float, current_time: datetime) -> Tuple[bool, Optional[float]]:
-    """
-    Check if position should exit due to time stop (optional).
-    
-    CAPITULATION REVERSAL STRATEGY - SIMPLIFIED:
-    - Optional time stop: exit after 20 bars if no resolution
-    - Controlled by CONFIG.time_stop_enabled and CONFIG.time_stop_bars
-    - This is optional and can be disabled if you prefer to let trades play out
-    
-    Why time stop?
-    Dead trades tie up capital and attention. If the reversal was going to work,
-    it should have worked by now. Extended consolidation means the edge is gone.
-    
-    Args:
-        symbol: Instrument symbol
-        current_price: Current market price
-        current_time: Current datetime
-    
-    Returns:
-        Tuple of (should_exit, exit_price)
-    """
-    position = state[symbol]["position"]
-    
-    if not position["active"]:
-        return False, None
-    
-    # Check if time stop is enabled
-    time_stop_enabled = CONFIG.get("time_stop_enabled", False)
-    if not time_stop_enabled:
-        return False, None
-    
-    # PRIORITY CHECK: If trailing stop active, skip time stop entirely
-    # Trade is working, let it run
-    if position.get("trailing_stop_active", False):
-        return False, None
-    
-    side = position["side"]
-    entry_price = position["entry_price"]
-    entry_time = position.get("entry_time")
-    # Use symbol-specific tick values for accurate P&L calculation across different instruments
-    tick_size, tick_value = get_symbol_tick_specs(symbol)
-    
-    if not entry_time:
-        return False, None
-    
-    # CAPITULATION REVERSAL: Fixed time stop at 20 bars (20 minutes on 1-min chart)
-    time_stop_bars = CONFIG.get("time_stop_bars", 20)
-    time_stop_minutes = time_stop_bars  # 1 bar = 1 minute
-    
-    # Calculate TOTAL elapsed time since entry
-    total_elapsed_minutes = (current_time - entry_time).total_seconds() / 60.0
-    
-    # Check if total elapsed time exceeds time stop
-    if total_elapsed_minutes >= time_stop_minutes:
-        # Calculate current P&L
-        if side == "long":
-            pnl_ticks = (current_price - entry_price) / tick_size
-        else:  # short
-            pnl_ticks = (entry_price - current_price) / tick_size
-        
-        pnl_dollars = pnl_ticks * tick_value * position["quantity"]
-        
-        # Log the time stop exit
-        logger.info("=" * 60)
-        logger.info("⏰ TIME STOP - EXITING DEAD TRADE")
-        logger.info("=" * 60)
-        logger.info(f"  Time Elapsed: {total_elapsed_minutes:.1f} minutes ({time_stop_bars} bars)")
-        logger.info(f"  Current P&L: {pnl_ticks:.1f} ticks (${pnl_dollars:+.2f})")
-        logger.info(f"  Entry: ${entry_price:.2f}, Current: ${current_price:.2f}")
-        logger.info(f"  Reason: Trade did not resolve within time limit")
-        logger.info("=" * 60)
-        
-        return True, current_price
-    
-    return False, None
 
 
 # ============================================================================
@@ -5305,15 +5107,19 @@ def update_current_regime(symbol: str) -> None:
 
 def check_regime_change(symbol: str, current_price: float) -> None:
     """
-    Check if market regime has changed during an active trade and adjust parameters.
+    Check if market regime has changed during an active trade (informational only).
     
     This function:
     1. Detects current regime from last 20 bars
     2. Compares to entry regime
-    3. If changed, updates stop loss and trailing parameters based on new regime
-    4. Uses pure regime multipliers (no confidence scaling)
+    3. Logs regime change for awareness (DOES NOT adjust trade parameters)
     
-    Critical rule: Stop price never moves closer to entry (backward), only trailing can tighten it.
+    IMPORTANT: Trade management uses FIXED rules - regime changes do NOT affect:
+    - Stop loss (set at entry, only moved by trailing)
+    - Breakeven threshold (fixed at 12 ticks)
+    - Trailing distance (fixed at 8 ticks)
+    
+    Regime only affects trade ENTRY decisions, never trade MANAGEMENT.
     
     Args:
         symbol: Instrument symbol
@@ -5362,21 +5168,14 @@ def check_regime_change(symbol: str, current_price: float) -> None:
         "timestamp": change_time
     })
     
-    # CAPITULATION REVERSAL: Regime change is informational only
-    # Trade management uses fixed rules, not regime-based adjustments
-    # Stop loss, breakeven, and trailing are set at entry and don't change with regime
-    
-    # Log the regime change for awareness
+    # Log the regime change for awareness (informational only - no parameter changes)
     logger.info("=" * 60)
-    logger.info(f"📊 REGIME CHANGE: {entry_regime_name} → {current_regime.name}")
+    logger.info(f"📊 REGIME CHANGE DETECTED: {entry_regime_name} → {current_regime.name}")
     logger.info("=" * 60)
     logger.info(f"  Time: {get_current_time().strftime('%H:%M:%S')}")
-    logger.info(f"  Note: Trade management uses fixed rules (no regime adjustments)")
-    logger.info(f"  Breakeven: 12 ticks | Trailing: 8 ticks | Stop: Unchanged")
+    logger.info(f"  Trade management UNCHANGED (fixed rules):")
+    logger.info(f"  - Breakeven: 12 ticks | Trailing: 8 ticks | Stop: Set at entry")
     logger.info("=" * 60)
-    
-    # Update breakeven threshold based on new regime (if not already active)
-    pass  # Silent - breakeven threshold adjustment is internal
 
 
 def check_exit_conditions(symbol: str) -> None:
@@ -5632,25 +5431,12 @@ def check_exit_conditions(symbol: str) -> None:
         execute_exit(symbol, price, "stop_loss")
         return
     
-    # REGIME CHANGE CHECK - Detect regime changes and adjust parameters
-    # This must happen BEFORE breakeven/trailing checks so they use updated regime parameters
+    # REGIME CHANGE CHECK - Detect and log regime changes (informational only)
+    # Trade management uses FIXED rules and is NOT affected by regime changes
     check_regime_change(symbol, current_bar["close"])
     
-    # TIMEOUT CHECKS DISABLED - User requested only stop_loss, trailing_stop, and 20-bar time stop
-    # The sideways_timeout and underwater_timeout exits are no longer used
+    # Get current time for any time-based checks
     current_time = get_current_time()
-    
-    # DISABLED: sideways_timeout - stagnant price action timeout
-    # should_exit_sideways, exit_price = check_sideways_timeout(symbol, current_bar["close"], current_time)
-    # if should_exit_sideways:
-    #     execute_exit(symbol, exit_price, "sideways_timeout")
-    #     return
-    
-    # DISABLED: underwater_timeout - continuous loss timeout
-    # should_exit_underwater, exit_price = check_underwater_timeout(symbol, current_bar["close"], current_time)
-    # if should_exit_underwater:
-    #     execute_exit(symbol, exit_price, "underwater_timeout")
-    #     return
     
     # FOURTH - Partial exits (happens before breakeven/trailing because it reduces position size)
     check_partial_exits(symbol, current_bar["close"])
