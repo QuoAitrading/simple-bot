@@ -26,9 +26,15 @@ app = Flask(__name__)
 # Security: Request size limit (prevent memory exhaustion attacks)
 app.config['MAX_CONTENT_LENGTH'] = 10 * 1024 * 1024  # 10MB max request size
 
-# Security: CORS protection - only allow your dashboard domain
+# Security: CORS protection - restrict to known domains
+# CORS_ORIGINS can be overridden via environment variable for flexibility
+# In production, set CORS_ORIGINS env var to exclude localhost
+_default_cors = "https://quotrading.com,https://quotrading-flask-api.azurewebsites.net"
+if os.environ.get("FLASK_ENV") == "development" or os.environ.get("FLASK_DEBUG") == "1":
+    _default_cors += ",http://localhost:5000"  # Only add localhost in dev mode
+CORS_ORIGINS = os.environ.get("CORS_ORIGINS", _default_cors).split(",")
 CORS(app, resources={
-    r"/api/*": {"origins": "*"},  # Bot clients need access
+    r"/api/*": {"origins": CORS_ORIGINS},  # Restricted to known domains
     r"/admin-dashboard-full.html": {"origins": ["https://quotrading-flask-api.azurewebsites.net"]}
 })
 
@@ -80,8 +86,38 @@ BOT_DOWNLOAD_URL = os.environ.get("BOT_DOWNLOAD_URL", "https://quotradingfiles.b
 # Connection pool for PostgreSQL (reuse connections)
 _db_pool = None
 
+def mask_sensitive(value: str, visible_chars: int = 4) -> str:
+    """Mask sensitive data for logging (e.g., 'ABC123XYZ' -> 'ABC1...XYZ')
+    
+    Args:
+        value: The sensitive string to mask (can be None)
+        visible_chars: Number of characters to show at start and end
+    
+    Returns:
+        Masked string or '***' if value is None/empty/too short
+    """
+    if value is None or not value or len(value) <= visible_chars * 2:
+        return "***"
+    return f"{value[:visible_chars]}...{value[-visible_chars:]}"
+
+def mask_email(email: str) -> str:
+    """Mask email for logging (e.g., 'user@domain.com' -> 'us***@domain.com')
+    
+    Args:
+        email: The email address to mask (can be None)
+    
+    Returns:
+        Masked email or '***' if invalid
+    """
+    if email is None or not email or '@' not in email:
+        return "***"
+    local, domain = email.rsplit('@', 1)
+    if len(local) <= 2:
+        return f"***@{domain}"
+    return f"{local[:2]}***@{domain}"
+
 def send_license_email(email, license_key, whop_user_id=None, whop_membership_id=None):
-    logging.info(f"🔍 send_license_email() called for {email}, license {license_key}")
+    logging.info(f"🔍 send_license_email() called for {mask_email(email)}, license {mask_sensitive(license_key)}")
     logging.info(f"🔍 SENDGRID_API_KEY present: {bool(SENDGRID_API_KEY)}")
     logging.info(f"🔍 FROM_EMAIL: {FROM_EMAIL}")
     
@@ -265,7 +301,7 @@ def send_license_email(email, license_key, whop_user_id=None, whop_membership_id
         
         # Try SendGrid first (preferred), fall back to SMTP
         if SENDGRID_API_KEY:
-            logging.info(f"🔍 Attempting SendGrid email to {email}")
+            logging.info(f"🔍 Attempting SendGrid email to {mask_email(email)}")
             try:
                 payload = {
                     "personalizations": [{"to": [{"email": email}]}],
@@ -282,7 +318,7 @@ def send_license_email(email, license_key, whop_user_id=None, whop_membership_id
                         "footer": {"enable": False}
                     }
                 }
-                logging.info(f"🔍 SendGrid payload: {payload}")
+                # Don't log payload - contains email addresses
                 
                 response = requests.post(
                     "https://api.sendgrid.com/v3/mail/send",
@@ -293,13 +329,13 @@ def send_license_email(email, license_key, whop_user_id=None, whop_membership_id
                     json=payload,
                     timeout=10
                 )
-                logging.info(f"🔍 SendGrid response: status={response.status_code}, body={response.text}")
+                logging.info(f"🔍 SendGrid response: status={response.status_code}")
                 
                 if response.status_code == 202:
-                    logging.info(f"✅ SendGrid email sent successfully to {email}")
+                    logging.info(f"✅ SendGrid email sent successfully to {mask_email(email)}")
                     return True
                 else:
-                    logging.error(f"❌ SendGrid failed: {response.status_code} - {response.text}")
+                    logging.error(f"❌ SendGrid failed: {response.status_code}")
                     logging.warning(f"Trying SMTP fallback")
             except Exception as e:
                 logging.error(f"❌ SendGrid exception: {type(e).__name__}: {str(e)}")
@@ -309,7 +345,7 @@ def send_license_email(email, license_key, whop_user_id=None, whop_membership_id
         
         # Fallback to SMTP (Gmail, etc.)
         if SMTP_USERNAME and SMTP_PASSWORD:
-            logging.info(f"🔍 Attempting SMTP email to {email}")
+            logging.info(f"🔍 Attempting SMTP email to {mask_email(email)}")
             try:
                 msg = MIMEMultipart('alternative')
                 msg['Subject'] = subject
@@ -321,7 +357,7 @@ def send_license_email(email, license_key, whop_user_id=None, whop_membership_id
                     server.starttls()
                     server.login(SMTP_USERNAME, SMTP_PASSWORD)
                     server.send_message(msg)
-                logging.info(f"✅ SMTP email sent successfully to {email}")
+                logging.info(f"✅ SMTP email sent successfully to {mask_email(email)}")
                 return True
             except Exception as e:
                 logging.error(f"❌ SMTP exception: {type(e).__name__}: {str(e)}")
@@ -338,10 +374,7 @@ def send_license_email(email, license_key, whop_user_id=None, whop_membership_id
 
 def send_renewal_email(email, renewal_date, next_billing_date, whop_membership_id=None):
     """Send subscription renewal confirmation email"""
-    logging.info(f"🔍 Sending renewal email to {email}")
-    logging.info(f"🔍 SENDGRID_API_KEY present: {bool(SENDGRID_API_KEY)}")
-    logging.info(f"🔍 SMTP_USERNAME present: {bool(SMTP_USERNAME)}")
-    logging.info(f"🔍 FROM_EMAIL: {FROM_EMAIL}")
+    logging.info(f"🔍 Sending renewal email to {mask_email(email)}")
     
     try:
         subject = "✅ QuoTrading AI Subscription Renewed"
@@ -430,7 +463,7 @@ def send_renewal_email(email, renewal_date, next_billing_date, whop_membership_i
         
         # Try SendGrid first
         if SENDGRID_API_KEY:
-            logging.info(f"🔍 Attempting SendGrid renewal email to {email}")
+            logging.info(f"🔍 Attempting SendGrid renewal email to {mask_email(email)}")
             try:
                 payload = {
                     "personalizations": [{"to": [{"email": email}]}],
@@ -448,13 +481,13 @@ def send_renewal_email(email, renewal_date, next_billing_date, whop_membership_i
                     json=payload
                 )
                 
-                logging.info(f"🔍 SendGrid response: status={response.status_code}, body={response.text}")
+                logging.info(f"🔍 SendGrid response: status={response.status_code}")
                 
                 if response.status_code == 202:
-                    logging.info(f"✅ SendGrid renewal email sent successfully to {email}")
+                    logging.info(f"✅ SendGrid renewal email sent successfully to {mask_email(email)}")
                     return True
                 else:
-                    logging.error(f"SendGrid renewal email failed: {response.status_code} - {response.text}")
+                    logging.error(f"SendGrid renewal email failed: {response.status_code}")
                     return False
                     
             except Exception as e:
@@ -470,7 +503,7 @@ def send_renewal_email(email, renewal_date, next_billing_date, whop_membership_i
 
 def send_cancellation_email(email, cancellation_date, access_until_date, whop_membership_id=None):
     """Send subscription cancellation confirmation email"""
-    logging.info(f"🔍 Sending cancellation email to {email}")
+    logging.info(f"🔍 Sending cancellation email to {mask_email(email)}")
     
     try:
         subject = "QuoTrading AI Subscription Cancelled"
@@ -578,7 +611,7 @@ def send_cancellation_email(email, cancellation_date, access_until_date, whop_me
                 )
                 
                 if response.status_code == 202:
-                    logging.info(f"✅ Cancellation email sent to {email}")
+                    logging.info(f"✅ Cancellation email sent to {mask_email(email)}")
                     return True
                 else:
                     logging.error(f"Cancellation email failed: {response.status_code}")
@@ -597,7 +630,7 @@ def send_cancellation_email(email, cancellation_date, access_until_date, whop_me
 
 def send_payment_failed_email(email, retry_date, whop_membership_id=None):
     """Send payment failure notification email"""
-    logging.info(f"🔍 Sending payment failed email to {email}")
+    logging.info(f"🔍 Sending payment failed email to {mask_email(email)}")
     
     try:
         subject = "⚠️ QuoTrading AI Payment Failed"
@@ -702,7 +735,7 @@ def send_payment_failed_email(email, retry_date, whop_membership_id=None):
                 )
                 
                 if response.status_code == 202:
-                    logging.info(f"✅ Payment failed email sent to {email}")
+                    logging.info(f"✅ Payment failed email sent to {mask_email(email)}")
                     return True
                 else:
                     logging.error(f"Payment failed email failed: {response.status_code}")
@@ -721,7 +754,7 @@ def send_payment_failed_email(email, retry_date, whop_membership_id=None):
 
 def send_subscription_expired_email(email, expiration_date):
     """Send subscription expiration notification email"""
-    logging.info(f"🔍 Sending subscription expired email to {email}")
+    logging.info(f"🔍 Sending subscription expired email to {mask_email(email)}")
     
     try:
         subject = "QuoTrading AI Subscription Expired"
@@ -817,7 +850,7 @@ def send_subscription_expired_email(email, expiration_date):
                 )
                 
                 if response.status_code == 202:
-                    logging.info(f"✅ Subscription expired email sent to {email}")
+                    logging.info(f"✅ Subscription expired email sent to {mask_email(email)}")
                     return True
                 else:
                     logging.error(f"Expired email failed: {response.status_code}")
@@ -2159,8 +2192,8 @@ def whop_webhook():
                                 WHERE email = %s
                             """, (membership_id, user_id, email))
                             license_key = existing[0]
-                            logging.info(f"🔄 License reactivated for {email}")
-                            log_webhook_event(event_type, 'success', membership_id, user_id, email, f'Reactivated license {license_key}')
+                            logging.info(f"🔄 License reactivated for {mask_email(email)}")
+                            log_webhook_event(event_type, 'success', membership_id, user_id, email, f'Reactivated license')
                         else:
                             # Create new license
                             license_key = generate_license_key()
@@ -2169,15 +2202,15 @@ def whop_webhook():
                                 INSERT INTO users (account_id, license_key, email, license_type, license_status, whop_membership_id, whop_user_id)
                                 VALUES (%s, %s, %s, %s, %s, %s, %s)
                             """, (account_id, license_key, email, 'Monthly', 'active', membership_id, user_id))
-                            logging.info(f"🎉 License created from Whop: {license_key} for {email}")
-                            log_webhook_event(event_type, 'success', membership_id, user_id, email, f'Created license {license_key}')
+                            logging.info(f"🎉 License created from Whop: {mask_sensitive(license_key)} for {mask_email(email)}")
+                            log_webhook_event(event_type, 'success', membership_id, user_id, email, f'Created license {mask_sensitive(license_key)}')
                             
                             # Send email with Whop IDs
                             email_sent = send_license_email(email, license_key, user_id, membership_id)
                             if email_sent:
-                                logging.info(f"✅ Email successfully sent to {email}")
+                                logging.info(f"✅ Email successfully sent to {mask_email(email)}")
                             else:
-                                logging.error(f"❌ Email failed to send to {email}")
+                                logging.error(f"❌ Email failed to send to {mask_email(email)}")
                         
                         
                         conn.commit()
@@ -2260,7 +2293,7 @@ def whop_webhook():
                         renewal_date = datetime.now().strftime("%B %d, %Y")
                         next_billing = (datetime.now() + timedelta(days=30)).strftime("%B %d, %Y")
                         send_renewal_email(email, renewal_date, next_billing, membership_id)
-                        logging.info(f"✅ Renewal email sent to {email}")
+                        logging.info(f"✅ Renewal email sent to {mask_email(email)}")
 
         finally:
             return_connection(conn)
@@ -2851,7 +2884,7 @@ def admin_send_license_email():
     email = data.get('email')
     license_key = data.get('license_key')
     
-    logging.info(f"📧 Send email request - email: {email}, license_key: {license_key}")
+    logging.info(f"📧 Send email request - email: {mask_email(email)}, license_key: {mask_sensitive(license_key)}")
     
     if not email or not license_key:
         return jsonify({"error": "Email and license_key are required"}), 400
@@ -2859,7 +2892,7 @@ def admin_send_license_email():
     try:
         success = send_license_email(email, license_key)
         if success:
-            return jsonify({"status": "success", "message": f"Email sent to {email}"}), 200
+            return jsonify({"status": "success", "message": "Email sent successfully"}), 200
         else:
             return jsonify({"error": "Failed to send email"}), 500
     except Exception as e:
