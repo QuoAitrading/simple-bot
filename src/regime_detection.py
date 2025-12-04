@@ -3,16 +3,25 @@ Market Regime Detection System
 ================================
 Detects and classifies market regimes based on volatility and price action.
 
-Seven Regimes:
-1. NORMAL - Baseline (ATR within 15% of average, choppy)
-2. NORMAL_TRENDING - Normal volatility, trending
-3. NORMAL_CHOPPY - Normal volatility, explicitly choppy
-4. HIGH_VOL_CHOPPY - High volatility (ATR > 115% avg), choppy
-5. HIGH_VOL_TRENDING - High volatility, trending
-6. LOW_VOL_RANGING - Low volatility (ATR < 85% avg), ranging
-7. LOW_VOL_TRENDING - Low volatility, trending
+CAPITULATION REVERSAL STRATEGY - SIMPLIFIED:
+Regime detection is now just a GO/NO-GO FILTER, not a parameter adjuster.
 
-Each regime has specific parameters for stop loss, breakeven, and trailing stops.
+TRADE these regimes:
+- HIGH_VOL_TRENDING: ATR is above average AND price making directional moves
+- HIGH_VOL_CHOPPY: ATR is above average BUT price chopping in range
+
+SKIP these regimes:
+- NORMAL_TRENDING: ATR is average, trending (not enough volatility for flushes)
+- NORMAL: ATR is average, no trend (fake moves)
+- NORMAL_CHOPPY: ATR is average, choppy (fake moves)
+- LOW_VOL_RANGING: ATR is below average (dead market, no flushes)
+- LOW_VOL_TRENDING: ATR is below average (dead market)
+
+How to detect:
+- Calculate 20-period ATR
+- Calculate 50-period ATR average
+- If current ATR > 1.2x average, it is HIGH_VOL
+- Use ADX and price structure to determine trending vs choppy
 """
 
 import logging
@@ -23,11 +32,19 @@ logger = logging.getLogger(__name__)
 
 
 class RegimeParameters:
-    """Parameters for a specific market regime."""
+    """
+    Parameters for a specific market regime.
     
-    def __init__(self, name: str, stop_mult: float, breakeven_mult: float, 
-                 trailing_mult: float, sideways_timeout: int, underwater_timeout: int):
+    NOTE: In Capitulation Reversal Strategy, multipliers are NOT USED.
+    Trade management (breakeven, trailing, stop) uses fixed rules.
+    This class is kept for backwards compatibility.
+    """
+    
+    def __init__(self, name: str, stop_mult: float = 1.0, breakeven_mult: float = 1.0, 
+                 trailing_mult: float = 1.0, sideways_timeout: int = 10, underwater_timeout: int = 20):
         self.name = name
+        # LEGACY: These multipliers are NOT used in Capitulation Reversal Strategy
+        # Kept for backwards compatibility with older code
         self.stop_mult = stop_mult
         self.breakeven_mult = breakeven_mult
         self.trailing_mult = trailing_mult
@@ -35,68 +52,42 @@ class RegimeParameters:
         self.underwater_timeout = underwater_timeout
     
     def __repr__(self):
-        return f"RegimeParameters({self.name}, stop={self.stop_mult}x, be={self.breakeven_mult}x, trail={self.trailing_mult}x)"
+        return f"RegimeParameters({self.name})"
 
 
-# Seven regime definitions - Adjusted for consistent ~$300 max risk (12 ticks)
-# Target: Max loss ~$300 (0.6% of $50k account) across ALL regimes
+# Tradeable regimes for Capitulation Reversal Strategy
+# Only HIGH_VOL regimes have real flushes - others have fake moves, no edge
+TRADEABLE_REGIMES = {"HIGH_VOL_TRENDING", "HIGH_VOL_CHOPPY"}
+
+
+def is_regime_tradeable(regime: str) -> bool:
+    """
+    Check if the current regime allows trading.
+    
+    CAPITULATION REVERSAL: Only trade in HIGH_VOL regimes.
+    - HIGH_VOL_TRENDING: TRADE (big moves happen, good for this strategy)
+    - HIGH_VOL_CHOPPY: TRADE (still has flushes, just choppier)
+    - All others: SKIP (not enough volatility for real flushes)
+    
+    Args:
+        regime: Current market regime name
+        
+    Returns:
+        True if regime allows trading, False otherwise
+    """
+    return regime in TRADEABLE_REGIMES
+
+
+# Regime definitions - simplified (multipliers not used in new strategy)
+# All regimes have same parameters since we use fixed rules
 REGIME_DEFINITIONS = {
-    "NORMAL": RegimeParameters(
-        name="NORMAL",
-        stop_mult=1.25,  # 4.8 ATR * 1.25 = 6 * $50 = $300 (12 ticks)
-        breakeven_mult=1.0,
-        trailing_mult=1.0,
-        sideways_timeout=10,
-        underwater_timeout=7
-    ),
-    "NORMAL_TRENDING": RegimeParameters(
-        name="NORMAL_TRENDING",
-        stop_mult=1.25,  # Reduced from 1.62 - 4.8 ATR * 1.25 = $300 (12 ticks)
-        breakeven_mult=1.0,
-        trailing_mult=1.15,
-        sideways_timeout=14,
-        underwater_timeout=8
-    ),
-    "NORMAL_CHOPPY": RegimeParameters(
-        name="NORMAL_CHOPPY",
-        stop_mult=1.20,  # 5 ATR * 1.20 = 6 * $50 = $300 (12 ticks)
-        breakeven_mult=0.95,
-        trailing_mult=0.95,
-        sideways_timeout=8,
-        underwater_timeout=6
-    ),
-    "HIGH_VOL_CHOPPY": RegimeParameters(
-        name="HIGH_VOL_CHOPPY",
-        stop_mult=0.75,  # Reduced from 1.50 - 8 ATR * 0.75 = 6 * $50 = $300 (12 ticks)
-        breakeven_mult=0.75,
-        trailing_mult=0.85,
-        sideways_timeout=12,
-        underwater_timeout=8
-    ),
-    "HIGH_VOL_TRENDING": RegimeParameters(
-        name="HIGH_VOL_TRENDING",
-        stop_mult=0.75,  # Reduced from 1.90 - 8 ATR * 0.75 = 6 * $50 = $300 (12 ticks)
-        breakeven_mult=0.85,
-        trailing_mult=1.25,
-        sideways_timeout=18,
-        underwater_timeout=10
-    ),
-    "LOW_VOL_RANGING": RegimeParameters(
-        name="LOW_VOL_RANGING",
-        stop_mult=1.50,  # Increased from 1.10 - 4 ATR * 1.50 = 6 * $50 = $300 (12 ticks)
-        breakeven_mult=1.0,
-        trailing_mult=0.90,
-        sideways_timeout=8,
-        underwater_timeout=6
-    ),
-    "LOW_VOL_TRENDING": RegimeParameters(
-        name="LOW_VOL_TRENDING",
-        stop_mult=1.50,  # Increased from 1.40 - 4 ATR * 1.50 = 6 * $50 = $300 (12 ticks)
-        breakeven_mult=1.0,
-        trailing_mult=1.10,
-        sideways_timeout=15,
-        underwater_timeout=8
-    ),
+    "NORMAL": RegimeParameters(name="NORMAL"),
+    "NORMAL_TRENDING": RegimeParameters(name="NORMAL_TRENDING"),
+    "NORMAL_CHOPPY": RegimeParameters(name="NORMAL_CHOPPY"),
+    "HIGH_VOL_CHOPPY": RegimeParameters(name="HIGH_VOL_CHOPPY"),
+    "HIGH_VOL_TRENDING": RegimeParameters(name="HIGH_VOL_TRENDING"),
+    "LOW_VOL_RANGING": RegimeParameters(name="LOW_VOL_RANGING"),
+    "LOW_VOL_TRENDING": RegimeParameters(name="LOW_VOL_TRENDING"),
 }
 
 
@@ -292,6 +283,32 @@ class RegimeDetector:
                    f"trailing={current_regime.trailing_mult:.2f}x")
         
         return True, current_regime
+
+
+def is_regime_tradeable(regime_name: str) -> bool:
+    """
+    Check if a regime is tradeable for the Capitulation Reversal Strategy.
+    
+    The strategy only trades in HIGH_VOL regimes where real flushes happen.
+    Other regimes have fake moves with no follow-through.
+    
+    Args:
+        regime_name: Name of the regime to check
+    
+    Returns:
+        True if the regime is tradeable
+    """
+    return regime_name in TRADEABLE_REGIMES
+
+
+def get_tradeable_regimes() -> set:
+    """
+    Get the set of tradeable regimes.
+    
+    Returns:
+        Set of regime names that are tradeable
+    """
+    return TRADEABLE_REGIMES.copy()
 
 
 # Singleton instance

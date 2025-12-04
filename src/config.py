@@ -1,6 +1,15 @@
 """
-Configuration Management for VWAP Bounce Bot
+Configuration Management for Capitulation Reversal Bot
 Supports multiple environments with validation and environment variable overrides.
+
+STRATEGY: Capitulation Reversal
+- Wait for panic selling/buying (flush)
+- Enter on exhaustion confirmation
+- Target VWAP for mean reversion
+
+STOP LOSS: User configurable via GUI
+- Primary stop: 2 ticks below flush low (long) or above flush high (short)
+- Emergency max: max_stop_loss_dollars setting (user configurable via GUI)
 """
 
 import os
@@ -11,12 +20,15 @@ from dataclasses import dataclass, field
 import pytz
 
 # Default configuration constants
-DEFAULT_MAX_STOP_LOSS_DOLLARS = 200.0  # Default max loss per trade in dollars
+# This is the EMERGENCY MAX stop loss - user can configure this via GUI
+# The actual stop is placed 2 ticks beyond the flush extreme
+# This setting acts as a safety net in case of gaps or broken logic
+DEFAULT_MAX_STOP_LOSS_DOLLARS = 400.0  # Default emergency max loss per trade (user configurable via GUI)
 
 
 @dataclass
 class BotConfiguration:
-    """Type-safe configuration for the VWAP Bounce Bot."""
+    """Type-safe configuration for the Capitulation Reversal Bot."""
     
     # Default account size constant
     DEFAULT_ACCOUNT_SIZE: float = 50000.0
@@ -45,38 +57,73 @@ class BotConfiguration:
     commission_per_contract: float = 2.50  # Round-turn commission (adjust to your broker)
         # Total cost per round-trip: ~3 ticks slippage + $2.50 commission = ~$42.50/contract
     
-    # VWAP bands (standard deviation multipliers) - ITERATION 3 (PROVEN WINNER!)
-    vwap_std_dev_1: float = 2.5  # Warning zone (potential reversal area)
-    vwap_std_dev_2: float = 2.1  # Entry zone - Iteration 3
-    vwap_std_dev_3: float = 3.7  # Exit/stop zone - Iteration 3
+    # ==========================================================================
+    # CAPITULATION REVERSAL STRATEGY - HARDCODED PARAMETERS
+    # ==========================================================================
+    # These parameters are HARDCODED in capitulation_detector.py
+    # They are NOT configurable - the strategy uses fixed rules for all trades.
+    # 
+    # HARDCODED VALUES (see capitulation_detector.py for implementation):
+    # - flush_min_ticks: 20 (minimum 5 dollars on ES)
+    # - flush_lookback_bars: 7 (last 7 one-minute bars)
+    # - flush_min_velocity: 3.0 (at least 3 ticks per bar)
+    # - flush_near_extreme_ticks: 5 (within 5 ticks of flush extreme)
+    # - rsi_extreme_long: 25 (RSI < 25 for long entry)
+    # - rsi_extreme_short: 75 (RSI > 75 for short entry)
+    # - volume_climax_mult: 2.0 (2x 20-bar average volume)
+    # - stop_buffer_ticks: 2 (2 ticks below/above flush extreme)
+    # - breakeven_trigger_ticks: 12 (move stop to entry after 12 ticks profit)
+    # - breakeven_offset_ticks: 1 (entry + 1 tick)
+    # - trailing_trigger_ticks: 15 (start trailing after 15 ticks profit)
+    # - trailing_distance_ticks: 8 (trail 8 ticks behind peak)
+    # - max_hold_bars: 20 (time stop after 20 bars)
+    #
+    # USER CONFIGURABLE via GUI:
+    # - max_stop_loss_dollars: Emergency max stop (caps stop loss in dollars)
+    # - max_contracts: Position size limit
+    # - max_trades_per_day: Trade count limit
+    # - daily_loss_limit: Daily loss cap
+    # - confidence_threshold: AI signal confidence filter
+    # - time_exit_enabled: Time-based exit after 20 bars (optional)
+    # ==========================================================================
     
-    # Trend Filter Parameters
-    trend_ema_period: int = 21  # Optimizer best
+    # RSI calculation period (standard)
+    rsi_period: int = 14  # Standard RSI period
+    volume_lookback: int = 20  # 20-bar volume average
+    
+    # ==========================================================================
+    # LEGACY PARAMETERS (kept for backwards compatibility, not used in new strategy)
+    # ==========================================================================
+    # VWAP bands - NOT USED in capitulation strategy (VWAP is target, not entry zone)
+    vwap_std_dev_1: float = 2.5  # Legacy - not used
+    vwap_std_dev_2: float = 2.1  # Legacy - not used
+    vwap_std_dev_3: float = 3.7  # Legacy - not used
+    
+    # Technical Filters - All handled by CapitulationDetector now
+    use_trend_filter: bool = False  # NOT USED - replaced by regime go/no-go filter
+    use_rsi_filter: bool = True  # RSI still used but with new thresholds (25/75)
+    use_vwap_direction_filter: bool = False  # NOT USED - VWAP is target, not filter
+    use_volume_filter: bool = True  # Volume still used but with 2x threshold
+    use_macd_filter: bool = False  # NOT USED - removed from strategy
+    
+    # Legacy RSI settings (kept for backwards compatibility)
+    rsi_oversold: int = 25  # Now using rsi_extreme_long
+    rsi_overbought: int = 75  # Now using rsi_extreme_short
+    
+    # Legacy trend settings - NOT USED
+    trend_ema_period: int = 21
     trend_threshold: float = 0.0001
     
-    # Technical Filters - ITERATION 3
-    use_trend_filter: bool = False  # Trend filter OFF (optimizer found better without)
-    use_rsi_filter: bool = True
-    use_vwap_direction_filter: bool = True  # VWAP direction filter ON (optimizer confirmed)
-    use_volume_filter: bool = False  # Don't use volume filter - blocks overnight trades
-    use_macd_filter: bool = False
-    
-    # RSI Settings - ITERATION 3 (Conservative, Selective)
-    rsi_period: int = 10  # Iteration 3
-    rsi_oversold: int = 35  # Iteration 3 - selective entry
-    rsi_overbought: int = 65  # Iteration 3 - selective entry
-    
-    # MACD - Keep for reference but disabled
+    # Legacy MACD - NOT USED
     macd_fast: int = 12
     macd_slow: int = 26
     macd_signal: int = 9
     
-    # Volume Filter - DISABLED (futures have inconsistent volume)
-    volume_spike_multiplier: float = 1.5
-    volume_lookback: int = 20
+    # Legacy volume settings (kept for reference)
+    volume_spike_multiplier: float = 2.0  # Now using volume_climax_mult
     
     # Time Windows (US Eastern - CME Futures Wall-Clock Schedule)
-    # These times NEVER change - always same wall-clock time regardless of DST
+    # Note: Bot can trade anytime when market is open. These are for maintenance only.
     market_open_time: time = field(default_factory=lambda: time(9, 30))  # Legacy stock market alignment - not used for VWAP reset
     entry_start_time: time = field(default_factory=lambda: time(18, 0))  # 6:00 PM Eastern - CME futures session opens
     entry_end_time: time = field(default_factory=lambda: time(16, 0))  # 4:00 PM Eastern - no new entries after this (can hold positions until 4:45 PM)
@@ -288,22 +335,43 @@ class BotConfiguration:
     max_transaction_cost_pct: float = 0.15  # Max transaction cost as % of expected profit (15%)
     commission_per_contract: float = 2.50  # Commission per contract round-turn
     
-    # Advanced Exit Management Parameters
-    # Static exit management using config values
+    # ==========================================================================
+    # EXIT MANAGEMENT - HARDCODED IN CAPITULATION_DETECTOR.PY
+    # ==========================================================================
+    # All exit management rules are HARDCODED in the bot code.
+    # These values are NOT configurable - the strategy uses fixed rules.
+    #
+    # HARDCODED EXIT RULES (see capitulation_detector.py):
+    # - Breakeven: Move stop to entry + 1 tick after 12 ticks profit
+    # - Trailing: Trail 8 ticks behind peak after 15 ticks profit
+    # - Time Stop: Exit after 20 bars if no target/stop hit
+    # - Target: VWAP (mean reversion destination)
+    #
+    # The following flags remain for compatibility but use hardcoded values:
+    breakeven_enabled: bool = True  # ENABLED - uses hardcoded 12-tick trigger
+    breakeven_profit_threshold_ticks: int = 12  # HARDCODED - Move stop to entry after 12 ticks profit
+    breakeven_stop_offset_ticks: int = 1  # HARDCODED - Entry + 1 tick buffer
+    trailing_stop_enabled: bool = True  # ENABLED - uses hardcoded 15-tick trigger, 8-tick trail
+    trailing_stop_trigger_ticks: int = 15  # HARDCODED - Start trailing after 15 ticks profit
+    trailing_stop_distance_ticks: int = 8  # HARDCODED - Trail 8 ticks behind peak
     
-    # Breakeven Protection - ITERATION 3 (PROVEN WINNER!)
-    breakeven_enabled: bool = True  # ENABLED - Uses static config values
-    breakeven_profit_threshold_ticks: int = 9  # Iteration 3 - proven optimal
-    breakeven_stop_offset_ticks: int = 1  # Static offset from entry
+    # Time-Based Exit (USER CONFIGURABLE via GUI checkbox)
+    time_stop_enabled: bool = False  # USER CONFIGURABLE - Exit after max_hold_bars if no resolution
+    max_hold_bars: int = 20  # HARDCODED - Time stop after 20 bars (20 min on 1-min chart)
     
-    # Partial Exits (static R-multiples)
-    partial_exits_enabled: bool = False  # DISABLED - Bot exits all contracts at once (no runners)
+    # Partial Exits (static R-multiples) - Capitulation Strategy exits
+    # For capitulation trades, VWAP is the primary target. Partial exits work as follows:
+    # - 50% exit at 1.5R (approximately halfway to VWAP from entry)
+    # - 30% exit at 2.0R (near VWAP or slightly beyond)
+    # - 20% runner for extended moves
+    # Note: The R-multiples are based on initial risk (stop distance), not VWAP distance
+    partial_exits_enabled: bool = True  # ENABLED - Take 50% at halfway to VWAP
     partial_exit_1_percentage: float = 0.50  # 50% exit at first level
-    partial_exit_1_r_multiple: float = 2.0  # Exit at 2.0R
+    partial_exit_1_r_multiple: float = 1.5  # Exit at 1.5R (halfway to VWAP)
     partial_exit_2_percentage: float = 0.30  # 30% exit at second level
-    partial_exit_2_r_multiple: float = 3.0  # Exit at 3.0R
+    partial_exit_2_r_multiple: float = 2.0  # Exit at 2.0R (near VWAP)
     partial_exit_3_percentage: float = 0.20  # 20% exit at third level
-    partial_exit_3_r_multiple: float = 5.0  # Exit at 5.0R
+    partial_exit_3_r_multiple: float = 3.0  # Exit at 3.0R (runner)
     
     # Reinforcement Learning Parameters
     # RL confidence filtering - uses RL experience to filter out low-confidence signals
@@ -445,7 +513,20 @@ class BotConfiguration:
             # Advanced Exit Management (baseline parameters)
             "breakeven_enabled": self.breakeven_enabled,
             "breakeven_profit_threshold_ticks": self.breakeven_profit_threshold_ticks,
+            "breakeven_trigger_ticks": self.breakeven_profit_threshold_ticks,  # Alias for engine compatibility
             "breakeven_stop_offset_ticks": self.breakeven_stop_offset_ticks,
+            "breakeven_offset_ticks": self.breakeven_stop_offset_ticks,  # Alias for engine compatibility
+            # Trailing Stop Settings (Capitulation Strategy)
+            "trailing_stop_enabled": self.trailing_stop_enabled,
+            "trailing_stop_trigger_ticks": self.trailing_stop_trigger_ticks,
+            "trailing_trigger_ticks": self.trailing_stop_trigger_ticks,  # Alias for engine compatibility
+            "trailing_stop_distance_ticks": self.trailing_stop_distance_ticks,
+            "trailing_distance_ticks": self.trailing_stop_distance_ticks,  # Alias for engine compatibility
+            # Time Stop Settings (Capitulation Strategy - USER CONFIGURABLE)
+            "time_stop_enabled": self.time_stop_enabled,
+            "max_hold_bars": self.max_hold_bars,
+            "time_stop_bars": self.max_hold_bars,  # Alias for engine compatibility
+            # Partial Exits
             "partial_exits_enabled": self.partial_exits_enabled,
             "partial_exit_1_percentage": self.partial_exit_1_percentage,
             "partial_exit_1_r_multiple": self.partial_exit_1_r_multiple,
@@ -558,6 +639,10 @@ def load_from_env() -> BotConfiguration:
     
     if os.getenv("BOT_AI_MODE"):
         config.ai_mode = os.getenv("BOT_AI_MODE").lower() in ("true", "1", "yes")
+    
+    # Time-Based Exit (USER CONFIGURABLE via GUI checkbox)
+    if os.getenv("BOT_TIME_EXIT_ENABLED"):
+        config.time_stop_enabled = os.getenv("BOT_TIME_EXIT_ENABLED").lower() in ("true", "1", "yes")
     
     if os.getenv("BOT_ENVIRONMENT"):
         config.environment = os.getenv("BOT_ENVIRONMENT")
