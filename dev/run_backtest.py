@@ -166,9 +166,9 @@ def initialize_rl_brains_for_backtest(bot_config) -> Tuple[Any, ModuleType]:
         exploration_decay=1.0  # No decay - always explore during initial learning
     )
     
-    # Set it on the bot module if it has rl_brain attribute
-    if hasattr(bot_module, 'rl_brain'):
-        bot_module.rl_brain = rl_brain
+    # Set the global rl_brain in the bot module's namespace
+    # This is critical - the module uses 'global rl_brain' which looks up in module.__dict__
+    bot_module.__dict__['rl_brain'] = rl_brain
     
     return rl_brain, bot_module
 
