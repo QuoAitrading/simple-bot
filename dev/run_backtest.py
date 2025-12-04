@@ -200,10 +200,18 @@ def run_backtest(args: argparse.Namespace) -> Dict[str, Any]:
     # Backtest mode environment variables already set at module import
     # (see top of file - BOT_BACKTEST_MODE and USE_CLOUD_SIGNALS)
     
-    # Load configuration
+    # Load configuration - use defaults, don't load from GUI/live config files
+    # IMPORTANT: Backtesting is completely isolated from live trading configuration
     bot_config = load_config(backtest_mode=True)
     
-    # Override symbol if specified
+    # BACKTEST-SPECIFIC OVERRIDES - These are hardcoded defaults for backtesting
+    # They do NOT affect live trading in any way
+    bot_config.account_size = 50000.0  # Standard backtest account size
+    bot_config.max_contracts = 1  # Single contract for backtesting (no position sizing)
+    bot_config.daily_loss_limit = 1000.0  # Standard daily loss limit for testing
+    bot_config.shadow_mode = False  # Backtesting always executes simulated trades
+    
+    # Override symbol if specified via command line
     if args.symbol:
         bot_config.instrument = args.symbol
     
@@ -464,6 +472,13 @@ def main():
     
     # Load configuration early to get account_size for reporter
     bot_config = load_config(backtest_mode=True)
+    
+    # BACKTEST-SPECIFIC OVERRIDES - These are hardcoded defaults for backtesting
+    # They do NOT affect live trading in any way
+    bot_config.account_size = 50000.0  # Standard backtest account size
+    bot_config.max_contracts = 1  # Single contract for backtesting (no position sizing)
+    bot_config.daily_loss_limit = 1000.0  # Standard daily loss limit for testing
+    bot_config.shadow_mode = False  # Backtesting always executes simulated trades
     
     # Setup logging - suppress verbose output for clean backtest display
     config_dict = {'log_directory': os.path.join(PROJECT_ROOT, 'logs')}

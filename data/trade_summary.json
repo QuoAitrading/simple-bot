@@ -3,9 +3,9 @@
   "direction": "LONG",
   "entry_price": 6721.25,
   "exit_price": 6713.25,
-  "contracts": 1,
-  "pnl": -402.5,
-  "pnl_percent": -0.4790775525385903,
+  "contracts": 3,
+  "pnl": -407.5,
+  "pnl_percent": -0.16167627549438968,
   "timestamp": "2025-11-14T06:36:00-05:00",
   "reason": "stop_loss"
 }
