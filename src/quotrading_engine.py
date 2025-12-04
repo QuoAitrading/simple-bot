@@ -590,7 +590,6 @@ bot_status: Dict[str, Any] = {
 # Timeout for flatten in progress check (seconds)
 FLATTEN_IN_PROGRESS_TIMEOUT = 30
 
-# AI MODE: Cooldown period for recently closed positions (seconds)
 
 def clear_flatten_flags() -> None:
     """
