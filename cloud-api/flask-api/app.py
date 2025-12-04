@@ -7,7 +7,7 @@ from flask_cors import CORS
 import os
 import json
 import psycopg2
-from psycopg2 import pool
+from psycopg2 import pool, sql as psycopg2_sql
 from psycopg2.extras import RealDictCursor
 from datetime import datetime, timedelta
 import logging
@@ -47,7 +47,12 @@ DB_PORT = os.environ.get("DB_PORT", "5432")
 # Whop configuration
 WHOP_API_KEY = os.environ.get("WHOP_API_KEY", "")
 WHOP_WEBHOOK_SECRET = os.environ.get("WHOP_WEBHOOK_SECRET", "")
-ADMIN_API_KEY = os.environ.get("ADMIN_API_KEY", "ADMIN-DEV-KEY-2026")  # For creating licenses
+# SECURITY: Admin API key must be set via environment variable in production
+# Default is only for local development - will log warning if used
+_ADMIN_API_KEY_DEFAULT = "ADMIN-DEV-KEY-2026"
+ADMIN_API_KEY = os.environ.get("ADMIN_API_KEY", _ADMIN_API_KEY_DEFAULT)
+if ADMIN_API_KEY == _ADMIN_API_KEY_DEFAULT:
+    logging.warning("⚠️ SECURITY WARNING: Using default ADMIN_API_KEY. Set ADMIN_API_KEY environment variable in production!")
 
 # Session locking configuration
 # A session is considered "active" if heartbeat received within this threshold
@@ -328,7 +333,6 @@ def send_license_email(email, license_key, whop_user_id=None, whop_membership_id
             
     except Exception as e:
         logging.error(f"❌ CRITICAL ERROR in send_license_email: {type(e).__name__}: {str(e)}")
-        import traceback
         logging.error(f"Traceback: {traceback.format_exc()}")
         return False
 
@@ -1020,11 +1024,12 @@ def return_connection(conn):
         if _db_pool:
             _db_pool.putconn(conn)
         else:
-            return_connection(conn)
+            # Close direct connection if pool not available
+            conn.close()
     except Exception as e:
         logging.error(f"Error returning connection: {e}")
         try:
-            return_connection(conn)
+            conn.close()
         except:
             pass
 
@@ -4497,7 +4502,7 @@ def admin_view_database_table(table_name):
     if api_key != ADMIN_API_KEY:
         return jsonify({"error": "Unauthorized"}), 401
     
-    # Whitelist allowed tables
+    # Whitelist allowed tables - SECURITY: Strictly validated before use
     allowed_tables = ['rl_experiences', 'users', 'api_logs', 'heartbeats']
     if table_name not in allowed_tables:
         return jsonify({"error": f"Table '{table_name}' not allowed"}), 400
@@ -4513,29 +4518,23 @@ def admin_view_database_table(table_name):
     try:
         cur = conn.cursor(cursor_factory=RealDictCursor)
         
-        # Get total row count
-        cur.execute(f"SELECT COUNT(*) FROM {table_name}")
+        # SECURITY: Use psycopg2.sql.Identifier to safely include table name
+        # Even though table_name is whitelisted, this is defense-in-depth
+        table_identifier = psycopg2_sql.Identifier(table_name)
+        
+        # Get total row count - using parameterized query with Identifier
+        count_query = psycopg2_sql.SQL("SELECT COUNT(*) FROM {}").format(table_identifier)
+        cur.execute(count_query)
         total_rows = cur.fetchone()['count']
         
         # Fetch recent rows (ordered by most recent first)
-        if table_name == 'rl_experiences':
-            cur.execute(f"""
-                SELECT * FROM {table_name}
-                ORDER BY created_at DESC
-                LIMIT %s
-            """, (limit,))
-        elif table_name == 'users':
-            cur.execute(f"""
-                SELECT * FROM {table_name}
-                ORDER BY created_at DESC
-                LIMIT %s
-            """, (limit,))
-        elif table_name == 'api_logs':
-            cur.execute(f"""
-                SELECT * FROM {table_name}
-                ORDER BY created_at DESC
-                LIMIT %s
-            """, (limit,))
+        # Using psycopg2.sql for safe table name inclusion
+        select_query = psycopg2_sql.SQL("""
+            SELECT * FROM {}
+            ORDER BY created_at DESC
+            LIMIT %s
+        """).format(table_identifier)
+        cur.execute(select_query, (limit,))
         
         rows = cur.fetchall()
         
