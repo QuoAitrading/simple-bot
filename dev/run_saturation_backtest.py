@@ -105,11 +105,13 @@ Examples:
         help='Number of consecutive zero-gain iterations before stopping. Default: 3'
     )
     
+    # Note: --log-level is not used because output is suppressed for clean progress display
+    # Keeping for potential future use or debugging
     parser.add_argument(
         '--log-level',
         choices=['DEBUG', 'INFO', 'WARNING', 'ERROR'],
         default='WARNING',
-        help='Logging level. Default: WARNING'
+        help='Logging level (not currently used - output is suppressed). Default: WARNING'
     )
     
     return parser.parse_args()
@@ -280,7 +282,7 @@ def main():
     args = parse_arguments()
     
     # Configure logging - suppress all verbose output for clean progress display
-    log_level = getattr(logging, args.log_level)
+    # We always use CRITICAL level to keep output clean, regardless of --log-level arg
     logging.basicConfig(level=logging.CRITICAL, format='%(message)s')
     
     # Suppress ALL verbose loggers for clean saturation output

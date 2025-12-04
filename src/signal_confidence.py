@@ -153,7 +153,7 @@ class SignalConfidenceRL:
             'atr', 'atr_slope', 'macd_hist', 'stoch_k',
             'volume_ratio', 'volume_slope', 'hour', 'session',
             'mfe', 'mae', 'returns',
-            'order_type_used', 'entry_slippage_ticks'
+            'order_type_used', 'entry_slippage_ticks',
             # 'exploration_rate' - EXCLUDED: metadata about collection, not signal quality
         ]
         
