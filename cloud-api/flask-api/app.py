@@ -1109,7 +1109,7 @@ def ensure_active_sessions_table(conn):
                 ON active_sessions(license_key)
             """)
             cursor.execute("""
-                CREATE INDEX IF NOT EXISTS idx_active_sessions_symbol 
+                CREATE INDEX IF NOT EXISTS idx_active_sessions_license_symbol 
                 ON active_sessions(license_key, symbol)
             """)
             cursor.execute("""
@@ -1148,7 +1148,6 @@ def check_symbol_session_conflict(conn, license_key: str, symbol: str, device_fi
             
             # Check if session is still active (within timeout)
             if last_heartbeat:
-                from datetime import datetime, timedelta
                 time_since_last = datetime.now() - last_heartbeat
                 
                 if time_since_last < timedelta(seconds=SESSION_TIMEOUT_SECONDS):
@@ -1230,7 +1229,6 @@ def count_active_symbol_sessions(conn, license_key: str):
     """
     try:
         with conn.cursor() as cursor:
-            from datetime import datetime, timedelta
             cursor.execute("""
                 SELECT COUNT(*) FROM active_sessions
                 WHERE license_key = %s 
@@ -1412,8 +1410,6 @@ def validate_license_endpoint():
                         
                         # If there's a stored session, check if it's active
                         if stored_device:
-                            from datetime import datetime, timedelta
-                            
                             # STRICT ENFORCEMENT: Check heartbeat EXISTS first, then check age
                             # This prevents bypassing restrictions - we don't blindly clear sessions
                             # Prevents API key sharing on same OR different devices
@@ -1605,7 +1601,6 @@ def heartbeat():
                         # Check if another device is active (heartbeat within SESSION_TIMEOUT_SECONDS)
                         if stored_device and stored_device != device_fingerprint:
                             # Check if the stored device is still active
-                            from datetime import datetime, timedelta
                             if last_heartbeat:
                                 time_since_last = datetime.now() - last_heartbeat
                                 if time_since_last < timedelta(seconds=SESSION_TIMEOUT_SECONDS):
@@ -1768,8 +1763,6 @@ def clear_stale_sessions():
         if conn:
             try:
                 with conn.cursor() as cursor:
-                    from datetime import datetime, timedelta
-                    
                     # Only clear sessions that are truly stale (no heartbeat for 90+ seconds)
                     # This preserves session locking - active sessions are NOT cleared
                     cursor.execute("""
