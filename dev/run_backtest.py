@@ -521,10 +521,10 @@ def main():
         def filter(self, record):
             # Track RL signals for the reporter but suppress output
             msg = record.getMessage()
-            if 'RL APPROVED' in msg:
+            if 'SIGNAL APPROVED' in msg:
                 reporter.record_signal(approved=True)
                 return False  # Suppress output
-            elif 'RL REJECTED' in msg:
+            elif 'Signal Declined' in msg:
                 reporter.record_signal(approved=False)
                 return False  # Suppress output
             elif 'Exploring' in msg:
