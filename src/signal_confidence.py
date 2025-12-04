@@ -283,45 +283,55 @@ class SignalConfidenceRL:
     def calculate_confidence(self, current_state: Dict) -> Tuple[float, str]:
         """
         Calculate confidence based on similar past experiences.
-        UPDATED for FLAT FORMAT: experiences have 'pnl' at top level (not 'reward').
+        
+        CONFIDENCE FORMULA:
+        ==================
+        Step 1: Find 20 most similar past trades
+        Step 2: Calculate from those similar trades:
+          - Win Rate = Winners / Total
+          - Average Profit = Sum of profits / Count
+          - Profit Score = min(Average Profit / 300, 1.0)
+          - Final Confidence = (Win Rate × 90%) + (Profit Score × 10%)
+        Step 3: If average profit is negative → Auto reject (0% confidence)
+        
+        Example: 16 wins out of 20 = 80% WR, $120 avg profit
+          Profit Score = 120/300 = 0.40
+          Confidence = (0.80 × 0.90) + (0.40 × 0.10) = 0.72 + 0.04 = 76%
         
         Returns:
             (confidence, reason)
         """
         # Need at least 10 experiences before using them for decisions
-        # Otherwise, a few early losses will make Brain 2 reject everything!
         if len(self.experiences) < 10:
-            return 0.65, f"≡ƒåò Limited experience ({len(self.experiences)} trades) - optimistic"
+            return 0.65, f"Limited experience ({len(self.experiences)} trades) - optimistic"
         
-        # Find similar past situations
-        similar = self.find_similar_states(current_state, max_results=10)
+        # Step 1: Find 20 most similar past trades
+        similar = self.find_similar_states(current_state, max_results=20)
         
         if not similar:
-            return 0.5, " No similar situations - neutral confidence"
+            return 0.5, "No similar situations - neutral confidence"
         
-        # Calculate win rate from similar situations
-        # FLAT FORMAT: 'pnl' is at top level (not 'reward')
-        wins = sum(1 for exp in similar if exp.get('pnl', exp.get('reward', 0)) > 0)
+        # Step 2: Calculate metrics from similar trades
+        # Win Rate = Winners / Total
+        wins = sum(1 for exp in similar if exp.get('pnl', 0) > 0)
         win_rate = wins / len(similar)
         
-        # Average profit from similar situations
-        # FLAT FORMAT: 'pnl' is at top level (not 'reward')
-        avg_profit = sum(exp.get('pnl', exp.get('reward', 0)) for exp in similar) / len(similar)
+        # Average Profit = Sum of profits / Count
+        avg_profit = sum(exp.get('pnl', 0) for exp in similar) / len(similar)
         
-        # SAFETY CHECK: Reject signals with negative expected value
+        # Step 3: If average profit is negative → Auto reject (0% confidence)
         if avg_profit < 0:
-            reason = f" {len(similar)} similar: {win_rate*100:.0f}% WR, ${avg_profit:.0f} avg (NEGATIVE EV - REJECTED)"
+            reason = f"{len(similar)} similar: {win_rate*100:.0f}% WR, ${avg_profit:.0f} avg (NEGATIVE EV - REJECTED)"
             return 0.0, reason
         
-        # MORE AGGRESSIVE confidence formula to match best-run quality
-        # Win rate is king (90% weight), profit is secondary (10% weight)
-        # Examples: 80% WR + $100 avg = 73% confidence
-        #          100% WR + $150 avg = 93% confidence
-        #           50% WR + $45 avg = 45% confidence (was 37.7% - now higher bar)
-        confidence = (win_rate * 0.9) + (min(avg_profit / 300, 1.0) * 0.1)
+        # Profit Score = min(Average Profit / 300, 1.0)
+        profit_score = min(avg_profit / 300.0, 1.0)
+        
+        # Final Confidence = (Win Rate × 90%) + (Profit Score × 10%)
+        confidence = (win_rate * 0.90) + (profit_score * 0.10)
         confidence = max(0.0, min(1.0, confidence))
         
-        reason = f" {len(similar)} similar: {win_rate*100:.0f}% WR, ${avg_profit:.0f} avg"
+        reason = f"{len(similar)} similar: {win_rate*100:.0f}% WR, ${avg_profit:.0f} avg"
         
         return confidence, reason
     
@@ -329,32 +339,22 @@ class SignalConfidenceRL:
         """
         Find past experiences with similar market states.
         
-        CAPITULATION REVERSAL PATTERN MATCHING (12 features):
-        ========================================
-        Continuous Features (9):
-          - flush_size_ticks (20% weight) - How big was the flush
-          - flush_velocity (15% weight) - How fast was the flush
-          - distance_from_flush_low (15% weight) - Distance from extreme
-          - rsi (15% weight) - Overbought/oversold
-          - volume_climax_ratio (10% weight) - Volume spike magnitude
-          - vwap_distance_ticks (10% weight) - Distance from fair value
-          - atr (5% weight) - Volatility level
-          - stop_distance_ticks (3% weight) - Risk size
-          - risk_reward_ratio (2% weight) - R:R ratio
+        SIMPLIFIED PATTERN MATCHING (7 features):
+        ==========================================
+        - Flush Size (25%) - How big was the panic move in ticks
+        - Velocity (20%) - How fast was the flush in ticks per bar
+        - RSI (15%) - How extreme was RSI at entry
+        - Volume Spike (15%) - How much volume spiked vs average
+        - Distance From Extreme (10%) - How close to the flush low/high
+        - Regime Match (10%) - Same market regime or not
+        - Hour of Day (5%) - Same time of day or not
         
-        Binary Features (1):
-          - reversal_candle (3% weight) - Confirmation candle
-          - no_new_extreme (2% weight) - Stopped making new lows/highs
-        
-        Categorical Features (1):
-          - regime (5% weight) - Market regime (binary match)
+        Pick the 20 most similar past trades.
         
         EXCLUDED (outcomes/metadata):
           ❌ timestamp, symbol, price, pnl, duration, took_trade,
-          ❌ mfe, mae, exit_reason, hour, session, flush_direction,
-          ❌ bars_since_flush_start, target_distance_ticks
-        
-        UPDATED for CAPITULATION REVERSAL STRATEGY.
+          ❌ mfe, mae, exit_reason, session, flush_direction,
+          ❌ bars_since_flush_start, target_distance_ticks, vwap, atr
         """
         if not self.experiences:
             return []
@@ -365,53 +365,39 @@ class SignalConfidenceRL:
             # FLAT FORMAT: All fields are at top level
             past = exp
             
-            # Calculate distance for continuous features (normalized to 0-1 range)
-            # Primary flush features (50%)
+            # Calculate distance for each feature (normalized to 0-1 range)
+            # Lower score = more similar
+            
+            # Flush Size (25%) - How big was the panic move
             flush_size_diff = abs(current.get('flush_size_ticks', 0) - past.get('flush_size_ticks', 0)) / 50  # Typical range 0-50 ticks
+            
+            # Velocity (20%) - How fast was the flush
             flush_velocity_diff = abs(current.get('flush_velocity', 0) - past.get('flush_velocity', 0)) / 10  # Typical range 0-10 ticks/bar
+            
+            # RSI (15%) - How extreme was RSI at entry
+            rsi_diff = abs(current.get('rsi', 50) - past.get('rsi', 50)) / 100  # 0-100 scale
+            
+            # Volume Spike (15%) - How much volume spiked vs average
+            volume_ratio_diff = abs(current.get('volume_climax_ratio', 1) - past.get('volume_climax_ratio', 1)) / 3  # Typical range 0-3
+            
+            # Distance From Extreme (10%) - How close to the flush low/high
             distance_from_low_diff = abs(current.get('distance_from_flush_low', 0) - past.get('distance_from_flush_low', 0)) / 20  # Typical range 0-20 ticks
             
-            # Indicator features (35%)
-            rsi_diff = abs(current.get('rsi', 50) - past.get('rsi', 50)) / 100  # 0-100 scale
-            volume_ratio_diff = abs(current.get('volume_climax_ratio', 1) - past.get('volume_climax_ratio', 1)) / 3  # Typical range 0-3
-            vwap_distance_diff = abs(current.get('vwap_distance_ticks', 0) - past.get('vwap_distance_ticks', 0)) / 30  # Typical range 0-30 ticks
-            atr_diff = abs(current.get('atr', 1) - past.get('atr', 1)) / 20  # Normalize to typical ATR range
-            
-            # Risk/Reward features (5%)
-            stop_dist_diff = abs(current.get('stop_distance_ticks', 0) - past.get('stop_distance_ticks', 0)) / 20  # Typical range 0-20 ticks
-            rr_diff = abs(current.get('risk_reward_ratio', 0) - past.get('risk_reward_ratio', 0)) / 5  # Typical range 0-5
-            
-            # Binary features (5%)
-            reversal_match = 0.0 if current.get('reversal_candle', False) == past.get('reversal_candle', False) else 1.0
-            no_extreme_match = 0.0 if current.get('no_new_extreme', False) == past.get('no_new_extreme', False) else 1.0
-            
-            # Categorical features - binary match (0 if same, 1 if different)
+            # Regime Match (10%) - Binary: same regime or not
             regime_match = 0.0 if current.get('regime', 'NORMAL') == past.get('regime', 'NORMAL') else 1.0
             
+            # Hour of Day (5%) - Same time of day or not
+            hour_diff = abs(current.get('hour', 12) - past.get('hour', 12)) / 24  # 0-24 scale
+            
             # Weighted similarity score (lower is more similar)
-            # Primary flush features (50%), Indicators (35%), Risk/Reward (5%), Binary (5%), Categorical (5%)
             similarity = (
-                # Primary flush features (50%)
-                flush_size_diff * 0.20 +              # Flush magnitude
-                flush_velocity_diff * 0.15 +          # Flush speed
-                distance_from_low_diff * 0.15 +       # Near extreme
-                
-                # Indicator features (35%)
-                rsi_diff * 0.15 +                     # Overbought/oversold
-                volume_ratio_diff * 0.10 +            # Volume spike
-                vwap_distance_diff * 0.10 +           # Distance from VWAP
-                atr_diff * 0.05 +                     # Volatility level
-                
-                # Risk/Reward features (5%)
-                stop_dist_diff * 0.03 +               # Risk size
-                rr_diff * 0.02 +                      # R:R ratio
-                
-                # Binary features (5%)
-                reversal_match * 0.03 +               # Confirmation candle
-                no_extreme_match * 0.02 +             # Stopped making extremes
-                
-                # Categorical matches (5%)
-                regime_match * 0.05                   # Market regime (binary)
+                flush_size_diff * 0.25 +      # Flush Size (25%)
+                flush_velocity_diff * 0.20 +  # Velocity (20%)
+                rsi_diff * 0.15 +             # RSI (15%)
+                volume_ratio_diff * 0.15 +    # Volume Spike (15%)
+                distance_from_low_diff * 0.10 + # Distance From Extreme (10%)
+                regime_match * 0.10 +         # Regime Match (10%)
+                hour_diff * 0.05              # Hour of Day (5%)
             )
             
             scored.append((similarity, exp))
@@ -419,7 +405,7 @@ class SignalConfidenceRL:
         # Sort by similarity (most similar first)
         scored.sort(key=lambda x: x[0])
         
-        # Return top N most similar
+        # Return top N most similar (default 20)
         return [exp for _, exp in scored[:max_results]]
     
     def _calculate_optimal_threshold(self) -> float:

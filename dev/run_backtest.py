@@ -155,12 +155,12 @@ def initialize_rl_brains_for_backtest(bot_config) -> Tuple[Any, ModuleType]:
     
     # Initialize RL brain with symbol-specific experience file
     # LIVE TRADING: Always uses 0% exploration (reads from config)
-    # BACKTESTING: Uses 100% exploration for learning when no data exists
+    # BACKTESTING: Uses 100% exploration for learning - takes ALL signals
     signal_exp_file = os.path.join(PROJECT_ROOT, f"experiences/{symbol}/signal_experience.json")
     rl_brain = SignalConfidenceRL(
         experience_file=signal_exp_file,
         backtest_mode=True,
-        confidence_threshold=bot_config.rl_confidence_threshold,
+        confidence_threshold=0.0,  # 0% threshold = take ALL trades for learning
         exploration_rate=1.0,  # 100% exploration for new strategy (no data yet)
         min_exploration=1.0,   # Keep at 100% to learn from all signals
         exploration_decay=1.0  # No decay - always explore during initial learning
