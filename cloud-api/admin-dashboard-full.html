@@ -714,7 +714,6 @@
                         <th style="width: 140px">API Key</th>
                         <th style="width: 80px">License</th>
                         <th style="width: 100px">Expires</th>
-                        <th style="width: 100px" title="Time until license expires">⏱️ Countdown</th>
                         <th style="width: 80px">Symbol</th>
                         <th style="width: 90px">Session P&L</th>
                         <th style="width: 70px">Trades</th>
@@ -726,7 +725,7 @@
                 </thead>
                 <tbody id="usersTableBody">
                     <tr>
-                        <td colspan="14" class="empty-state">
+                        <td colspan="13" class="empty-state">
                             <div class="empty-state-icon">📋</div>
                             <div class="empty-state-text">Loading users...</div>
                         </td>
@@ -1646,29 +1645,9 @@
                 allUsers = data.users;
                 
                 renderUsers(allUsers);
-                startCountdownTimer(); // Start live countdown updates
             } catch (error) {
                 console.error('Failed to load users:', error);
             }
-        }
-
-        // Live countdown timer - updates every second
-        let countdownInterval = null;
-        function startCountdownTimer() {
-            // Clear any existing interval
-            if (countdownInterval) {
-                clearInterval(countdownInterval);
-            }
-            // Update countdown cells every second
-            countdownInterval = setInterval(() => {
-                const countdownCells = document.querySelectorAll('[data-expiration]');
-                countdownCells.forEach(cell => {
-                    const expiration = cell.getAttribute('data-expiration');
-                    if (expiration) {
-                        cell.innerHTML = formatCountdown(expiration);
-                    }
-                });
-            }, 1000);
         }
 
         function renderUsers(users) {
@@ -1677,7 +1656,7 @@
             if (users.length === 0) {
                 tbody.innerHTML = `
                     <tr>
-                        <td colspan="14" class="empty-state">
+                        <td colspan="13" class="empty-state">
                             <div class="empty-state-icon">📋</div>
                             <div class="empty-state-text">No users found</div>
                         </td>
@@ -1727,7 +1706,6 @@
                         ${formatDate(user.license_expiration) || 'Never'}
                         ${expirationInfo.badge ? `<br><span class="badge ${expirationInfo.badgeClass}">${expirationInfo.badge}</span>` : ''}
                     </td>
-                    <td style="font-size: 12px;" data-expiration="${user.license_expiration || ''}">${formatCountdown(user.license_expiration)}</td>
                     <td>${symbol}</td>
                     <td>${sessionPnl}</td>
                     <td>${trades}</td>
@@ -2546,6 +2524,7 @@
                                             <p><strong>License Type:</strong> <span class="badge badge-${data.user.license_type === 'ADMIN' ? 'pending' : 'active'}">${data.user.license_type}</span></p>
                                             <p><strong>Status:</strong> <span class="badge badge-${data.user.license_status === 'ACTIVE' ? 'active' : 'suspended'}">${data.user.license_status}</span></p>
                                             <p><strong>Expires:</strong> ${data.user.license_expiration ? formatDateTime(data.user.license_expiration) : 'Never'}</p>
+                                            <p><strong>⏱️ Time Remaining:</strong> <span id="modalCountdown" data-expiration="${data.user.license_expiration || ''}" style="font-weight: 600;">${formatCountdown(data.user.license_expiration)}</span></p>
                                             <p><strong>Created:</strong> ${formatDateTime(data.user.created_at)}</p>
                                             <p><strong>Last Active:</strong> ${formatDateTime(data.user.last_active)}</p>
                                         </div>
@@ -2609,13 +2588,44 @@
                 document.body.insertAdjacentHTML('beforeend', modalHtml);
                 console.log('Modal added to page');
                 
+                // Start live countdown timer in modal
+                startModalCountdownTimer();
+                
             } catch (error) {
                 console.error('Failed to load user details:', error);
                 alert(`❌ Failed to load user details: ${error.message}`);
             }
         }
 
+        // Modal countdown timer - updates every second while modal is open
+        let modalCountdownInterval = null;
+        function startModalCountdownTimer() {
+            // Clear any existing interval
+            if (modalCountdownInterval) {
+                clearInterval(modalCountdownInterval);
+            }
+            // Update countdown in modal every second
+            modalCountdownInterval = setInterval(() => {
+                const countdownEl = document.getElementById('modalCountdown');
+                if (countdownEl) {
+                    const expiration = countdownEl.getAttribute('data-expiration');
+                    if (expiration) {
+                        countdownEl.innerHTML = formatCountdown(expiration);
+                    }
+                } else {
+                    // Modal closed, stop timer
+                    clearInterval(modalCountdownInterval);
+                    modalCountdownInterval = null;
+                }
+            }, 1000);
+        }
+
         function closeDetailsModal() {
+            // Stop modal countdown timer
+            if (modalCountdownInterval) {
+                clearInterval(modalCountdownInterval);
+                modalCountdownInterval = null;
+            }
             const modal = document.getElementById('detailsModal');
             if (modal) {
                 modal.remove();
