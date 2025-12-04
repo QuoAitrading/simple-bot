@@ -56,6 +56,11 @@ ADMIN_API_KEY = os.environ.get("ADMIN_API_KEY", "ADMIN-DEV-KEY-2026")  # For cre
 SESSION_TIMEOUT_SECONDS = 60  # 60 seconds - session expires if no heartbeat for 60 seconds (3x heartbeat interval)
 WHOP_API_BASE_URL = "https://api.whop.com/api/v5"
 
+# MULTI-SYMBOL SESSION SUPPORT
+# When True, allows multiple bot instances per license key (one per symbol)
+# Each symbol gets its own session, preventing conflicts when trading ES, NQ, etc. simultaneously
+MULTI_SYMBOL_SESSIONS_ENABLED = True
+
 # Email configuration (for SendGrid or SMTP)
 SENDGRID_API_KEY = os.environ.get("SENDGRID_API_KEY", "")
 SMTP_SERVER = os.environ.get("SMTP_SERVER", "smtp.gmail.com")
@@ -1080,6 +1085,164 @@ def validate_license(license_key: str):
     finally:
         return_connection(conn)
 
+def ensure_active_sessions_table(conn):
+    """
+    Create the active_sessions table if it doesn't exist.
+    This table enables multi-symbol session support.
+    """
+    try:
+        with conn.cursor() as cursor:
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS active_sessions (
+                    id SERIAL PRIMARY KEY,
+                    license_key VARCHAR(255) NOT NULL,
+                    symbol VARCHAR(20) NOT NULL,
+                    device_fingerprint VARCHAR(255) NOT NULL,
+                    last_heartbeat TIMESTAMP DEFAULT NOW(),
+                    created_at TIMESTAMP DEFAULT NOW(),
+                    metadata JSONB,
+                    UNIQUE(license_key, symbol)
+                )
+            """)
+            cursor.execute("""
+                CREATE INDEX IF NOT EXISTS idx_active_sessions_license 
+                ON active_sessions(license_key)
+            """)
+            cursor.execute("""
+                CREATE INDEX IF NOT EXISTS idx_active_sessions_symbol 
+                ON active_sessions(license_key, symbol)
+            """)
+            cursor.execute("""
+                CREATE INDEX IF NOT EXISTS idx_active_sessions_heartbeat 
+                ON active_sessions(last_heartbeat)
+            """)
+            conn.commit()
+            return True
+    except Exception as e:
+        logging.error(f"Failed to create active_sessions table: {e}")
+        return False
+
+
+def check_symbol_session_conflict(conn, license_key: str, symbol: str, device_fingerprint: str):
+    """
+    Check if there's an active session for this license+symbol combination.
+    
+    Returns:
+        Tuple of (has_conflict: bool, session_info: dict or None)
+    """
+    try:
+        with conn.cursor() as cursor:
+            cursor.execute("""
+                SELECT device_fingerprint, last_heartbeat, metadata
+                FROM active_sessions
+                WHERE license_key = %s AND symbol = %s
+            """, (license_key, symbol))
+            session = cursor.fetchone()
+            
+            if not session:
+                return False, None
+            
+            stored_device = session[0]
+            last_heartbeat = session[1]
+            metadata = session[2]
+            
+            # Check if session is still active (within timeout)
+            if last_heartbeat:
+                from datetime import datetime, timedelta
+                time_since_last = datetime.now() - last_heartbeat
+                
+                if time_since_last < timedelta(seconds=SESSION_TIMEOUT_SECONDS):
+                    # Active session exists
+                    if stored_device == device_fingerprint:
+                        # Same device - this is a reconnection, allow it
+                        return False, None
+                    else:
+                        # Different device - conflict
+                        return True, {
+                            "device_fingerprint": stored_device,
+                            "last_heartbeat": last_heartbeat,
+                            "seconds_remaining": max(0, SESSION_TIMEOUT_SECONDS - int(time_since_last.total_seconds()))
+                        }
+                else:
+                    # Session expired - clean it up
+                    cursor.execute("""
+                        DELETE FROM active_sessions
+                        WHERE license_key = %s AND symbol = %s
+                    """, (license_key, symbol))
+                    conn.commit()
+                    logging.info(f"🧹 Cleaned up expired session for {license_key}/{symbol}")
+                    return False, None
+            else:
+                # No heartbeat - session is stale
+                return False, None
+                
+    except Exception as e:
+        logging.error(f"Error checking symbol session: {e}")
+        return False, None
+
+
+def create_or_update_symbol_session(conn, license_key: str, symbol: str, device_fingerprint: str, metadata: dict = None):
+    """
+    Create or update a session for a specific license+symbol combination.
+    """
+    try:
+        with conn.cursor() as cursor:
+            # Use UPSERT to create or update the session
+            cursor.execute("""
+                INSERT INTO active_sessions (license_key, symbol, device_fingerprint, last_heartbeat, metadata)
+                VALUES (%s, %s, %s, NOW(), %s)
+                ON CONFLICT (license_key, symbol) 
+                DO UPDATE SET 
+                    device_fingerprint = EXCLUDED.device_fingerprint,
+                    last_heartbeat = NOW(),
+                    metadata = EXCLUDED.metadata
+            """, (license_key, symbol, device_fingerprint, json.dumps(metadata) if metadata else None))
+            conn.commit()
+            return True
+    except Exception as e:
+        logging.error(f"Error creating/updating symbol session: {e}")
+        return False
+
+
+def release_symbol_session(conn, license_key: str, symbol: str, device_fingerprint: str):
+    """
+    Release a session for a specific license+symbol combination.
+    Only releases if the device_fingerprint matches (prevents unauthorized releases).
+    """
+    try:
+        with conn.cursor() as cursor:
+            cursor.execute("""
+                DELETE FROM active_sessions
+                WHERE license_key = %s AND symbol = %s AND device_fingerprint = %s
+            """, (license_key, symbol, device_fingerprint))
+            deleted = cursor.rowcount
+            conn.commit()
+            return deleted > 0
+    except Exception as e:
+        logging.error(f"Error releasing symbol session: {e}")
+        return False
+
+
+def count_active_symbol_sessions(conn, license_key: str):
+    """
+    Count the number of active symbol sessions for a license.
+    Returns count of non-expired sessions.
+    """
+    try:
+        with conn.cursor() as cursor:
+            from datetime import datetime, timedelta
+            cursor.execute("""
+                SELECT COUNT(*) FROM active_sessions
+                WHERE license_key = %s 
+                AND last_heartbeat > NOW() - make_interval(secs => %s)
+            """, (license_key, SESSION_TIMEOUT_SECONDS))
+            result = cursor.fetchone()
+            return result[0] if result else 0
+    except Exception as e:
+        logging.error(f"Error counting symbol sessions: {e}")
+        return 0
+
+
 def load_experiences(symbol='ES'):
     """
     DEPRECATED: Bots use local experience files for decision-making.
@@ -1125,13 +1288,19 @@ def validate_license_endpoint():
     Parameters:
     - license_key: The license key to validate
     - device_fingerprint: Device fingerprint (may differ between launcher and bot due to PID)
+    - symbol: Trading symbol for multi-symbol session support (e.g., 'ES', 'NQ')
     - check_only: If True, only validate and check conflicts WITHOUT creating session (default: False)
+    
+    Multi-Symbol Session Support:
+    When a symbol is provided, sessions are managed per license+symbol combination,
+    allowing multiple bot instances (one per symbol) to run simultaneously.
     """
     try:
         data = request.get_json()
         license_key = data.get('license_key')
         device_fingerprint = data.get('device_fingerprint')
-        check_only = data.get('check_only', False)  # New parameter
+        symbol = data.get('symbol')  # MULTI-SYMBOL: Optional symbol for per-symbol sessions
+        check_only = data.get('check_only', False)
         
         if not license_key:
             return jsonify({
@@ -1165,8 +1334,70 @@ def validate_license_endpoint():
         conn = get_db_connection()
         if conn:
             try:
+                # Get license type first
                 with conn.cursor() as cursor:
-                    # Get current session info FIRST (before any clearing)
+                    cursor.execute("""
+                        SELECT license_type FROM users WHERE license_key = %s
+                    """, (license_key,))
+                    user = cursor.fetchone()
+                    license_type = user[0] if user else 'STANDARD'
+                
+                # MULTI-SYMBOL SESSION SUPPORT
+                # When symbol is provided, use per-symbol session management
+                if symbol and MULTI_SYMBOL_SESSIONS_ENABLED:
+                    # Ensure active_sessions table exists
+                    ensure_active_sessions_table(conn)
+                    
+                    # Check for session conflict for this specific symbol
+                    has_conflict, conflict_info = check_symbol_session_conflict(
+                        conn, license_key, symbol, device_fingerprint
+                    )
+                    
+                    if has_conflict:
+                        logging.warning(f"⚠️ BLOCKED - License {license_key} symbol {symbol} already in use by {conflict_info['device_fingerprint'][:8]}...")
+                        return jsonify({
+                            "license_valid": False,
+                            "session_conflict": True,
+                            "message": f"Symbol {symbol} Already Active - Another session is using this symbol. If the previous instance crashed, wait {conflict_info['seconds_remaining']} seconds.",
+                            "active_device": conflict_info['device_fingerprint'][:20] + "...",
+                            "symbol": symbol,
+                            "estimated_wait_seconds": conflict_info['seconds_remaining']
+                        }), 403
+                    
+                    # No conflict for this symbol
+                    if check_only:
+                        logging.info(f"✅ License check-only validation passed for {license_key}/{symbol}")
+                        return jsonify({
+                            "license_valid": True,
+                            "message": f"License validated successfully for {symbol} (check only)",
+                            "session_conflict": False,
+                            "license_type": license_type,
+                            "symbol": symbol,
+                            "expiry_date": license_expiration.isoformat() if license_expiration else None
+                        }), 200
+                    
+                    # Create session for this symbol
+                    create_or_update_symbol_session(
+                        conn, license_key, symbol, device_fingerprint,
+                        metadata={"created_via": "validate-license"}
+                    )
+                    
+                    active_count = count_active_symbol_sessions(conn, license_key)
+                    logging.info(f"✅ License validated, session created for {license_key}/{symbol} (device {device_fingerprint[:8]}..., {active_count} active symbols)")
+                    
+                    return jsonify({
+                        "license_valid": True,
+                        "message": f"License validated successfully for {symbol}",
+                        "session_conflict": False,
+                        "license_type": license_type,
+                        "symbol": symbol,
+                        "active_symbols": active_count,
+                        "expiry_date": license_expiration.isoformat() if license_expiration else None
+                    }), 200
+                
+                # LEGACY: No symbol provided - use original single-session logic
+                # This maintains backward compatibility with older bot versions
+                with conn.cursor() as cursor:
                     cursor.execute("""
                         SELECT device_fingerprint, last_heartbeat, license_type
                         FROM users
@@ -1270,11 +1501,24 @@ def validate_license_endpoint():
 
 @app.route('/api/heartbeat', methods=['POST'])
 def heartbeat():
-    """Record bot heartbeat for online status tracking with session locking"""
+    """
+    Record bot heartbeat for online status tracking with session locking.
+    
+    Parameters:
+    - license_key: The license key
+    - device_fingerprint: Device fingerprint
+    - symbol: Trading symbol for multi-symbol session support (optional)
+    - metadata: Additional metadata (status, bot_version, etc.)
+    
+    Multi-Symbol Session Support:
+    When a symbol is provided, heartbeats are managed per license+symbol,
+    allowing multiple bot instances to maintain their own sessions.
+    """
     try:
         data = request.get_json()
         license_key = data.get('license_key')
         device_fingerprint = data.get('device_fingerprint')
+        symbol = data.get('symbol')  # MULTI-SYMBOL: Optional symbol for per-symbol sessions
         
         if not license_key:
             return jsonify({"status": "error", "message": "License key required"}), 400
@@ -1296,6 +1540,55 @@ def heartbeat():
         conn = get_db_connection()
         if conn:
             try:
+                # MULTI-SYMBOL SESSION SUPPORT
+                # When symbol is provided, use per-symbol session management
+                if symbol and MULTI_SYMBOL_SESSIONS_ENABLED:
+                    # Check for session conflict for this specific symbol
+                    has_conflict, conflict_info = check_symbol_session_conflict(
+                        conn, license_key, symbol, device_fingerprint
+                    )
+                    
+                    if has_conflict:
+                        logging.warning(f"⚠️ Runtime session conflict for {license_key}/{symbol}: Device {device_fingerprint[:8]}... tried heartbeat while {conflict_info['device_fingerprint'][:8]}... is active")
+                        return jsonify({
+                            "status": "error",
+                            "session_conflict": True,
+                            "message": f"Symbol {symbol} already in use on another device",
+                            "active_device": conflict_info['device_fingerprint'][:8] + "...",
+                            "symbol": symbol
+                        }), 403
+                    
+                    # Update session for this symbol
+                    create_or_update_symbol_session(
+                        conn, license_key, symbol, device_fingerprint,
+                        metadata=data.get('metadata', {})
+                    )
+                    
+                    # Also insert into heartbeats table for history
+                    with conn.cursor() as cursor:
+                        cursor.execute("""
+                            INSERT INTO heartbeats (license_key, bot_version, status, metadata)
+                            VALUES (%s, %s, %s, %s)
+                        """, (
+                            license_key,
+                            data.get('bot_version', 'unknown'),
+                            data.get('status', 'online'),
+                            json.dumps(data.get('metadata', {}))
+                        ))
+                        conn.commit()
+                    
+                    active_count = count_active_symbol_sessions(conn, license_key)
+                    
+                    return jsonify({
+                        "status": "success",
+                        "message": f"Heartbeat recorded for {symbol}",
+                        "license_valid": True,
+                        "session_conflict": False,
+                        "symbol": symbol,
+                        "active_symbols": active_count
+                    }), 200
+                
+                # LEGACY: No symbol provided - use original single-session logic
                 with conn.cursor() as cursor:
                     # Check for existing active session (last heartbeat within SESSION_TIMEOUT_SECONDS)
                     cursor.execute("""
@@ -1365,11 +1658,23 @@ def heartbeat():
 
 @app.route('/api/session/release', methods=['POST'])
 def release_session():
-    """Release session lock when bot shuts down"""
+    """
+    Release session lock when bot shuts down.
+    
+    Parameters:
+    - license_key: The license key
+    - device_fingerprint: Device fingerprint
+    - symbol: Trading symbol for multi-symbol session support (optional)
+    
+    Multi-Symbol Session Support:
+    When a symbol is provided, only the session for that specific symbol is released,
+    allowing other symbol sessions to continue running.
+    """
     try:
         data = request.get_json()
         license_key = data.get('license_key')
         device_fingerprint = data.get('device_fingerprint')
+        symbol = data.get('symbol')  # MULTI-SYMBOL: Optional symbol for per-symbol sessions
         
         if not license_key:
             return jsonify({"status": "error", "message": "License key required"}), 400
@@ -1386,6 +1691,27 @@ def release_session():
         conn = get_db_connection()
         if conn:
             try:
+                # MULTI-SYMBOL SESSION SUPPORT
+                # When symbol is provided, release only the specific symbol session
+                if symbol and MULTI_SYMBOL_SESSIONS_ENABLED:
+                    released = release_symbol_session(conn, license_key, symbol, device_fingerprint)
+                    
+                    if released:
+                        active_count = count_active_symbol_sessions(conn, license_key)
+                        logging.info(f"✅ Session released for {license_key}/{symbol} from device {device_fingerprint[:8]}... ({active_count} active symbols remaining)")
+                        return jsonify({
+                            "status": "success",
+                            "message": f"Session released for {symbol}",
+                            "symbol": symbol,
+                            "active_symbols": active_count
+                        }), 200
+                    else:
+                        return jsonify({
+                            "status": "info",
+                            "message": f"No active session found for {symbol} on this device"
+                        }), 200
+                
+                # LEGACY: No symbol provided - use original single-session logic
                 with conn.cursor() as cursor:
                     # Only release if this device owns the session
                     cursor.execute("""
