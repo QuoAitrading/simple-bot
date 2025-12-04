@@ -207,6 +207,9 @@ def run_backtest(args: argparse.Namespace) -> Dict[str, Any]:
     if args.symbol:
         bot_config.instrument = args.symbol
     
+    # Extract symbol once - used throughout this function
+    symbol = bot_config.instrument
+    
     # Convert config to dict early for header
     bot_config_dict = bot_config.to_dict()
     
@@ -219,7 +222,6 @@ def run_backtest(args: argparse.Namespace) -> Dict[str, Any]:
     elif args.days:
         # Load the CSV to get the actual end date of available data
         data_path = args.data_path if args.data_path else os.path.join(PROJECT_ROOT, "data/historical_data")
-        symbol = args.symbol if args.symbol else bot_config.instrument
         csv_path = os.path.join(data_path, f"{symbol}_1min.csv")
         
         if os.path.exists(csv_path):
@@ -249,7 +251,7 @@ def run_backtest(args: argparse.Namespace) -> Dict[str, Any]:
     reporter.print_header(
         start_date=start_date.strftime('%Y-%m-%d'),
         end_date=end_date.strftime('%Y-%m-%d'),
-        symbol=args.symbol if args.symbol else bot_config.instrument,
+        symbol=symbol,
         config=bot_config_dict
     )
         
@@ -260,7 +262,7 @@ def run_backtest(args: argparse.Namespace) -> Dict[str, Any]:
         start_date=start_date,
         end_date=end_date,
         initial_equity=bot_config.account_size,
-        symbols=[args.symbol] if args.symbol else [bot_config.instrument],
+        symbols=[symbol],
         data_path=data_path,
         use_tick_data=args.use_tick_data
     )
@@ -441,7 +443,6 @@ def run_backtest(args: argparse.Namespace) -> Dict[str, Any]:
     
     # Save RL experiences at the end
     print("Saving RL experiences...")
-    symbol = args.symbol if args.symbol else bot_config.instrument
     experience_path = f"experiences/{symbol}/signal_experience.json"
     if rl_brain is not None and hasattr(rl_brain, 'save_experience'):
         rl_brain.save_experience()
