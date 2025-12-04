@@ -148,28 +148,35 @@ class SignalConfidenceRL:
         # same outcome to be stored twice just because the exploration rate
         # was different during collection.
         key_fields = [
-            'timestamp', 'symbol', 'price', 'pnl', 'duration', 'took_trade',
-            'regime', 'volatility_regime', 'rsi', 'vwap_distance', 'vwap_slope',
-            'atr', 'atr_slope', 'macd_hist', 'stoch_k',
-            'volume_ratio', 'volume_slope', 'hour', 'session',
-            'mfe', 'mae', 'returns',
-            'order_type_used', 'entry_slippage_ticks',
+            # Core identification fields
+            'timestamp', 'symbol', 'price',
+            # Outcome fields - these make each trade unique
+            'pnl', 'duration', 'took_trade', 'exit_reason',
+            # Market state fields (match actual field names in experience file)
+            'flush_size_ticks', 'flush_velocity', 'flush_direction',
+            'distance_from_flush_low', 'rsi', 'volume_climax_ratio',
+            'vwap_distance_ticks', 'atr', 'regime', 'hour', 'session',
+            # Execution quality fields
+            'mfe', 'mae', 'order_type_used', 'entry_slippage_ticks',
+            # Risk parameters
+            'stop_distance_ticks', 'target_distance_ticks', 'risk_reward_ratio',
+            # Binary confirmation flags
+            'reversal_candle', 'no_new_extreme',
             # 'exploration_rate' - EXCLUDED: metadata about collection, not signal quality
         ]
         
-        # Get exit_reason from either execution_data or experience dict
-        exit_reason = None
-        if execution_data and 'exit_reason' in execution_data:
-            exit_reason = execution_data['exit_reason']
-        elif 'exit_reason' in experience:
-            exit_reason = experience['exit_reason']
-        key_fields.append('exit_reason')
-        
         # Build key from all significant values
+        # Handle exit_reason specially - check execution_data first, then experience dict
         values = []
         for field in key_fields:
             if field == 'exit_reason':
-                val = exit_reason
+                # Check execution_data first (for new experiences being recorded)
+                if execution_data and 'exit_reason' in execution_data:
+                    val = execution_data['exit_reason']
+                elif 'exit_reason' in experience:
+                    val = experience['exit_reason']
+                else:
+                    val = None
             elif field in experience:
                 val = experience[field]
             else:

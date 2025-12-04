@@ -39,21 +39,30 @@ def experience_hash(exp):
     same outcome to be stored twice just because the exploration rate
     was different during collection.
     
+    Uses the ACTUAL field names from the experience file to ensure proper matching.
+    
     Args:
         exp: Experience dictionary
         
     Returns:
         Hash string representing the experience
     """
-    # ALL fields that make an experience unique
-    # exploration_rate is EXCLUDED - it's collection metadata, not signal quality
+    # ALL fields that make an experience unique - using ACTUAL field names
     key_fields = [
-        'timestamp', 'symbol', 'price', 'pnl', 'duration', 'took_trade',
-        'regime', 'volatility_regime', 'rsi', 'vwap_distance', 'vwap_slope',
-        'atr', 'atr_slope', 'macd_hist', 'stoch_k',
-        'volume_ratio', 'volume_slope', 'hour', 'session',
-        'exit_reason', 'mfe', 'mae', 'returns',
-        'order_type_used', 'entry_slippage_ticks',
+        # Core identification fields
+        'timestamp', 'symbol', 'price',
+        # Outcome fields - these make each trade unique
+        'pnl', 'duration', 'took_trade', 'exit_reason',
+        # Market state fields (match actual field names in experience file)
+        'flush_size_ticks', 'flush_velocity', 'flush_direction',
+        'distance_from_flush_low', 'rsi', 'volume_climax_ratio',
+        'vwap_distance_ticks', 'atr', 'regime', 'hour', 'session',
+        # Execution quality fields
+        'mfe', 'mae', 'order_type_used', 'entry_slippage_ticks',
+        # Risk parameters
+        'stop_distance_ticks', 'target_distance_ticks', 'risk_reward_ratio',
+        # Binary confirmation flags
+        'reversal_candle', 'no_new_extreme',
         # 'exploration_rate' - EXCLUDED: metadata about collection, not signal quality
     ]
     
