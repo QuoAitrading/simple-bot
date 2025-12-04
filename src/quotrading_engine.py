@@ -4788,11 +4788,19 @@ def check_stop_hit(symbol: str, current_bar: Dict[str, Any], position: Dict[str,
 
 def check_reversal_signal(symbol: str, current_bar: Dict[str, Any], position: Dict[str, Any]) -> Tuple[bool, Optional[float]]:
     """
-    Check if price has reverted to VWAP (mean reversion target achieved).
+    Check if price has reached VWAP BEFORE trailing stop activates.
     
-    CAPITULATION REVERSAL STRATEGY:
-    The target is VWAP (fair value). When price reaches VWAP from an extreme
-    (flush low for longs, flush high for shorts), the mean reversion is complete.
+    CAPITULATION REVERSAL EXIT STRATEGY:
+    - Trailing stop handles all profit-taking (activates at 15+ ticks profit)
+    - VWAP is a SAFETY NET only used if price reaches VWAP before trailing activates
+    - Once trailing is active (15+ ticks), ignore VWAP and let trailing ride
+    
+    Logic:
+    - If price reaches VWAP before trailing activates (before 15 ticks profit): exit at VWAP
+    - If trailing activates first (15+ ticks profit): let it ride, ignore VWAP target
+    - Trailing stop eventually exits you, either at VWAP or beyond
+    
+    This captures more profit on big reversals while still protecting gains on weak ones.
     
     Args:
         symbol: Instrument symbol
@@ -4800,24 +4808,46 @@ def check_reversal_signal(symbol: str, current_bar: Dict[str, Any], position: Di
         position: Position dictionary
     
     Returns:
-        Tuple of (target_reached, exit_price)
+        Tuple of (should_exit_at_vwap, exit_price)
     """
+    # If trailing stop is already active, DO NOT use VWAP target
+    # Let trailing stop manage the exit for maximum profit capture
+    if position.get("trailing_stop_active", False):
+        return False, None
+    
     vwap = state[symbol].get("vwap")
     side = position["side"]
+    entry_price = position.get("entry_price", 0)
     
     # VWAP not available - cannot check target
     if vwap is None or vwap <= 0:
         return False, None
     
-    # For long positions: price reaching or exceeding VWAP means target hit
-    if side == "long":
-        if current_bar["close"] >= vwap:
-            return True, current_bar["close"]
+    # Calculate current profit in ticks
+    tick_size = CONFIG.get("tick_size", 0.25)
+    current_price = current_bar["close"]
     
-    # For short positions: price reaching or falling below VWAP means target hit
+    if side == "long":
+        profit_ticks = (current_price - entry_price) / tick_size
+    else:
+        profit_ticks = (entry_price - current_price) / tick_size
+    
+    # Check if trailing stop would be active at this profit level
+    trailing_trigger = CONFIG.get("trailing_trigger_ticks", 15)
+    if profit_ticks >= trailing_trigger:
+        # Trailing stop should be active - don't use VWAP target
+        return False, None
+    
+    # Trailing not active yet - check if we've reached VWAP (safety net)
+    if side == "long":
+        if current_price >= vwap:
+            logger.info(f"📊 VWAP TARGET HIT (before trailing): Price ${current_price:.2f} >= VWAP ${vwap:.2f}")
+            return True, current_price
+    
     if side == "short":
-        if current_bar["close"] <= vwap:
-            return True, current_bar["close"]
+        if current_price <= vwap:
+            logger.info(f"📊 VWAP TARGET HIT (before trailing): Price ${current_price:.2f} <= VWAP ${vwap:.2f}")
+            return True, current_price
     
     return False, None
 
