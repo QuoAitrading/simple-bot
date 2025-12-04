@@ -714,6 +714,7 @@
                         <th style="width: 140px">API Key</th>
                         <th style="width: 80px">License</th>
                         <th style="width: 100px">Expires</th>
+                        <th style="width: 100px" title="Time until license expires">⏱️ Countdown</th>
                         <th style="width: 80px">Symbol</th>
                         <th style="width: 90px">Session P&L</th>
                         <th style="width: 70px">Trades</th>
@@ -725,7 +726,7 @@
                 </thead>
                 <tbody id="usersTableBody">
                     <tr>
-                        <td colspan="13" class="empty-state">
+                        <td colspan="14" class="empty-state">
                             <div class="empty-state-icon">📋</div>
                             <div class="empty-state-text">Loading users...</div>
                         </td>
@@ -854,11 +855,19 @@
                                 Generate a new license key instantly.
                             </p>
                             
-                            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 16px;">
+                            <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; margin-bottom: 16px;">
                                 <div>
-                                    <label style="display: block; margin-bottom: 6px; color: #202124; font-weight: 500; font-size: 13px;">Days Valid</label>
-                                    <input type="number" id="createDays" value="30" min="1" 
+                                    <label style="display: block; margin-bottom: 6px; color: #202124; font-weight: 500; font-size: 13px;">Duration</label>
+                                    <input type="number" id="createDuration" value="30" min="1" 
                                         style="width: 100%; padding: 8px 12px; border: 1px solid #dadce0; border-radius: 4px; font-size: 14px;">
+                                </div>
+                                <div>
+                                    <label style="display: block; margin-bottom: 6px; color: #202124; font-weight: 500; font-size: 13px;">Unit</label>
+                                    <select id="createDurationUnit" style="width: 100%; padding: 8px 12px; border: 1px solid #dadce0; border-radius: 4px; font-size: 14px;">
+                                        <option value="minutes">Minutes</option>
+                                        <option value="hours">Hours</option>
+                                        <option value="days" selected>Days</option>
+                                    </select>
                                 </div>
                                 <div>
                                     <label style="display: block; margin-bottom: 6px; color: #202124; font-weight: 500; font-size: 13px;">License Type</label>
@@ -867,6 +876,17 @@
                                         <option value="PREMIUM">PREMIUM</option>
                                         <option value="ADMIN">ADMIN</option>
                                     </select>
+                                </div>
+                            </div>
+                            <div style="margin-bottom: 16px;">
+                                <label style="display: block; margin-bottom: 6px; color: #5f6368; font-size: 12px;">Quick Presets:</label>
+                                <div style="display: flex; gap: 8px; flex-wrap: wrap;">
+                                    <button type="button" onclick="setDuration(5, 'minutes')" style="padding: 4px 10px; border: 1px solid #dadce0; border-radius: 4px; background: #fff; cursor: pointer; font-size: 12px;">5 min</button>
+                                    <button type="button" onclick="setDuration(15, 'minutes')" style="padding: 4px 10px; border: 1px solid #dadce0; border-radius: 4px; background: #fff; cursor: pointer; font-size: 12px;">15 min</button>
+                                    <button type="button" onclick="setDuration(1, 'hours')" style="padding: 4px 10px; border: 1px solid #dadce0; border-radius: 4px; background: #fff; cursor: pointer; font-size: 12px;">1 hour</button>
+                                    <button type="button" onclick="setDuration(1, 'days')" style="padding: 4px 10px; border: 1px solid #dadce0; border-radius: 4px; background: #fff; cursor: pointer; font-size: 12px;">1 day</button>
+                                    <button type="button" onclick="setDuration(7, 'days')" style="padding: 4px 10px; border: 1px solid #dadce0; border-radius: 4px; background: #fff; cursor: pointer; font-size: 12px;">7 days</button>
+                                    <button type="button" onclick="setDuration(30, 'days')" style="padding: 4px 10px; border: 1px solid #dadce0; border-radius: 4px; background: #fff; cursor: pointer; font-size: 12px;">30 days</button>
                                 </div>
                             </div>
                             
@@ -1626,9 +1646,29 @@
                 allUsers = data.users;
                 
                 renderUsers(allUsers);
+                startCountdownTimer(); // Start live countdown updates
             } catch (error) {
                 console.error('Failed to load users:', error);
             }
+        }
+
+        // Live countdown timer - updates every second
+        let countdownInterval = null;
+        function startCountdownTimer() {
+            // Clear any existing interval
+            if (countdownInterval) {
+                clearInterval(countdownInterval);
+            }
+            // Update countdown cells every second
+            countdownInterval = setInterval(() => {
+                const countdownCells = document.querySelectorAll('[data-expiration]');
+                countdownCells.forEach(cell => {
+                    const expiration = cell.getAttribute('data-expiration');
+                    if (expiration) {
+                        cell.innerHTML = formatCountdown(expiration);
+                    }
+                });
+            }, 1000);
         }
 
         function renderUsers(users) {
@@ -1637,7 +1677,7 @@
             if (users.length === 0) {
                 tbody.innerHTML = `
                     <tr>
-                        <td colspan="13" class="empty-state">
+                        <td colspan="14" class="empty-state">
                             <div class="empty-state-icon">📋</div>
                             <div class="empty-state-text">No users found</div>
                         </td>
@@ -1687,6 +1727,7 @@
                         ${formatDate(user.license_expiration) || 'Never'}
                         ${expirationInfo.badge ? `<br><span class="badge ${expirationInfo.badgeClass}">${expirationInfo.badge}</span>` : ''}
                     </td>
+                    <td style="font-size: 12px;" data-expiration="${user.license_expiration || ''}">${formatCountdown(user.license_expiration)}</td>
                     <td>${symbol}</td>
                     <td>${sessionPnl}</td>
                     <td>${trades}</td>
@@ -2181,9 +2222,20 @@
         }
 
         async function createNewLicense() {
-            const days = document.getElementById('createDays').value;
+            const duration = document.getElementById('createDuration').value;
+            const durationUnit = document.getElementById('createDurationUnit').value;
             const licenseType = document.getElementById('createLicenseType').value;
             const resultDiv = document.getElementById('createResult');
+            
+            // Convert duration to minutes for the API
+            let minutes_valid;
+            if (durationUnit === 'minutes') {
+                minutes_valid = parseInt(duration);
+            } else if (durationUnit === 'hours') {
+                minutes_valid = parseInt(duration) * 60;
+            } else {
+                minutes_valid = parseInt(duration) * 24 * 60;
+            }
             
             resultDiv.innerHTML = `
                 <div style="text-align: center; padding: 16px; color: #5f6368; font-size: 13px;">
@@ -2200,7 +2252,7 @@
                         account_id: `user_${Date.now()}`,
                         email: `user_${Date.now()}@quotrading.com`,
                         license_type: licenseType,
-                        days_valid: parseInt(days),
+                        minutes_valid: minutes_valid,
                         send_email: false
                     })
                 });
@@ -2216,11 +2268,15 @@
                                 <div style="font-size: 11px; color: #5f6368; margin-bottom: 4px;">LICENSE KEY</div>
                                 <div style="font-family: 'Courier New', monospace; font-size: 13px; color: #202124; font-weight: 600;">${data.license_key}</div>
                             </div>
+                            <div style="font-size: 12px; color: #5f6368; text-align: center;">
+                                Expires: ${new Date(data.expiration).toLocaleString()}
+                            </div>
                         </div>
                     `;
                     
                     // Reset form
-                    document.getElementById('createDays').value = '30';
+                    document.getElementById('createDuration').value = '30';
+                    document.getElementById('createDurationUnit').value = 'days';
                     
                     // Refresh dashboard
                     setTimeout(() => loadDashboard(), 1000);
@@ -2655,10 +2711,61 @@
             if (!dateStr) return 'Never';
             const seconds = Math.floor((new Date() - new Date(dateStr)) / 1000);
             
+            // Handle future dates (negative seconds) - shouldn't happen for last_active
+            if (seconds < 0) return 'Just now';
+            
             if (seconds < 60) return seconds + 's ago';
             if (seconds < 3600) return Math.floor(seconds / 60) + 'm ago';
             if (seconds < 86400) return Math.floor(seconds / 3600) + 'h ago';
             return Math.floor(seconds / 86400) + 'd ago';
+        }
+
+        // Countdown timer for license expiration
+        function formatCountdown(expirationDateStr) {
+            if (!expirationDateStr) return 'N/A';
+            const now = new Date();
+            const expiration = new Date(expirationDateStr);
+            const diffMs = expiration - now;
+            
+            // Already expired
+            if (diffMs <= 0) {
+                return '<span style="color: #d93025; font-weight: 600;">EXPIRED</span>';
+            }
+            
+            const diffSeconds = Math.floor(diffMs / 1000);
+            const diffMinutes = Math.floor(diffSeconds / 60);
+            const diffHours = Math.floor(diffMinutes / 60);
+            const diffDays = Math.floor(diffHours / 24);
+            
+            // Less than 1 hour - show minutes and seconds
+            if (diffMinutes < 60) {
+                const mins = diffMinutes;
+                const secs = diffSeconds % 60;
+                return `<span style="color: #d93025; font-weight: 600;">${mins}m ${secs}s</span>`;
+            }
+            
+            // Less than 24 hours - show hours and minutes
+            if (diffHours < 24) {
+                const hrs = diffHours;
+                const mins = diffMinutes % 60;
+                return `<span style="color: #ea8600; font-weight: 600;">${hrs}h ${mins}m</span>`;
+            }
+            
+            // Less than 7 days - show days and hours
+            if (diffDays < 7) {
+                const days = diffDays;
+                const hrs = diffHours % 24;
+                return `<span style="color: #e37400;">${days}d ${hrs}h</span>`;
+            }
+            
+            // More than 7 days - just show days
+            return `<span style="color: #1e8e3e;">${diffDays}d</span>`;
+        }
+
+        // Helper function to set duration presets
+        function setDuration(value, unit) {
+            document.getElementById('createDuration').value = value;
+            document.getElementById('createDurationUnit').value = unit;
         }
 
         // Close modal on outside click
@@ -3593,7 +3700,7 @@
                     method: 'DELETE',
                     headers: {
                         'Content-Type': 'application/json',
-                        'X-API-Key': ADMIN_API_KEY
+                        'X-API-Key': ADMIN_KEY
                     },
                     body: JSON.stringify({
                         admin_key: ADMIN_KEY,
@@ -3688,7 +3795,7 @@
                     method: 'DELETE',
                     headers: {
                         'Content-Type': 'application/json',
-                        'X-API-Key': ADMIN_API_KEY
+                        'X-API-Key': ADMIN_KEY
                     },
                     body: JSON.stringify({
                         admin_key: ADMIN_KEY

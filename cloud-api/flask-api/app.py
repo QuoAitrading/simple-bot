@@ -2833,7 +2833,14 @@ def admin_delete_user(account_id):
 
 @app.route('/api/admin/add-user', methods=['POST'])
 def admin_add_user():
-    """Create a new user (same as create-license but formatted for dashboard)"""
+    """Create a new user (same as create-license but formatted for dashboard)
+    
+    Supports flexible duration:
+    - minutes_valid: Duration in minutes (for testing short-lived licenses)
+    - days_valid: Duration in days (default: 30)
+    
+    If minutes_valid is provided, it takes precedence over days_valid.
+    """
     admin_key = request.args.get('license_key') or request.args.get('admin_key')
     if admin_key != ADMIN_API_KEY:
         return jsonify({"error": "Unauthorized"}), 401
@@ -2841,6 +2848,10 @@ def admin_add_user():
     data = request.get_json()
     email = data.get('email')
     license_type = data.get('license_type', 'MONTHLY')
+    
+    # Support both minutes_valid and days_valid
+    # minutes_valid takes precedence for testing short-lived licenses
+    minutes_valid = data.get('minutes_valid')
     days_valid = data.get('days_valid', 30)
     
     conn = get_db_connection()
@@ -2850,7 +2861,14 @@ def admin_add_user():
     try:
         license_key = generate_license_key()
         account_id = f"user_{license_key[:8]}"
-        expiration = datetime.now() + timedelta(days=days_valid)
+        
+        # Calculate expiration based on provided duration
+        if minutes_valid is not None:
+            expiration = datetime.now() + timedelta(minutes=int(minutes_valid))
+            logging.info(f"Creating license with {minutes_valid} minutes validity (expires: {expiration})")
+        else:
+            expiration = datetime.now() + timedelta(days=int(days_valid))
+            logging.info(f"Creating license with {days_valid} days validity (expires: {expiration})")
         
         with conn.cursor() as cursor:
             cursor.execute("""
