@@ -291,32 +291,32 @@ class SignalConfidenceRL:
         """
         Calculate confidence based on similar past experiences.
         
-        CONFIDENCE FORMULA:
+        CONFIDENCE FORMULA (80/20 Rule):
         ==================
         Step 1: Find 10 most similar past trades
         Step 2: Calculate from those similar trades:
           - Win Rate = Winners / Total
           - Average Profit = Sum of profits / Count
           - Profit Score = min(Average Profit / 300, 1.0)
-          - Final Confidence = (Win Rate × 90%) + (Profit Score × 10%)
+          - Final Confidence = (Win Rate × 80%) + (Profit Score × 20%)
         Step 3: If average profit is negative → Auto reject (0% confidence)
         
         Example: 8 wins out of 10 = 80% WR, $120 avg profit
           Profit Score = 120/300 = 0.40
-          Confidence = (0.80 × 0.90) + (0.40 × 0.10) = 0.72 + 0.04 = 76%
+          Confidence = (0.80 × 0.80) + (0.40 × 0.20) = 0.64 + 0.08 = 72%
         
         Returns:
             (confidence, reason)
         """
         # Need at least 10 experiences before using them for decisions
         if len(self.experiences) < 10:
-            return 0.65, f"Limited experience ({len(self.experiences)} trades) - optimistic"
+            return 0.35, f"Limited experience ({len(self.experiences)} trades) - safety default"
         
         # Step 1: Find 10 most similar past trades
         similar = self.find_similar_states(current_state, max_results=10)
         
         if not similar:
-            return 0.5, "No similar situations - neutral confidence"
+            return 0.35, "No similar situations - safety default"
         
         # Step 2: Calculate metrics from similar trades
         # Win Rate = Winners / Total
@@ -334,8 +334,8 @@ class SignalConfidenceRL:
         # Profit Score = min(Average Profit / 300, 1.0)
         profit_score = min(avg_profit / 300.0, 1.0)
         
-        # Final Confidence = (Win Rate × 90%) + (Profit Score × 10%)
-        confidence = (win_rate * 0.90) + (profit_score * 0.10)
+        # Final Confidence = (Win Rate × 80%) + (Profit Score × 20%)
+        confidence = (win_rate * 0.80) + (profit_score * 0.20)
         confidence = max(0.0, min(1.0, confidence))
         
         reason = f"{len(similar)} similar: {win_rate*100:.0f}% WR, ${avg_profit:.0f} avg"
@@ -346,22 +346,33 @@ class SignalConfidenceRL:
         """
         Find past experiences with similar market states.
         
-        SIMPLIFIED PATTERN MATCHING (7 features):
-        ==========================================
-        - Flush Size (25%) - How big was the panic move in ticks
-        - Velocity (20%) - How fast was the flush in ticks per bar
-        - RSI (15%) - How extreme was RSI at entry
-        - Volume Spike (15%) - How much volume spiked vs average
-        - Distance From Extreme (10%) - How close to the flush low/high
-        - Regime Match (10%) - Same market regime or not
-        - Hour of Day (5%) - Same time of day or not
+        UPDATED PATTERN MATCHING (11 features for live and backtesting):
+        ================================================================
         
-        Pick the 10 most similar past trades.
+        Primary Flush Signals (50% total):
+        - Flush Size (20%) - How big was the panic move in ticks
+        - Velocity (15%) - How fast was the flush in ticks per bar
+        - Volume Climax (10%) - How much volume spiked vs average
+        - Flush Direction (5%) - Binary: same direction or not
+        
+        Entry Quality (25% total):
+        - RSI (8%) - How extreme was RSI at entry
+        - Distance From Flush Low (7%) - How close to the flush low/high
+        - Reversal Candle (5%) - Binary: both have reversal candle or not
+        - No New Extreme (5%) - Binary: both have no new extreme or not
+        
+        Market Context (15% total):
+        - VWAP Distance (8%) - Distance from VWAP in ticks
+        - Regime Match (7%) - Binary: same market regime or not
+        
+        Time Context (10% total):
+        - Session (6%) - Binary: both ETH or both RTH
+        - Hour of Day (4%) - Same time of day or not
         
         EXCLUDED (outcomes/metadata):
           ❌ timestamp, symbol, price, pnl, duration, took_trade,
-          ❌ mfe, mae, exit_reason, session, flush_direction,
-          ❌ bars_since_flush_start, target_distance_ticks, vwap, atr
+          ❌ mfe, mae, exit_reason, bars_since_flush_start, 
+          ❌ stop_distance_ticks, target_distance_ticks, risk_reward_ratio, atr
         """
         if not self.experiences:
             return []
@@ -375,36 +386,68 @@ class SignalConfidenceRL:
             # Calculate distance for each feature (normalized to 0-1 range)
             # Lower score = more similar
             
-            # Flush Size (25%) - How big was the panic move
-            flush_size_diff = abs(current.get('flush_size_ticks', 0) - past.get('flush_size_ticks', 0)) / 50  # Typical range 0-50 ticks
+            # === PRIMARY FLUSH SIGNALS (50% total) ===
             
-            # Velocity (20%) - How fast was the flush
-            flush_velocity_diff = abs(current.get('flush_velocity', 0) - past.get('flush_velocity', 0)) / 10  # Typical range 0-10 ticks/bar
+            # Flush Size (20%) - Normalize by dividing difference by 50
+            flush_size_diff = abs(current.get('flush_size_ticks', 0) - past.get('flush_size_ticks', 0)) / 50.0
             
-            # RSI (15%) - How extreme was RSI at entry
-            rsi_diff = abs(current.get('rsi', 50) - past.get('rsi', 50)) / 100  # 0-100 scale
+            # Velocity (15%) - Normalize by dividing difference by 10
+            flush_velocity_diff = abs(current.get('flush_velocity', 0) - past.get('flush_velocity', 0)) / 10.0
             
-            # Volume Spike (15%) - How much volume spiked vs average
-            volume_ratio_diff = abs(current.get('volume_climax_ratio', 1) - past.get('volume_climax_ratio', 1)) / 3  # Typical range 0-3
+            # Volume Climax (10%) - Normalize by dividing difference by 3
+            volume_climax_diff = abs(current.get('volume_climax_ratio', 1) - past.get('volume_climax_ratio', 1)) / 3.0
             
-            # Distance From Extreme (10%) - How close to the flush low/high
-            distance_from_low_diff = abs(current.get('distance_from_flush_low', 0) - past.get('distance_from_flush_low', 0)) / 20  # Typical range 0-20 ticks
+            # Flush Direction (5%) - Score 0 if match, score 1 if different
+            flush_direction_match = 0.0 if current.get('flush_direction', 'NEUTRAL') == past.get('flush_direction', 'NEUTRAL') else 1.0
             
-            # Regime Match (10%) - Binary: same regime or not
+            # === ENTRY QUALITY (25% total) ===
+            
+            # RSI (8%) - Normalize by dividing difference by 100
+            rsi_diff = abs(current.get('rsi', 50) - past.get('rsi', 50)) / 100.0
+            
+            # Distance From Flush Low (7%) - Normalize by dividing difference by 20
+            distance_from_low_diff = abs(current.get('distance_from_flush_low', 0) - past.get('distance_from_flush_low', 0)) / 20.0
+            
+            # Reversal Candle (5%) - Score 0 if both match, score 1 if different
+            reversal_candle_match = 0.0 if current.get('reversal_candle', False) == past.get('reversal_candle', False) else 1.0
+            
+            # No New Extreme (5%) - Score 0 if both match, score 1 if different
+            no_new_extreme_match = 0.0 if current.get('no_new_extreme', False) == past.get('no_new_extreme', False) else 1.0
+            
+            # === MARKET CONTEXT (15% total) ===
+            
+            # VWAP Distance (8%) - Normalize by dividing absolute difference by 100
+            vwap_distance_diff = abs(current.get('vwap_distance_ticks', 0) - past.get('vwap_distance_ticks', 0)) / 100.0
+            
+            # Regime Match (7%) - Score 0 if regimes match, score 1 if different
             regime_match = 0.0 if current.get('regime', 'NORMAL') == past.get('regime', 'NORMAL') else 1.0
             
-            # Hour of Day (5%) - Same time of day or not
-            hour_diff = abs(current.get('hour', 12) - past.get('hour', 12)) / 24  # 0-24 scale
+            # === TIME CONTEXT (10% total) ===
+            
+            # Session (6%) - Score 0 if both ETH or both RTH, score 1 if different
+            session_match = 0.0 if current.get('session', 'RTH') == past.get('session', 'RTH') else 1.0
+            
+            # Hour (4%) - Normalize by dividing difference by 24
+            hour_diff = abs(current.get('hour', 12) - past.get('hour', 12)) / 24.0
             
             # Weighted similarity score (lower is more similar)
             similarity = (
-                flush_size_diff * 0.25 +      # Flush Size (25%)
-                flush_velocity_diff * 0.20 +  # Velocity (20%)
-                rsi_diff * 0.15 +             # RSI (15%)
-                volume_ratio_diff * 0.15 +    # Volume Spike (15%)
-                distance_from_low_diff * 0.10 + # Distance From Extreme (10%)
-                regime_match * 0.10 +         # Regime Match (10%)
-                hour_diff * 0.05              # Hour of Day (5%)
+                # Primary Flush Signals (50%)
+                flush_size_diff * 0.20 +           # 20%
+                flush_velocity_diff * 0.15 +       # 15%
+                volume_climax_diff * 0.10 +        # 10%
+                flush_direction_match * 0.05 +     # 5%
+                # Entry Quality (25%)
+                rsi_diff * 0.08 +                  # 8%
+                distance_from_low_diff * 0.07 +    # 7%
+                reversal_candle_match * 0.05 +     # 5%
+                no_new_extreme_match * 0.05 +      # 5%
+                # Market Context (15%)
+                vwap_distance_diff * 0.08 +        # 8%
+                regime_match * 0.07 +              # 7%
+                # Time Context (10%)
+                session_match * 0.06 +             # 6%
+                hour_diff * 0.04                   # 4%
             )
             
             scored.append((similarity, exp))
