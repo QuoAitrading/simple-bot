@@ -2303,6 +2303,12 @@ def inject_complete_bar(symbol: str, bar: Dict[str, Any]) -> None:
     """
     global backtest_current_time
     
+    # DEBUG: Confirm bars are being injected
+    inject_count = state[symbol].get("inject_count", 0) + 1
+    state[symbol]["inject_count"] = inject_count
+    if inject_count <= 3:
+        print(f"DEBUG: inject_complete_bar called #{inject_count}, timestamp={bar.get('timestamp')}")
+    
     # BACKTEST MODE: Update simulation time so all time-based logic uses historical time
     if is_backtest_mode() and 'timestamp' in bar:
         backtest_current_time = bar['timestamp']
@@ -3499,12 +3505,23 @@ def check_for_signals(symbol: str) -> None:
     Args:
         symbol: Instrument symbol
     """
+    # DEBUG: Confirm function is being called
+    call_count = state[symbol].get("check_for_signals_count", 0) + 1
+    state[symbol]["check_for_signals_count"] = call_count
+    if call_count <= 5:
+        print(f"DEBUG: check_for_signals called #{call_count}")
+    
     # Check safety conditions first
     is_safe, reason = check_safety_conditions(symbol)
     if not is_safe:
         # SILENCE DURING MAINTENANCE - no spam in logs
         if not bot_status.get("maintenance_idle", False):
             logger.info(f"[SIGNAL CHECK] Safety check failed: {reason}")
+        # DEBUG: Log first few safety failures
+        safety_fail_count = state[symbol].get("safety_fail_count", 0) + 1
+        state[symbol]["safety_fail_count"] = safety_fail_count
+        if safety_fail_count <= 3:
+            print(f"DEBUG: Safety check failed - {reason}")
         return
     
     # Get the latest bar
@@ -3522,6 +3539,10 @@ def check_for_signals(symbol: str) -> None:
         # This helps users understand the bot is running but conditions aren't met
         validation_fail_counter = state[symbol].get("validation_fail_counter", 0) + 1
         state[symbol]["validation_fail_counter"] = validation_fail_counter
+        
+        # DEBUG: Log first few validation failures
+        if validation_fail_counter <= 5:
+            print(f"DEBUG: Validation failed - {reason}")
         
         # Log every 15 minutes (15 bars) - just show the reason, not strategy details
         if validation_fail_counter % 15 == 0:
