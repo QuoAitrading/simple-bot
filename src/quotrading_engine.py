@@ -1215,8 +1215,7 @@ def check_broker_connection() -> None:
                     bot_status["maintenance_idle"] = False
                     bot_status["idle_type"] = None
                     bot_status["trading_enabled"] = True
-                    logger.critical("  [RECONNECT] [OK] Trading enabled. Bot fully operational.")
-                    logger.critical("  [RECONNECT] [OK] Daily limits and VWAP reset at 6:00 PM ET")
+                    logger.info("Trading resumed after maintenance")
                 else:
                     logger.error("  [RECONNECT] [ERROR] Connection failed - Will retry periodically")
         except Exception as e:
@@ -2771,7 +2770,7 @@ def check_market_divergence(symbol: str, position_side: str) -> Tuple[bool, str]
 def calculate_vwap(symbol: str) -> None:
     """
     Calculate VWAP and standard deviation bands from 1-minute bars.
-    VWAP is volume-weighted average price, reset daily.
+    VWAP is calculated per bar without logging.
     
     Args:
         symbol: Instrument symbol
@@ -2819,19 +2818,6 @@ def calculate_vwap(symbol: str) -> None:
     state[symbol]["vwap_bands"]["lower_1"] = vwap - (std_dev * band_1_mult)
     state[symbol]["vwap_bands"]["lower_2"] = vwap - (std_dev * band_2_mult)
     state[symbol]["vwap_bands"]["lower_3"] = vwap - (std_dev * band_3_mult)
-    
-    # Log VWAP update every 10 bars to show bot is working
-    bar_count = len(bars)
-    if bar_count % 10 == 0:
-        pass  # Silent - VWAP calculation internal
-    else:
-        logger.debug(f"VWAP: {vwap:.2f}, StdDev: {std_dev:.2f}")
-        logger.debug(f"Bands - U3: {state[symbol]['vwap_bands']['upper_3']:.2f}, "
-                    f"U2: {state[symbol]['vwap_bands']['upper_2']:.2f}, "
-                    f"U1: {state[symbol]['vwap_bands']['upper_1']:.2f}, "
-                    f"L1: {state[symbol]['vwap_bands']['lower_1']:.2f}, "
-                    f"L2: {state[symbol]['vwap_bands']['lower_2']:.2f}, "
-                    f"L3: {state[symbol]['vwap_bands']['lower_3']:.2f}")
 
 
 # ============================================================================
@@ -6363,39 +6349,10 @@ def check_vwap_reset(symbol: str, current_time: datetime) -> None:
 
 def perform_vwap_reset(symbol: str, new_date: Any, reset_time: datetime) -> None:
     """
-    Perform VWAP reset at 6:00 PM ET daily (futures trading day start).
-    
-    Args:
-        symbol: Instrument symbol
-        new_date: The new VWAP date
-        reset_time: Time of the reset
+    DISABLED: VWAP reset function - not called per strategy requirements.
+    Strategy only needs accurate VWAP value for current bar.
     """
-    logger.info(SEPARATOR_LINE)
-    logger.info(f"VWAP RESET at {reset_time.strftime('%Y-%m-%d %H:%M:%S %Z')}")
-    logger.info(f"Futures trading day start (6:00 PM ET) - New VWAP session: {new_date}")
-    logger.info(SEPARATOR_LINE)
-    
-    # Clear accumulated 1-minute bars for VWAP calculation
-    state[symbol]["bars_1min"].clear()
-    
-    # Reset cumulative VWAP data
-    state[symbol]["vwap"] = None
-    state[symbol]["vwap_bands"] = {
-        "upper_1": None,
-        "upper_2": None,
-        "lower_1": None,
-        "lower_2": None
-    }
-    state[symbol]["vwap_std_dev"] = None
-    
-    # Update VWAP day
-    state[symbol]["vwap_day"] = new_date
-    
-    # Note: 15-minute trend bars continue running - trend carries from overnight
-    logger.info("[OK] VWAP data cleared - starting fresh daily VWAP calculation")
-    logger.info("[OK] 1-minute bars cleared")
-    logger.info(f"[OK] 15-minute trend bars continue ({len(state[symbol]['bars_15min'])} bars)")
-    logger.info(SEPARATOR_LINE)
+    pass  # Function disabled - VWAP continues calculating without reset
 
 
 def check_daily_reset(symbol: str, current_time: datetime) -> None:
@@ -6434,7 +6391,6 @@ def perform_daily_reset(symbol: str, new_date: Any) -> None:
     """
     logger.info(SEPARATOR_LINE)
     logger.info(f"DAILY RESET - New Trading Day: {new_date}")
-    logger.info(f"Resetting at 6:00 PM ET after maintenance window")
     logger.info(SEPARATOR_LINE)
     
     # Log session summary before reset
@@ -7824,11 +7780,11 @@ def handle_time_check_event(data: Dict[str, Any]) -> None:
 
 
 def handle_vwap_reset_event(data: Dict[str, Any]) -> None:
-    """Handle VWAP reset event"""
-    symbol = CONFIG["instrument"]
-    if symbol in state:
-        tz = pytz.timezone(CONFIG["timezone"])
-        check_vwap_reset(symbol, datetime.now(tz))
+    """Handle VWAP reset event - DISABLED per strategy requirements"""
+    # VWAP reset disabled: Strategy only needs accurate VWAP for current bar (condition 8)
+    # No need to reset VWAP at maintenance open - just keep calculating as usual
+    # The capitulation reversal strategy doesn't depend on VWAP bands or mean reversion
+    pass
 
 
 def handle_position_reconciliation_event(data: Dict[str, Any]) -> None:

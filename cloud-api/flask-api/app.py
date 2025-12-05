@@ -9,7 +9,7 @@ import json
 import psycopg2
 from psycopg2 import pool, sql as psycopg2_sql
 from psycopg2.extras import RealDictCursor
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import logging
 import secrets
 import string
@@ -1309,6 +1309,7 @@ def hello():
         "message": "✅ QuoTrading Cloud API - Data Collection Only",
         "endpoints": [
             "POST /api/rl/submit-outcome - Submit trade outcome",
+            "GET /api/profile - Get user profile and trading statistics",
             "GET /api/hello - Health check"
         ],
         "database_configured": bool(DB_PASSWORD),
@@ -2088,7 +2089,14 @@ def update_license_status():
 
 @app.route('/api/admin/create-license', methods=['POST'])
 def create_license():
-    """Create a new license (admin only)"""
+    """Create a new license (admin only)
+    
+    Supports flexible duration:
+    - minutes_valid: Duration in minutes (for testing short-lived licenses)
+    - duration_days: Duration in days (default: 30)
+    
+    If minutes_valid is provided, it takes precedence over duration_days.
+    """
     try:
         data = request.get_json()
         
@@ -2099,6 +2107,10 @@ def create_license():
         
         email = data.get('email')
         license_type = data.get('license_type', 'standard')
+        
+        # Support both minutes_valid and duration_days
+        # minutes_valid takes precedence for testing short-lived licenses
+        minutes_valid = data.get('minutes_valid')
         duration_days = data.get('duration_days', 30)
         
         if not email:
@@ -2106,7 +2118,16 @@ def create_license():
         
         license_key = generate_license_key()
         account_id = f"ACC-{secrets.token_hex(8).upper()}"
-        expiration = datetime.now() + timedelta(days=duration_days)
+        
+        # Calculate expiration based on provided duration
+        if minutes_valid is not None:
+            expiration = datetime.now() + timedelta(minutes=int(minutes_valid))
+            logging.info(f"Creating license with {minutes_valid} minutes validity (expires: {expiration})")
+            duration_desc = f"{minutes_valid} minutes"
+        else:
+            expiration = datetime.now() + timedelta(days=duration_days)
+            logging.info(f"Creating license with {duration_days} days validity (expires: {expiration})")
+            duration_desc = f"{duration_days} days"
         
         conn = get_db_connection()
         if not conn:
@@ -2127,7 +2148,7 @@ def create_license():
                 "email": email,
                 "license_type": license_type,
                 "expires_at": expiration.isoformat(),
-                "duration_days": duration_days
+                "duration": duration_desc
             }), 201
             
         finally:
@@ -3369,6 +3390,235 @@ def submit_outcome():
 # ============================================================================
 
 # ============================================================================
+# USER PROFILE ENDPOINT
+# ============================================================================
+
+@app.route('/api/profile', methods=['GET'])
+def get_user_profile():
+    """
+    Get user profile information (self-service)
+    Users can view their own account details and trading statistics
+    
+    Authentication: License key via query parameter or Authorization header
+    ?license_key=LIC-KEY-123 OR Authorization: Bearer LIC-KEY-123
+    
+    Response:
+    {
+        "status": "success",
+        "profile": {
+            "account_id": "ACC123",
+            "email": "us***@example.com",  // Masked for security
+            "license_type": "Monthly",
+            "license_status": "active",
+            "license_expiration": "2025-12-31T23:59:59",
+            "days_until_expiration": 27,
+            "created_at": "2025-01-01T00:00:00",
+            "account_age_days": 337,
+            "last_active": "2025-12-04T20:00:00",
+            "is_online": true
+        },
+        "trading_stats": {
+            "total_trades": 150,
+            "total_pnl": 5420.50,
+            "avg_pnl_per_trade": 36.14,
+            "winning_trades": 95,
+            "losing_trades": 55,
+            "win_rate_percent": 63.33,
+            "best_trade": 250.00,
+            "worst_trade": -180.00
+        },
+        "recent_activity": {
+            "api_calls_today": 45,
+            "api_calls_total": 1234,
+            "last_heartbeat": "2025-12-04T20:30:00",
+            "current_device": "abc123...",
+            "symbols_traded": ["ES", "NQ", "YM"]
+        }
+    }
+    """
+    try:
+        # Get license key from query parameter or Authorization header
+        license_key = request.args.get('license_key')
+        if not license_key:
+            auth_header = request.headers.get('Authorization', '')
+            if auth_header.startswith('Bearer '):
+                license_key = auth_header.replace('Bearer ', '').strip()
+        
+        if not license_key:
+            return jsonify({"error": "License key required. Use ?license_key=KEY or Authorization: Bearer KEY"}), 400
+        
+        # Rate limiting to prevent abuse (global limit of 100 requests per minute)
+        allowed, rate_msg = check_rate_limit(license_key, '/api/profile')
+        if not allowed:
+            logging.warning(f"⚠️ Rate limit exceeded for /api/profile: {mask_sensitive(license_key)}")
+            return jsonify({"error": rate_msg}), 429
+        
+        # Validate license key (returns is_valid, message, expiration_datetime)
+        is_valid, msg, _ = validate_license(license_key)
+        if not is_valid:
+            logging.warning(f"⚠️ Invalid license key in /api/profile: {mask_sensitive(license_key)}")
+            return jsonify({"error": "Invalid license key"}), 401
+        
+        # Get database connection to check user status
+        conn = get_db_connection()
+        if not conn:
+            return jsonify({"error": "Database connection failed"}), 500
+        
+        try:
+            with conn.cursor(cursor_factory=RealDictCursor) as cursor:
+                # 1. Get user profile details and check status
+                cursor.execute("""
+                    SELECT account_id, email, license_type, license_status,
+                           license_expiration, created_at, last_heartbeat,
+                           device_fingerprint
+                    FROM users
+                    WHERE license_key = %s
+                """, (license_key,))
+                user = cursor.fetchone()
+                
+                if not user:
+                    return jsonify({"error": "User not found"}), 404
+                
+                # Check if account is suspended
+                if user['license_status'].upper() == 'SUSPENDED':
+                    logging.warning(f"⚠️ Suspended account tried to access profile: {mask_sensitive(license_key)}")
+                    return jsonify({"error": "Account suspended. Contact support."}), 403
+                
+                # 2. Get trading statistics
+                cursor.execute("""
+                    SELECT 
+                        COUNT(*) as total_trades,
+                        COALESCE(SUM(pnl), 0) as total_pnl,
+                        COALESCE(AVG(pnl), 0) as avg_pnl,
+                        COUNT(*) FILTER (WHERE pnl > 0) as winning_trades,
+                        COUNT(*) FILTER (WHERE pnl < 0) as losing_trades,
+                        COALESCE(MAX(pnl), 0) as best_trade,
+                        COALESCE(MIN(pnl), 0) as worst_trade
+                    FROM rl_experiences
+                    WHERE license_key = %s AND took_trade = TRUE
+                """, (license_key,))
+                trade_stats = cursor.fetchone()
+                
+                # 3. Get API call statistics
+                cursor.execute("""
+                    SELECT COUNT(*) as api_calls_total
+                    FROM api_logs
+                    WHERE license_key = %s
+                """, (license_key,))
+                api_stats = cursor.fetchone()
+                
+                # 4. Get today's API calls
+                cursor.execute("""
+                    SELECT COUNT(*) as api_calls_today
+                    FROM api_logs
+                    WHERE license_key = %s 
+                      AND created_at >= CURRENT_DATE
+                """, (license_key,))
+                api_today = cursor.fetchone()
+                
+                # 5. Get symbols traded
+                cursor.execute("""
+                    SELECT DISTINCT symbol
+                    FROM rl_experiences
+                    WHERE license_key = %s AND took_trade = TRUE
+                    ORDER BY symbol
+                """, (license_key,))
+                symbols = cursor.fetchall()
+                symbols_list = [s['symbol'] for s in symbols] if symbols else []
+                
+                # Calculate derived fields
+                now = datetime.now(timezone.utc)
+                
+                # Days until expiration
+                days_until_expiration = None
+                if user['license_expiration']:
+                    if user['license_expiration'].tzinfo is None:
+                        expiration = user['license_expiration'].replace(tzinfo=timezone.utc)
+                    else:
+                        expiration = user['license_expiration']
+                    days_until_expiration = (expiration - now).days
+                
+                # Account age
+                account_age_days = None
+                if user['created_at']:
+                    if user['created_at'].tzinfo is None:
+                        created = user['created_at'].replace(tzinfo=timezone.utc)
+                    else:
+                        created = user['created_at']
+                    account_age_days = (now - created).days
+                
+                # Online status (heartbeat within last 2 minutes)
+                is_online = False
+                if user['last_heartbeat']:
+                    if user['last_heartbeat'].tzinfo is None:
+                        last_hb = user['last_heartbeat'].replace(tzinfo=timezone.utc)
+                    else:
+                        last_hb = user['last_heartbeat']
+                    time_since_heartbeat = (now - last_hb).total_seconds()
+                    is_online = time_since_heartbeat < 120  # 2 minutes
+                
+                # Win rate calculation
+                total_trades = int(trade_stats['total_trades']) if trade_stats['total_trades'] else 0
+                winning_trades = int(trade_stats['winning_trades']) if trade_stats['winning_trades'] else 0
+                win_rate_percent = (winning_trades / total_trades * 100) if total_trades > 0 else 0.0
+                
+                # Extract values for reuse
+                total_pnl = float(trade_stats['total_pnl']) if trade_stats['total_pnl'] else 0.0
+                device_fp = user.get('device_fingerprint', '')
+                device_display = device_fp[:8] + '...' if len(device_fp) > 8 else device_fp or None
+                
+                # Build response
+                profile_data = {
+                    "status": "success",
+                    "profile": {
+                        "account_id": user['account_id'],
+                        "email": mask_email(user['email']) if user['email'] else None,
+                        "license_type": user['license_type'],
+                        "license_status": user['license_status'],
+                        "license_expiration": user['license_expiration'].isoformat() if user['license_expiration'] else None,
+                        "days_until_expiration": days_until_expiration,
+                        "created_at": user['created_at'].isoformat() if user['created_at'] else None,
+                        "account_age_days": account_age_days,
+                        "last_active": user['last_heartbeat'].isoformat() if user['last_heartbeat'] else None,
+                        "is_online": is_online
+                    },
+                    "trading_stats": {
+                        "total_trades": total_trades,
+                        "total_pnl": total_pnl,
+                        "avg_pnl_per_trade": float(trade_stats['avg_pnl']) if trade_stats['avg_pnl'] else 0.0,
+                        "winning_trades": winning_trades,
+                        "losing_trades": int(trade_stats['losing_trades']) if trade_stats['losing_trades'] else 0,
+                        "win_rate_percent": round(win_rate_percent, 2),
+                        "best_trade": float(trade_stats['best_trade']) if trade_stats['best_trade'] else 0.0,
+                        "worst_trade": float(trade_stats['worst_trade']) if trade_stats['worst_trade'] else 0.0
+                    },
+                    "recent_activity": {
+                        "api_calls_today": int(api_today['api_calls_today']) if api_today['api_calls_today'] else 0,
+                        "api_calls_total": int(api_stats['api_calls_total']) if api_stats['api_calls_total'] else 0,
+                        "last_heartbeat": user['last_heartbeat'].isoformat() if user['last_heartbeat'] else None,
+                        "current_device": device_display,
+                        "symbols_traded": symbols_list
+                    }
+                }
+                
+                logging.info(f"✅ Profile accessed: {mask_email(user['email'])}, {total_trades} trades, ${total_pnl:.2f} PnL")
+                return jsonify(profile_data), 200
+                
+        except Exception as e:
+            logging.error(f"Profile query error: {e}")
+            return jsonify({"error": "Failed to retrieve profile data"}), 500
+        finally:
+            return_connection(conn)
+            
+    except Exception as e:
+        logging.error(f"Profile endpoint error: {e}")
+        return jsonify({"error": str(e)}), 500
+
+# ============================================================================
+# END USER PROFILE ENDPOINT
+# ============================================================================
+
+# ============================================================================
 # RL ADMIN/STATS ENDPOINTS (existing)
 # ============================================================================
 
@@ -3378,7 +3628,7 @@ def root():
     return jsonify({
         "status": "success",
         "message": "QuoTrading API",
-        "endpoints": ["/api/hello", "/api/main", "/api/whop/webhook", "/api/admin/create-license", "/api/admin/expire-licenses"]
+        "endpoints": ["/api/hello", "/api/main", "/api/profile", "/api/whop/webhook", "/api/admin/create-license", "/api/admin/expire-licenses"]
     }), 200
 
 # ========== PHASE 2: CHART DATA ENDPOINTS ==========
