@@ -83,21 +83,24 @@ class CloudAPIClient:
             return False
         
         try:
-            # FLAT FORMAT: CAPITULATION REVERSAL STRATEGY FIELDS
-            # New experience record structure per user request
+            # FLAT FORMAT: Cloud API expects specific technical indicator fields
+            # Market state from capture_market_state() now includes:
+            # timestamp, symbol, price, returns, vwap_distance, vwap_slope,
+            # atr, atr_slope, rsi, macd_hist, stoch_k, volume_ratio, volume_slope,
+            # hour, session, regime, volatility_regime
             payload = {
                 "license_key": self.license_key,
-                # All market state fields (21 fields from capture_market_state)
-                **state,  # timestamp, symbol, price, flush_size_ticks, flush_velocity, flush_direction, 
-                         # bars_since_flush_start, distance_from_flush_low, rsi, volume_climax_ratio,
-                         # vwap_distance_ticks, reversal_candle, no_new_extreme, atr, hour, session, regime,
-                         # stop_distance_ticks, target_distance_ticks, risk_reward_ratio
-                # Trade outcomes (5 fields)
+                # All market state fields (17 fields from capture_market_state)
+                **state,
+                # Trade outcomes (7 additional fields)
                 "took_trade": took_trade,
                 "pnl": pnl,
                 "duration": duration,
+                "exploration_rate": 0.0,  # Not using exploration currently
                 "mfe": execution_data.get("mfe", 0.0) if execution_data else 0.0,
                 "mae": execution_data.get("mae", 0.0) if execution_data else 0.0,
+                "order_type_used": execution_data.get("order_type", "market") if execution_data else "market",
+                "entry_slippage_ticks": execution_data.get("entry_slippage_ticks", 0.0) if execution_data else 0.0,
                 "exit_reason": execution_data.get("exit_reason", "unknown") if execution_data else "unknown"
             }
             
@@ -131,21 +134,24 @@ class CloudAPIClient:
             return False
         
         try:
-            # FLAT FORMAT: CAPITULATION REVERSAL STRATEGY FIELDS
-            # New experience record structure per user request
+            # FLAT FORMAT: Cloud API expects specific technical indicator fields
+            # Market state from capture_market_state() now includes:
+            # timestamp, symbol, price, returns, vwap_distance, vwap_slope,
+            # atr, atr_slope, rsi, macd_hist, stoch_k, volume_ratio, volume_slope,
+            # hour, session, regime, volatility_regime
             payload = {
                 "license_key": self.license_key,
-                # All market state fields (21 fields from capture_market_state)
-                **state,  # timestamp, symbol, price, flush_size_ticks, flush_velocity, flush_direction, 
-                         # bars_since_flush_start, distance_from_flush_low, rsi, volume_climax_ratio,
-                         # vwap_distance_ticks, reversal_candle, no_new_extreme, atr, hour, session, regime,
-                         # stop_distance_ticks, target_distance_ticks, risk_reward_ratio
-                # Trade outcomes (5 fields)
+                # All market state fields (17 fields from capture_market_state)
+                **state,
+                # Trade outcomes (7 additional fields)
                 "took_trade": took_trade,
                 "pnl": pnl,
                 "duration": duration,
+                "exploration_rate": 0.0,  # Not using exploration currently
                 "mfe": execution_data.get("mfe", 0.0) if execution_data else 0.0,
                 "mae": execution_data.get("mae", 0.0) if execution_data else 0.0,
+                "order_type_used": execution_data.get("order_type", "market") if execution_data else "market",
+                "entry_slippage_ticks": execution_data.get("entry_slippage_ticks", 0.0) if execution_data else 0.0,
                 "exit_reason": execution_data.get("exit_reason", "unknown") if execution_data else "unknown"
             }
             
