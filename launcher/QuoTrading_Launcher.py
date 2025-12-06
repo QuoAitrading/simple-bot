@@ -1731,9 +1731,9 @@ class QuoTradingLauncher:
                 except (ValueError, AttributeError):
                     # Try other common formats
                     try:
-                        expiration_dt = datetime.strptime(license_expiration, "%Y-%m-%d %H:%M:%S")
+                        expiration_dt = datetime.strptime(license_expiration, "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.utc)
                     except ValueError:
-                        expiration_dt = datetime.strptime(license_expiration, "%Y-%m-%dT%H:%M:%S")
+                        expiration_dt = datetime.strptime(license_expiration, "%Y-%m-%dT%H:%M:%S").replace(tzinfo=timezone.utc)
             else:
                 # Already a datetime object
                 expiration_dt = license_expiration
