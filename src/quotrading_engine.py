@@ -123,6 +123,8 @@ except ImportError:
 
 # Startup logo configuration
 STARTUP_LOGO_DURATION = 8.0  # Seconds to display startup logo
+WELCOME_HEADER_DURATION = 3600.0  # Seconds to display welcome header animation (60 minutes)
+WELCOME_HEADER_FPS = 5  # FPS for welcome header animation (lower for 60-min duration to reduce CPU)
 
 # ===== EXE-COMPATIBLE FILE PATH HELPERS =====
 # These ensure files are saved in the correct location whether running as:
@@ -7613,8 +7615,8 @@ def main(symbol_override: str = None) -> None:
     # Only show in live mode (skip in backtest mode)
     if RAINBOW_LOGO_AVAILABLE and display_animated_welcome_header and not is_backtest_mode():
         try:
-            # Display the rainbow animated header (60 minutes duration)
-            display_animated_welcome_header(duration=3600.0, fps=15)
+            # Display the rainbow animated header (60 minutes duration at 5 fps)
+            display_animated_welcome_header(duration=WELCOME_HEADER_DURATION, fps=WELCOME_HEADER_FPS)
         except Exception as e:
             # Fallback to regular static header if animation fails
             logger.debug(f"Welcome header animation failed, using static header: {e}")

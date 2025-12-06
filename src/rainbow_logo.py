@@ -311,18 +311,19 @@ SUPPORT_MESSAGE = "Any issues? Reach out to: support@quotrading.com"
 WELCOME_HEADER = "QuoTrading AI Professional Trading System"
 
 
-def display_animated_welcome_header(duration=3600.0, fps=15):
+def display_animated_welcome_header(duration=3600.0, fps=5):
     """
     Display animated rainbow "QuoTrading AI Professional Trading System" header.
     Colors flow/cycle through the text for a smooth animation effect.
-    Runs for 60 minutes (3600 seconds) by default.
+    Runs for 60 minutes (3600 seconds) by default at 5 fps (reduced for long duration).
     
     Note: This function manipulates terminal cursor position to create animation.
     It overwrites the previous output line during the animation loop.
+    Can be interrupted with Ctrl+C without affecting the rest of the program.
     
     Args:
         duration: How long to animate in seconds (default: 3600.0 = 60 minutes)
-        fps: Frames per second for animation (default: 15)
+        fps: Frames per second for animation (default: 5, reduced for long-running animation)
     
     Returns:
         None
@@ -349,30 +350,35 @@ def display_animated_welcome_header(duration=3600.0, fps=15):
     print()
     print(" " * sep_padding + separator)
     
-    for frame in range(frames):
-        # Calculate color offset for flowing rainbow effect
-        color_offset = frame % len(rainbow)
-        
-        # Move cursor up to overwrite previous frame (just 1 line: the header)
-        if frame > 0:
-            sys.stdout.write('\033[1A')  # Move up 1 line
-        
-        # Clear line and display rainbow header with offset
-        sys.stdout.write('\033[2K')  # Clear line
-        colored_header = ''.join(
-            f"{rainbow[(i + color_offset) % len(rainbow)]}{char}{Colors.RESET}" 
-            for i, char in enumerate(WELCOME_HEADER)
-        )
-        sys.stdout.write(" " * msg_padding + colored_header + "\n")
-        
-        sys.stdout.flush()
-        
-        if frame < frames - 1:
-            time.sleep(delay)
-    
-    # Print closing separator after animation completes
-    print(" " * sep_padding + separator)
-    print()
+    try:
+        for frame in range(frames):
+            # Calculate color offset for flowing rainbow effect
+            color_offset = frame % len(rainbow)
+            
+            # Move cursor up to overwrite previous frame (just 1 line: the header)
+            if frame > 0:
+                sys.stdout.write('\033[1A')  # Move up 1 line
+            
+            # Clear line and display rainbow header with offset
+            sys.stdout.write('\033[2K')  # Clear line
+            colored_header = ''.join(
+                f"{rainbow[(i + color_offset) % len(rainbow)]}{char}{Colors.RESET}" 
+                for i, char in enumerate(WELCOME_HEADER)
+            )
+            sys.stdout.write(" " * msg_padding + colored_header + "\n")
+            
+            sys.stdout.flush()
+            
+            if frame < frames - 1:
+                time.sleep(delay)
+    except KeyboardInterrupt:
+        # Allow graceful interruption without crashing
+        # Print final separator and continue
+        pass
+    finally:
+        # Always print closing separator, even if interrupted
+        print(" " * sep_padding + separator)
+        print()
 
 
 def display_animated_thank_you(duration=60.0, fps=15):
