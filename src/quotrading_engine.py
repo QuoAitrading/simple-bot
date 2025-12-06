@@ -7961,7 +7961,8 @@ def handle_position_reconciliation_event(data: Dict[str, Any]) -> None:
     clearing position state while order is still being processed. This prevents
     duplicate orders and state corruption.
     """
-    # Skip during maintenance/weekend to avoid log spam when broker is disconnected
+    # Skip during maintenance/weekend/shutdown to avoid log spam when broker is disconnected
+    # The maintenance_idle flag is set during both maintenance windows and weekend closures
     if bot_status.get("maintenance_idle", False):
         return
     

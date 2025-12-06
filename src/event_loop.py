@@ -302,7 +302,7 @@ class TimerManager:
     """
     
     def __init__(self, event_loop: EventLoop, config: Dict[str, Any], 
-                 timezone: pytz.timezone, bot_status: Optional[Dict[str, Any]] = None):
+                 timezone: pytz.timezone, bot_status: Dict[str, Any] = None):
         """
         Initialize timer manager.
         
@@ -310,12 +310,12 @@ class TimerManager:
             event_loop: Event loop to post timer events to
             config: Bot configuration
             timezone: Trading timezone
-            bot_status: Optional bot status dictionary for checking maintenance mode
+            bot_status: Bot status dictionary for checking maintenance mode (defaults to empty dict)
         """
         self.event_loop = event_loop
         self.config = config
         self.timezone = timezone
-        self.bot_status = bot_status or {}
+        self.bot_status = bot_status if bot_status is not None else {}
         self.last_checks: Dict[str, datetime] = {}
         self.running = False
         self.thread: Optional[threading.Thread] = None
