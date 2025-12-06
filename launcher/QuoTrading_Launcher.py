@@ -2907,7 +2907,7 @@ Time-Based Exit: {time_exit}
         self.config["alert_email_password"] = email_pass_var.get()
         self.config["additional_alert_emails"] = additional_emails
         self.config["smtp_server"] = smtp_server_var.get()
-        self.config["smtp_port"] = int(smtp_port_var.get()) if smtp_port_var.get().isdigit() else 587
+        self.config["smtp_port"] = int(smtp_port_var.get()) if smtp_port_var.get().strip().isdigit() else 587
         self.config["smtp_tls"] = smtp_tls_var.get()
         self.config["alert_phone"] = phone_var.get()
         self.config["alert_carrier"] = carrier_var.get()
@@ -2923,13 +2923,13 @@ Time-Based Exit: {time_exit}
                              smtp_server_var, smtp_port_var, smtp_tls_var,
                              phone_var, carrier_var):
         """Test alert settings by sending a test notification."""
-        # Temporarily save settings to config for testing
+        # Build config from current form values (don't save to disk yet)
         temp_config = {
             "smtp_provider": provider_var.get(),
             "alert_email": email_var.get(),
             "alert_email_password": email_pass_var.get(),
             "smtp_server": smtp_server_var.get(),
-            "smtp_port": int(smtp_port_var.get()) if smtp_port_var.get().isdigit() else 587,
+            "smtp_port": int(smtp_port_var.get()) if smtp_port_var.get().strip().isdigit() else 587,
             "smtp_tls": smtp_tls_var.get(),
             "alert_phone": phone_var.get(),
             "alert_carrier": carrier_var.get(),
@@ -2944,8 +2944,10 @@ Time-Based Exit: {time_exit}
             )
             return
         
-        # Save current config and temporarily use test config
+        # Save current config to restore later
         original_config = self.config.copy()
+        
+        # Temporarily update config in memory and save to disk for notifier to read
         self.config.update(temp_config)
         self.save_config()
         
@@ -2954,6 +2956,7 @@ Time-Based Exit: {time_exit}
         
         def test_in_thread():
             """Run test in background thread."""
+            test_success = False
             try:
                 # Import notifications module
                 import sys
@@ -2968,7 +2971,7 @@ Time-Based Exit: {time_exit}
                 notifier = AlertNotifier(config_path="config.json")
                 
                 # Send test alert
-                success = notifier.send_test_alert()
+                test_success = notifier.send_test_alert()
                 
                 # Report result on main thread
                 def on_success():
@@ -2997,7 +3000,7 @@ Time-Based Exit: {time_exit}
                         "Go to: Google Account → Security → 2-Step Verification → App Passwords"
                     )
                 
-                if success:
+                if test_success:
                     self.root.after(0, on_success)
                 else:
                     self.root.after(0, on_failure)
@@ -3012,11 +3015,12 @@ Time-Based Exit: {time_exit}
                     )
                 self.root.after(0, on_error)
             finally:
-                # Restore original config (don't keep test settings if not saved)
+                # Always restore original config after test (don't persist test settings)
+                # User must click Save to persist their changes
                 def restore_config():
                     self.config = original_config
                     self.save_config()
-                # Don't restore - let user decide to save or not
+                self.root.after(0, restore_config)
         
         # Start test in background thread
         thread = threading.Thread(target=test_in_thread, daemon=True)
@@ -3336,7 +3340,7 @@ Time-Based Exit: {time_exit}
             self.config["alert_email_password"] = email_pass_var.get()
             self.config["additional_alert_emails"] = additional_emails
             self.config["smtp_server"] = smtp_server_var.get()
-            self.config["smtp_port"] = int(smtp_port_var.get()) if smtp_port_var.get().isdigit() else 587
+            self.config["smtp_port"] = int(smtp_port_var.get()) if smtp_port_var.get().strip().isdigit() else 587
             self.config["smtp_tls"] = smtp_tls_var.get()
             self.config["alert_phone"] = phone_var.get()
             self.config["alert_carrier"] = carrier_var.get()
