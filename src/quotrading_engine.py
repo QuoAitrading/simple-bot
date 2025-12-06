@@ -247,11 +247,50 @@ from cloud_api import CloudAPIClient
 
 # Conditionally import broker (only needed for live trading, not backtesting)
 try:
-    from broker_interface import create_broker, BrokerInterface
+    from broker_interface import create_broker, BrokerInterface, BrokerSDKImplementation
 except ImportError:
     # Broker interface not available (e.g., in backtest-only mode)
     create_broker = None
     BrokerInterface = None
+    BrokerSDKImplementation = None
+
+
+def _cleanup_event_loop(loop: asyncio.AbstractEventLoop) -> None:
+    """
+    Properly clean up an asyncio event loop to prevent Windows proactor errors.
+    
+    On Windows, the ProactorEventLoop can have its proactor set to None when
+    the loop is closed before all async operations complete, leading to:
+    AttributeError: 'NoneType' object has no attribute 'send'
+    
+    This method ensures all pending tasks are cancelled and async generators
+    are shut down before closing the loop.
+    
+    Args:
+        loop: The event loop to clean up
+    """
+    try:
+        # Cancel all pending tasks
+        pending = asyncio.all_tasks(loop)
+        for task in pending:
+            task.cancel()
+        
+        # Wait for all tasks to complete cancellation
+        if pending:
+            loop.run_until_complete(asyncio.gather(*pending, return_exceptions=True))
+        
+        # Shutdown async generators
+        loop.run_until_complete(loop.shutdown_asyncgens())
+        
+        # Now safe to close the loop
+        loop.close()
+    except Exception:
+        # If cleanup fails, still try to close the loop
+        # Suppress any errors as we're in cleanup
+        try:
+            loop.close()
+        except Exception:
+            pass
 
 
 # ============================================================================
@@ -793,7 +832,7 @@ def get_ml_confidence(rl_state: Dict[str, Any], side: str) -> Tuple[bool, float,
     try:
         return loop.run_until_complete(get_ml_confidence_async(rl_state, side))
     finally:
-        loop.close()
+        _cleanup_event_loop(loop)
 
 
 
@@ -871,7 +910,7 @@ def save_trade_experience(
     try:
         loop.run_until_complete(save_trade_experience_async(rl_state, side, pnl, duration_minutes, execution_data))
     finally:
-        loop.close()
+        _cleanup_event_loop(loop)
 
 
 # ============================================================================

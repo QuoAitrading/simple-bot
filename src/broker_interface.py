@@ -348,6 +348,44 @@ class BrokerSDKImplementation(BrokerInterface):
         
         return None
     
+    @staticmethod
+    def _cleanup_event_loop(loop: asyncio.AbstractEventLoop) -> None:
+        """
+        Properly clean up an asyncio event loop to prevent Windows proactor errors.
+        
+        On Windows, the ProactorEventLoop can have its proactor set to None when
+        the loop is closed before all async operations complete, leading to:
+        AttributeError: 'NoneType' object has no attribute 'send'
+        
+        This method ensures all pending tasks are cancelled and async generators
+        are shut down before closing the loop.
+        
+        Args:
+            loop: The event loop to clean up
+        """
+        try:
+            # Cancel all pending tasks
+            pending = asyncio.all_tasks(loop)
+            for task in pending:
+                task.cancel()
+            
+            # Wait for all tasks to complete cancellation
+            if pending:
+                loop.run_until_complete(asyncio.gather(*pending, return_exceptions=True))
+            
+            # Shutdown async generators
+            loop.run_until_complete(loop.shutdown_asyncgens())
+            
+            # Now safe to close the loop
+            loop.close()
+        except Exception:
+            # If cleanup fails, still try to close the loop
+            # Suppress any errors as we're in cleanup
+            try:
+                loop.close()
+            except Exception:
+                pass
+    
     def _get_position_symbol(self, position: Any) -> str:
         """
         Get the symbol from an SDK Position object.
@@ -800,7 +838,7 @@ class BrokerSDKImplementation(BrokerInterface):
                     self._record_success()  # Successful query (no position)
                     return 0  # No position found
                 finally:
-                    loop.close()
+                    self._cleanup_event_loop(loop)
         except AttributeError as e:
             # Common Windows asyncio proactor error during shutdown - ignore
             if "'NoneType' object has no attribute 'send'" in str(e):
@@ -847,7 +885,7 @@ class BrokerSDKImplementation(BrokerInterface):
                 try:
                     return thread_loop.run_until_complete(query_positions_async())
                 finally:
-                    thread_loop.close()
+                    BrokerSDKImplementation._cleanup_event_loop(thread_loop)
             
             try:
                 loop = asyncio.get_running_loop()
@@ -863,7 +901,7 @@ class BrokerSDKImplementation(BrokerInterface):
                 try:
                     positions = loop.run_until_complete(query_positions_async())
                 finally:
-                    loop.close()
+                    self._cleanup_event_loop(loop)
             
             # Process positions
             result = []
@@ -1133,7 +1171,7 @@ class BrokerSDKImplementation(BrokerInterface):
                     try:
                         cancel_response = loop.run_until_complete(cancel_order_async())
                     finally:
-                        loop.close()
+                        self._cleanup_event_loop(loop)
                 else:
                     cancel_response = asyncio.run(cancel_order_async())
             
@@ -1221,7 +1259,7 @@ class BrokerSDKImplementation(BrokerInterface):
                     try:
                         order_response = loop.run_until_complete(place_order_async())
                     finally:
-                        loop.close()
+                        self._cleanup_event_loop(loop)
                 else:
                     order_response = asyncio.run(place_order_async())
             
@@ -1456,7 +1494,7 @@ class BrokerSDKImplementation(BrokerInterface):
                             self.sdk_client.search_instruments(query=clean_symbol)
                         )
                     finally:
-                        loop.close()
+                        BrokerSDKImplementation._cleanup_event_loop(loop)
                 
                 with ThreadPoolExecutor(max_workers=1) as executor:
                     future = executor.submit(run_async_search)
