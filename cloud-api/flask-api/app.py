@@ -1644,7 +1644,7 @@ def heartbeat():
                         "session_conflict": False,
                         "symbol": symbol,
                         "active_symbols": active_count,
-                        "license_expiration": license_expiration.isoformat() if license_expiration else None,
+                        "license_expiration": license_expiration.isoformat().replace('+00:00', 'Z') if license_expiration else None,
                         "days_until_expiration": days_until_expiration,
                         "hours_until_expiration": hours_until_expiration
                     }), 200
@@ -2534,9 +2534,9 @@ def admin_list_users():
                     "license_key": user['license_key'],
                     "license_type": user['license_type'].upper() if user['license_type'] else 'MONTHLY',
                     "license_status": user['license_status'].upper() if user['license_status'] else 'ACTIVE',
-                    "license_expiration": user['license_expiration'].isoformat() if user['license_expiration'] else None,
-                    "created_at": user['created_at'].isoformat() if user['created_at'] else None,
-                    "last_active": user['last_active'].isoformat() if user['last_active'] else None,
+                    "license_expiration": user['license_expiration'].isoformat().replace('+00:00', 'Z') if user['license_expiration'] else None,
+                    "created_at": user['created_at'].isoformat().replace('+00:00', 'Z') if user['created_at'] else None,
+                    "last_active": user['last_active'].isoformat().replace('+00:00', 'Z') if user['last_active'] else None,
                     "is_online": user['is_online'],
                     "api_call_count": int(user['api_call_count']) if user['api_call_count'] else 0,
                     "trade_count": int(user['trade_count']) if user['trade_count'] else 0
@@ -2607,9 +2607,9 @@ def admin_get_user(account_id):
                     "license_key": user['license_key'],
                     "license_type": user['license_type'],
                     "license_status": user['license_status'],
-                    "license_expiration": user['license_expiration'].isoformat() if user['license_expiration'] else None,
-                    "created_at": user['created_at'].isoformat() if user['created_at'] else None,
-                    "last_active": user['last_active'].isoformat() if user['last_active'] else None,
+                    "license_expiration": user['license_expiration'].isoformat().replace('+00:00', 'Z') if user['license_expiration'] else None,
+                    "created_at": user['created_at'].isoformat().replace('+00:00', 'Z') if user['created_at'] else None,
+                    "last_active": user['last_active'].isoformat().replace('+00:00', 'Z') if user['last_active'] else None,
                     "notes": None
                 },
                 "recent_api_calls": api_call_count,
@@ -2955,8 +2955,8 @@ def admin_add_user():
                 "license_key": license_key,
                 "account_id": account_id,
                 "email": email,
-                "expires_at": expiration.isoformat(),
-                "expiration": expiration.isoformat()  # Keep for backward compatibility
+                "expires_at": expiration.isoformat().replace('+00:00', 'Z'),
+                "expiration": expiration.isoformat().replace('+00:00', 'Z')  # Keep for backward compatibility
             }), 201
     except Exception as e:
         logging.error(f"Add user error: {e}")
