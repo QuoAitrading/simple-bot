@@ -2762,34 +2762,27 @@
                 return '<span style="color: #d93025; font-weight: 600;">EXPIRED</span>';
             }
             
-            const diffSeconds = Math.floor(diffMs / 1000);
-            const diffMinutes = Math.floor(diffSeconds / 60);
-            const diffHours = Math.floor(diffMinutes / 60);
-            const diffDays = Math.floor(diffHours / 24);
+            // Calculate days, hours, minutes, seconds
+            const totalSeconds = Math.floor(diffMs / 1000);
+            const days = Math.floor(totalSeconds / 86400);
+            const hours = Math.floor((totalSeconds % 86400) / 3600);
+            const minutes = Math.floor((totalSeconds % 3600) / 60);
+            const seconds = totalSeconds % 60;
             
-            // Less than 1 hour - show minutes and seconds
-            if (diffMinutes < 60) {
-                const mins = diffMinutes;
-                const secs = diffSeconds % 60;
-                return `<span style="color: #d93025; font-weight: 600;">${mins}m ${secs}s</span>`;
+            // Build full countdown string
+            const countdown = `${days}d ${hours}h ${minutes}m ${seconds}s`;
+            
+            // Color based on time remaining
+            let color = '#1e8e3e'; // green (> 7 days)
+            if (totalSeconds < 3600) {
+                color = '#d93025'; // red (< 1 hour)
+            } else if (totalSeconds < 86400) {
+                color = '#ea8600'; // orange (< 1 day)
+            } else if (days < 7) {
+                color = '#e37400'; // dark orange (< 7 days)
             }
             
-            // Less than 24 hours - show hours and minutes
-            if (diffHours < 24) {
-                const hrs = diffHours;
-                const mins = diffMinutes % 60;
-                return `<span style="color: #ea8600; font-weight: 600;">${hrs}h ${mins}m</span>`;
-            }
-            
-            // Less than 7 days - show days and hours
-            if (diffDays < 7) {
-                const days = diffDays;
-                const hrs = diffHours % 24;
-                return `<span style="color: #e37400;">${days}d ${hrs}h</span>`;
-            }
-            
-            // More than 7 days - just show days
-            return `<span style="color: #1e8e3e;">${diffDays}d</span>`;
+            return `<span style="color: ${color}; font-weight: 600;">${countdown}</span>`;
         }
 
         // Helper function to set duration presets

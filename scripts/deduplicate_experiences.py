@@ -152,10 +152,10 @@ def main():
 Examples:
   # Process all symbols
   python scripts/deduplicate_experiences.py
-  
+
   # Process specific symbol
   python scripts/deduplicate_experiences.py --symbol ES
-  
+
   # Dry run (preview without changes)
   python scripts/deduplicate_experiences.py --dry-run
         """
