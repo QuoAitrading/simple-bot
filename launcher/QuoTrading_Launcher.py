@@ -18,7 +18,7 @@ from tkinter import ttk, messagebox
 import os
 import json
 from pathlib import Path
-from datetime import datetime
+from datetime import datetime, timezone
 import sys
 import subprocess
 import re
@@ -598,7 +598,10 @@ class QuoTradingLauncher:
                     if expiry_date_str:
                         try:
                             expiry_date = datetime.fromisoformat(expiry_date_str.replace('Z', '+00:00'))
-                            time_until_expiration = expiry_date - datetime.now(expiry_date.tzinfo)
+                            # Ensure expiry_date is timezone-aware (UTC)
+                            if expiry_date.tzinfo is None:
+                                expiry_date = expiry_date.replace(tzinfo=timezone.utc)
+                            time_until_expiration = expiry_date - datetime.now(timezone.utc)
                             days_until_expiration = time_until_expiration.days
                             hours_until_expiration = time_until_expiration.total_seconds() / 3600
                         except Exception:
@@ -1737,6 +1740,10 @@ class QuoTradingLauncher:
             else:
                 # Already a datetime object
                 expiration_dt = license_expiration
+            
+            # Ensure expiration_dt is timezone-aware (UTC)
+            if expiration_dt.tzinfo is None:
+                expiration_dt = expiration_dt.replace(tzinfo=timezone.utc)
             
             # Calculate time remaining
             now = datetime.now(timezone.utc)
