@@ -89,15 +89,20 @@ class DataRecorderLauncher:
         ]
         self.current_color_index = 0
         self.animation_running = False
+        self.animation_after_id = None  # Track animation callback ID
         
         # Show welcome screen first
         self.show_welcome_screen()
     
+    def clear_widgets(self):
+        """Clear all widgets from the window."""
+        for widget in self.root.winfo_children():
+            widget.destroy()
+    
     def show_welcome_screen(self):
         """Display welcome screen with animated rainbow logo."""
         # Clear any existing widgets
-        for widget in self.root.winfo_children():
-            widget.destroy()
+        self.clear_widgets()
         
         # Set black background for welcome screen
         self.root.configure(bg='#000000')
@@ -151,18 +156,27 @@ class DataRecorderLauncher:
         if not self.animation_running:
             return
         
-        if hasattr(self, 'welcome_label') and self.welcome_label.winfo_exists():
-            # Cycle through rainbow colors
-            self.current_color_index = (self.current_color_index + 1) % len(self.rainbow_colors)
-            self.welcome_label.config(fg=self.rainbow_colors[self.current_color_index])
-            
-            # Continue animation (100ms = smooth color transition)
-            self.root.after(100, self.animate_rainbow)
+        try:
+            if hasattr(self, 'welcome_label') and self.welcome_label.winfo_exists():
+                # Cycle through rainbow colors
+                self.current_color_index = (self.current_color_index + 1) % len(self.rainbow_colors)
+                self.welcome_label.config(fg=self.rainbow_colors[self.current_color_index])
+                
+                # Continue animation (100ms = smooth color transition)
+                self.animation_after_id = self.root.after(100, self.animate_rainbow)
+        except tk.TclError:
+            # Widget was destroyed, stop animation
+            self.animation_running = False
     
     def launch_recorder(self):
         """Launch the main recorder interface."""
         # Stop animation
         self.animation_running = False
+        
+        # Cancel any pending animation callbacks
+        if self.animation_after_id is not None:
+            self.root.after_cancel(self.animation_after_id)
+            self.animation_after_id = None
         
         # Reset background color
         self.root.configure(bg=self.colors['background'])
@@ -173,8 +187,7 @@ class DataRecorderLauncher:
     def setup_ui(self):
         """Setup the user interface."""
         # Clear any existing widgets from welcome screen
-        for widget in self.root.winfo_children():
-            widget.destroy()
+        self.clear_widgets()
         
         # Header
         header = tk.Frame(self.root, bg=self.colors['success_dark'], height=80)
