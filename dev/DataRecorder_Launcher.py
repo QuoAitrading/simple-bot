@@ -6,7 +6,7 @@ Standalone launcher for recording live market data for backtesting.
 Features:
 - Records live market data (quotes, trades, depth/DOM) for any ticker symbol
 - Supports recording multiple symbols simultaneously
-- Consolidates all data into a single CSV file, separated by symbols
+- Each symbol is saved to a separate CSV file for easy management
 - Completely separate from the main trading system
 - Ideal for collecting backtesting data
 
@@ -17,8 +17,8 @@ Data Captured:
 - Timestamps (for synchronization)
 
 Output Format:
-- Single CSV file with all symbols
-- Each row tagged with symbol identifier
+- Separate CSV file per symbol (e.g., ES.csv, NQ.csv)
+- Each file contains all data types for that symbol
 - Chronologically ordered
 - Ready for backtesting analysis
 """
