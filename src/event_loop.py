@@ -302,7 +302,7 @@ class TimerManager:
     """
     
     def __init__(self, event_loop: EventLoop, config: Dict[str, Any], 
-                 timezone: pytz.timezone):
+                 timezone: pytz.timezone, bot_status: Optional[Dict[str, Any]] = None):
         """
         Initialize timer manager.
         
@@ -310,10 +310,12 @@ class TimerManager:
             event_loop: Event loop to post timer events to
             config: Bot configuration
             timezone: Trading timezone
+            bot_status: Optional bot status dictionary for checking maintenance mode
         """
         self.event_loop = event_loop
         self.config = config
         self.timezone = timezone
+        self.bot_status = bot_status or {}
         self.last_checks: Dict[str, datetime] = {}
         self.running = False
         self.thread: Optional[threading.Thread] = None
@@ -358,8 +360,11 @@ class TimerManager:
                 # Position reconciliation check
                 # Check every 5 seconds for quick position sync
                 # (Previously 5 minutes, now faster to ensure bot always knows position state)
+                # Skip during shutdown or maintenance to avoid log spam when disconnected
                 reconciliation_interval = 5
-                if self._should_check("position_reconciliation", current_time, reconciliation_interval):
+                if (self._should_check("position_reconciliation", current_time, reconciliation_interval) and
+                    not self.event_loop.shutdown_requested and
+                    not self.bot_status.get("maintenance_idle", False)):
                     self.event_loop.post_event(
                         EventType.POSITION_RECONCILIATION,
                         EventPriority.HIGH,
@@ -367,7 +372,9 @@ class TimerManager:
                     )
                 
                 # Connection health check (every 20 seconds)
-                if self._should_check("connection_health", current_time, 20):
+                # Skip during maintenance to avoid log spam when disconnected
+                if (self._should_check("connection_health", current_time, 20) and
+                    not self.bot_status.get("maintenance_idle", False)):
                     self.event_loop.post_event(
                         EventType.CONNECTION_HEALTH,
                         EventPriority.HIGH,

@@ -7767,7 +7767,7 @@ def main(symbol_override: str = None) -> None:
     
     # Initialize timer manager for periodic events
     tz = pytz.timezone(CONFIG["timezone"])
-    timer_manager = TimerManager(event_loop, CONFIG, tz)
+    timer_manager = TimerManager(event_loop, CONFIG, tz, bot_status)
     timer_manager.start()
     
     # LIVE MODE: Subscribe to market data (trades) - use trading_symbol
@@ -7961,6 +7961,10 @@ def handle_position_reconciliation_event(data: Dict[str, Any]) -> None:
     clearing position state while order is still being processed. This prevents
     duplicate orders and state corruption.
     """
+    # Skip during maintenance/weekend to avoid log spam when broker is disconnected
+    if bot_status.get("maintenance_idle", False):
+        return
+    
     # CRITICAL FIX: Skip reconciliation when entry order is pending
     # This prevents the race condition where:
     # 1. Bot places order

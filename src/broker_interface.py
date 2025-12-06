@@ -811,7 +811,8 @@ class BrokerSDKImplementation(BrokerInterface):
     def get_position_quantity(self, symbol: str) -> int:
         """Get position quantity from TopStep."""
         if not self.connected or not self.sdk_client:
-            logger.error("Cannot get position: not connected")
+            # Silent return during expected disconnection (maintenance, shutdown, etc.)
+            # Position reconciliation is already suppressed during these times
             return 0
         
         try:
