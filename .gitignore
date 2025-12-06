@@ -168,6 +168,11 @@ launcher/*.exe
 # Launcher config (contains credentials)
 launcher/config.json
 
+# Data Recorder config and output (contains credentials and potentially large data files)
+launcher/data_recorder_config.json
+launcher/*.csv
+launcher/market_data*.csv
+
 # Keep example/template files
 !data/.gitkeep
 !launcher/.gitkeep
