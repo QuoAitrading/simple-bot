@@ -62,7 +62,7 @@ pip install -r requirements.txt
 
 1. Run the launcher:
 ```bash
-python launcher/DataRecorder_Launcher.py
+python dev/DataRecorder_Launcher.py
 ```
 
 2. Enter your broker credentials:
