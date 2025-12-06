@@ -5,7 +5,7 @@ Supports multiple environments with validation and environment variable override
 STRATEGY: Capitulation Reversal
 - Wait for panic selling/buying (flush)
 - Enter on exhaustion confirmation
-- Target VWAP for mean reversion
+- Use trailing stops to manage exits
 
 STOP LOSS: User configurable via GUI
 - Primary stop: 2 ticks below flush low (long) or above flush high (short)
@@ -92,34 +92,32 @@ class BotConfiguration:
     volume_lookback: int = 20  # 20-bar volume average
     
     # ==========================================================================
-    # LEGACY PARAMETERS - REMOVED FROM CAPITULATION REVERSAL STRATEGY
+    # LEGACY PARAMETERS - NO LONGER USED
     # ==========================================================================
-    # The following were used in the old VWAP Bounce strategy but are NO LONGER USED:
+    # The following were used in old strategies but are NO LONGER USED:
     # - VWAP std dev bands (entry zones) - Replaced by flush detection
     # - Trend filter - Replaced by flush direction + regime filter
-    # - VWAP direction filter - Replaced by price vs VWAP check for entry
+    # - VWAP direction filter - Replaced by price check for entry
     # - MACD filter - Removed entirely
     # - Trend EMA settings - Not used
     #
-    # RETAINED FOR VWAP CALCULATION (still needed for target/safety net):
-    # - VWAP calculation is ON (needed for exit strategy)
+    # RETAINED FOR CALCULATIONS (still needed):
     # - ATR calculation is ON (needed for regime detection)
     #
     # Filter flags (kept for compatibility, but strategy ignores them):
     use_trend_filter: bool = False  # OFF - flush direction determines trade direction
-    use_vwap_direction_filter: bool = False  # OFF - replaced by price vs VWAP check
+    use_vwap_direction_filter: bool = False  # OFF - not used
     use_rsi_filter: bool = True  # ON - RSI 25/75 extreme thresholds
     use_volume_filter: bool = True  # ON - 2x 20-bar average for climax
     use_macd_filter: bool = False  # OFF - not used in capitulation strategy
     
     # Time Windows (US Eastern - CME Futures Wall-Clock Schedule)
     # Note: Bot can trade anytime when market is open. These are for maintenance only.
-    market_open_time: time = field(default_factory=lambda: time(9, 30))  # Legacy stock market alignment - not used for VWAP reset
+    market_open_time: time = field(default_factory=lambda: time(9, 30))  # Legacy - not used
     entry_start_time: time = field(default_factory=lambda: time(18, 0))  # 6:00 PM Eastern - CME futures session opens
     entry_end_time: time = field(default_factory=lambda: time(16, 0))  # 4:00 PM Eastern - no new entries after this (can hold positions until 4:45 PM)
     forced_flatten_time: time = field(default_factory=lambda: time(16, 45))  # 4:45 PM Eastern - force close all positions before maintenance
     shutdown_time: time = field(default_factory=lambda: time(18, 0))  # 6:00 PM Eastern - market reopens after maintenance
-    vwap_reset_time: time = field(default_factory=lambda: time(18, 0))  # 6:00 PM Eastern - daily session reset at market open
     
     # Safety Parameters - USER CONFIGURABLE
     daily_loss_limit: float = 1000.0  # USER CONFIGURABLE - max $ loss per day (or auto-calculated)
@@ -327,13 +325,12 @@ class BotConfiguration:
     # ==========================================================================
     # EXIT MANAGEMENT - TRAILING STOP HANDLES ALL PROFIT-TAKING
     # ==========================================================================
-    # Trailing stop manages all exits. NO fixed VWAP target.
-    # VWAP is only used as a SAFETY NET before trailing activates.
+    # Trailing stop manages all exits with breakeven protection.
     #
     # EXIT LOGIC (HARDCODED):
-    # - If price reaches VWAP BEFORE trailing activates (before 15 ticks): exit at VWAP
-    # - If trailing activates FIRST (15+ ticks profit): let it ride, ignore VWAP
-    # - Trailing stop eventually exits you, either at VWAP or beyond
+    # - Breakeven: Move stop to entry + 1 tick after 12 ticks profit
+    # - Trailing: Start trailing after 15 ticks profit (8 ticks behind peak)
+    # - Time stop: Optional exit after 20 bars if no resolution
     #
     # HARDCODED VALUES (in capitulation_detector.py):
     # - breakeven_trigger_ticks: 12 (move stop to entry + 1 tick)
@@ -342,9 +339,9 @@ class BotConfiguration:
     # - trailing_distance_ticks: 8 (trail 8 ticks behind peak)
     # - max_hold_bars: 20 (optional time stop after 20 bars)
     #
-    # WHY TRAILING > FIXED TARGET:
-    # - Small reversal: Trail protects gains, exit near VWAP with 16+ ticks
-    # - Big reversal: Trail lets you ride through VWAP for 80+ ticks
+    # WHY TRAILING WORKS:
+    # - Small reversal: Trail protects gains, locks in 16+ ticks
+    # - Big reversal: Trail lets you ride for 80+ ticks
     # - Weak reversal: Trail still locks in 24+ ticks before pullback
     # ==========================================================================
     breakeven_enabled: bool = True  # HARDCODED - Move stop to entry + 1 tick after 12 ticks
@@ -472,7 +469,7 @@ class BotConfiguration:
             "use_trend_filter": self.use_trend_filter,  # OFF - flush direction determines trade
             "use_rsi_filter": self.use_rsi_filter,  # ON - RSI 25/75 extreme thresholds
             "use_macd_filter": self.use_macd_filter,  # OFF - not used
-            "use_vwap_direction_filter": self.use_vwap_direction_filter,  # OFF - replaced by price vs VWAP
+            "use_vwap_direction_filter": self.use_vwap_direction_filter,  # OFF - not used
             "use_volume_filter": self.use_volume_filter,  # ON - 2x volume climax
             "rsi_period": self.rsi_period,
             "volume_lookback": self.volume_lookback,
@@ -482,7 +479,6 @@ class BotConfiguration:
             "entry_end_time": self.entry_end_time,
             "forced_flatten_time": self.forced_flatten_time,
             "shutdown_time": self.shutdown_time,
-            "vwap_reset_time": self.vwap_reset_time,
             
             # Risk Settings
             "daily_loss_limit": self.daily_loss_limit,
