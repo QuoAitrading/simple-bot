@@ -42,6 +42,18 @@ if str(src_path) not in sys.path:
 
 # Configuration constants
 RECORDER_CLEANUP_DELAY_SECONDS = 1  # Time to wait for recorder cleanup before exit
+ANIMATION_INTERVAL_MS = 100  # Rainbow animation interval in milliseconds
+
+# Rainbow colors for welcome screen animation
+RAINBOW_COLORS = [
+    '#FF0000',  # Red
+    '#FF7F00',  # Orange
+    '#FFFF00',  # Yellow
+    '#00FF00',  # Green
+    '#0000FF',  # Blue
+    '#4B0082',  # Indigo
+    '#9400D3'   # Violet
+]
 
 
 class DataRecorderLauncher:
@@ -83,10 +95,6 @@ class DataRecorderLauncher:
         self.recorder = None
         
         # Rainbow animation state
-        self.rainbow_colors = [
-            '#FF0000', '#FF7F00', '#FFFF00', '#00FF00', 
-            '#0000FF', '#4B0082', '#9400D3'
-        ]
         self.current_color_index = 0
         self.animation_running = False
         self.animation_after_id = None  # Track animation callback ID
@@ -117,7 +125,7 @@ class DataRecorderLauncher:
             text="Welcome to QuoTrading AI Professional Trading System",
             font=("Segoe UI", 16, "bold"),
             bg='#000000',
-            fg=self.rainbow_colors[0]
+            fg=RAINBOW_COLORS[0]
         )
         self.welcome_label.pack(pady=30)
         
@@ -157,13 +165,13 @@ class DataRecorderLauncher:
             return
         
         try:
-            if hasattr(self, 'welcome_label') and self.welcome_label.winfo_exists():
+            if self.welcome_label.winfo_exists():
                 # Cycle through rainbow colors
-                self.current_color_index = (self.current_color_index + 1) % len(self.rainbow_colors)
-                self.welcome_label.config(fg=self.rainbow_colors[self.current_color_index])
+                self.current_color_index = (self.current_color_index + 1) % len(RAINBOW_COLORS)
+                self.welcome_label.config(fg=RAINBOW_COLORS[self.current_color_index])
                 
-                # Continue animation (100ms = smooth color transition)
-                self.animation_after_id = self.root.after(100, self.animate_rainbow)
+                # Continue animation
+                self.animation_after_id = self.root.after(ANIMATION_INTERVAL_MS, self.animate_rainbow)
         except tk.TclError:
             # Widget was destroyed, stop animation
             self.animation_running = False
