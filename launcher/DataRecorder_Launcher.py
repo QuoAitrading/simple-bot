@@ -201,7 +201,7 @@ class DataRecorderLauncher:
             fg=self.colors['text_light']
         ).pack(anchor=tk.W, pady=(0, 10))
         
-        # Symbol checkboxes - Only essential symbols for now
+        # Symbol checkboxes - Primary symbols for backtesting
         self.symbol_vars = {}
         symbols = [
             ("ES", "E-mini S&P 500"),
