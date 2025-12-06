@@ -308,7 +308,7 @@ THANK_YOU_MESSAGE = "Thanks for using QuoTrading AI"
 SUPPORT_MESSAGE = "Any issues? Reach out to: support@quotrading.com"
 
 # Welcome header constant - for startup rainbow animation
-WELCOME_HEADER = "QuoTrading AI Professional Trading System"
+WELCOME_HEADER = "Welcome to QuoTrading AI Professional Trading System"
 
 
 def display_animated_welcome_header(duration=3600.0, fps=5):

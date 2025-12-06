@@ -7605,14 +7605,10 @@ def main(symbol_override: str = None) -> None:
     # Track session start time for runtime display
     bot_status["session_start_time"] = datetime.now(pytz.timezone(CONFIG.get("timezone", "US/Eastern")))
     
-    # CRITICAL: Validate license FIRST, before any initialization
-    # This is the "login screen" - fail fast if license invalid or session conflict
-    # Uses current_trading_symbol for symbol-specific session (multi-symbol support)
-    validate_license_at_startup()
-    
-    # Display animated rainbow header "QuoTrading AI Professional Trading System"
+    # Display animated rainbow header "Welcome to QuoTrading AI Professional Trading System"
     # Runs for 60 minutes with flowing rainbow colors
     # Only show in live mode (skip in backtest mode)
+    # Displayed BEFORE license validation as welcome screen
     if RAINBOW_LOGO_AVAILABLE and display_animated_welcome_header and not is_backtest_mode():
         try:
             # Display the rainbow animated header (60 minutes duration at 5 fps)
@@ -7621,13 +7617,18 @@ def main(symbol_override: str = None) -> None:
             # Fallback to regular static header if animation fails
             logger.debug(f"Welcome header animation failed, using static header: {e}")
             logger.info("=" * 80)
-            logger.info("QuoTrading AI Professional Trading System")
+            logger.info("Welcome to QuoTrading AI Professional Trading System")
             logger.info("=" * 80)
     else:
         # Backtest mode or rainbow logo not available - use regular static header
         logger.info("=" * 80)
-        logger.info("QuoTrading AI Professional Trading System")
+        logger.info("Welcome to QuoTrading AI Professional Trading System")
         logger.info("=" * 80)
+    
+    # CRITICAL: Validate license AFTER displaying welcome
+    # This is the "login screen" - fail fast if license invalid or session conflict
+    # Uses current_trading_symbol for symbol-specific session (multi-symbol support)
+    validate_license_at_startup()
     
     # Display mode and connection
     if _bot_config.shadow_mode:
