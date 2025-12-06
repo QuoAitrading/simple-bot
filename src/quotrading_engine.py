@@ -3146,7 +3146,12 @@ def check_long_signal_conditions(symbol: str, prev_bar: Dict[str, Any],
         recent_volumes = [bar.get("volume", 0) for bar in list(bars)[-20:]]
         avg_volume_20 = sum(recent_volumes) / len(recent_volumes) if recent_volumes else 1
     else:
-        avg_volume_20 = current_bar.get("volume", 1)
+        # If less than 20 bars, use available bars for average (not current bar)
+        if len(bars) > 0:
+            recent_volumes = [bar.get("volume", 0) for bar in list(bars)]
+            avg_volume_20 = sum(recent_volumes) / len(recent_volumes) if recent_volumes else 1
+        else:
+            avg_volume_20 = 1
     
     # Get capitulation detector
     tick_size = CONFIG.get("tick_size", 0.25)
@@ -3225,7 +3230,12 @@ def check_short_signal_conditions(symbol: str, prev_bar: Dict[str, Any],
         recent_volumes = [bar.get("volume", 0) for bar in list(bars)[-20:]]
         avg_volume_20 = sum(recent_volumes) / len(recent_volumes) if recent_volumes else 1
     else:
-        avg_volume_20 = current_bar.get("volume", 1)
+        # If less than 20 bars, use available bars for average (not current bar)
+        if len(bars) > 0:
+            recent_volumes = [bar.get("volume", 0) for bar in list(bars)]
+            avg_volume_20 = sum(recent_volumes) / len(recent_volumes) if recent_volumes else 1
+        else:
+            avg_volume_20 = 1
     
     # Get capitulation detector
     tick_size = CONFIG.get("tick_size", 0.25)
@@ -3654,6 +3664,18 @@ def check_for_signals(symbol: str) -> None:
         failed_conditions = entry_details.get("failed_conditions", [])
         if failed_conditions:
             logger.info(f"💡 Long signal check - conditions not met: {', '.join(failed_conditions)}")
+        else:
+            # If no failed_conditions, might be insufficient data
+            logger.info(f"💡 Long signal check - no signal detected (may be insufficient data or all conditions failed)")
+    
+    # Enhanced diagnostic every 15 minutes (more frequent than 30)
+    diagnostic_counter_15 = state[symbol].get("diagnostic_counter_15", 0) + 1
+    state[symbol]["diagnostic_counter_15"] = diagnostic_counter_15
+    if diagnostic_counter_15 % 15 == 0:
+        entry_details = state[symbol].get("entry_details", {})
+        failed_conditions = entry_details.get("failed_conditions", [])
+        if failed_conditions and len(failed_conditions) <= 3:  # Show if only a few conditions failed
+            logger.info(f"🔍 Near-signal: {9 - len(failed_conditions)}/9 conditions passed. Missing: {', '.join(failed_conditions)}")
     
     # Check for short signal
     short_passed = check_short_signal_conditions(symbol, prev_bar, current_bar)
