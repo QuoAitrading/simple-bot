@@ -307,9 +307,72 @@ def get_rainbow_bot_art_with_message():
 THANK_YOU_MESSAGE = "Thanks for using QuoTrading AI"
 SUPPORT_MESSAGE = "Any issues? Reach out to: support@quotrading.com"
 
-# Welcome message constants
-WELCOME_MESSAGE = "Welcome to QuoTrading AI"
-READY_MESSAGE = "Initializing trading system..."
+# Welcome header constant - for startup rainbow animation
+WELCOME_HEADER = "QuoTrading AI Professional Trading System"
+
+
+def display_animated_welcome_header(duration=3600.0, fps=15):
+    """
+    Display animated rainbow "QuoTrading AI Professional Trading System" header.
+    Colors flow/cycle through the text for a smooth animation effect.
+    Runs for 60 minutes (3600 seconds) by default.
+    
+    Note: This function manipulates terminal cursor position to create animation.
+    It overwrites the previous output line during the animation loop.
+    
+    Args:
+        duration: How long to animate in seconds (default: 3600.0 = 60 minutes)
+        fps: Frames per second for animation (default: 15)
+    
+    Returns:
+        None
+    """
+    frames = int(duration * fps)
+    delay = 1.0 / fps
+    rainbow = get_rainbow_colors()
+    
+    # Get terminal width for centering
+    try:
+        terminal_size = os.get_terminal_size()
+        terminal_width = terminal_size.columns
+    except OSError:
+        terminal_width = 120
+    
+    # Calculate padding for centering the header
+    msg_padding = max(0, (terminal_width - len(WELCOME_HEADER)) // 2)
+    
+    # Display the header with separators
+    separator = "=" * 80
+    sep_padding = max(0, (terminal_width - 80) // 2)
+    
+    # Print initial frame with separators
+    print()
+    print(" " * sep_padding + separator)
+    
+    for frame in range(frames):
+        # Calculate color offset for flowing rainbow effect
+        color_offset = frame % len(rainbow)
+        
+        # Move cursor up to overwrite previous frame (just 1 line: the header)
+        if frame > 0:
+            sys.stdout.write('\033[1A')  # Move up 1 line
+        
+        # Clear line and display rainbow header with offset
+        sys.stdout.write('\033[2K')  # Clear line
+        colored_header = ''.join(
+            f"{rainbow[(i + color_offset) % len(rainbow)]}{char}{Colors.RESET}" 
+            for i, char in enumerate(WELCOME_HEADER)
+        )
+        sys.stdout.write(" " * msg_padding + colored_header + "\n")
+        
+        sys.stdout.flush()
+        
+        if frame < frames - 1:
+            time.sleep(delay)
+    
+    # Print closing separator after animation completes
+    print(" " * sep_padding + separator)
+    print()
 
 
 def display_animated_thank_you(duration=60.0, fps=15):
@@ -396,112 +459,6 @@ def display_static_thank_you():
     print(colored_message)
     print()
     print(colored_support)
-    print()
-
-
-def display_animated_welcome(duration=3.0, fps=15):
-    """
-    Display animated rainbow "Welcome to QuoTrading AI" message.
-    Colors flow/cycle through the text for a smooth animation effect.
-    Similar to the closing thank you animation.
-    
-    Note: This function manipulates terminal cursor position to create animation.
-    It overwrites previous output lines during the animation loop.
-    
-    Args:
-        duration: How long to animate in seconds (default: 3.0)
-        fps: Frames per second for animation (default: 15)
-    
-    Returns:
-        None
-    """
-    frames = int(duration * fps)
-    delay = 1.0 / fps
-    rainbow = get_rainbow_colors()
-    
-    # Get terminal width for centering
-    try:
-        terminal_size = os.get_terminal_size()
-        terminal_width = terminal_size.columns
-    except OSError:
-        terminal_width = 80
-    
-    # Calculate padding for centering
-    msg_padding = max(0, (terminal_width - len(WELCOME_MESSAGE)) // 2)
-    ready_padding = max(0, (terminal_width - len(READY_MESSAGE)) // 2)
-    
-    # Single blank line before starting
-    print()
-    
-    for frame in range(frames):
-        # Calculate color offset for flowing rainbow effect
-        color_offset = frame % len(rainbow)
-        
-        # Move cursor up to overwrite previous frame (2 lines: welcome + ready message)
-        if frame > 0:
-            sys.stdout.write('\033[2A')  # Move up 2 lines
-        
-        # Clear line and display rainbow welcome message with offset
-        sys.stdout.write('\033[2K')  # Clear line
-        colored_message = ''.join(
-            f"{rainbow[(i + color_offset) % len(rainbow)]}{char}{Colors.RESET}" 
-            for i, char in enumerate(WELCOME_MESSAGE)
-        )
-        sys.stdout.write(" " * msg_padding + colored_message + "\n")
-        
-        # Display ready line with same rainbow offset
-        sys.stdout.write('\033[2K')  # Clear line
-        colored_ready = ''.join(
-            f"{rainbow[(i + color_offset) % len(rainbow)]}{char}{Colors.RESET}" 
-            for i, char in enumerate(READY_MESSAGE)
-        )
-        sys.stdout.write(" " * ready_padding + colored_ready + "\n")
-        
-        sys.stdout.flush()
-        
-        if frame < frames - 1:
-            time.sleep(delay)
-    
-    # Final newline for spacing
-    print()
-
-
-def display_static_welcome():
-    """
-    Display static rainbow "Welcome to QuoTrading AI" message.
-    Used as fallback when animation is not possible.
-    Text is centered based on terminal width for visual consistency.
-    
-    Returns:
-        None
-    """
-    rainbow = get_rainbow_colors()
-    
-    # Get terminal width for centering
-    try:
-        terminal_size = os.get_terminal_size()
-        terminal_width = terminal_size.columns
-    except OSError:
-        terminal_width = 80
-    
-    # Color each character with rainbow gradient
-    colored_message = ''.join(
-        f"{rainbow[i % len(rainbow)]}{char}{Colors.RESET}" 
-        for i, char in enumerate(WELCOME_MESSAGE)
-    )
-    colored_ready = ''.join(
-        f"{rainbow[i % len(rainbow)]}{char}{Colors.RESET}" 
-        for i, char in enumerate(READY_MESSAGE)
-    )
-    
-    # Calculate padding for centering
-    msg_padding = max(0, (terminal_width - len(WELCOME_MESSAGE)) // 2)
-    ready_padding = max(0, (terminal_width - len(READY_MESSAGE)) // 2)
-    
-    print()
-    print(" " * msg_padding + colored_message)
-    print()
-    print(" " * ready_padding + colored_ready)
     print()
 
 

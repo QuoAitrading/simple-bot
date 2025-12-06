@@ -109,7 +109,7 @@ load_dotenv(dotenv_path=env_path)
 
 # Import rainbow logo display - with fallback if not available
 try:
-    from rainbow_logo import display_animated_logo, Colors, get_rainbow_bot_art, get_rainbow_bot_art_with_message, display_animated_thank_you, display_static_thank_you, display_animated_welcome, display_static_welcome
+    from rainbow_logo import display_animated_logo, Colors, get_rainbow_bot_art, get_rainbow_bot_art_with_message, display_animated_thank_you, display_static_thank_you, display_animated_welcome_header
     RAINBOW_LOGO_AVAILABLE = True
 except ImportError:
     RAINBOW_LOGO_AVAILABLE = False
@@ -119,8 +119,7 @@ except ImportError:
     get_rainbow_bot_art_with_message = None
     display_animated_thank_you = None
     display_static_thank_you = None
-    display_animated_welcome = None
-    display_static_welcome = None
+    display_animated_welcome_header = None
 
 # Startup logo configuration
 STARTUP_LOGO_DURATION = 8.0  # Seconds to display startup logo
@@ -7609,21 +7608,24 @@ def main(symbol_override: str = None) -> None:
     # Uses current_trading_symbol for symbol-specific session (multi-symbol support)
     validate_license_at_startup()
     
-    # Display animated welcome message (similar to closing thank you animation)
+    # Display animated rainbow header "QuoTrading AI Professional Trading System"
+    # Runs for 60 minutes with flowing rainbow colors
     # Only show in live mode (skip in backtest mode)
-    if RAINBOW_LOGO_AVAILABLE and display_animated_welcome and not is_backtest_mode():
+    if RAINBOW_LOGO_AVAILABLE and display_animated_welcome_header and not is_backtest_mode():
         try:
-            display_animated_welcome(duration=3.0, fps=15)
+            # Display the rainbow animated header (60 minutes duration)
+            display_animated_welcome_header(duration=3600.0, fps=15)
         except Exception as e:
-            # Fallback to static display if animation fails
-            logger.debug(f"Welcome animation failed, using static display: {e}")
-            if display_static_welcome:
-                display_static_welcome()
-    
-    # Professional startup header with GUI settings
-    logger.info("=" * 80)
-    logger.info("QuoTrading AI Professional Trading System")
-    logger.info("=" * 80)
+            # Fallback to regular static header if animation fails
+            logger.debug(f"Welcome header animation failed, using static header: {e}")
+            logger.info("=" * 80)
+            logger.info("QuoTrading AI Professional Trading System")
+            logger.info("=" * 80)
+    else:
+        # Backtest mode or rainbow logo not available - use regular static header
+        logger.info("=" * 80)
+        logger.info("QuoTrading AI Professional Trading System")
+        logger.info("=" * 80)
     
     # Display mode and connection
     if _bot_config.shadow_mode:
