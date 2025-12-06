@@ -82,11 +82,100 @@ class DataRecorderLauncher:
         self.recorder_thread = None
         self.recorder = None
         
-        # Setup UI
+        # Rainbow animation state
+        self.rainbow_colors = [
+            '#FF0000', '#FF7F00', '#FFFF00', '#00FF00', 
+            '#0000FF', '#4B0082', '#9400D3'
+        ]
+        self.current_color_index = 0
+        self.animation_running = False
+        
+        # Show welcome screen first
+        self.show_welcome_screen()
+    
+    def show_welcome_screen(self):
+        """Display welcome screen with animated rainbow logo."""
+        # Clear any existing widgets
+        for widget in self.root.winfo_children():
+            widget.destroy()
+        
+        # Set black background for welcome screen
+        self.root.configure(bg='#000000')
+        
+        # Center frame
+        center_frame = tk.Frame(self.root, bg='#000000')
+        center_frame.place(relx=0.5, rely=0.4, anchor=tk.CENTER)
+        
+        # Animated welcome text
+        self.welcome_label = tk.Label(
+            center_frame,
+            text="Welcome to QuoTrading AI Professional Trading System",
+            font=("Segoe UI", 16, "bold"),
+            bg='#000000',
+            fg=self.rainbow_colors[0]
+        )
+        self.welcome_label.pack(pady=30)
+        
+        # Subtitle
+        tk.Label(
+            center_frame,
+            text="Market Data Recorder",
+            font=("Segoe UI", 12),
+            bg='#000000',
+            fg='#FFFFFF'
+        ).pack(pady=10)
+        
+        # Launch button
+        launch_button = tk.Button(
+            center_frame,
+            text="🚀 LAUNCH RECORDER",
+            command=self.launch_recorder,
+            font=("Segoe UI", 14, "bold"),
+            bg='#0078D4',
+            fg='white',
+            relief=tk.FLAT,
+            cursor="hand2",
+            padx=40,
+            pady=15,
+            activebackground='#005A9E',
+            activeforeground='white'
+        )
+        launch_button.pack(pady=30)
+        
+        # Start rainbow animation
+        self.animation_running = True
+        self.animate_rainbow()
+    
+    def animate_rainbow(self):
+        """Animate the welcome text with rainbow colors."""
+        if not self.animation_running:
+            return
+        
+        if hasattr(self, 'welcome_label') and self.welcome_label.winfo_exists():
+            # Cycle through rainbow colors
+            self.current_color_index = (self.current_color_index + 1) % len(self.rainbow_colors)
+            self.welcome_label.config(fg=self.rainbow_colors[self.current_color_index])
+            
+            # Continue animation (100ms = smooth color transition)
+            self.root.after(100, self.animate_rainbow)
+    
+    def launch_recorder(self):
+        """Launch the main recorder interface."""
+        # Stop animation
+        self.animation_running = False
+        
+        # Reset background color
+        self.root.configure(bg=self.colors['background'])
+        
+        # Setup main UI
         self.setup_ui()
     
     def setup_ui(self):
         """Setup the user interface."""
+        # Clear any existing widgets from welcome screen
+        for widget in self.root.winfo_children():
+            widget.destroy()
+        
         # Header
         header = tk.Frame(self.root, bg=self.colors['success_dark'], height=80)
         header.pack(fill=tk.X)
