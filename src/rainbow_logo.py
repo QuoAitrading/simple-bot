@@ -411,6 +411,9 @@ def display_animated_welcome(duration=3.0, fps=15):
     Args:
         duration: How long to animate in seconds (default: 3.0)
         fps: Frames per second for animation (default: 15)
+    
+    Returns:
+        None
     """
     frames = int(duration * fps)
     delay = 1.0 / fps
@@ -467,8 +470,19 @@ def display_static_welcome():
     """
     Display static rainbow "Welcome to QuoTrading AI" message.
     Used as fallback when animation is not possible.
+    Text is centered based on terminal width for visual consistency.
+    
+    Returns:
+        None
     """
     rainbow = get_rainbow_colors()
+    
+    # Get terminal width for centering
+    try:
+        terminal_size = os.get_terminal_size()
+        terminal_width = terminal_size.columns
+    except OSError:
+        terminal_width = 80
     
     # Color each character with rainbow gradient
     colored_message = ''.join(
@@ -480,10 +494,14 @@ def display_static_welcome():
         for i, char in enumerate(READY_MESSAGE)
     )
     
+    # Calculate padding for centering
+    msg_padding = max(0, (terminal_width - len(WELCOME_MESSAGE)) // 2)
+    ready_padding = max(0, (terminal_width - len(READY_MESSAGE)) // 2)
+    
     print()
-    print(colored_message)
+    print(" " * msg_padding + colored_message)
     print()
-    print(colored_ready)
+    print(" " * ready_padding + colored_ready)
     print()
 
 
