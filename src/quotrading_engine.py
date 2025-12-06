@@ -7605,7 +7605,7 @@ def main(symbol_override: str = None) -> None:
     # Track session start time for runtime display
     bot_status["session_start_time"] = datetime.now(pytz.timezone(CONFIG.get("timezone", "US/Eastern")))
     
-    # Display animated rainbow header "Welcome to QuoTrading AI Professional Trading System"
+    # Display animated rainbow header "QuoTrading AI Professional Trading System"
     # Runs for 60 minutes with flowing rainbow colors
     # Only show in live mode (skip in backtest mode)
     # Displayed BEFORE license validation as welcome screen
@@ -7617,12 +7617,12 @@ def main(symbol_override: str = None) -> None:
             # Fallback to regular static header if animation fails
             logger.debug(f"Welcome header animation failed, using static header: {e}")
             logger.info("=" * 80)
-            logger.info("Welcome to QuoTrading AI Professional Trading System")
+            logger.info("QuoTrading AI Professional Trading System")
             logger.info("=" * 80)
     else:
         # Backtest mode or rainbow logo not available - use regular static header
         logger.info("=" * 80)
-        logger.info("Welcome to QuoTrading AI Professional Trading System")
+        logger.info("QuoTrading AI Professional Trading System")
         logger.info("=" * 80)
     
     # CRITICAL: Validate license AFTER displaying welcome
