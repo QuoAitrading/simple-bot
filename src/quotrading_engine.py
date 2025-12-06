@@ -109,7 +109,7 @@ load_dotenv(dotenv_path=env_path)
 
 # Import rainbow logo display - with fallback if not available
 try:
-    from rainbow_logo import display_animated_logo, Colors, get_rainbow_bot_art, get_rainbow_bot_art_with_message, display_animated_thank_you, display_static_thank_you
+    from rainbow_logo import display_animated_logo, Colors, get_rainbow_bot_art, get_rainbow_bot_art_with_message, display_animated_thank_you, display_static_thank_you, display_animated_welcome, display_static_welcome
     RAINBOW_LOGO_AVAILABLE = True
 except ImportError:
     RAINBOW_LOGO_AVAILABLE = False
@@ -119,6 +119,8 @@ except ImportError:
     get_rainbow_bot_art_with_message = None
     display_animated_thank_you = None
     display_static_thank_you = None
+    display_animated_welcome = None
+    display_static_welcome = None
 
 # Startup logo configuration
 STARTUP_LOGO_DURATION = 8.0  # Seconds to display startup logo
@@ -7606,6 +7608,17 @@ def main(symbol_override: str = None) -> None:
     # This is the "login screen" - fail fast if license invalid or session conflict
     # Uses current_trading_symbol for symbol-specific session (multi-symbol support)
     validate_license_at_startup()
+    
+    # Display animated welcome message (similar to closing thank you animation)
+    # Only show in live mode (skip in backtest mode)
+    if RAINBOW_LOGO_AVAILABLE and display_animated_welcome and not is_backtest_mode():
+        try:
+            display_animated_welcome(duration=3.0, fps=15)
+        except Exception as e:
+            # Fallback to static display if animation fails
+            logger.debug(f"Welcome animation failed, using static display: {e}")
+            if display_static_welcome:
+                display_static_welcome()
     
     # Professional startup header with GUI settings
     logger.info("=" * 80)
