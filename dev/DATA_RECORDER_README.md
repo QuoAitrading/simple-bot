@@ -60,9 +60,13 @@ pip install -r requirements.txt
 
 ### Starting the Recorder
 
-1. Run the launcher:
+**Option 1: Use the launch script (Easy)**
+- Windows: Double-click `dev/launch_recorder.bat`
+- Linux/Mac: Run `./dev/launch_recorder.sh` or `bash dev/launch_recorder.sh`
+
+**Option 2: Run directly with Python**
 ```bash
-python launcher/DataRecorder_Launcher.py
+python dev/DataRecorder_Launcher.py
 ```
 
 2. Enter your broker credentials:

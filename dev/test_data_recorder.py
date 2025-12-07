@@ -165,10 +165,10 @@ def validate_recorder_imports():
         import sys
         from pathlib import Path
         
-        # Add launcher directory to path
-        launcher_path = Path(__file__).parent
-        if str(launcher_path) not in sys.path:
-            sys.path.insert(0, str(launcher_path))
+        # Add dev directory to path
+        dev_path = Path(__file__).parent
+        if str(dev_path) not in sys.path:
+            sys.path.insert(0, str(dev_path))
         
         # Skip GUI launcher test (requires tkinter which may not be available in all environments)
         print("  Skipping DataRecorder_Launcher (requires tkinter GUI)")
@@ -177,7 +177,7 @@ def validate_recorder_imports():
         print("  Testing data_recorder core module...")
         try:
             # Just check if the file exists and can be compiled
-            recorder_file = launcher_path / "data_recorder.py"
+            recorder_file = dev_path / "data_recorder.py"
             if not recorder_file.exists():
                 print(f"  ❌ FAIL: data_recorder.py not found")
                 return False
