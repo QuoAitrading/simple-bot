@@ -222,9 +222,6 @@ def display_animated_logo(duration=3.0, fps=20, with_headers=True, non_blocking=
             for i in range(total_lines):
                 print()  # Reserve lines
             
-            # Subtitle fade-in happens during first 10% of animation
-            FADE_IN_PERCENTAGE = 0.1
-            
             # Animate the logo in the reserved space
             for frame in range(frames):
                 # Calculate color offset for flowing rainbow effect
@@ -390,6 +387,9 @@ def get_rainbow_bot_art_with_message():
 # Thank you message constants
 THANK_YOU_MESSAGE = "Thanks for using QuoTrading AI"
 SUPPORT_MESSAGE = "Any issues? Reach out to: support@quotrading.com"
+
+# Subtitle fades in during first 10% of animation
+FADE_IN_PERCENTAGE = 0.1
 
 # Welcome header constant - for startup rainbow animation
 WELCOME_HEADER = "Welcome to QuoTrading AI Professional Trading System"
