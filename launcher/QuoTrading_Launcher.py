@@ -696,8 +696,11 @@ class QuoTradingLauncher:
         for widget in self.root.winfo_children():
             widget.destroy()
         
-        # Force immediate update to ensure splash screen is fully cleared
-        self.root.update_idletasks()
+        # Reset root background to theme color (removes any black background from splash)
+        self.root.configure(bg=self.colors['background'])
+        
+        # Force complete UI refresh to ensure splash screen is fully cleared
+        self.root.update()
         
         self.current_screen = 0
         self.root.title("QuoTrading - Broker Setup")
