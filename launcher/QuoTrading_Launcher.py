@@ -696,10 +696,10 @@ class QuoTradingLauncher:
         self.current_screen = 0
         self.root.title("QuoTrading - Broker Setup")
         
-        # Header with "Welcome to QuoTrading Professional Trading System"
+        # Header with rainbow "Welcome to QuoTrading Professional Trading System"
         header = self.create_header("Welcome to QuoTrading Professional Trading System", 
                                    "Select your account type and broker", 
-                                   rainbow=False)
+                                   rainbow=True)
         
         # Main container - no scrolling
         main = tk.Frame(self.root, bg=self.colors['background'], padx=10, pady=5)
