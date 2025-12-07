@@ -7604,19 +7604,18 @@ def main(symbol_override: str = None) -> None:
     # Track session start time for runtime display
     bot_status["session_start_time"] = datetime.now(pytz.timezone(CONFIG.get("timezone", "US/Eastern")))
     
-    # Display animated rainbow welcome header (10 seconds, blocking)
-    # Shows "Welcome to QuoTrading AI Professional Trading System" with rainbow animation
-    # Colors cycle through the text but it stays in place - exactly like the thank you message
-    # Runs for 10 seconds then bot continues - clean and professional
+    # Display rainbow welcome header (non-blocking, static)
+    # Shows "Welcome to QuoTrading AI Professional Trading System" with rainbow colors
+    # Displays immediately without blocking - bot startup continues right away
     # Only in live mode (skip in backtest)
-    if RAINBOW_LOGO_AVAILABLE and display_animated_welcome_header and not is_backtest_mode():
+    if RAINBOW_LOGO_AVAILABLE and not is_backtest_mode():
         try:
-            # Animate header for 10 seconds (blocking) - same behavior as thank you message
-            # Header stays in place while colors cycle through - neat and professional
-            display_animated_welcome_header(duration=10.0, fps=10, non_blocking=False)
+            # Display static rainbow header (non-blocking)
+            # This appears immediately and bot startup continues without delay
+            display_animated_welcome_header(non_blocking=True)
         except Exception as e:
-            # Fallback to static header if animation fails
-            logger.warning(f"Rainbow header animation failed: {e}")
+            # Fallback to static header if rainbow display fails
+            logger.warning(f"Rainbow header display failed: {e}")
             logger.info("=" * 80)
             logger.info("Welcome to QuoTrading AI Professional Trading System")
             logger.info("=" * 80)
@@ -8927,14 +8926,10 @@ Multi-Symbol Mode:
     # SKIP in backtest mode to prevent spam
     if RAINBOW_LOGO_AVAILABLE and not is_backtest_mode():
         try:
-            # Show logo in background thread so it doesn't block bot startup
-            # This creates a professional loading screen effect that continues while bot initializes
-            # Startup animation (8 seconds) for visual polish
-            # Animation updates at top of screen while bot output appears below
-            display_animated_logo(duration=STARTUP_LOGO_DURATION, fps=5, with_headers=False, non_blocking=True)
-            
-            # No delay needed - animation is non-blocking
-            # No screen clear - let animation stay at top while output appears below
+            # Show logo for 8 seconds with animation, then continue to next screen
+            # BLOCKING mode: Logo displays centered, animates for 8 seconds, then bot continues
+            # This prevents overlap with welcome header and ensures clean sequential display
+            display_animated_logo(duration=STARTUP_LOGO_DURATION, fps=5, with_headers=False, non_blocking=False)
         except Exception as e:
             # Logo display failed - log and continue (not critical)
             # Use logger if available, otherwise print
