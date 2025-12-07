@@ -165,7 +165,8 @@ class DataRecorderLauncher:
             return
         
         try:
-            if self.welcome_label.winfo_exists():
+            # Check both attribute existence and widget state for safety
+            if hasattr(self, 'welcome_label') and self.welcome_label.winfo_exists():
                 # Cycle through rainbow colors
                 self.current_color_index = (self.current_color_index + 1) % len(RAINBOW_COLORS)
                 self.welcome_label.config(fg=RAINBOW_COLORS[self.current_color_index])
