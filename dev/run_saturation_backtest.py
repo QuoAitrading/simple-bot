@@ -141,6 +141,27 @@ def initialize_rl_brain(symbol: str, exploration_rate: float) -> Tuple[SignalCon
     # Load the module
     spec.loader.exec_module(bot_module)
     
+    # CRITICAL: Update CONFIG with symbol-specific tick size/value
+    # The bot module loads CONFIG at import time, so we need to update it for each symbol
+    from symbol_specs import get_symbol_spec
+    symbol_spec = get_symbol_spec(symbol)
+    
+    # Update both CONFIG dict and _bot_config object in bot module
+    bot_module.CONFIG['instrument'] = symbol
+    bot_module.CONFIG['tick_size'] = symbol_spec.tick_size
+    bot_module.CONFIG['tick_value'] = symbol_spec.tick_value
+    bot_module._bot_config.instrument = symbol
+    bot_module._bot_config.tick_size = symbol_spec.tick_size
+    bot_module._bot_config.tick_value = symbol_spec.tick_value
+    
+    # Also update SYMBOL_SPEC in bot module
+    bot_module.SYMBOL_SPEC = symbol_spec
+    
+    # CRITICAL: Reset capitulation detector to use new symbol's tick size/value
+    # The detector is a singleton and needs to be recreated for each symbol
+    import capitulation_detector
+    capitulation_detector._detector = None
+    
     # Initialize RL brain with specified exploration rate
     signal_exp_file = os.path.join(PROJECT_ROOT, f"experiences/{symbol}/signal_experience.json")
     
@@ -299,6 +320,14 @@ def main():
     bot_config.instrument = args.symbol
     bot_config.account_size = 50000.0
     bot_config.max_contracts = 1
+    
+    # CRITICAL FIX: Update tick_size and tick_value based on symbol
+    # This ensures MES, MNQ, NQ use correct values (not ES defaults)
+    from symbol_specs import get_symbol_spec
+    symbol_spec = get_symbol_spec(args.symbol)
+    bot_config.tick_size = symbol_spec.tick_size
+    bot_config.tick_value = symbol_spec.tick_value
+    
     bot_config_dict = bot_config.to_dict()
     
     # Get date range from historical data
