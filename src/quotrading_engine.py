@@ -7624,16 +7624,17 @@ def main(symbol_override: str = None) -> None:
     # QuoTrading AI logo was already shown and cleared in __main__ (8 seconds)
     # Now display the welcome header as a SEPARATE screen
     # Shows "Welcome to QuoTrading AI Professional Trading System" with flowing rainbow colors
-    # Uses BLOCKING mode with short duration (3 seconds) to complete before other output
-    # This prevents log spam while keeping the rainbow animation
+    # Uses NON-BLOCKING mode with thread-safe updates so animation continues while bot initializes
+    # Animation uses saved cursor position to update header without interfering with logs
+    # Animates for 30 seconds to keep the header looking cool during initialization
     # Only in live mode (skip in backtest)
     if RAINBOW_LOGO_AVAILABLE and not is_backtest_mode():
         try:
-            # Display animated rainbow header (BLOCKING mode for clean output)
-            # Colors cycle through the text for 3 seconds creating flowing rainbow effect
-            # Blocking ensures animation completes before bot initialization continues
-            # This prevents cursor movement interference with other log output
-            display_animated_welcome_header(duration=3.0, fps=10)
+            # Display animated rainbow header (NON-BLOCKING mode - animation runs in background)
+            # Colors cycle through the text for 30 seconds creating flowing rainbow effect
+            # Uses thread-safe cursor save/restore to update header without log interference
+            # Bot initialization continues immediately while header stays animated
+            display_animated_welcome_header(duration=30.0, fps=10, non_blocking=True)
         except Exception as e:
             # Fallback to static header if rainbow display fails
             logger.warning(f"Rainbow header display failed: {e}")

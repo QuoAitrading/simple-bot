@@ -7,7 +7,10 @@ import time
 import sys
 import os
 import threading
+import logging
 
+# Thread lock for stdout access to prevent concurrent write conflicts
+_stdout_lock = threading.Lock()
 
 # ANSI color codes for rainbow effect
 class Colors:
@@ -410,6 +413,7 @@ def display_animated_welcome_header(duration=10.0, fps=10, non_blocking=False):
     
     In blocking mode: Animates for the duration, then continues (blocks main thread).
     In non-blocking mode: Animates in background thread, returns immediately (non-blocking).
+                         Uses thread-safe approach to update header without interfering with logs.
     
     Args:
         duration: How long to animate/display in seconds (default: 10.0)
@@ -423,7 +427,13 @@ def display_animated_welcome_header(duration=10.0, fps=10, non_blocking=False):
     # If non_blocking mode, display animated rainbow header in background thread
     if non_blocking:
         def display_animated_rainbow_header_bg():
-            """Display animated rainbow header with color cycling in background thread"""
+            """
+            Display animated rainbow header with color cycling in background thread.
+            
+            This version prints the header structure once, then continuously updates
+            just the colored text line using ANSI escape codes to save/restore cursor.
+            This prevents interference with concurrent log output.
+            """
             frames = int(duration * fps)
             delay = 1.0 / fps
             rainbow = get_rainbow_colors()
@@ -442,28 +452,48 @@ def display_animated_welcome_header(duration=10.0, fps=10, non_blocking=False):
             separator = "=" * 80
             sep_padding = max(0, (terminal_width - 80) // 2)
             
-            # Print initial frame with separators
-            print()
-            print(" " * sep_padding + separator)
+            # Use lock to prevent concurrent stdout access
+            with _stdout_lock:
+                # Print structure once - separators and initial header
+                print()
+                print(" " * sep_padding + separator)
+                
+                # Print placeholder for header (will be updated in animation loop)
+                colored_header = ''.join(
+                    f"{rainbow[i % len(rainbow)]}{char}{Colors.RESET}" 
+                    for i, char in enumerate(WELCOME_HEADER)
+                )
+                print(" " * msg_padding + colored_header)
+                
+                # Save cursor position right after the header line
+                sys.stdout.write('\033[s')  # Save cursor position
+                sys.stdout.flush()
             
             try:
+                # Animation loop - update just the header line
                 for frame in range(frames):
                     # Calculate color offset for flowing rainbow effect
                     color_offset = frame % len(rainbow)
                     
-                    # Move cursor up to overwrite previous frame (just 1 line: the header)
-                    if frame > 0:
-                        sys.stdout.write('\033[1A')  # Move up 1 line
-                    
-                    # Clear line and display rainbow header with offset
-                    sys.stdout.write('\033[2K')  # Clear line
+                    # Build colored header with offset
                     colored_header = ''.join(
                         f"{rainbow[(i + color_offset) % len(rainbow)]}{char}{Colors.RESET}" 
                         for i, char in enumerate(WELCOME_HEADER)
                     )
-                    sys.stdout.write(" " * msg_padding + colored_header + "\n")
                     
-                    sys.stdout.flush()
+                    # Use lock for thread-safe update
+                    with _stdout_lock:
+                        # Restore cursor to saved position (right after header line)
+                        sys.stdout.write('\033[u')  # Restore cursor position
+                        # Move up one line to overwrite the header
+                        sys.stdout.write('\033[1A')  # Move up 1 line
+                        # Clear the line
+                        sys.stdout.write('\033[2K')  # Clear line
+                        # Write updated colored header
+                        sys.stdout.write(" " * msg_padding + colored_header + "\n")
+                        # Save cursor position again
+                        sys.stdout.write('\033[s')  # Save cursor position
+                        sys.stdout.flush()
                     
                     if frame < frames - 1:
                         time.sleep(delay)
@@ -471,9 +501,12 @@ def display_animated_welcome_header(duration=10.0, fps=10, non_blocking=False):
                 # Allow graceful interruption without crashing
                 pass
             finally:
-                # Always print closing separator, even if interrupted
-                print(" " * sep_padding + separator)
-                print()
+                # Print closing separator
+                with _stdout_lock:
+                    # Restore cursor position
+                    sys.stdout.write('\033[u')  # Restore cursor position
+                    print(" " * sep_padding + separator)
+                    print()
         
         thread = threading.Thread(
             target=display_animated_rainbow_header_bg,
