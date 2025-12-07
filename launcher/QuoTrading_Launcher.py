@@ -297,7 +297,7 @@ class QuoTradingLauncher:
         Args:
             title: Header title text
             subtitle: Optional subtitle text
-            rainbow: If True, renders title in rainbow colors
+            rainbow: If True, renders title in animated rainbow colors
         """
         header = tk.Frame(self.root, bg=self.colors['success_dark'], height=80)
         header.pack(fill=tk.X)
@@ -308,9 +308,12 @@ class QuoTradingLauncher:
         top_accent.pack(fill=tk.X)
         
         if rainbow:
-            # Create rainbow text for title
+            # Create animated rainbow text for title
             title_container = tk.Frame(header, bg=self.colors['success_dark'])
             title_container.pack(pady=(12, 2))
+            
+            # Create list to store character labels for animation
+            char_labels = []
             
             for i, char in enumerate(title):
                 if char == ' ':
@@ -318,13 +321,18 @@ class QuoTradingLauncher:
                             font=("Segoe UI", 11, "bold")).pack(side=tk.LEFT)
                 else:
                     color = self.RAINBOW_COLORS[i % len(self.RAINBOW_COLORS)]
-                    tk.Label(
+                    label = tk.Label(
                         title_container,
                         text=char,
                         bg=self.colors['success_dark'],
                         fg=color,
                         font=("Segoe UI", 11, "bold")
-                    ).pack(side=tk.LEFT)
+                    )
+                    label.pack(side=tk.LEFT)
+                    char_labels.append((label, i))  # Store label and original position
+            
+            # Start animation for rainbow text (non-blocking)
+            self._animate_rainbow_header(char_labels)
         else:
             # Regular title
             title_label = tk.Label(
@@ -351,6 +359,25 @@ class QuoTradingLauncher:
         bottom_shadow.pack(side=tk.BOTTOM, fill=tk.X)
         
         return header
+    
+    def _animate_rainbow_header(self, char_labels, offset=0):
+        """Animate rainbow colors on header text (non-blocking).
+        
+        Args:
+            char_labels: List of (label, original_position) tuples
+            offset: Current animation offset for color cycling
+        """
+        # Update each character's color based on offset
+        for label, pos in char_labels:
+            try:
+                color_index = (pos + offset) % len(self.RAINBOW_COLORS)
+                label.config(fg=self.RAINBOW_COLORS[color_index])
+            except tk.TclError:
+                # Label was destroyed, stop animation
+                return
+        
+        # Schedule next animation frame (300ms delay for smooth but visible animation)
+        self.root.after(300, lambda: self._animate_rainbow_header(char_labels, offset + 1))
     
     def create_input_field(self, parent, label_text, is_password=False, placeholder=""):
         """Create a styled input field with label and premium design."""
