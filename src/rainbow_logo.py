@@ -340,8 +340,9 @@ def display_animated_logo(duration=3.0, fps=20, with_headers=True, non_blocking=
     
     # Clear screen or add spacing after logo
     if clear_after:
-        # Clear screen like a loading screen in a video game
-        # Use ANSI escape code to clear screen and move cursor to top
+        # Clear screen AND scrollback buffer completely
+        # Use ANSI escape codes to ensure logo doesn't remain visible when scrolling up
+        sys.stdout.write('\033[3J')  # Clear scrollback buffer (prevents scrolling up to see logo)
         sys.stdout.write('\033[2J')  # Clear entire screen
         sys.stdout.write('\033[H')   # Move cursor to home position (top-left)
         sys.stdout.flush()
@@ -407,22 +408,24 @@ def display_animated_welcome_header(duration=10.0, fps=10, non_blocking=False):
     Display rainbow "QuoTrading AI Professional Trading System" header with animation.
     Colors cycle through the text while it stays in place - exactly like thank you message.
     
-    In blocking mode (recommended): Animates for the duration, then continues.
-    In non-blocking mode: Displays static rainbow header (animation would conflict with bot output).
+    In blocking mode: Animates for the duration, then continues (blocks main thread).
+    In non-blocking mode: Animates in background thread, returns immediately (non-blocking).
     
     Args:
         duration: How long to animate/display in seconds (default: 10.0)
         fps: Frames per second for animation (default: 10)
-        non_blocking: If True, displays static header in background thread (default: False)
-                     If False, animates synchronously like thank you message (recommended)
+        non_blocking: If True, animates in background thread and returns immediately (default: False)
+                     If False, animates synchronously and blocks until complete
     
     Returns:
         If non_blocking=True, returns the thread object. Otherwise returns None.
     """
-    # If non_blocking mode, display static rainbow header (non-animated)
+    # If non_blocking mode, display animated rainbow header in background thread
     if non_blocking:
-        def display_static_rainbow_header():
-            """Display static rainbow header with rainbow-colored text"""
+        def display_animated_rainbow_header_bg():
+            """Display animated rainbow header with color cycling in background thread"""
+            frames = int(duration * fps)
+            delay = 1.0 / fps
             rainbow = get_rainbow_colors()
             
             # Get terminal width for centering
@@ -439,31 +442,41 @@ def display_animated_welcome_header(duration=10.0, fps=10, non_blocking=False):
             separator = "=" * 80
             sep_padding = max(0, (terminal_width - 80) // 2)
             
+            # Print initial frame with separators
+            print()
+            print(" " * sep_padding + separator)
+            
             try:
-                # Print header with rainbow colors once (static, not animated)
-                # Each character gets a different rainbow color based on position
-                print()
-                print(" " * sep_padding + separator)
-                
-                # Display header with rainbow-colored text (static)
-                colored_header = ''.join(
-                    f"{rainbow[i % len(rainbow)]}{char}{Colors.RESET}" 
-                    for i, char in enumerate(WELCOME_HEADER)
-                )
-                print(" " * msg_padding + colored_header)
-                
-                print(" " * sep_padding + separator)
-                print()
-                
-                # Keep thread alive for duration but don't animate
-                # Animation would conflict with bot output
-                time.sleep(duration)
-                
+                for frame in range(frames):
+                    # Calculate color offset for flowing rainbow effect
+                    color_offset = frame % len(rainbow)
+                    
+                    # Move cursor up to overwrite previous frame (just 1 line: the header)
+                    if frame > 0:
+                        sys.stdout.write('\033[1A')  # Move up 1 line
+                    
+                    # Clear line and display rainbow header with offset
+                    sys.stdout.write('\033[2K')  # Clear line
+                    colored_header = ''.join(
+                        f"{rainbow[(i + color_offset) % len(rainbow)]}{char}{Colors.RESET}" 
+                        for i, char in enumerate(WELCOME_HEADER)
+                    )
+                    sys.stdout.write(" " * msg_padding + colored_header + "\n")
+                    
+                    sys.stdout.flush()
+                    
+                    if frame < frames - 1:
+                        time.sleep(delay)
             except (KeyboardInterrupt, OSError, IOError):
+                # Allow graceful interruption without crashing
                 pass
+            finally:
+                # Always print closing separator, even if interrupted
+                print(" " * sep_padding + separator)
+                print()
         
         thread = threading.Thread(
-            target=display_static_rainbow_header,
+            target=display_animated_rainbow_header_bg,
             daemon=True
         )
         thread.start()
