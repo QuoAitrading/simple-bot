@@ -8534,7 +8534,7 @@ def handle_license_check_event(data: Dict[str, Any]) -> None:
                 if broker is not None:
                     try:
                         broker.disconnect()
-                    except:
+                    except Exception:
                         pass
                 
                 # Exit the bot completely
@@ -8583,7 +8583,7 @@ def handle_license_check_event(data: Dict[str, Any]) -> None:
             if broker is not None:
                 try:
                     broker.disconnect()
-                except:
+                except Exception:
                     pass
             
             # Exit the bot completely
@@ -8628,7 +8628,7 @@ def handle_license_check_event(data: Dict[str, Any]) -> None:
             if broker is not None:
                 try:
                     broker.disconnect()
-                except:
+                except Exception:
                     pass
             
             # Exit the bot completely
