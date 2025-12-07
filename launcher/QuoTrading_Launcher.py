@@ -202,7 +202,7 @@ class QuoTradingLauncher:
         self.root.protocol("WM_DELETE_WINDOW", self.on_closing)
         
         # Start directly with broker screen - NO splash screen in launcher GUI
-        # Rainbow splash only shows when AI bot launches in PowerShell
+        # Rainbow splash only shows when AI bot launches (in terminal/PowerShell)
         self.setup_broker_screen()
     
     def show_splash_screen(self):
