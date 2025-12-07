@@ -1,15 +1,15 @@
 {
   "license_type": "STANDARD",
   "license_expiration": "2026-01-05T06:42:39.468219",
-  "days_until_expiration": 30,
-  "hours_until_expiration": 723.8239797544444,
+  "days_until_expiration": 28,
+  "hours_until_expiration": 690.3618549516666,
   "topstep_starting_balances": {
     "14797846": 18.64,
     "14955666": 49980.26
   },
   "broker_type": "Prop Firm",
   "broker": "TopStep",
-  "account_size": 49665.0,
+  "account_size": "49665",
   "broker_validated": true,
   "accounts": [
     {
@@ -29,10 +29,7 @@
   "remember_credentials": true,
   "theme": "dark",
   "symbols": [
-    "ES",
-    "MES",
-    "MNQ",
-    "NQ"
+    "ES"
   ],
   "daily_loss_limit": 1000.0,
   "max_loss_per_trade": 400.0,
