@@ -1279,8 +1279,13 @@ def create_or_update_symbol_session(conn, license_key: str, symbol: str, device_
 
 def release_symbol_session(conn, license_key: str, symbol: str, device_fingerprint: str):
     """
-    Release a session for a specific license+symbol combination.
-    Only releases if the device_fingerprint matches (prevents unauthorized releases).
+    Release a session for a specific license+symbol combination by deleting it from the database.
+    This allows immediate re-login after normal shutdown.
+    
+    Only deletes if the device_fingerprint matches (prevents unauthorized releases).
+    
+    Returns:
+        True if session was deleted, False otherwise
     """
     try:
         with conn.cursor() as cursor:
