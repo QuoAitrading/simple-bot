@@ -982,6 +982,17 @@ def validate_license_at_startup() -> None:
             data = response.json()
             if data.get("license_valid"):
                 logger.info(f"✅ License validated - {data.get('message', 'Access Granted')}")
+                
+                # CRITICAL: Send immediate heartbeat to create/claim session
+                # This prevents the window where another user could login during the first 20 seconds
+                # Session is created NOW, not after waiting for the first scheduled heartbeat
+                try:
+                    send_heartbeat()
+                    pass  # Silent - initial heartbeat sent successfully
+                except Exception as hb_error:
+                    # Heartbeat failed - log but don't block startup
+                    # Session will be created on next scheduled heartbeat
+                    logger.warning(f"Initial heartbeat failed: {hb_error}")
             else:
                 reason = data.get('message', 'Unknown error')
                 logger.critical("=" * 70)
@@ -7614,14 +7625,14 @@ def main(symbol_override: str = None) -> None:
     # QuoTrading AI logo was already shown and cleared in __main__ (8 seconds)
     # Now display the welcome header as a SEPARATE screen
     # Shows "Welcome to QuoTrading AI Professional Trading System" with flowing rainbow colors
-    # Animates for 8 seconds with color cycling effect
+    # Animates for 8 seconds with color cycling effect (now in non-blocking mode)
     # Only in live mode (skip in backtest)
     if RAINBOW_LOGO_AVAILABLE and not is_backtest_mode():
         try:
             # Display animated rainbow header (non-blocking mode for parallel initialization)
             # Colors cycle through the text for 8 seconds creating flowing rainbow effect
             # This displays AFTER logo has completely cleared
-            # Bot initialization continues immediately without waiting for animation to finish
+            # Animation runs in background thread - bot initialization continues immediately
             display_animated_welcome_header(duration=8.0, fps=10, non_blocking=True)
         except Exception as e:
             # Fallback to static header if rainbow display fails
