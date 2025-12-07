@@ -988,7 +988,6 @@ def validate_license_at_startup() -> None:
                 # Session is created NOW, not after waiting for the first scheduled heartbeat
                 try:
                     send_heartbeat()
-                    pass  # Silent - initial heartbeat sent successfully
                 except Exception as hb_error:
                     # Heartbeat failed - log but don't block startup
                     # Session will be created on next scheduled heartbeat
