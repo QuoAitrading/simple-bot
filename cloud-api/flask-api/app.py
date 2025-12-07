@@ -1449,8 +1449,8 @@ def validate_license_endpoint():
                         }), 403
                     
                     # No conflict for this symbol - validation successful
-                    # FIX: Do NOT create session here - sessions are created only via heartbeat
-                    # This prevents immediate session conflicts when bot crashes/restarts quickly
+                    # NOTE: Sessions are NOT created during validation - only via heartbeat endpoint
+                    # (See legacy session path below for detailed explanation)
                     active_count = count_active_symbol_sessions(conn, license_key)
                     logging.info(f"✅ License validated for {license_key}/{symbol} ({active_count} active symbols)")
                     
@@ -1524,8 +1524,9 @@ def validate_license_endpoint():
                                 logging.info(f"✅ No heartbeat found - allowing {device_fingerprint[:8]}...")
                     
                     # No conflict detected - validation successful
-                    # FIX: Do NOT create session here - sessions are created only via heartbeat
-                    # This prevents immediate session conflicts when bot crashes/restarts quickly
+                    # NOTE: Sessions are NOT created during validation - only via heartbeat endpoint
+                    # This prevents race conditions where bot crashes immediately after validation
+                    # creating a session lock that blocks immediate reconnection attempts
                     logging.info(f"✅ License validated for {license_key} - {license_type} expires {license_expiration}")
                     
                     return jsonify({
