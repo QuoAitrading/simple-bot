@@ -7608,7 +7608,7 @@ def main(symbol_override: str = None) -> None:
     # Shows "Welcome to QuoTrading AI Professional Trading System" with brief rainbow animation
     # Quick 1-second animation - provides visual appeal without delaying bot startup
     # Only in live mode (skip in backtest)
-    if RAINBOW_LOGO_AVAILABLE and display_quick_rainbow_header and not is_backtest_mode():
+    if RAINBOW_LOGO_AVAILABLE and not is_backtest_mode():
         try:
             # Display rainbow header with quick 1-second animation
             # Colors cycle through text briefly, then bot startup continues
