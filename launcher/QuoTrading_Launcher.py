@@ -143,7 +143,13 @@ def check_launcher_lock(api_key: str) -> tuple[bool, dict]:
         if released_at:
             try:
                 released_time = datetime.fromisoformat(released_at)
-                time_since_release = (datetime.now() - released_time).total_seconds()
+                # Use timezone-aware datetime for consistent comparison
+                current_time = datetime.now()
+                # Ensure both datetimes are timezone-naive for comparison
+                if released_time.tzinfo is not None:
+                    released_time = released_time.replace(tzinfo=None)
+                
+                time_since_release = (current_time - released_time).total_seconds()
                 
                 if time_since_release < 60:
                     # Still in cooldown period
@@ -228,6 +234,15 @@ def release_launcher_lock(api_key: str) -> bool:
 
 class QuoTradingLauncher:
     """Professional GUI launcher for QuoTrading AI - Blue/White Theme with Cloud Authentication."""
+    
+    # Splash screen animation constants
+    DOT_ANIMATION_FRAMES = ["●", "●●", "●●●", "●●●●", "●●●●●", "●●●●", "●●●", "●●", "●"]
+    RAINBOW_COLORS = ['#FF0000', '#FF7F00', '#FFFF00', '#00FF00', '#0000FF', '#4B0082', '#9400D3']
+    SPLASH_DURATION_MS = 8000  # Total splash screen duration
+    WELCOME_DELAY_MS = 4000    # When to show welcome message
+    DOT_ANIMATION_INTERVAL_MS = 150
+    RAINBOW_ANIMATION_INTERVAL_MS = 200
+    WELCOME_ANIMATION_CYCLES = WELCOME_DELAY_MS // RAINBOW_ANIMATION_INTERVAL_MS  # 20 cycles
     
     def __init__(self):
         self.root = tk.Tk()
@@ -373,30 +388,25 @@ class QuoTradingLauncher:
         # Start animations
         self.animate_splash_dots()
         
-        # Schedule welcome message and transition after 8 seconds
-        self.root.after(4000, self.show_welcome_message)
-        self.root.after(8000, self.finish_splash_screen)
+        # Schedule welcome message and transition
+        self.root.after(self.WELCOME_DELAY_MS, self.show_welcome_message)
+        self.root.after(self.SPLASH_DURATION_MS, self.finish_splash_screen)
     
     def animate_splash_dots(self):
         """Animate loading dots on splash screen."""
         if not self.splash_running:
             return
         
-        dot_frames = ["●", "●●", "●●●", "●●●●", "●●●●●", "●●●●", "●●●", "●●", "●"]
-        
-        current_dots = dot_frames[self.splash_animation_step % len(dot_frames)]
+        current_dots = self.DOT_ANIMATION_FRAMES[self.splash_animation_step % len(self.DOT_ANIMATION_FRAMES)]
         self.splash_dots_label.config(text=current_dots)
         
         self.splash_animation_step += 1
-        self.root.after(150, self.animate_splash_dots)
+        self.root.after(self.DOT_ANIMATION_INTERVAL_MS, self.animate_splash_dots)
     
     def show_welcome_message(self):
         """Show rainbow animated welcome message."""
         if not self.splash_running:
             return
-        
-        # Rainbow colors for text animation
-        rainbow_colors = ['#FF0000', '#FF7F00', '#FFFF00', '#00FF00', '#0000FF', '#4B0082', '#9400D3']
         
         welcome_text = "Welcome to QuoTrading AI System"
         self.welcome_label.config(text=welcome_text)
@@ -410,16 +420,14 @@ class QuoTradingLauncher:
         if not self.splash_running:
             return
         
-        rainbow_colors = ['#FF0000', '#FF7F00', '#FFFF00', '#00FF00', '#0000FF', '#4B0082', '#9400D3']
-        
-        color = rainbow_colors[self.welcome_color_index % len(rainbow_colors)]
+        color = self.RAINBOW_COLORS[self.welcome_color_index % len(self.RAINBOW_COLORS)]
         self.welcome_label.config(fg=color)
         
         self.welcome_color_index += 1
         
-        # Continue animation for 4 seconds (until splash finishes)
-        if self.welcome_color_index < 20:  # About 4 seconds at 200ms intervals
-            self.root.after(200, self.animate_welcome_rainbow)
+        # Continue animation until splash screen finishes
+        if self.welcome_color_index < self.WELCOME_ANIMATION_CYCLES:
+            self.root.after(self.RAINBOW_ANIMATION_INTERVAL_MS, self.animate_welcome_rainbow)
     
     def finish_splash_screen(self):
         """Finish splash screen and proceed to broker screen."""
