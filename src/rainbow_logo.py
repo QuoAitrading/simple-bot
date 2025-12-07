@@ -182,7 +182,7 @@ def display_logo_line(line, color_offset=0, center_width=80):
     print(" " * padding + colored_line)
 
 
-def display_animated_logo(duration=3.0, fps=20, with_headers=True):
+def display_animated_logo(duration=3.0, fps=20, with_headers=True, non_blocking=False):
     """
     Display the QuoTrading AI logo with animated rainbow colors.
     Professional splash screen - shows logo with flowing rainbow gradient.
@@ -192,7 +192,88 @@ def display_animated_logo(duration=3.0, fps=20, with_headers=True):
         duration: How long to display in seconds (default: 3.0, reduced for faster startup)
         fps: Frames per second for animation (default: 20, increased for smoother animation)
         with_headers: Whether to show header/footer text (default: True)
+        non_blocking: If True, runs animation in background thread and returns immediately (default: False)
+                     In non-blocking mode, animation displays and keeps updating at a fixed position
+                     while allowing the main program to continue below
+    
+    Returns:
+        If non_blocking=True, returns the thread object. Otherwise returns None.
     """
+    # If non_blocking mode, start animation in background and return immediately
+    if non_blocking:
+        import threading
+        
+        def animate_continuously():
+            """Run animation in background thread, continuously updating logo"""
+            frames = int(duration * fps)
+            delay = 1.0 / fps
+            
+            # Get terminal dimensions
+            try:
+                terminal_size = os.get_terminal_size()
+                terminal_width = terminal_size.columns
+            except OSError:
+                terminal_width = 120
+            
+            # Calculate number of lines for logo
+            total_lines = len(QUO_AI_LOGO) + 3  # Logo lines + blank + subtitle + blank
+            
+            # Display logo for first time and reserve space
+            for i in range(total_lines):
+                print()  # Reserve lines
+            
+            # Animate the logo in the reserved space
+            for frame in range(frames):
+                # Calculate color offset for flowing rainbow effect
+                color_offset = (frame / frames) * len(get_rainbow_colors())
+                
+                # Calculate fade-in progress for subtitle (0.0 to 1.0)
+                fade_progress = min(1.0, frame / max(1, frames * 0.1))  # Fade in during first 10% of animation
+                
+                try:
+                    # Move cursor to top of reserved space
+                    # Use relative positioning: move up by total_lines
+                    sys.stdout.write(f'\033[{total_lines}A')
+                    
+                    # Blank line at top
+                    sys.stdout.write('\033[2K\n')
+                    
+                    # Display each line of logo with rainbow colors
+                    for line in QUO_AI_LOGO:
+                        sys.stdout.write('\033[2K')  # Clear line
+                        colored_line = color_line_with_gradient(line, color_offset)
+                        padding = max(0, (terminal_width - len(line)) // 2)
+                        sys.stdout.write(" " * padding + colored_line + "\n")
+                    
+                    # Blank line
+                    sys.stdout.write('\033[2K\n')
+                    
+                    # Subtitle with fade-in effect
+                    sys.stdout.write('\033[2K')  # Clear line
+                    subtitle_colored = color_line_with_gradient_and_fade(SUBTITLE, color_offset, fade_progress)
+                    subtitle_padding = max(0, (terminal_width - len(SUBTITLE)) // 2)
+                    sys.stdout.write(" " * subtitle_padding + subtitle_colored + "\n")
+                    
+                    # Blank line at bottom
+                    sys.stdout.write('\033[2K\n')
+                    
+                    sys.stdout.flush()
+                except:
+                    # If terminal operations fail (e.g., output redirection), stop animation
+                    break
+                
+                # Wait before next frame
+                if frame < frames - 1:
+                    time.sleep(delay)
+        
+        thread = threading.Thread(
+            target=animate_continuously,
+            daemon=True  # Daemon thread will not prevent program exit
+        )
+        thread.start()
+        return thread
+    
+    # Blocking mode - original implementation
     frames = int(duration * fps)
     delay = 1.0 / fps
     
