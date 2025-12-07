@@ -395,7 +395,7 @@ FADE_IN_PERCENTAGE = 0.1
 WELCOME_HEADER = "Welcome to QuoTrading AI Professional Trading System"
 
 
-def display_animated_welcome_header(duration=3600.0, fps=5, non_blocking=False):
+def display_animated_welcome_header(duration=10.0, fps=10, non_blocking=False):
     """
     Display rainbow "QuoTrading AI Professional Trading System" header with animation.
     Colors cycle through the text while it stays in place - exactly like thank you message.
@@ -404,8 +404,8 @@ def display_animated_welcome_header(duration=3600.0, fps=5, non_blocking=False):
     In non-blocking mode: Displays static rainbow header (animation would conflict with bot output).
     
     Args:
-        duration: How long to animate/display in seconds (default: 3600.0)
-        fps: Frames per second for animation (default: 5)
+        duration: How long to animate/display in seconds (default: 10.0)
+        fps: Frames per second for animation (default: 10)
         non_blocking: If True, displays static header in background thread (default: False)
                      If False, animates synchronously like thank you message (recommended)
     
@@ -415,7 +415,7 @@ def display_animated_welcome_header(duration=3600.0, fps=5, non_blocking=False):
     # If non_blocking mode, display static rainbow header (non-animated)
     if non_blocking:
         def display_static_rainbow_header():
-            """Display static rainbow header - like thank you message but non-animated"""
+            """Display static rainbow header with rainbow-colored text"""
             rainbow = get_rainbow_colors()
             
             # Get terminal width for centering
@@ -433,12 +433,12 @@ def display_animated_welcome_header(duration=3600.0, fps=5, non_blocking=False):
             sep_padding = max(0, (terminal_width - 80) // 2)
             
             try:
-                # Print header with rainbow colors once
-                # Colors cycle through like in thank you message, but static (not animated)
+                # Print header with rainbow colors once (static, not animated)
+                # Each character gets a different rainbow color based on position
                 print()
                 print(" " * sep_padding + separator)
                 
-                # Display header with cycling rainbow colors
+                # Display header with rainbow-colored text (static)
                 colored_header = ''.join(
                     f"{rainbow[i % len(rainbow)]}{char}{Colors.RESET}" 
                     for i, char in enumerate(WELCOME_HEADER)
