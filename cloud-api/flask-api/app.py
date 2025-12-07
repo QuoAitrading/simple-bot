@@ -1435,8 +1435,9 @@ def validate_license_endpoint():
                     ensure_active_sessions_table(conn)
                     
                     # Check for session conflict for this specific symbol
+                    # For validation/login, use strict blocking (even same device)
                     has_conflict, conflict_info = check_symbol_session_conflict(
-                        conn, license_key, symbol, device_fingerprint
+                        conn, license_key, symbol, device_fingerprint, allow_same_device=False
                     )
                     
                     if has_conflict:
