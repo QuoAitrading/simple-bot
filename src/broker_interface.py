@@ -1513,7 +1513,13 @@ class BrokerSDKImplementation(BrokerInterface):
                             self.sdk_client.search_instruments(query=clean_symbol)
                         )
                     finally:
-                        BrokerSDKImplementation._cleanup_event_loop(loop)
+                        # Gentler cleanup to avoid Windows proactor errors
+                        try:
+                            if not loop.is_closed():
+                                loop.run_until_complete(loop.shutdown_asyncgens())
+                                loop.close()
+                        except Exception:
+                            pass  # Suppress cleanup errors
                 
                 with ThreadPoolExecutor(max_workers=1) as executor:
                     future = executor.submit(run_async_search)
