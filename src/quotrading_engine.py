@@ -7633,7 +7633,7 @@ def main(symbol_override: str = None) -> None:
             # Colors cycle through the text for 3 seconds creating flowing rainbow effect
             # Blocking ensures animation completes before bot initialization continues
             # This prevents cursor movement interference with other log output
-            display_animated_welcome_header(duration=3.0, fps=10, non_blocking=False)
+            display_animated_welcome_header(duration=3.0, fps=10)
         except Exception as e:
             # Fallback to static header if rainbow display fails
             logger.warning(f"Rainbow header display failed: {e}")
