@@ -7610,8 +7610,29 @@ def main(symbol_override: str = None) -> None:
     # Track session start time for runtime display
     bot_status["session_start_time"] = datetime.now(pytz.timezone(CONFIG.get("timezone", "US/Eastern")))
     
-    # QuoTrading AI logo was already shown as splash screen for 8 seconds (in __main__)
-    # After logo clears, go straight to bot configuration - no duplicate welcome header
+    # Display rainbow welcome header with animation
+    # QuoTrading AI logo was already shown and cleared in __main__ (8 seconds)
+    # Now display the welcome header as a SEPARATE screen
+    # Shows "Welcome to QuoTrading AI Professional Trading System" with flowing rainbow colors
+    # Animates for 8 seconds with color cycling effect
+    # Only in live mode (skip in backtest)
+    if RAINBOW_LOGO_AVAILABLE and not is_backtest_mode():
+        try:
+            # Display animated rainbow header (blocking mode for full animation)
+            # Colors cycle through the text for 8 seconds creating flowing rainbow effect
+            # This displays AFTER logo has completely cleared
+            display_animated_welcome_header(duration=8.0, fps=10, non_blocking=False)
+        except Exception as e:
+            # Fallback to static header if rainbow display fails
+            logger.warning(f"Rainbow header display failed: {e}")
+            logger.info("=" * 80)
+            logger.info("Welcome to QuoTrading AI Professional Trading System")
+            logger.info("=" * 80)
+    else:
+        # Backtest mode or rainbow not available - use static header
+        logger.info("=" * 80)
+        logger.info("Welcome to QuoTrading AI Professional Trading System")
+        logger.info("=" * 80)
     
     # CRITICAL: Validate license after startup logo
     # This is the "login screen" - fail fast if license invalid or session conflict
