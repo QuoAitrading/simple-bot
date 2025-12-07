@@ -7620,10 +7620,9 @@ def main(symbol_override: str = None) -> None:
             
             # Get terminal width for centering
             try:
-                import os
                 terminal_size = os.get_terminal_size()
                 terminal_width = terminal_size.columns
-            except:
+            except (OSError, AttributeError):
                 terminal_width = 120
             
             # Create rainbow-colored welcome message
