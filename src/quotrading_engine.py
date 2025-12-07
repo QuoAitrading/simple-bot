@@ -122,7 +122,7 @@ except ImportError:
     display_quick_rainbow_header = None
 
 # Startup logo configuration
-STARTUP_LOGO_DURATION = 600.0  # Seconds to display startup logo (10 minutes)
+STARTUP_LOGO_DURATION = 3.0  # Seconds to display startup logo
 
 # ===== EXE-COMPATIBLE FILE PATH HELPERS =====
 # These ensure files are saved in the correct location whether running as:
@@ -8924,7 +8924,7 @@ Multi-Symbol Mode:
         try:
             # Show logo in background thread so it doesn't block bot startup
             # This creates a professional loading screen effect that continues while bot initializes
-            # Reduced FPS (5) for 10-minute animation to minimize resource usage
+            # Brief animation (3 seconds) at startup for visual polish
             # Animation updates at top of screen while bot output appears below
             display_animated_logo(duration=STARTUP_LOGO_DURATION, fps=5, with_headers=False, non_blocking=True)
             
