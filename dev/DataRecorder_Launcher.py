@@ -42,18 +42,6 @@ if str(src_path) not in sys.path:
 
 # Configuration constants
 RECORDER_CLEANUP_DELAY_SECONDS = 1  # Time to wait for recorder cleanup before exit
-ANIMATION_INTERVAL_MS = 100  # Rainbow animation interval in milliseconds
-
-# Rainbow colors for welcome screen animation
-RAINBOW_COLORS = [
-    '#FF0000',  # Red
-    '#FF7F00',  # Orange
-    '#FFFF00',  # Yellow
-    '#00FF00',  # Green
-    '#0000FF',  # Blue
-    '#4B0082',  # Indigo
-    '#9400D3'   # Violet
-]
 
 
 class DataRecorderLauncher:
@@ -94,110 +82,11 @@ class DataRecorderLauncher:
         self.recorder_thread = None
         self.recorder = None
         
-        # Rainbow animation state
-        self.current_color_index = 0
-        self.animation_running = False
-        self.animation_after_id = None  # Track animation callback ID
-        
-        # Show welcome screen first
-        self.show_welcome_screen()
-    
-    def clear_widgets(self):
-        """Clear all widgets from the window."""
-        for widget in self.root.winfo_children():
-            widget.destroy()
-    
-    def show_welcome_screen(self):
-        """Display welcome screen with animated rainbow logo."""
-        # Clear any existing widgets
-        self.clear_widgets()
-        
-        # Set black background for welcome screen
-        self.root.configure(bg='#000000')
-        
-        # Center frame
-        center_frame = tk.Frame(self.root, bg='#000000')
-        center_frame.place(relx=0.5, rely=0.4, anchor=tk.CENTER)
-        
-        # Animated welcome text
-        self.welcome_label = tk.Label(
-            center_frame,
-            text="Welcome to QuoTrading AI Professional Trading System",
-            font=("Segoe UI", 16, "bold"),
-            bg='#000000',
-            fg=RAINBOW_COLORS[0]
-        )
-        self.welcome_label.pack(pady=30)
-        
-        # Subtitle
-        tk.Label(
-            center_frame,
-            text="Market Data Recorder",
-            font=("Segoe UI", 12),
-            bg='#000000',
-            fg='#FFFFFF'
-        ).pack(pady=10)
-        
-        # Launch button
-        launch_button = tk.Button(
-            center_frame,
-            text="🚀 LAUNCH RECORDER",
-            command=self.launch_recorder,
-            font=("Segoe UI", 14, "bold"),
-            bg='#0078D4',
-            fg='white',
-            relief=tk.FLAT,
-            cursor="hand2",
-            padx=40,
-            pady=15,
-            activebackground='#005A9E',
-            activeforeground='white'
-        )
-        launch_button.pack(pady=30)
-        
-        # Start rainbow animation
-        self.animation_running = True
-        self.animate_rainbow()
-    
-    def animate_rainbow(self):
-        """Animate the welcome text with rainbow colors."""
-        if not self.animation_running:
-            return
-        
-        try:
-            # Check both attribute existence and widget state for safety
-            if hasattr(self, 'welcome_label') and self.welcome_label.winfo_exists():
-                # Cycle through rainbow colors
-                self.current_color_index = (self.current_color_index + 1) % len(RAINBOW_COLORS)
-                self.welcome_label.config(fg=RAINBOW_COLORS[self.current_color_index])
-                
-                # Continue animation
-                self.animation_after_id = self.root.after(ANIMATION_INTERVAL_MS, self.animate_rainbow)
-        except tk.TclError:
-            # Widget was destroyed, stop animation
-            self.animation_running = False
-    
-    def launch_recorder(self):
-        """Launch the main recorder interface."""
-        # Stop animation
-        self.animation_running = False
-        
-        # Cancel any pending animation callbacks
-        if self.animation_after_id is not None:
-            self.root.after_cancel(self.animation_after_id)
-            self.animation_after_id = None
-        
-        # Reset background color
-        self.root.configure(bg=self.colors['background'])
-        
-        # Setup main UI
+        # Setup UI
         self.setup_ui()
     
     def setup_ui(self):
         """Setup the user interface."""
-        # Clear any existing widgets from welcome screen
-        self.clear_widgets()
-        
         # Header
         header = tk.Frame(self.root, bg=self.colors['success_dark'], height=80)
         header.pack(fill=tk.X)
