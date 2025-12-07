@@ -201,8 +201,9 @@ class QuoTradingLauncher:
         # Register cleanup on window close
         self.root.protocol("WM_DELETE_WINDOW", self.on_closing)
         
-        # Show splash screen for 8 seconds, then start with broker screen
-        self.show_splash_screen()
+        # Start directly with broker screen - NO splash screen in launcher GUI
+        # Rainbow splash only shows when AI bot launches (in terminal/PowerShell)
+        self.setup_broker_screen()
     
     def show_splash_screen(self):
         """Show QuoTrading AI splash screen for 8 seconds with logo animation."""
@@ -692,17 +693,23 @@ class QuoTradingLauncher:
     
     def setup_broker_screen(self):
         """Screen 0: Broker Connection Setup with QuoTrading API Key and Account Size."""
-        # Clear window
+        # Clear window - ensure all splash screen widgets are completely destroyed
         for widget in self.root.winfo_children():
             widget.destroy()
+        
+        # Reset root background to theme color (removes any black background from splash)
+        self.root.configure(bg=self.colors['background'])
+        
+        # Force complete UI refresh to ensure splash screen is fully cleared
+        self.root.update()
         
         self.current_screen = 0
         self.root.title("QuoTrading - Broker Setup")
         
-        # Header with rainbow "Welcome to QuoTrading Professional Trading System" (static, not animated)
+        # Header - plain white text, NO rainbow in launcher GUI
         header = self.create_header("Welcome to QuoTrading Professional Trading System", 
                                    "Select your account type and broker", 
-                                   rainbow=True,
+                                   rainbow=False,
                                    rainbow_animated=False)
         
         # Main container - no scrolling
