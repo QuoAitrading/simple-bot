@@ -1470,6 +1470,41 @@ def validate_license_endpoint():
                 # LEGACY: No symbol provided - use original single-session logic
                 # This maintains backward compatibility with older bot versions
                 with conn.cursor() as cursor:
+                    # STRICT ENFORCEMENT: Check if ANY symbol sessions exist for this license
+                    # This prevents launcher from starting if any bot instances are running
+                    if MULTI_SYMBOL_SESSIONS_ENABLED:
+                        cursor.execute("""
+                            SELECT symbol, device_fingerprint, last_heartbeat
+                            FROM active_sessions
+                            WHERE license_key = %s
+                            AND last_heartbeat > NOW() - make_interval(secs => %s)
+                            ORDER BY last_heartbeat DESC
+                            LIMIT 1
+                        """, (license_key, SESSION_TIMEOUT_SECONDS))
+                        active_symbol_session = cursor.fetchone()
+                        
+                        if active_symbol_session:
+                            # Active symbol session exists - block launcher
+                            symbol = active_symbol_session[0]
+                            stored_device = active_symbol_session[1]
+                            last_heartbeat = active_symbol_session[2]
+                            
+                            now_utc = datetime.now(timezone.utc)
+                            heartbeat = last_heartbeat if last_heartbeat.tzinfo else last_heartbeat.replace(tzinfo=timezone.utc)
+                            time_since_last = now_utc - heartbeat
+                            seconds_remaining = max(0, SESSION_TIMEOUT_SECONDS - int(time_since_last.total_seconds()))
+                            
+                            logging.warning(f"⚠️ BLOCKED - License {license_key} has active session for symbol {symbol} on device {stored_device[:8]}...")
+                            return jsonify({
+                                "license_valid": False,
+                                "session_conflict": True,
+                                "message": f"Active Session Detected - Symbol {symbol} is currently running. If you force-closed the bot, wait {seconds_remaining} seconds.",
+                                "active_device": stored_device[:20] + "...",
+                                "active_symbol": symbol,
+                                "estimated_wait_seconds": seconds_remaining
+                            }), 403
+                    
+                    # Check legacy session in users table
                     cursor.execute("""
                         SELECT device_fingerprint, last_heartbeat, license_type
                         FROM users
