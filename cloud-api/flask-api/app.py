@@ -1281,17 +1281,20 @@ def create_or_update_symbol_session(conn, license_key: str, symbol: str, device_
 
 def release_symbol_session(conn, license_key: str, symbol: str, device_fingerprint: str):
     """
-    Release a session for a specific license+symbol combination.
-    Only releases if the device_fingerprint matches (prevents unauthorized releases).
+    Mark a session for natural expiry after 60-second cooldown.
+    Only processes if the device_fingerprint matches (prevents unauthorized releases).
     
     IMPORTANT: Does NOT delete the session immediately. Instead, keeps the last_heartbeat
     timestamp so the 60-second cooldown is enforced before re-login is allowed.
     The session will be auto-cleaned after 60 seconds of inactivity.
+    
+    Returns:
+        True if session exists and belongs to this device, False otherwise
     """
     try:
         with conn.cursor() as cursor:
-            # Instead of deleting, we keep the session but stop updating heartbeat
-            # The check_symbol_session_conflict will enforce 60s cooldown
+            # Validate session ownership without modifying it
+            # The check_symbol_session_conflict will enforce 60s cooldown based on last_heartbeat
             # Session will be auto-cleaned when expired
             cursor.execute("""
                 SELECT device_fingerprint FROM active_sessions
@@ -1838,7 +1841,7 @@ def release_session():
                 with conn.cursor() as cursor:
                     # IMPORTANT: Do NOT clear last_heartbeat to NULL
                     # Keep the timestamp to enforce 60-second cooldown before re-login
-                    # Only release if this device owns the session
+                    # Only validate if this device owns the session
                     cursor.execute("""
                         SELECT device_fingerprint FROM users
                         WHERE license_key = %s
@@ -1850,7 +1853,6 @@ def release_session():
                         # Don't clear device_fingerprint or last_heartbeat
                         # Let the 60s timeout enforce cooldown before next login
                         logging.info(f"📝 Session release noted for {license_key} from device {device_fingerprint[:8]}... - 60s cooldown will be enforced")
-                        conn.commit()
                         return jsonify({
                             "status": "success",
                             "message": "Session release noted - 60 second cooldown will be enforced before re-login"
