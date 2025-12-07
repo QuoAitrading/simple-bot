@@ -7618,10 +7618,11 @@ def main(symbol_override: str = None) -> None:
     # Only in live mode (skip in backtest)
     if RAINBOW_LOGO_AVAILABLE and not is_backtest_mode():
         try:
-            # Display animated rainbow header (blocking mode for full animation)
+            # Display animated rainbow header (non-blocking mode for parallel initialization)
             # Colors cycle through the text for 8 seconds creating flowing rainbow effect
             # This displays AFTER logo has completely cleared
-            display_animated_welcome_header(duration=8.0, fps=10, non_blocking=False)
+            # Bot initialization continues immediately without waiting for animation to finish
+            display_animated_welcome_header(duration=8.0, fps=10, non_blocking=True)
         except Exception as e:
             # Fallback to static header if rainbow display fails
             logger.warning(f"Rainbow header display failed: {e}")
