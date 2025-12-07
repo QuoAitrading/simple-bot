@@ -349,6 +349,8 @@ def display_animated_logo(duration=3.0, fps=20, with_headers=True, non_blocking=
         sys.stdout.write('\033[2J')  # Clear entire screen
         sys.stdout.write('\033[H')   # Move cursor to home position (top-left)
         sys.stdout.flush()
+        # Small delay to ensure terminal processes clear commands before new output
+        time.sleep(0.1)
     elif not with_headers:
         print("\n" * 2)
     else:
