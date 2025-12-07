@@ -1014,19 +1014,19 @@ def validate_license_at_startup() -> None:
                 sys.exit(1)
             elif data.get("session_conflict"):
                 # Session conflict - another device is ACTIVELY using this license
-                # OR same device trying to reconnect within 60-second cooldown
+                # OR same device trying to reconnect within 60-second cooldown after crash/force-close
                 wait_seconds = data.get("estimated_wait_seconds", 60)
                 logger.critical("=" * 70)
                 logger.critical("")
                 logger.critical("  ⚠️ SESSION CONFLICT - PLEASE WAIT")
                 logger.critical("")
-                logger.critical("  Your license key has an active session or was recently closed.")
+                logger.critical("  Your license key has an active session or was recently force-closed.")
                 logger.critical("  Only one active session is allowed per license.")
                 logger.critical("")
                 logger.critical(f"  Please wait approximately {wait_seconds} seconds before trying again.")
-                logger.critical("  This cooldown prevents rapid restarts and ensures proper session cleanup.")
+                logger.critical("  This cooldown only applies after crashes or force-closes.")
+                logger.critical("  Normal shutdowns allow immediate re-login.")
                 logger.critical("")
-                logger.critical("  If you recently force-closed the bot, this is expected.")
                 logger.critical("  Contact: support@quotrading.com")
                 logger.critical("")
                 logger.critical("=" * 70)

@@ -64,8 +64,6 @@ if ADMIN_API_KEY == _ADMIN_API_KEY_DEFAULT:
 # A session is considered "active" if heartbeat received within this threshold
 # Heartbeats are sent every 20 seconds by the bot
 # Session expires after 60 seconds of no heartbeat - 3x heartbeat interval for crash detection while tolerating network issues
-# IMPORTANT: When a session is released (normal shutdown or force-close), the last_heartbeat timestamp is KEPT
-#            This enforces a 60-second cooldown before the same API key can login again, preventing rapid restarts
 SESSION_TIMEOUT_SECONDS = 60  # 60 seconds - session expires if no heartbeat for 60 seconds (3x heartbeat interval)
 WHOP_API_BASE_URL = "https://api.whop.com/api/v5"
 
@@ -1281,36 +1279,18 @@ def create_or_update_symbol_session(conn, license_key: str, symbol: str, device_
 
 def release_symbol_session(conn, license_key: str, symbol: str, device_fingerprint: str):
     """
-    Mark a session for natural expiry after 60-second cooldown.
-    Only processes if the device_fingerprint matches (prevents unauthorized releases).
-    
-    IMPORTANT: Does NOT delete the session immediately. Instead, keeps the last_heartbeat
-    timestamp so the 60-second cooldown is enforced before re-login is allowed.
-    The session will be auto-cleaned after 60 seconds of inactivity.
-    
-    Returns:
-        True if session exists and belongs to this device, False otherwise
+    Release a session for a specific license+symbol combination.
+    Only releases if the device_fingerprint matches (prevents unauthorized releases).
     """
     try:
         with conn.cursor() as cursor:
-            # Validate session ownership without modifying it
-            # The check_symbol_session_conflict will enforce 60s cooldown based on last_heartbeat
-            # Session will be auto-cleaned when expired
             cursor.execute("""
-                SELECT device_fingerprint FROM active_sessions
-                WHERE license_key = %s AND symbol = %s
-            """, (license_key, symbol))
-            session = cursor.fetchone()
-            
-            if session and session[0] == device_fingerprint:
-                # Session exists and belongs to this device - it's already marked with last_heartbeat
-                # No need to update anything - just let it expire naturally after 60s
-                logging.info(f"📝 Session release noted for {license_key}/{symbol} - 60s cooldown will be enforced")
-                return True
-            else:
-                # Session doesn't exist or belongs to different device
-                logging.warning(f"⚠️ Cannot release session for {license_key}/{symbol} - not owned by this device")
-                return False
+                DELETE FROM active_sessions
+                WHERE license_key = %s AND symbol = %s AND device_fingerprint = %s
+            """, (license_key, symbol, device_fingerprint))
+            deleted = cursor.rowcount
+            conn.commit()
+            return deleted > 0
     except Exception as e:
         logging.error(f"Error releasing symbol session: {e}")
         return False
@@ -1839,27 +1819,26 @@ def release_session():
                 
                 # LEGACY: No symbol provided - use original single-session logic
                 with conn.cursor() as cursor:
-                    # IMPORTANT: Do NOT clear last_heartbeat to NULL
-                    # Keep the timestamp to enforce 60-second cooldown before re-login
-                    # Only validate if this device owns the session
+                    # Only release if this device owns the session
                     cursor.execute("""
-                        SELECT device_fingerprint FROM users
-                        WHERE license_key = %s
-                    """, (license_key,))
-                    user = cursor.fetchone()
+                        UPDATE users 
+                        SET device_fingerprint = NULL,
+                            last_heartbeat = NULL
+                        WHERE license_key = %s 
+                        AND device_fingerprint = %s
+                    """, (license_key, device_fingerprint))
                     
-                    if user and user[0] == device_fingerprint:
-                        # Session exists and belongs to this device
-                        # Don't clear device_fingerprint or last_heartbeat
-                        # Let the 60s timeout enforce cooldown before next login
-                        logging.info(f"📝 Session release noted for {license_key} from device {device_fingerprint[:8]}... - 60s cooldown will be enforced")
+                    rows_affected = cursor.rowcount
+                    conn.commit()
+                    
+                    if rows_affected > 0:
+                        logging.info(f"✅ Session released for {license_key} from device {device_fingerprint[:8]}...")
                         return jsonify({
                             "status": "success",
-                            "message": "Session release noted - 60 second cooldown will be enforced before re-login"
+                            "message": "Session released successfully"
                         }), 200
                     else:
-                        # Device doesn't own the session
-                        logging.warning(f"⚠️ Cannot release session for {license_key} - not owned by device {device_fingerprint[:8]}...")
+                        # Device doesn't own the session or session already released
                         return jsonify({
                             "status": "info",
                             "message": "No active session found for this device"
