@@ -109,7 +109,7 @@ load_dotenv(dotenv_path=env_path)
 
 # Import rainbow logo display - with fallback if not available
 try:
-    from rainbow_logo import display_animated_logo, Colors, get_rainbow_bot_art, get_rainbow_bot_art_with_message, display_animated_thank_you, display_static_thank_you, display_quick_rainbow_header
+    from rainbow_logo import display_animated_logo, Colors, get_rainbow_bot_art, get_rainbow_bot_art_with_message, display_animated_thank_you, display_static_thank_you, display_quick_rainbow_header, display_animated_welcome_header
     RAINBOW_LOGO_AVAILABLE = True
 except ImportError:
     RAINBOW_LOGO_AVAILABLE = False
@@ -120,9 +120,10 @@ except ImportError:
     display_animated_thank_you = None
     display_static_thank_you = None
     display_quick_rainbow_header = None
+    display_animated_welcome_header = None
 
 # Startup logo configuration
-STARTUP_LOGO_DURATION = 600.0  # Seconds to display startup logo (10 minutes)
+STARTUP_LOGO_DURATION = 8.0  # Seconds to display startup logo
 
 # ===== EXE-COMPATIBLE FILE PATH HELPERS =====
 # These ensure files are saved in the correct location whether running as:
@@ -7603,12 +7604,16 @@ def main(symbol_override: str = None) -> None:
     # Track session start time for runtime display
     bot_status["session_start_time"] = datetime.now(pytz.timezone(CONFIG.get("timezone", "US/Eastern")))
     
-    # Display quick animated rainbow welcome header (2 seconds)
+    # Display animated rainbow welcome header (10 seconds, blocking)
     # Shows "Welcome to QuoTrading AI Professional Trading System" with rainbow animation
+    # Colors cycle through the text but it stays in place - exactly like the thank you message
+    # Runs for 10 seconds then bot continues - clean and professional
     # Only in live mode (skip in backtest)
-    if RAINBOW_LOGO_AVAILABLE and display_quick_rainbow_header and not is_backtest_mode():
+    if RAINBOW_LOGO_AVAILABLE and display_animated_welcome_header and not is_backtest_mode():
         try:
-            display_quick_rainbow_header(duration=2.0, fps=10)
+            # Animate header for 10 seconds (blocking) - same behavior as thank you message
+            # Header stays in place while colors cycle through - neat and professional
+            display_animated_welcome_header(duration=10.0, fps=10, non_blocking=False)
         except Exception as e:
             # Fallback to static header if animation fails
             logger.warning(f"Rainbow header animation failed: {e}")
@@ -8924,7 +8929,7 @@ Multi-Symbol Mode:
         try:
             # Show logo in background thread so it doesn't block bot startup
             # This creates a professional loading screen effect that continues while bot initializes
-            # Reduced FPS (5) for 10-minute animation to minimize resource usage
+            # Startup animation (8 seconds) for visual polish
             # Animation updates at top of screen while bot output appears below
             display_animated_logo(duration=STARTUP_LOGO_DURATION, fps=5, with_headers=False, non_blocking=True)
             

@@ -395,23 +395,74 @@ FADE_IN_PERCENTAGE = 0.1
 WELCOME_HEADER = "Welcome to QuoTrading AI Professional Trading System"
 
 
-def display_animated_welcome_header(duration=3600.0, fps=5):
+def display_animated_welcome_header(duration=10.0, fps=10, non_blocking=False):
     """
-    Display animated rainbow "QuoTrading AI Professional Trading System" header.
-    Colors flow/cycle through the text for a smooth animation effect.
-    Runs for 60 minutes (3600 seconds) by default at 5 fps (reduced for long duration).
+    Display rainbow "QuoTrading AI Professional Trading System" header with animation.
+    Colors cycle through the text while it stays in place - exactly like thank you message.
     
-    Note: This function manipulates terminal cursor position to create animation.
-    It overwrites the previous output line during the animation loop.
-    Can be interrupted with Ctrl+C without affecting the rest of the program.
+    In blocking mode (recommended): Animates for the duration, then continues.
+    In non-blocking mode: Displays static rainbow header (animation would conflict with bot output).
     
     Args:
-        duration: How long to animate in seconds (default: 3600.0 = 60 minutes)
-        fps: Frames per second for animation (default: 5, reduced for long-running animation)
+        duration: How long to animate/display in seconds (default: 10.0)
+        fps: Frames per second for animation (default: 10)
+        non_blocking: If True, displays static header in background thread (default: False)
+                     If False, animates synchronously like thank you message (recommended)
     
     Returns:
-        None
+        If non_blocking=True, returns the thread object. Otherwise returns None.
     """
+    # If non_blocking mode, display static rainbow header (non-animated)
+    if non_blocking:
+        def display_static_rainbow_header():
+            """Display static rainbow header with rainbow-colored text"""
+            rainbow = get_rainbow_colors()
+            
+            # Get terminal width for centering
+            try:
+                terminal_size = os.get_terminal_size()
+                terminal_width = terminal_size.columns
+            except OSError:
+                terminal_width = 120
+            
+            # Calculate padding for centering the header
+            msg_padding = max(0, (terminal_width - len(WELCOME_HEADER)) // 2)
+            
+            # Display the header with separators
+            separator = "=" * 80
+            sep_padding = max(0, (terminal_width - 80) // 2)
+            
+            try:
+                # Print header with rainbow colors once (static, not animated)
+                # Each character gets a different rainbow color based on position
+                print()
+                print(" " * sep_padding + separator)
+                
+                # Display header with rainbow-colored text (static)
+                colored_header = ''.join(
+                    f"{rainbow[i % len(rainbow)]}{char}{Colors.RESET}" 
+                    for i, char in enumerate(WELCOME_HEADER)
+                )
+                print(" " * msg_padding + colored_header)
+                
+                print(" " * sep_padding + separator)
+                print()
+                
+                # Keep thread alive for duration but don't animate
+                # Animation would conflict with bot output
+                time.sleep(duration)
+                
+            except (KeyboardInterrupt, OSError, IOError):
+                pass
+        
+        thread = threading.Thread(
+            target=display_static_rainbow_header,
+            daemon=True
+        )
+        thread.start()
+        return thread
+    
+    # Blocking mode - original implementation
     frames = int(duration * fps)
     delay = 1.0 / fps
     rainbow = get_rainbow_colors()
