@@ -7611,6 +7611,7 @@ def main(symbol_override: str = None) -> None:
             display_quick_rainbow_header(duration=2.0, fps=10)
         except Exception as e:
             # Fallback to static header if animation fails
+            logger.warning(f"Rainbow header animation failed: {e}")
             logger.info("=" * 80)
             logger.info("Welcome to QuoTrading AI Professional Trading System")
             logger.info("=" * 80)
