@@ -109,7 +109,7 @@ load_dotenv(dotenv_path=env_path)
 
 # Import rainbow logo display - with fallback if not available
 try:
-    from rainbow_logo import display_animated_logo, Colors, get_rainbow_bot_art, get_rainbow_bot_art_with_message, display_animated_thank_you, display_static_thank_you, display_animated_welcome_header
+    from rainbow_logo import display_animated_logo, Colors, get_rainbow_bot_art, get_rainbow_bot_art_with_message, display_animated_thank_you, display_static_thank_you
     RAINBOW_LOGO_AVAILABLE = True
 except ImportError:
     RAINBOW_LOGO_AVAILABLE = False
@@ -119,12 +119,9 @@ except ImportError:
     get_rainbow_bot_art_with_message = None
     display_animated_thank_you = None
     display_static_thank_you = None
-    display_animated_welcome_header = None
 
 # Startup logo configuration
 STARTUP_LOGO_DURATION = 8.0  # Seconds to display startup logo
-WELCOME_HEADER_DURATION = 3600.0  # Seconds to display welcome header animation (60 minutes)
-WELCOME_HEADER_FPS = 5  # FPS for welcome header animation (lower for 60-min duration to reduce CPU)
 
 # ===== EXE-COMPATIBLE FILE PATH HELPERS =====
 # These ensure files are saved in the correct location whether running as:
