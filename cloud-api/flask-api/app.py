@@ -1633,6 +1633,9 @@ def heartbeat():
                 # MULTI-SYMBOL SESSION SUPPORT
                 # When symbol is provided, use per-symbol session management
                 if symbol and MULTI_SYMBOL_SESSIONS_ENABLED:
+                    # Ensure active_sessions table exists
+                    ensure_active_sessions_table(conn)
+                    
                     # Check for session conflict for this specific symbol
                     # For heartbeats, allow same device to continue
                     has_conflict, conflict_info = check_symbol_session_conflict(
@@ -1650,10 +1653,17 @@ def heartbeat():
                         }), 403
                     
                     # Update session for this symbol
-                    create_or_update_symbol_session(
+                    session_updated = create_or_update_symbol_session(
                         conn, license_key, symbol, device_fingerprint,
                         metadata=data.get('metadata', {})
                     )
+                    
+                    if not session_updated:
+                        logging.error(f"Failed to update session for {license_key}/{symbol}")
+                        return jsonify({
+                            "status": "error",
+                            "message": "Failed to update session"
+                        }), 500
                     
                     # Also insert into heartbeats table for history
                     with conn.cursor() as cursor:
