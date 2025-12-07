@@ -105,106 +105,14 @@ def ensure_utc_aware(dt: datetime) -> datetime:
     return dt
 
 
-def check_launcher_lock(api_key: str) -> tuple[bool, dict]:
-    """
-    Check if another launcher instance is using this API key on this machine.
-    
-    Returns:
-        (is_locked, lock_info) - is_locked=True if another launcher is active
-    """
-    locks_dir = Path("locks")
-    locks_dir.mkdir(exist_ok=True)
-    
-    # Hash the API key for filename (don't store raw key in filename)
-    key_hash = hashlib.sha256(api_key.encode()).hexdigest()[:16]
-    lock_file = locks_dir / f"launcher_{key_hash}.lock"
-    
-    if not lock_file.exists():
-        return False, {}
-    
-    try:
-        with open(lock_file, 'r') as f:
-            lock_data = json.load(f)
-        
-        # Check if the process is still running (stale lock detection)
-        pid = lock_data.get("pid")
-        if pid and psutil.pid_exists(pid):
-            try:
-                proc = psutil.Process(pid)
-                # Check if it's actually a Python process (launcher)
-                if proc.is_running() and 'python' in proc.name().lower():
-                    return True, lock_data
-            except (psutil.NoSuchProcess, psutil.AccessDenied):
-                pass
-        
-        # Stale lock - remove it
-        lock_file.unlink()
-        return False, {}
-    except Exception:
-        return False, {}
-
-
-def create_launcher_lock(api_key: str) -> bool:
-    """
-    Create a lock file for this launcher instance.
-    
-    Returns:
-        True if lock created successfully
-    """
-    locks_dir = Path("locks")
-    locks_dir.mkdir(exist_ok=True)
-    
-    # Hash the API key for filename
-    key_hash = hashlib.sha256(api_key.encode()).hexdigest()[:16]
-    lock_file = locks_dir / f"launcher_{key_hash}.lock"
-    
-    lock_data = {
-        "api_key_hash": key_hash,
-        "pid": os.getpid(),
-        "created_at": datetime.now().isoformat(),
-        "device_fingerprint": get_device_fingerprint()
-    }
-    
-    try:
-        with open(lock_file, 'w') as f:
-            json.dump(lock_data, f, indent=2)
-        return True
-    except Exception:
-        return False
-
-
-def release_launcher_lock(api_key: str) -> bool:
-    """
-    Release the launcher lock for this API key.
-    
-    Returns:
-        True if lock released successfully
-    """
-    locks_dir = Path("locks")
-    if not locks_dir.exists():
-        return True
-    
-    # Hash the API key for filename
-    key_hash = hashlib.sha256(api_key.encode()).hexdigest()[:16]
-    lock_file = locks_dir / f"launcher_{key_hash}.lock"
-    
-    if lock_file.exists():
-        try:
-            # Only remove if it's our lock
-            with open(lock_file, 'r') as f:
-                lock_data = json.load(f)
-            
-            if lock_data.get("pid") == os.getpid():
-                lock_file.unlink()
-                return True
-        except Exception:
-            pass
-    
-    return True
 
 
 class QuoTradingLauncher:
     """Professional GUI launcher for QuoTrading AI - Blue/White Theme with Cloud Authentication."""
+    
+    # Splash screen animation constants
+    SPLASH_DURATION_MS = 8000  # 8 seconds
+    RAINBOW_COLORS = ['#FF0000', '#FF7F00', '#FFFF00', '#00FF00', '#0000FF', '#4B0082', '#9400D3']
     
     def __init__(self):
         self.root = tk.Tk()
@@ -284,9 +192,6 @@ class QuoTradingLauncher:
         # AI process reference
         self.bot_process = None  # Keep variable name for compatibility
         
-        # Track current API key for lock management
-        self.current_api_key = None
-        
         # Countdown state (initialized here to avoid dynamic attribute creation)
         self.countdown_cancelled = False
         
@@ -296,15 +201,67 @@ class QuoTradingLauncher:
         # Register cleanup on window close
         self.root.protocol("WM_DELETE_WINDOW", self.on_closing)
         
-        # Start with broker screen (Screen 0)
-        self.setup_broker_screen()
+        # Show splash screen for 8 seconds, then start with broker screen
+        self.show_splash_screen()
+    
+    def show_splash_screen(self):
+        """Show QuoTrading AI splash screen for 8 seconds with logo animation."""
+        # Clear window
+        for widget in self.root.winfo_children():
+            widget.destroy()
+        
+        # Black background for splash
+        splash_frame = tk.Frame(self.root, bg='black')
+        splash_frame.pack(fill=tk.BOTH, expand=True)
+        
+        # Center container
+        center_container = tk.Frame(splash_frame, bg='black')
+        center_container.pack(expand=True)
+        
+        # Main logo text - "QUOTRADING AI" in rainbow colors as shown in screenshot
+        logo_text = "QUOTRADING AI"
+        logo_container = tk.Frame(center_container, bg='black')
+        logo_container.pack()
+        
+        # Create each letter with rainbow color
+        for i, char in enumerate(logo_text):
+            if char == ' ':
+                # Add space
+                tk.Label(logo_container, text=' ', bg='black', font=("Courier New", 48, "bold")).pack(side=tk.LEFT)
+            else:
+                color = self.RAINBOW_COLORS[i % len(self.RAINBOW_COLORS)]
+                tk.Label(
+                    logo_container,
+                    text=char,
+                    bg='black',
+                    fg=color,
+                    font=("Courier New", 48, "bold")
+                ).pack(side=tk.LEFT)
+        
+        # Subtitle in rainbow colors
+        subtitle_frame = tk.Frame(center_container, bg='black')
+        subtitle_frame.pack(pady=(20, 10))
+        
+        subtitle_text = "ALGORITHMIC TRADING"
+        for i, char in enumerate(subtitle_text):
+            if char == ' ':
+                tk.Label(subtitle_frame, text=' ', bg='black', font=("Courier New", 12)).pack(side=tk.LEFT)
+            else:
+                color = self.RAINBOW_COLORS[i % len(self.RAINBOW_COLORS)]
+                tk.Label(
+                    subtitle_frame,
+                    text=char,
+                    bg='black',
+                    fg=color,
+                    font=("Courier New", 12)
+                ).pack(side=tk.LEFT)
+        
+        # After 8 seconds, transition to broker screen
+        self.root.after(self.SPLASH_DURATION_MS, self.setup_broker_screen)
     
     def on_closing(self):
         """Handle launcher window closing."""
         # Release launcher lock if we have one
-        if self.current_api_key:
-            release_launcher_lock(self.current_api_key)
-        
         # Destroy the window
         self.root.destroy()
     
@@ -334,8 +291,14 @@ class QuoTradingLauncher:
                         canvas.yview_scroll(1, "units")
         return handler
     
-    def create_header(self, title, subtitle=""):
-        """Create a professional header for each screen with premium styling."""
+    def create_header(self, title, subtitle="", rainbow=False):
+        """Create a professional header for each screen with premium styling.
+        
+        Args:
+            title: Header title text
+            subtitle: Optional subtitle text
+            rainbow: If True, renders title in animated rainbow colors
+        """
         header = tk.Frame(self.root, bg=self.colors['success_dark'], height=80)
         header.pack(fill=tk.X)
         header.pack_propagate(False)
@@ -344,14 +307,42 @@ class QuoTradingLauncher:
         top_accent = tk.Frame(header, bg=self.colors['success'], height=2)
         top_accent.pack(fill=tk.X)
         
-        title_label = tk.Label(
-            header,
-            text=title,
-            font=("Segoe UI", 13, "bold"),
-            bg=self.colors['success_dark'],
-            fg='white'
-        )
-        title_label.pack(pady=(17, 2))
+        if rainbow:
+            # Create animated rainbow text for title
+            title_container = tk.Frame(header, bg=self.colors['success_dark'])
+            title_container.pack(pady=(12, 2))
+            
+            # Create list to store character labels for animation
+            char_labels = []
+            
+            for i, char in enumerate(title):
+                if char == ' ':
+                    tk.Label(title_container, text=' ', bg=self.colors['success_dark'], 
+                            font=("Segoe UI", 11, "bold")).pack(side=tk.LEFT)
+                else:
+                    color = self.RAINBOW_COLORS[i % len(self.RAINBOW_COLORS)]
+                    label = tk.Label(
+                        title_container,
+                        text=char,
+                        bg=self.colors['success_dark'],
+                        fg=color,
+                        font=("Segoe UI", 11, "bold")
+                    )
+                    label.pack(side=tk.LEFT)
+                    char_labels.append((label, i))  # Store label and original position
+            
+            # Start animation for rainbow text (non-blocking)
+            self._animate_rainbow_header(char_labels)
+        else:
+            # Regular title
+            title_label = tk.Label(
+                header,
+                text=title,
+                font=("Segoe UI", 13, "bold"),
+                bg=self.colors['success_dark'],
+                fg='white'
+            )
+            title_label.pack(pady=(17, 2))
         
         if subtitle:
             subtitle_label = tk.Label(
@@ -368,6 +359,25 @@ class QuoTradingLauncher:
         bottom_shadow.pack(side=tk.BOTTOM, fill=tk.X)
         
         return header
+    
+    def _animate_rainbow_header(self, char_labels, offset=0):
+        """Animate rainbow colors on header text (non-blocking).
+        
+        Args:
+            char_labels: List of (label, original_position) tuples
+            offset: Current animation offset for color cycling
+        """
+        # Update each character's color based on offset
+        for label, pos in char_labels:
+            try:
+                color_index = (pos + offset) % len(self.RAINBOW_COLORS)
+                label.config(fg=self.RAINBOW_COLORS[color_index])
+            except tk.TclError:
+                # Label was destroyed, stop animation
+                return
+        
+        # Schedule next animation frame (300ms delay for smooth but visible animation)
+        self.root.after(300, lambda: self._animate_rainbow_header(char_labels, offset + 1))
     
     def create_input_field(self, parent, label_text, is_password=False, placeholder=""):
         """Create a styled input field with label and premium design."""
@@ -686,8 +696,10 @@ class QuoTradingLauncher:
         self.current_screen = 0
         self.root.title("QuoTrading - Broker Setup")
         
-        # Header
-        header = self.create_header("QuoTrading AI", "Select your account type and broker")
+        # Header with rainbow "Welcome to QuoTrading Professional Trading System"
+        header = self.create_header("Welcome to QuoTrading Professional Trading System", 
+                                   "Select your account type and broker", 
+                                   rainbow=True)
         
         # Main container - no scrolling
         main = tk.Frame(self.root, bg=self.colors['background'], padx=10, pady=5)
@@ -942,32 +954,13 @@ class QuoTradingLauncher:
             return
         
         # CHECK LAUNCHER LOCK - Prevent multiple launchers with same API key on this machine
-        is_locked, lock_info = check_launcher_lock(quotrading_api_key)
-        if is_locked:
-            pid = lock_info.get("pid", "unknown")
-            created_at = lock_info.get("created_at", "unknown time")
-            messagebox.showerror(
-                "License Already in Use",
-                f"⚠️ ANOTHER LAUNCHER INSTANCE IS ALREADY RUNNING ⚠️\n\n"
-                f"This license key is currently in use by another\n"
-                f"launcher instance on this computer.\n\n"
-                f"Process ID: {pid}\n"
-                f"Started: {created_at}\n\n"
-                f"You can only run ONE launcher instance per license key.\n\n"
-                f"To fix this:\n"
-                f"1. Close the other launcher window\n"
-                f"2. Or use a different license key"
-            )
-            return
         
         # Validate license key with Azure server (server will check if it's admin or regular)
+        # Server handles session management with heartbeats - no local lock needed
         self.show_loading("Validating license...")
         
         def on_license_success(license_data):
             self.hide_loading()
-            # Create launcher lock after successful validation
-            if create_launcher_lock(quotrading_api_key):
-                self.current_api_key = quotrading_api_key
             # License valid - proceed with broker validation
             self._continue_broker_validation(broker, token, username, quotrading_api_key, account_size)
         
@@ -2326,10 +2319,8 @@ Time-Based Exit: {time_exit}
             # Keep backward compatibility - store first process
             self.bot_process = self.bot_processes[0][1] if self.bot_processes else None
             
-            # Close the GUI immediately and release launcher lock
-            # Each bot will maintain its own runtime session via heartbeats
-            if self.current_api_key:
-                release_launcher_lock(self.current_api_key)
+            # Close the GUI immediately
+            # Each bot will maintain its own runtime session via heartbeats with the server
             self.root.destroy()
             
         except Exception as e:
