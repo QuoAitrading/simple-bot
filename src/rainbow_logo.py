@@ -183,7 +183,7 @@ def display_logo_line(line, color_offset=0, center_width=80):
     print(" " * padding + colored_line)
 
 
-def display_animated_logo(duration=3.0, fps=20, with_headers=True, non_blocking=False):
+def display_animated_logo(duration=3.0, fps=20, with_headers=True, non_blocking=False, clear_after=False):
     """
     Display the QuoTrading AI logo with animated rainbow colors.
     Professional splash screen - shows logo with flowing rainbow gradient.
@@ -196,6 +196,7 @@ def display_animated_logo(duration=3.0, fps=20, with_headers=True, non_blocking=
         non_blocking: If True, runs animation in background thread and returns immediately (default: False)
                      In non-blocking mode, animation displays and keeps updating at a fixed position
                      while allowing the main program to continue below
+        clear_after: If True, clears the screen after animation completes (like a loading screen) (default: False)
     
     Returns:
         If non_blocking=True, returns the thread object. Otherwise returns None.
@@ -337,8 +338,14 @@ def display_animated_logo(duration=3.0, fps=20, with_headers=True, non_blocking=
         if frame < frames - 1:
             time.sleep(delay)
     
-    # Add spacing after logo
-    if not with_headers:
+    # Clear screen or add spacing after logo
+    if clear_after:
+        # Clear screen like a loading screen in a video game
+        # Use ANSI escape code to clear screen and move cursor to top
+        sys.stdout.write('\033[2J')  # Clear entire screen
+        sys.stdout.write('\033[H')   # Move cursor to home position (top-left)
+        sys.stdout.flush()
+    elif not with_headers:
         print("\n" * 2)
     else:
         print("\n" + "=" * 60)

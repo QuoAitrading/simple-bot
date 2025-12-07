@@ -1229,17 +1229,13 @@ def check_symbol_session_conflict(conn, license_key: str, symbol: str, device_fi
                 time_since_last = now_utc - heartbeat
                 
                 if time_since_last < timedelta(seconds=SESSION_TIMEOUT_SECONDS):
-                    # Active session exists
-                    if stored_device == device_fingerprint:
-                        # Same device - this is a reconnection, allow it
-                        return False, None
-                    else:
-                        # Different device - conflict
-                        return True, {
-                            "device_fingerprint": stored_device,
-                            "last_heartbeat": last_heartbeat,
-                            "seconds_remaining": max(0, SESSION_TIMEOUT_SECONDS - int(time_since_last.total_seconds()))
-                        }
+                    # Active session exists - block ALL reconnections (same or different device)
+                    # This enforces the 60-second timeout after force-close
+                    return True, {
+                        "device_fingerprint": stored_device,
+                        "last_heartbeat": last_heartbeat,
+                        "seconds_remaining": max(0, SESSION_TIMEOUT_SECONDS - int(time_since_last.total_seconds()))
+                    }
                 else:
                     # Session expired - clean it up
                     cursor.execute("""

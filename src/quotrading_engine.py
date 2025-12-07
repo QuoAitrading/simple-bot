@@ -7604,15 +7604,15 @@ def main(symbol_override: str = None) -> None:
     # Track session start time for runtime display
     bot_status["session_start_time"] = datetime.now(pytz.timezone(CONFIG.get("timezone", "US/Eastern")))
     
-    # Display rainbow welcome header (non-blocking, static)
-    # Shows "Welcome to QuoTrading AI Professional Trading System" with rainbow colors
-    # Displays immediately without blocking - bot startup continues right away
+    # Display rainbow welcome header with animation
+    # Shows "Welcome to QuoTrading AI Professional Trading System" with flowing rainbow colors
+    # Animates for 8 seconds with color cycling effect (like thank you message)
     # Only in live mode (skip in backtest)
     if RAINBOW_LOGO_AVAILABLE and not is_backtest_mode():
         try:
-            # Display static rainbow header (non-blocking)
-            # This appears immediately and bot startup continues without delay
-            display_animated_welcome_header(non_blocking=True)
+            # Display animated rainbow header (blocking mode for full animation)
+            # Colors cycle through the text for 8 seconds creating flowing rainbow effect
+            display_animated_welcome_header(duration=8.0, fps=10, non_blocking=False)
         except Exception as e:
             # Fallback to static header if rainbow display fails
             logger.warning(f"Rainbow header display failed: {e}")
@@ -8106,6 +8106,7 @@ def handle_connection_health_event(data: Dict[str, Any]) -> None:
     """
     Handle periodic connection health check event.
     Verifies broker connection is alive and reconnects if needed.
+    Sends heartbeat to maintain active session (via check_broker_connection).
     Runs every 20 seconds.
     """
     check_broker_connection()
@@ -8926,10 +8927,10 @@ Multi-Symbol Mode:
     # SKIP in backtest mode to prevent spam
     if RAINBOW_LOGO_AVAILABLE and not is_backtest_mode():
         try:
-            # Show logo for 8 seconds with animation, then continue to next screen
-            # BLOCKING mode: Logo displays centered, animates for 8 seconds, then bot continues
-            # This prevents overlap with welcome header and ensures clean sequential display
-            display_animated_logo(duration=STARTUP_LOGO_DURATION, fps=5, with_headers=False, non_blocking=False)
+            # Show logo for 8 seconds with animation, then CLEAR SCREEN like a loading screen
+            # BLOCKING mode: Logo displays centered, animates for 8 seconds, clears screen, then bot continues
+            # clear_after=True makes it work like a video game loading screen
+            display_animated_logo(duration=STARTUP_LOGO_DURATION, fps=5, with_headers=False, non_blocking=False, clear_after=True)
         except Exception as e:
             # Logo display failed - log and continue (not critical)
             # Use logger if available, otherwise print
