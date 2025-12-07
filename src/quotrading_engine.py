@@ -109,7 +109,7 @@ load_dotenv(dotenv_path=env_path)
 
 # Import rainbow logo display - with fallback if not available
 try:
-    from rainbow_logo import display_animated_logo, Colors, get_rainbow_bot_art, get_rainbow_bot_art_with_message, display_animated_thank_you, display_static_thank_you, display_animated_welcome_header
+    from rainbow_logo import display_animated_logo, Colors, get_rainbow_bot_art, get_rainbow_bot_art_with_message, display_animated_thank_you, display_static_thank_you, display_quick_rainbow_header
     RAINBOW_LOGO_AVAILABLE = True
 except ImportError:
     RAINBOW_LOGO_AVAILABLE = False
@@ -119,12 +119,10 @@ except ImportError:
     get_rainbow_bot_art_with_message = None
     display_animated_thank_you = None
     display_static_thank_you = None
-    display_animated_welcome_header = None
+    display_quick_rainbow_header = None
 
 # Startup logo configuration
 STARTUP_LOGO_DURATION = 8.0  # Seconds to display startup logo
-WELCOME_HEADER_DURATION = 3600.0  # Seconds to display welcome header animation (60 minutes)
-WELCOME_HEADER_FPS = 5  # FPS for welcome header animation (lower for 60-min duration to reduce CPU)
 
 # ===== EXE-COMPATIBLE FILE PATH HELPERS =====
 # These ensure files are saved in the correct location whether running as:
@@ -7605,27 +7603,25 @@ def main(symbol_override: str = None) -> None:
     # Track session start time for runtime display
     bot_status["session_start_time"] = datetime.now(pytz.timezone(CONFIG.get("timezone", "US/Eastern")))
     
-    # Display animated rainbow header "Welcome to QuoTrading AI Professional Trading System"
-    # Runs for 60 minutes with flowing rainbow colors
-    # Only show in live mode (skip in backtest mode)
-    # Displayed BEFORE license validation as welcome screen
-    if RAINBOW_LOGO_AVAILABLE and display_animated_welcome_header and not is_backtest_mode():
+    # Display quick animated rainbow welcome header (2 seconds)
+    # Shows "Welcome to QuoTrading AI Professional Trading System" with rainbow animation
+    # Only in live mode (skip in backtest)
+    if RAINBOW_LOGO_AVAILABLE and display_quick_rainbow_header and not is_backtest_mode():
         try:
-            # Display the rainbow animated header (60 minutes duration at 5 fps)
-            display_animated_welcome_header(duration=WELCOME_HEADER_DURATION, fps=WELCOME_HEADER_FPS)
+            display_quick_rainbow_header(duration=2.0, fps=10)
         except Exception as e:
-            # Fallback to regular static header if animation fails
-            logger.debug(f"Welcome header animation failed, using static header: {e}")
+            # Fallback to static header if animation fails
+            logger.warning(f"Rainbow header animation failed: {e}")
             logger.info("=" * 80)
             logger.info("Welcome to QuoTrading AI Professional Trading System")
             logger.info("=" * 80)
     else:
-        # Backtest mode or rainbow logo not available - use regular static header
+        # Backtest mode or rainbow not available - use static header
         logger.info("=" * 80)
         logger.info("Welcome to QuoTrading AI Professional Trading System")
         logger.info("=" * 80)
     
-    # CRITICAL: Validate license AFTER displaying welcome
+    # CRITICAL: Validate license after startup logo
     # This is the "login screen" - fail fast if license invalid or session conflict
     # Uses current_trading_symbol for symbol-specific session (multi-symbol support)
     validate_license_at_startup()
