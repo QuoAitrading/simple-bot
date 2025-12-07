@@ -143,11 +143,12 @@ def check_launcher_lock(api_key: str) -> tuple[bool, dict]:
         if released_at:
             try:
                 released_time = datetime.fromisoformat(released_at)
-                # Use timezone-aware datetime for consistent comparison
                 current_time = datetime.now()
-                # Ensure both datetimes are timezone-naive for comparison
+                # Ensure both datetimes are timezone-naive for consistent comparison
                 if released_time.tzinfo is not None:
                     released_time = released_time.replace(tzinfo=None)
+                if current_time.tzinfo is not None:
+                    current_time = current_time.replace(tzinfo=None)
                 
                 time_since_release = (current_time - released_time).total_seconds()
                 
@@ -220,7 +221,12 @@ def release_launcher_lock(api_key: str) -> bool:
             if lock_data.get("pid") == os.getpid():
                 # Update lock file with release timestamp instead of deleting
                 # This enables cooldown period tracking
-                lock_data["released_at"] = datetime.now().isoformat()
+                # Use timezone-naive datetime for consistent comparison with check_launcher_lock()
+                current_time = datetime.now()
+                if current_time.tzinfo is not None:
+                    current_time = current_time.replace(tzinfo=None)
+                
+                lock_data["released_at"] = current_time.isoformat()
                 lock_data["pid"] = None  # Clear PID since process is ending
                 
                 with open(lock_file, 'w') as f:
@@ -242,7 +248,8 @@ class QuoTradingLauncher:
     WELCOME_DELAY_MS = 4000    # When to show welcome message
     DOT_ANIMATION_INTERVAL_MS = 150
     RAINBOW_ANIMATION_INTERVAL_MS = 200
-    WELCOME_ANIMATION_CYCLES = WELCOME_DELAY_MS // RAINBOW_ANIMATION_INTERVAL_MS  # 20 cycles
+    # Calculate animation cycles: welcome runs from WELCOME_DELAY_MS to SPLASH_DURATION_MS
+    WELCOME_ANIMATION_CYCLES = (SPLASH_DURATION_MS - WELCOME_DELAY_MS) // RAINBOW_ANIMATION_INTERVAL_MS
     
     def __init__(self):
         self.root = tk.Tk()
@@ -425,8 +432,8 @@ class QuoTradingLauncher:
         
         self.welcome_color_index += 1
         
-        # Continue animation until splash screen finishes
-        if self.welcome_color_index < self.WELCOME_ANIMATION_CYCLES:
+        # Continue animation until splash screen finishes or max cycles reached
+        if self.splash_running and self.welcome_color_index < self.WELCOME_ANIMATION_CYCLES:
             self.root.after(self.RAINBOW_ANIMATION_INTERVAL_MS, self.animate_welcome_rainbow)
     
     def finish_splash_screen(self):
