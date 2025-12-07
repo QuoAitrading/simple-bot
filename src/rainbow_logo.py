@@ -415,8 +415,8 @@ def display_animated_welcome_header(duration=3600.0, fps=5, non_blocking=False):
     """
     # If non_blocking mode, start animation in background and return immediately
     if non_blocking:
-        def animate_continuously():
-            """Run animation in background thread - displays static rainbow header"""
+        def display_static_header():
+            """Display static rainbow header in background thread"""
             rainbow = get_rainbow_colors()
             
             # Get terminal width for centering
@@ -458,7 +458,7 @@ def display_animated_welcome_header(duration=3600.0, fps=5, non_blocking=False):
                 pass
         
         thread = threading.Thread(
-            target=animate_continuously,
+            target=display_static_header,
             daemon=True  # Daemon thread will not prevent program exit
         )
         thread.start()
