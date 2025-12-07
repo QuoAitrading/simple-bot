@@ -463,10 +463,13 @@ def display_animated_welcome_header(duration=10.0, fps=10, non_blocking=False):
                     f"{rainbow[i % len(rainbow)]}{char}{Colors.RESET}" 
                     for i, char in enumerate(WELCOME_HEADER)
                 )
-                print(" " * msg_padding + colored_header)
-                
-                # Save cursor position right after the header line
+                # Print header WITHOUT newline, then save cursor position
+                sys.stdout.write(" " * msg_padding + colored_header)
+                sys.stdout.flush()
+                # Save cursor position at end of header text (before newline)
                 sys.stdout.write('\033[s')  # Save cursor position
+                # Now print newline to move to next line
+                sys.stdout.write('\n')
                 sys.stdout.flush()
             
             try:
@@ -483,16 +486,14 @@ def display_animated_welcome_header(duration=10.0, fps=10, non_blocking=False):
                     
                     # Use lock for thread-safe update
                     with _stdout_lock:
-                        # Restore cursor to saved position (right after header line)
+                        # Restore cursor to saved position (at end of header line)
                         sys.stdout.write('\033[u')  # Restore cursor position
-                        # Move up one line to overwrite the header
-                        sys.stdout.write('\033[1A')  # Move up 1 line
+                        # Move to beginning of line
+                        sys.stdout.write('\r')  # Carriage return
                         # Clear the line
                         sys.stdout.write('\033[2K')  # Clear line
                         # Write updated colored header
-                        sys.stdout.write(" " * msg_padding + colored_header + "\n")
-                        # Save cursor position again
-                        sys.stdout.write('\033[s')  # Save cursor position
+                        sys.stdout.write(" " * msg_padding + colored_header)
                         sys.stdout.flush()
                     
                     if frame < frames - 1:
@@ -503,10 +504,11 @@ def display_animated_welcome_header(duration=10.0, fps=10, non_blocking=False):
             finally:
                 # Print closing separator
                 with _stdout_lock:
-                    # Restore cursor position
-                    sys.stdout.write('\033[u')  # Restore cursor position
-                    print(" " * sep_padding + separator)
-                    print()
+                    # Move to next line after header
+                    sys.stdout.write('\n')
+                    # Print closing separator
+                    sys.stdout.write(" " * sep_padding + separator + "\n\n")
+                    sys.stdout.flush()
         
         thread = threading.Thread(
             target=display_animated_rainbow_header_bg,
