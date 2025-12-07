@@ -6,6 +6,7 @@ Displays animated "QuoTrading AI" logo with rainbow colors that slowly transitio
 import time
 import sys
 import os
+import threading
 
 
 # ANSI color codes for rainbow effect
@@ -201,7 +202,6 @@ def display_animated_logo(duration=3.0, fps=20, with_headers=True, non_blocking=
     """
     # If non_blocking mode, start animation in background and return immediately
     if non_blocking:
-        import threading
         
         def animate_continuously():
             """Run animation in background thread, continuously updating logo"""
@@ -222,13 +222,16 @@ def display_animated_logo(duration=3.0, fps=20, with_headers=True, non_blocking=
             for i in range(total_lines):
                 print()  # Reserve lines
             
+            # Subtitle fade-in happens during first 10% of animation
+            FADE_IN_PERCENTAGE = 0.1
+            
             # Animate the logo in the reserved space
             for frame in range(frames):
                 # Calculate color offset for flowing rainbow effect
                 color_offset = (frame / frames) * len(get_rainbow_colors())
                 
                 # Calculate fade-in progress for subtitle (0.0 to 1.0)
-                fade_progress = min(1.0, frame / max(1, frames * 0.1))  # Fade in during first 10% of animation
+                fade_progress = min(1.0, frame / max(1, frames * FADE_IN_PERCENTAGE))
                 
                 try:
                     # Move cursor to top of reserved space
@@ -258,7 +261,7 @@ def display_animated_logo(duration=3.0, fps=20, with_headers=True, non_blocking=
                     sys.stdout.write('\033[2K\n')
                     
                     sys.stdout.flush()
-                except:
+                except (OSError, IOError):
                     # If terminal operations fail (e.g., output redirection), stop animation
                     break
                 
