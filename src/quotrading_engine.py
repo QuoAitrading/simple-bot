@@ -8927,10 +8927,10 @@ Multi-Symbol Mode:
     # SKIP in backtest mode to prevent spam
     if RAINBOW_LOGO_AVAILABLE and not is_backtest_mode():
         try:
-            # Show logo for 8 seconds with animation, then continue to next screen
-            # BLOCKING mode: Logo displays centered, animates for 8 seconds, then bot continues
-            # This prevents overlap with welcome header and ensures clean sequential display
-            display_animated_logo(duration=STARTUP_LOGO_DURATION, fps=5, with_headers=False, non_blocking=False)
+            # Show logo for 8 seconds with animation, then CLEAR SCREEN like a loading screen
+            # BLOCKING mode: Logo displays centered, animates for 8 seconds, clears screen, then bot continues
+            # clear_after=True makes it work like a video game loading screen
+            display_animated_logo(duration=STARTUP_LOGO_DURATION, fps=5, with_headers=False, non_blocking=False, clear_after=True)
         except Exception as e:
             # Logo display failed - log and continue (not critical)
             # Use logger if available, otherwise print
