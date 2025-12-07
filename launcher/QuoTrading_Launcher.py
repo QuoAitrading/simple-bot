@@ -256,24 +256,6 @@ class QuoTradingLauncher:
                     font=("Courier New", 12)
                 ).pack(side=tk.LEFT)
         
-        # Welcome message
-        welcome_frame = tk.Frame(center_container, bg='black')
-        welcome_frame.pack(pady=(5, 0))
-        
-        welcome_text = "Welcome to QuoTrading AI Professional Trading System"
-        for i, char in enumerate(welcome_text):
-            if char == ' ':
-                tk.Label(welcome_frame, text=' ', bg='black', font=("Courier New", 10)).pack(side=tk.LEFT)
-            else:
-                color = self.RAINBOW_COLORS[i % len(self.RAINBOW_COLORS)]
-                tk.Label(
-                    welcome_frame,
-                    text=char,
-                    bg='black',
-                    fg=color,
-                    font=("Courier New", 10)
-                ).pack(side=tk.LEFT)
-        
         # After 8 seconds, transition to broker screen
         self.root.after(self.SPLASH_DURATION_MS, self.setup_broker_screen)
     
@@ -309,8 +291,14 @@ class QuoTradingLauncher:
                         canvas.yview_scroll(1, "units")
         return handler
     
-    def create_header(self, title, subtitle=""):
-        """Create a professional header for each screen with premium styling."""
+    def create_header(self, title, subtitle="", rainbow=False):
+        """Create a professional header for each screen with premium styling.
+        
+        Args:
+            title: Header title text
+            subtitle: Optional subtitle text
+            rainbow: If True, renders title in rainbow colors
+        """
         header = tk.Frame(self.root, bg=self.colors['success_dark'], height=80)
         header.pack(fill=tk.X)
         header.pack_propagate(False)
@@ -319,14 +307,34 @@ class QuoTradingLauncher:
         top_accent = tk.Frame(header, bg=self.colors['success'], height=2)
         top_accent.pack(fill=tk.X)
         
-        title_label = tk.Label(
-            header,
-            text=title,
-            font=("Segoe UI", 13, "bold"),
-            bg=self.colors['success_dark'],
-            fg='white'
-        )
-        title_label.pack(pady=(17, 2))
+        if rainbow:
+            # Create rainbow text for title
+            title_container = tk.Frame(header, bg=self.colors['success_dark'])
+            title_container.pack(pady=(12, 2))
+            
+            for i, char in enumerate(title):
+                if char == ' ':
+                    tk.Label(title_container, text=' ', bg=self.colors['success_dark'], 
+                            font=("Segoe UI", 11, "bold")).pack(side=tk.LEFT)
+                else:
+                    color = self.RAINBOW_COLORS[i % len(self.RAINBOW_COLORS)]
+                    tk.Label(
+                        title_container,
+                        text=char,
+                        bg=self.colors['success_dark'],
+                        fg=color,
+                        font=("Segoe UI", 11, "bold")
+                    ).pack(side=tk.LEFT)
+        else:
+            # Regular title
+            title_label = tk.Label(
+                header,
+                text=title,
+                font=("Segoe UI", 13, "bold"),
+                bg=self.colors['success_dark'],
+                fg='white'
+            )
+            title_label.pack(pady=(17, 2))
         
         if subtitle:
             subtitle_label = tk.Label(
@@ -661,8 +669,10 @@ class QuoTradingLauncher:
         self.current_screen = 0
         self.root.title("QuoTrading - Broker Setup")
         
-        # Header
-        header = self.create_header("QuoTrading AI", "Select your account type and broker")
+        # Header with rainbow "Welcome to QuoTrading Professional Trading System"
+        header = self.create_header("Welcome to QuoTrading Professional Trading System", 
+                                   "Select your account type and broker", 
+                                   rainbow=True)
         
         # Main container - no scrolling
         main = tk.Frame(self.root, bg=self.colors['background'], padx=10, pady=5)
