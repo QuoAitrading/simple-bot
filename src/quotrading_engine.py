@@ -7602,14 +7602,7 @@ def main(symbol_override: str = None) -> None:
     # Track session start time for runtime display
     bot_status["session_start_time"] = datetime.now(pytz.timezone(CONFIG.get("timezone", "US/Eastern")))
     
-    # Display welcome header
-    # Use simple static header to avoid blocking bot startup
-    # The animated welcome was causing 60-minute freeze at startup
-    logger.info("=" * 80)
-    logger.info("Welcome to QuoTrading AI Professional Trading System")
-    logger.info("=" * 80)
-    
-    # CRITICAL: Validate license AFTER displaying welcome
+    # CRITICAL: Validate license after startup logo
     # This is the "login screen" - fail fast if license invalid or session conflict
     # Uses current_trading_symbol for symbol-specific session (multi-symbol support)
     validate_license_at_startup()
