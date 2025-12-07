@@ -1902,13 +1902,16 @@ def initialize_state(symbol: str) -> None:
         symbol: Instrument symbol
     """
     # CRITICAL FIX: Reload config to get latest values (fixes subprocess caching issue)
+    # BUT: Skip reload in backtest mode to preserve symbol-specific CONFIG values
     global _bot_config, CONFIG
     _is_backtest = is_backtest_mode()
-    _bot_config = load_config(backtest_mode=_is_backtest)
-    # Only validate if not in backtest mode
+    
+    # Only reload config in LIVE mode (not backtest)
+    # In backtest, CONFIG is already set with correct symbol-specific values
     if not _is_backtest:
+        _bot_config = load_config(backtest_mode=False)
         _bot_config.validate()
-    CONFIG = _bot_config.to_dict()
+        CONFIG = _bot_config.to_dict()
     
     state[symbol] = {
         # Tick data storage
