@@ -201,8 +201,8 @@ class QuoTradingLauncher:
         # Register cleanup on window close
         self.root.protocol("WM_DELETE_WINDOW", self.on_closing)
         
-        # Start directly with broker screen - no splash screen delay
-        self.setup_broker_screen()
+        # Show splash screen for 8 seconds, then start with broker screen
+        self.show_splash_screen()
     
     def show_splash_screen(self):
         """Show QuoTrading AI splash screen for 8 seconds with logo animation."""
@@ -692,17 +692,20 @@ class QuoTradingLauncher:
     
     def setup_broker_screen(self):
         """Screen 0: Broker Connection Setup with QuoTrading API Key and Account Size."""
-        # Clear window
+        # Clear window - ensure all splash screen widgets are completely destroyed
         for widget in self.root.winfo_children():
             widget.destroy()
+        
+        # Force immediate update to ensure splash screen is fully cleared
+        self.root.update_idletasks()
         
         self.current_screen = 0
         self.root.title("QuoTrading - Broker Setup")
         
-        # Header - simple text without rainbow animation to avoid bleeding issues
+        # Header with rainbow "Welcome to QuoTrading Professional Trading System" (static, not animated)
         header = self.create_header("Welcome to QuoTrading Professional Trading System", 
                                    "Select your account type and broker", 
-                                   rainbow=False,
+                                   rainbow=True,
                                    rainbow_animated=False)
         
         # Main container - no scrolling
