@@ -1199,9 +1199,13 @@ def ensure_active_sessions_table(conn):
         return False
 
 
-def check_symbol_session_conflict(conn, license_key: str, symbol: str, device_fingerprint: str):
+def check_symbol_session_conflict(conn, license_key: str, symbol: str, device_fingerprint: str, allow_same_device: bool = False):
     """
     Check if there's an active session for this license+symbol combination.
+    
+    Args:
+        allow_same_device: If True, same device can continue (used for heartbeats)
+                          If False, ALL devices blocked (used for validation/login)
     
     Returns:
         Tuple of (has_conflict: bool, session_info: dict or None)
@@ -1229,13 +1233,17 @@ def check_symbol_session_conflict(conn, license_key: str, symbol: str, device_fi
                 time_since_last = now_utc - heartbeat
                 
                 if time_since_last < timedelta(seconds=SESSION_TIMEOUT_SECONDS):
-                    # Active session exists - block ALL reconnections (same or different device)
-                    # This enforces the 60-second timeout after force-close
-                    return True, {
-                        "device_fingerprint": stored_device,
-                        "last_heartbeat": last_heartbeat,
-                        "seconds_remaining": max(0, SESSION_TIMEOUT_SECONDS - int(time_since_last.total_seconds()))
-                    }
+                    # Active session exists
+                    if allow_same_device and stored_device == device_fingerprint:
+                        # Heartbeat from same device - allow to continue
+                        return False, None
+                    else:
+                        # Different device OR validation/login - block ALL
+                        return True, {
+                            "device_fingerprint": stored_device,
+                            "last_heartbeat": last_heartbeat,
+                            "seconds_remaining": max(0, SESSION_TIMEOUT_SECONDS - int(time_since_last.total_seconds()))
+                        }
                 else:
                     # Session expired - clean it up
                     cursor.execute("""
@@ -1427,8 +1435,9 @@ def validate_license_endpoint():
                     ensure_active_sessions_table(conn)
                     
                     # Check for session conflict for this specific symbol
+                    # For validation/login, use strict blocking (even same device)
                     has_conflict, conflict_info = check_symbol_session_conflict(
-                        conn, license_key, symbol, device_fingerprint
+                        conn, license_key, symbol, device_fingerprint, allow_same_device=False
                     )
                     
                     if has_conflict:
@@ -1442,26 +1451,11 @@ def validate_license_endpoint():
                             "estimated_wait_seconds": conflict_info['seconds_remaining']
                         }), 403
                     
-                    # No conflict for this symbol
-                    if check_only:
-                        logging.info(f"✅ License check-only validation passed for {license_key}/{symbol}")
-                        return jsonify({
-                            "license_valid": True,
-                            "message": f"License validated successfully for {symbol} (check only)",
-                            "session_conflict": False,
-                            "license_type": license_type,
-                            "symbol": symbol,
-                            "expiry_date": license_expiration.isoformat() if license_expiration else None
-                        }), 200
-                    
-                    # Create session for this symbol
-                    create_or_update_symbol_session(
-                        conn, license_key, symbol, device_fingerprint,
-                        metadata={"created_via": "validate-license"}
-                    )
-                    
+                    # No conflict for this symbol - validation successful
+                    # NOTE: Sessions are NOT created during validation - only via heartbeat endpoint
+                    # (See legacy session path below for detailed explanation)
                     active_count = count_active_symbol_sessions(conn, license_key)
-                    logging.info(f"✅ License validated, session created for {license_key}/{symbol} (device {device_fingerprint[:8]}..., {active_count} active symbols)")
+                    logging.info(f"✅ License validated for {license_key}/{symbol} ({active_count} active symbols)")
                     
                     return jsonify({
                         "license_valid": True,
@@ -1476,6 +1470,41 @@ def validate_license_endpoint():
                 # LEGACY: No symbol provided - use original single-session logic
                 # This maintains backward compatibility with older bot versions
                 with conn.cursor() as cursor:
+                    # STRICT ENFORCEMENT: Check if ANY symbol sessions exist for this license
+                    # This prevents launcher from starting if any bot instances are running
+                    if MULTI_SYMBOL_SESSIONS_ENABLED:
+                        cursor.execute("""
+                            SELECT symbol, device_fingerprint, last_heartbeat
+                            FROM active_sessions
+                            WHERE license_key = %s
+                            AND last_heartbeat > NOW() - make_interval(secs => %s)
+                            ORDER BY last_heartbeat DESC
+                            LIMIT 1
+                        """, (license_key, SESSION_TIMEOUT_SECONDS))
+                        active_symbol_session = cursor.fetchone()
+                        
+                        if active_symbol_session:
+                            # Active symbol session exists - block launcher
+                            symbol = active_symbol_session[0]
+                            stored_device = active_symbol_session[1]
+                            last_heartbeat = active_symbol_session[2]
+                            
+                            now_utc = datetime.now(timezone.utc)
+                            heartbeat = last_heartbeat if last_heartbeat.tzinfo else last_heartbeat.replace(tzinfo=timezone.utc)
+                            time_since_last = now_utc - heartbeat
+                            seconds_remaining = max(0, SESSION_TIMEOUT_SECONDS - int(time_since_last.total_seconds()))
+                            
+                            logging.warning(f"⚠️ BLOCKED - License {license_key} has active session for symbol {symbol} on device {stored_device[:8]}...")
+                            return jsonify({
+                                "license_valid": False,
+                                "session_conflict": True,
+                                "message": f"Active Session Detected - Symbol {symbol} is currently running. If you force-closed the bot, wait {seconds_remaining} seconds.",
+                                "active_device": stored_device[:20] + "...",
+                                "active_symbol": symbol,
+                                "estimated_wait_seconds": seconds_remaining
+                            }), 403
+                    
+                    # Check legacy session in users table
                     cursor.execute("""
                         SELECT device_fingerprint, last_heartbeat, license_type
                         FROM users
@@ -1532,28 +1561,11 @@ def validate_license_endpoint():
                                 # No heartbeat timestamp - session was cleanly released, allow login
                                 logging.info(f"✅ No heartbeat found - allowing {device_fingerprint[:8]}...")
                     
-                    # No conflict detected
-                    if check_only:
-                        # Launcher check - DON'T create session, just validate and report no conflict
-                        logging.info(f"✅ License check-only validation passed for {license_key} - {license_type} expires {license_expiration}")
-                        return jsonify({
-                            "license_valid": True,
-                            "message": "License validated successfully (check only)",
-                            "session_conflict": False,
-                            "license_type": license_type,
-                            "expiry_date": license_expiration.isoformat() if license_expiration else None
-                        }), 200
-                    
-                    # Not check-only - create session by updating device fingerprint and heartbeat
-                    cursor.execute("""
-                        UPDATE users 
-                        SET device_fingerprint = %s,
-                            last_heartbeat = NOW()
-                        WHERE license_key = %s
-                    """, (device_fingerprint, license_key))
-                    conn.commit()
-                    
-                    logging.info(f"✅ License validated and session created for device {device_fingerprint[:8]}... - {license_type} expires {license_expiration}")
+                    # No conflict detected - validation successful
+                    # NOTE: Sessions are NOT created during validation - only via heartbeat endpoint
+                    # This prevents race conditions where bot crashes immediately after validation
+                    # creating a session lock that blocks immediate reconnection attempts
+                    logging.info(f"✅ License validated for {license_key} - {license_type} expires {license_expiration}")
                     
                     return jsonify({
                         "license_valid": True,
@@ -1622,8 +1634,9 @@ def heartbeat():
                 # When symbol is provided, use per-symbol session management
                 if symbol and MULTI_SYMBOL_SESSIONS_ENABLED:
                     # Check for session conflict for this specific symbol
+                    # For heartbeats, allow same device to continue
                     has_conflict, conflict_info = check_symbol_session_conflict(
-                        conn, license_key, symbol, device_fingerprint
+                        conn, license_key, symbol, device_fingerprint, allow_same_device=True
                     )
                     
                     if has_conflict:
