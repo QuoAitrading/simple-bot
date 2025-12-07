@@ -397,26 +397,25 @@ WELCOME_HEADER = "Welcome to QuoTrading AI Professional Trading System"
 
 def display_animated_welcome_header(duration=3600.0, fps=5, non_blocking=False):
     """
-    Display rainbow "QuoTrading AI Professional Trading System" header.
+    Display rainbow "QuoTrading AI Professional Trading System" header with animation.
+    Colors cycle through the text while it stays in place - exactly like thank you message.
     
-    In blocking mode: Colors flow/cycle through the text for a smooth animation effect.
-    In non-blocking mode: Displays static rainbow header once (neat and professional).
+    In blocking mode (recommended): Animates for the duration, then continues.
+    In non-blocking mode: Displays static rainbow header (animation would conflict with bot output).
     
     Args:
-        duration: How long to keep thread alive in seconds (default: 3600.0 = 60 minutes)
-                 In blocking mode, this is animation duration.
-                 In non-blocking mode, thread stays alive but header is static.
-        fps: Frames per second for animation in blocking mode (default: 5)
-        non_blocking: If True, displays static rainbow header in background thread (default: False)
-                     Static header is neat and professional - doesn't move or spam
+        duration: How long to animate/display in seconds (default: 3600.0)
+        fps: Frames per second for animation (default: 5)
+        non_blocking: If True, displays static header in background thread (default: False)
+                     If False, animates synchronously like thank you message (recommended)
     
     Returns:
         If non_blocking=True, returns the thread object. Otherwise returns None.
     """
-    # If non_blocking mode, start animation in background and return immediately
+    # If non_blocking mode, display static rainbow header (non-animated)
     if non_blocking:
-        def display_static_header():
-            """Display static rainbow header in background thread"""
+        def display_static_rainbow_header():
+            """Display static rainbow header - like thank you message but non-animated"""
             rainbow = get_rainbow_colors()
             
             # Get terminal width for centering
@@ -434,12 +433,12 @@ def display_animated_welcome_header(duration=3600.0, fps=5, non_blocking=False):
             sep_padding = max(0, (terminal_width - 80) // 2)
             
             try:
-                # Print static rainbow header once - neat and professional
+                # Print header with rainbow colors once
+                # Colors cycle through like in thank you message, but static (not animated)
                 print()
                 print(" " * sep_padding + separator)
                 
-                # Display header with rainbow colors (static, not animated)
-                # Each character gets a color from the rainbow sequence
+                # Display header with cycling rainbow colors
                 colored_header = ''.join(
                     f"{rainbow[i % len(rainbow)]}{char}{Colors.RESET}" 
                     for i, char in enumerate(WELCOME_HEADER)
@@ -449,17 +448,16 @@ def display_animated_welcome_header(duration=3600.0, fps=5, non_blocking=False):
                 print(" " * sep_padding + separator)
                 print()
                 
-                # Stay alive for the duration to keep thread active
-                # but don't update anything - header remains static and neat
+                # Keep thread alive for duration but don't animate
+                # Animation would conflict with bot output
                 time.sleep(duration)
                 
             except (KeyboardInterrupt, OSError, IOError):
-                # Allow graceful interruption or handle terminal errors
                 pass
         
         thread = threading.Thread(
-            target=display_static_header,
-            daemon=True  # Daemon thread will not prevent program exit
+            target=display_static_rainbow_header,
+            daemon=True
         )
         thread.start()
         return thread
