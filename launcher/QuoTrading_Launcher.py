@@ -144,7 +144,9 @@ def check_launcher_lock(api_key: str) -> tuple[bool, dict]:
             try:
                 released_time = datetime.fromisoformat(released_at)
                 current_time = datetime.now()
-                # Ensure both datetimes are timezone-naive for consistent comparison
+                # Use timezone-naive datetime for lock file comparisons
+                # This is simpler and more reliable for local file timestamps on the same machine
+                # Note: This differs from ensure_utc_aware() used for network/cloud timestamps
                 if released_time.tzinfo is not None:
                     released_time = released_time.replace(tzinfo=None)
                 if current_time.tzinfo is not None:
@@ -221,7 +223,8 @@ def release_launcher_lock(api_key: str) -> bool:
             if lock_data.get("pid") == os.getpid():
                 # Update lock file with release timestamp instead of deleting
                 # This enables cooldown period tracking
-                # Use timezone-naive datetime for consistent comparison with check_launcher_lock()
+                # Use timezone-naive datetime for consistent local timestamp comparison
+                # Note: This differs from ensure_utc_aware() used for network/cloud timestamps
                 current_time = datetime.now()
                 if current_time.tzinfo is not None:
                     current_time = current_time.replace(tzinfo=None)
@@ -249,7 +252,8 @@ class QuoTradingLauncher:
     DOT_ANIMATION_INTERVAL_MS = 150
     RAINBOW_ANIMATION_INTERVAL_MS = 200
     # Calculate animation cycles: welcome runs from WELCOME_DELAY_MS to SPLASH_DURATION_MS
-    WELCOME_ANIMATION_CYCLES = (SPLASH_DURATION_MS - WELCOME_DELAY_MS) // RAINBOW_ANIMATION_INTERVAL_MS
+    # Ensure at least 1 cycle to prevent animation from not running
+    WELCOME_ANIMATION_CYCLES = max(1, (SPLASH_DURATION_MS - WELCOME_DELAY_MS) // RAINBOW_ANIMATION_INTERVAL_MS)
     
     def __init__(self):
         self.root = tk.Tk()
