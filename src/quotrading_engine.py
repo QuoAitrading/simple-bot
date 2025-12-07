@@ -7612,6 +7612,11 @@ def main(symbol_override: str = None) -> None:
         logger.info("=" * 80)
         logger.info("Welcome to QuoTrading AI Professional Trading System")
         logger.info("=" * 80)
+    else:
+        # Backtest mode - minimal header (logo skipped in backtest)
+        logger.info("=" * 80)
+        logger.info("QuoTrading AI - Backtest Mode")
+        logger.info("=" * 80)
     
     # CRITICAL: Validate license after startup logo
     # This is the "login screen" - fail fast if license invalid or session conflict
