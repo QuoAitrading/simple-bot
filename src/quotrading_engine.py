@@ -7610,9 +7610,9 @@ def main(symbol_override: str = None) -> None:
     # Only in live mode (skip in backtest)
     if RAINBOW_LOGO_AVAILABLE and not is_backtest_mode():
         try:
-            # Display static rainbow header (no animation, non-blocking)
+            # Display static rainbow header (non-blocking)
             # This appears immediately and bot startup continues without delay
-            display_animated_welcome_header(duration=0.1, fps=1, non_blocking=True)
+            display_animated_welcome_header(non_blocking=True)
         except Exception as e:
             # Fallback to static header if rainbow display fails
             logger.warning(f"Rainbow header display failed: {e}")
