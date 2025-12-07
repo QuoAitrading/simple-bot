@@ -1199,9 +1199,13 @@ def ensure_active_sessions_table(conn):
         return False
 
 
-def check_symbol_session_conflict(conn, license_key: str, symbol: str, device_fingerprint: str):
+def check_symbol_session_conflict(conn, license_key: str, symbol: str, device_fingerprint: str, allow_same_device: bool = False):
     """
     Check if there's an active session for this license+symbol combination.
+    
+    Args:
+        allow_same_device: If True, same device can continue (used for heartbeats)
+                          If False, ALL devices blocked (used for validation/login)
     
     Returns:
         Tuple of (has_conflict: bool, session_info: dict or None)
@@ -1230,18 +1234,16 @@ def check_symbol_session_conflict(conn, license_key: str, symbol: str, device_fi
                 
                 if time_since_last < timedelta(seconds=SESSION_TIMEOUT_SECONDS):
                     # Active session exists
-                    # FIX: Only report conflict if DIFFERENT device
-                    # Same device can continue sending heartbeats
-                    if stored_device != device_fingerprint:
-                        # Different device - this is a conflict
+                    if allow_same_device and stored_device == device_fingerprint:
+                        # Heartbeat from same device - allow to continue
+                        return False, None
+                    else:
+                        # Different device OR validation/login - block ALL
                         return True, {
                             "device_fingerprint": stored_device,
                             "last_heartbeat": last_heartbeat,
                             "seconds_remaining": max(0, SESSION_TIMEOUT_SECONDS - int(time_since_last.total_seconds()))
                         }
-                    else:
-                        # Same device - no conflict, can continue
-                        return False, None
                 else:
                     # Session expired - clean it up
                     cursor.execute("""
@@ -1596,8 +1598,9 @@ def heartbeat():
                 # When symbol is provided, use per-symbol session management
                 if symbol and MULTI_SYMBOL_SESSIONS_ENABLED:
                     # Check for session conflict for this specific symbol
+                    # For heartbeats, allow same device to continue
                     has_conflict, conflict_info = check_symbol_session_conflict(
-                        conn, license_key, symbol, device_fingerprint
+                        conn, license_key, symbol, device_fingerprint, allow_same_device=True
                     )
                     
                     if has_conflict:
