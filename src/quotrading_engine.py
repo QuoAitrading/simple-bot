@@ -7623,9 +7623,11 @@ def main(symbol_override: str = None) -> None:
     # Display welcome header - static to avoid spam/interference with other output
     # QuoTrading AI logo was already shown and cleared in __main__ (8 seconds)
     # Use static text instead of animation to prevent log spam
-    logger.info("=" * 80)
-    logger.info("Welcome to QuoTrading AI Professional Trading System")
-    logger.info("=" * 80)
+    # Skip in backtest mode
+    if not is_backtest_mode():
+        logger.info("=" * 80)
+        logger.info("Welcome to QuoTrading AI Professional Trading System")
+        logger.info("=" * 80)
     
     # CRITICAL: Validate license after startup logo
     # This is the "login screen" - fail fast if license invalid or session conflict
