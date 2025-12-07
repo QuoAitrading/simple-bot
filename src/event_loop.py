@@ -372,9 +372,10 @@ class TimerManager:
                     )
                 
                 # Connection health check (every 20 seconds)
-                # Skip during maintenance to avoid log spam when disconnected
-                if (self._should_check("connection_health", current_time, 20) and
-                    not self.bot_status.get("maintenance_idle", False)):
+                # CRITICAL: Always check connection health, even during maintenance/idle
+                # This ensures heartbeats are sent to maintain active session
+                # Otherwise, session timer expires and allows concurrent logins
+                if self._should_check("connection_health", current_time, 20):
                     self.event_loop.post_event(
                         EventType.CONNECTION_HEALTH,
                         EventPriority.HIGH,
