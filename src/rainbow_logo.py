@@ -381,6 +381,69 @@ def display_animated_welcome_header(duration=3600.0, fps=5):
         print()
 
 
+def display_quick_rainbow_header(message=None, duration=2.0, fps=10):
+    """
+    Display a quick animated rainbow header with text.
+    Colors cycle through the text for a brief animation effect.
+    
+    This is a lightweight, non-blocking alternative to display_animated_welcome_header.
+    Perfect for startup headers that need visual appeal without long delays.
+    
+    Args:
+        message: Text to display (default: WELCOME_HEADER)
+        duration: How long to animate in seconds (default: 2.0 for quick startup)
+        fps: Frames per second for animation (default: 10)
+    """
+    if message is None:
+        message = WELCOME_HEADER
+    
+    frames = int(duration * fps)
+    delay = 1.0 / fps
+    rainbow = get_rainbow_colors()
+    
+    # Get terminal width for centering
+    try:
+        terminal_size = os.get_terminal_size()
+        terminal_width = terminal_size.columns
+    except OSError:
+        terminal_width = 120
+    
+    # Calculate padding for centering the header
+    msg_padding = max(0, (terminal_width - len(message)) // 2)
+    
+    # Display separator
+    separator = "=" * 80
+    sep_padding = max(0, (terminal_width - 80) // 2)
+    
+    print()
+    print(" " * sep_padding + separator)
+    
+    for frame in range(frames):
+        # Calculate color offset for flowing rainbow effect
+        color_offset = frame % len(rainbow)
+        
+        # Move cursor up to overwrite previous frame (just 1 line: the header)
+        if frame > 0:
+            sys.stdout.write('\033[1A')  # Move up 1 line
+        
+        # Clear line and display rainbow header with offset
+        sys.stdout.write('\033[2K')  # Clear line
+        colored_header = ''.join(
+            f"{rainbow[(i + color_offset) % len(rainbow)]}{char}{Colors.RESET}" 
+            for i, char in enumerate(message)
+        )
+        sys.stdout.write(" " * msg_padding + colored_header + "\n")
+        
+        sys.stdout.flush()
+        
+        if frame < frames - 1:
+            time.sleep(delay)
+    
+    # Print closing separator
+    print(" " * sep_padding + separator)
+    print()
+
+
 def display_animated_thank_you(duration=60.0, fps=15):
     """
     Display animated rainbow "Thanks for using QuoTrading AI" message.

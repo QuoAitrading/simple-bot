@@ -109,7 +109,7 @@ load_dotenv(dotenv_path=env_path)
 
 # Import rainbow logo display - with fallback if not available
 try:
-    from rainbow_logo import display_animated_logo, Colors, get_rainbow_bot_art, get_rainbow_bot_art_with_message, display_animated_thank_you, display_static_thank_you
+    from rainbow_logo import display_animated_logo, Colors, get_rainbow_bot_art, get_rainbow_bot_art_with_message, display_animated_thank_you, display_static_thank_you, display_quick_rainbow_header
     RAINBOW_LOGO_AVAILABLE = True
 except ImportError:
     RAINBOW_LOGO_AVAILABLE = False
@@ -119,6 +119,7 @@ except ImportError:
     get_rainbow_bot_art_with_message = None
     display_animated_thank_you = None
     display_static_thank_you = None
+    display_quick_rainbow_header = None
 
 # Startup logo configuration
 STARTUP_LOGO_DURATION = 8.0  # Seconds to display startup logo
@@ -7601,6 +7602,23 @@ def main(symbol_override: str = None) -> None:
     
     # Track session start time for runtime display
     bot_status["session_start_time"] = datetime.now(pytz.timezone(CONFIG.get("timezone", "US/Eastern")))
+    
+    # Display quick animated rainbow welcome header (2 seconds)
+    # Shows "Welcome to QuoTrading AI Professional Trading System" with rainbow animation
+    # Only in live mode (skip in backtest)
+    if RAINBOW_LOGO_AVAILABLE and display_quick_rainbow_header and not is_backtest_mode():
+        try:
+            display_quick_rainbow_header(duration=2.0, fps=10)
+        except Exception as e:
+            # Fallback to static header if animation fails
+            logger.info("=" * 80)
+            logger.info("Welcome to QuoTrading AI Professional Trading System")
+            logger.info("=" * 80)
+    else:
+        # Backtest mode or rainbow not available - use static header
+        logger.info("=" * 80)
+        logger.info("Welcome to QuoTrading AI Professional Trading System")
+        logger.info("=" * 80)
     
     # CRITICAL: Validate license after startup logo
     # This is the "login screen" - fail fast if license invalid or session conflict
