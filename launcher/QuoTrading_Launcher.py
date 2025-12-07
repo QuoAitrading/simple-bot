@@ -291,13 +291,14 @@ class QuoTradingLauncher:
                         canvas.yview_scroll(1, "units")
         return handler
     
-    def create_header(self, title, subtitle="", rainbow=False):
+    def create_header(self, title, subtitle="", rainbow=False, rainbow_animated=True):
         """Create a professional header for each screen with premium styling.
         
         Args:
             title: Header title text
             subtitle: Optional subtitle text
-            rainbow: If True, renders title in animated rainbow colors
+            rainbow: If True, renders title in rainbow colors
+            rainbow_animated: If True and rainbow=True, animates the rainbow colors (default: True)
         """
         header = tk.Frame(self.root, bg=self.colors['success_dark'], height=80)
         header.pack(fill=tk.X)
@@ -331,8 +332,9 @@ class QuoTradingLauncher:
                     label.pack(side=tk.LEFT)
                     char_labels.append((label, i))  # Store label and original position
             
-            # Start animation for rainbow text (non-blocking)
-            self._animate_rainbow_header(char_labels)
+            # Start animation for rainbow text (non-blocking) only if rainbow_animated is True
+            if rainbow_animated:
+                self._animate_rainbow_header(char_labels)
         else:
             # Regular title
             title_label = tk.Label(
@@ -696,10 +698,11 @@ class QuoTradingLauncher:
         self.current_screen = 0
         self.root.title("QuoTrading - Broker Setup")
         
-        # Header with rainbow "Welcome to QuoTrading Professional Trading System"
+        # Header with rainbow "Welcome to QuoTrading Professional Trading System" (static, not animated)
         header = self.create_header("Welcome to QuoTrading Professional Trading System", 
                                    "Select your account type and broker", 
-                                   rainbow=True)
+                                   rainbow=True,
+                                   rainbow_animated=False)
         
         # Main container - no scrolling
         main = tk.Frame(self.root, bg=self.colors['background'], padx=10, pady=5)
