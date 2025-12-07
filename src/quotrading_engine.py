@@ -7620,30 +7620,12 @@ def main(symbol_override: str = None) -> None:
     # Track session start time for runtime display
     bot_status["session_start_time"] = datetime.now(pytz.timezone(CONFIG.get("timezone", "US/Eastern")))
     
-    # Display rainbow welcome header with animation
-    # QuoTrading AI logo was already shown and cleared in __main__ (8 seconds)
-    # Now display the welcome header as a SEPARATE screen
-    # Shows "Welcome to QuoTrading AI Professional Trading System" with flowing rainbow colors
-    # Animates for 8 seconds with color cycling effect (now in non-blocking mode)
-    # Only in live mode (skip in backtest)
-    if RAINBOW_LOGO_AVAILABLE and not is_backtest_mode():
-        try:
-            # Display animated rainbow header (non-blocking mode for parallel initialization)
-            # Colors cycle through the text for 8 seconds creating flowing rainbow effect
-            # This displays AFTER logo has completely cleared
-            # Animation runs in background thread - bot initialization continues immediately
-            display_animated_welcome_header(duration=8.0, fps=10, non_blocking=True)
-        except Exception as e:
-            # Fallback to static header if rainbow display fails
-            logger.warning(f"Rainbow header display failed: {e}")
-            logger.info("=" * 80)
-            logger.info("Welcome to QuoTrading AI Professional Trading System")
-            logger.info("=" * 80)
-    else:
-        # Backtest mode or rainbow not available - use static header
-        logger.info("=" * 80)
-        logger.info("Welcome to QuoTrading AI Professional Trading System")
-        logger.info("=" * 80)
+    # Display welcome header after splash logo has cleared
+    # The 8-second splash art logo was already shown and cleared in __main__
+    # Now display a simple static header to keep logs clean and organized
+    logger.info("=" * 80)
+    logger.info("Welcome to QuoTrading AI Professional Trading System")
+    logger.info("=" * 80)
     
     # CRITICAL: Validate license after startup logo
     # This is the "login screen" - fail fast if license invalid or session conflict
