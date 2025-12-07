@@ -7604,44 +7604,15 @@ def main(symbol_override: str = None) -> None:
     # Track session start time for runtime display
     bot_status["session_start_time"] = datetime.now(pytz.timezone(CONFIG.get("timezone", "US/Eastern")))
     
-    # Display static rainbow welcome header after logo completes
-    # Shows "Welcome to QuoTrading AI Professional Trading System" with rainbow colors
-    # Static display (no animation) - logo already provided 8 seconds of animation
+    # Display quick rainbow welcome header after logo completes
+    # Shows "Welcome to QuoTrading AI Professional Trading System" with brief rainbow animation
+    # Quick 1-second animation - provides visual appeal without delaying bot startup
     # Only in live mode (skip in backtest)
-    if RAINBOW_LOGO_AVAILABLE and not is_backtest_mode():
+    if RAINBOW_LOGO_AVAILABLE and display_quick_rainbow_header and not is_backtest_mode():
         try:
-            # Display static rainbow header (no animation, just rainbow colored text)
-            # This appears immediately after logo completes
-            rainbow = [
-                '\033[91m', '\033[38;5;208m', '\033[93m', '\033[92m',
-                '\033[96m', '\033[94m', '\033[95m', '\033[35m'
-            ]
-            reset = '\033[0m'
-            
-            # Get terminal width for centering
-            try:
-                terminal_size = os.get_terminal_size()
-                terminal_width = terminal_size.columns
-            except (OSError, AttributeError):
-                terminal_width = 120
-            
-            # Create rainbow-colored welcome message
-            welcome_msg = "Welcome to QuoTrading AI Professional Trading System"
-            colored_welcome = ''.join(
-                f"{rainbow[i % len(rainbow)]}{char}{reset}" 
-                for i, char in enumerate(welcome_msg)
-            )
-            
-            # Display with separators
-            separator = "=" * 80
-            sep_padding = max(0, (terminal_width - 80) // 2)
-            msg_padding = max(0, (terminal_width - len(welcome_msg)) // 2)
-            
-            logger.info("")
-            print(" " * sep_padding + separator)
-            print(" " * msg_padding + colored_welcome)
-            print(" " * sep_padding + separator)
-            logger.info("")
+            # Display rainbow header with quick 1-second animation
+            # Colors cycle through text briefly, then bot startup continues
+            display_quick_rainbow_header(duration=1.0, fps=10)
         except Exception as e:
             # Fallback to static header if rainbow display fails
             logger.warning(f"Rainbow header display failed: {e}")
