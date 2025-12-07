@@ -1014,15 +1014,21 @@ def validate_license_at_startup() -> None:
                 sys.exit(1)
             elif data.get("session_conflict"):
                 # Session conflict - another device is ACTIVELY using this license
-                # Server already auto-clears stale sessions, so this is a real conflict
+                # OR same device trying to reconnect within 60-second cooldown after crash/force-close
+                wait_seconds = data.get("estimated_wait_seconds", 60)
                 logger.critical("=" * 70)
                 logger.critical("")
-                logger.critical("  ⚠️ LICENSE ALREADY IN USE")
+                logger.critical("  ⚠️ SESSION CONFLICT - PLEASE WAIT")
                 logger.critical("")
-                logger.critical("  Your license key is currently active on another device.")
-                logger.critical("  Only one device can use a license at a time.")
+                logger.critical("  Your license key has an active session or was recently force-closed.")
+                logger.critical("  Only one active session is allowed per license.")
                 logger.critical("")
-                logger.critical("  If the other device is not running, wait a moment and try again.")
+                logger.critical(f"  Please wait approximately {wait_seconds} seconds before trying again.")
+                logger.critical("")
+                logger.critical("  NOTE: This cooldown only applies after crashes or force-closes")
+                logger.critical("        (Task Manager kill, system crash, Ctrl+Break, etc.)")
+                logger.critical("  Normal shutdowns (Ctrl+C, clean exit) allow immediate re-login.")
+                logger.critical("")
                 logger.critical("  Contact: support@quotrading.com")
                 logger.critical("")
                 logger.critical("=" * 70)
@@ -7605,13 +7611,16 @@ def main(symbol_override: str = None) -> None:
     bot_status["session_start_time"] = datetime.now(pytz.timezone(CONFIG.get("timezone", "US/Eastern")))
     
     # Display rainbow welcome header with animation
+    # QuoTrading AI logo was already shown and cleared in __main__ (8 seconds)
+    # Now display the welcome header as a SEPARATE screen
     # Shows "Welcome to QuoTrading AI Professional Trading System" with flowing rainbow colors
-    # Animates for 8 seconds with color cycling effect (like thank you message)
+    # Animates for 8 seconds with color cycling effect
     # Only in live mode (skip in backtest)
     if RAINBOW_LOGO_AVAILABLE and not is_backtest_mode():
         try:
             # Display animated rainbow header (blocking mode for full animation)
             # Colors cycle through the text for 8 seconds creating flowing rainbow effect
+            # This displays AFTER logo has completely cleared
             display_animated_welcome_header(duration=8.0, fps=10, non_blocking=False)
         except Exception as e:
             # Fallback to static header if rainbow display fails
