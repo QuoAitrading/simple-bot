@@ -8183,6 +8183,9 @@ def handle_license_check_event(data: Dict[str, Any]) -> None:
         if response.status_code == 200:
             data = response.json()
             
+            # Reset failure counter on successful validation
+            bot_status["license_validation_failures"] = 0
+            
             # Extract expiration information
             expiration_iso = data.get("license_expiration")
             days_until_expiration = data.get("days_until_expiration")
@@ -8490,16 +8493,149 @@ def handle_license_check_event(data: Dict[str, Any]) -> None:
                 bot_status["stop_reason"] = "License validation failed - forbidden"
         
         else:
-            # Other error - log but don't stop trading (could be temporary API issue)
-            logger.warning(f"ΓÜá∩╕Å License validation returned HTTP {response.status_code} - continuing for now")
+            # Other HTTP error (like 503, 500, etc.) - track failures
+            # If we can't validate license after multiple attempts, shut down for security
+            failure_count = bot_status.get("license_validation_failures", 0) + 1
+            bot_status["license_validation_failures"] = failure_count
+            
+            logger.warning(f"ΓÜá∩╕Å License validation returned HTTP {response.status_code} - attempt {failure_count}/3")
+            
+            # After 3 consecutive failures (15 minutes), shut down the bot
+            # We cannot continue trading without confirming a valid license
+            if failure_count >= 3:
+                logger.critical("=" * 70)
+                logger.critical("")
+                logger.critical("  ⚠️ LICENSE VALIDATION FAILED - BOT SHUTDOWN")
+                logger.critical("")
+                logger.critical(f"  Failed to validate license after {failure_count} attempts")
+                logger.critical(f"  Last error: HTTP {response.status_code}")
+                logger.critical("")
+                logger.critical("  The bot cannot continue without confirming a valid license.")
+                logger.critical("  This could indicate:")
+                logger.critical("  - Server is temporarily down")
+                logger.critical("  - Network connectivity issues")
+                logger.critical("  - License server maintenance")
+                logger.critical("")
+                logger.critical("  Please check:")
+                logger.critical("  1. Your internet connection")
+                logger.critical("  2. License server status")
+                logger.critical("  3. Contact support if issue persists")
+                logger.critical("")
+                logger.critical("  Contact: support@quotrading.com")
+                logger.critical("")
+                logger.critical("=" * 70)
+                
+                bot_status["license_expired"] = True
+                bot_status["trading_enabled"] = False
+                bot_status["emergency_stop"] = True
+                bot_status["stop_reason"] = "license_validation_failed_multiple_attempts"
+                
+                # Disconnect broker
+                if broker is not None:
+                    try:
+                        broker.disconnect()
+                    except:
+                        pass
+                
+                # Exit the bot completely
+                logger.critical("Shutting down bot in 5 seconds...")
+                time_module.sleep(5)
+                logger.critical("BOT SHUTDOWN - License validation failed")
+                sys.exit(1)  # Exit with error code
     
     except requests.Timeout:
-        # Timeout - don't stop trading, could be temporary network issue
-        logger.warning("ΓÅ▒∩╕Å License validation timeout - will retry in 5 minutes")
+        # Timeout - track failures and shut down after multiple attempts
+        failure_count = bot_status.get("license_validation_failures", 0) + 1
+        bot_status["license_validation_failures"] = failure_count
+        
+        logger.warning(f"ΓÅ▒∩╕Å License validation timeout - attempt {failure_count}/3 - will retry in 5 minutes")
+        
+        # After 3 consecutive timeouts (15 minutes), shut down the bot
+        if failure_count >= 3:
+            logger.critical("=" * 70)
+            logger.critical("")
+            logger.critical("  ⚠️ LICENSE VALIDATION TIMEOUT - BOT SHUTDOWN")
+            logger.critical("")
+            logger.critical(f"  Failed to reach license server after {failure_count} attempts (15 minutes)")
+            logger.critical("")
+            logger.critical("  The bot cannot continue without confirming a valid license.")
+            logger.critical("  This could indicate:")
+            logger.critical("  - Network connectivity issues")
+            logger.critical("  - License server is temporarily unreachable")
+            logger.critical("  - Firewall blocking outbound connections")
+            logger.critical("")
+            logger.critical("  Please check:")
+            logger.critical("  1. Your internet connection")
+            logger.critical("  2. Firewall settings")
+            logger.critical("  3. License server status")
+            logger.critical("  4. Contact support if issue persists")
+            logger.critical("")
+            logger.critical("  Contact: support@quotrading.com")
+            logger.critical("")
+            logger.critical("=" * 70)
+            
+            bot_status["license_expired"] = True
+            bot_status["trading_enabled"] = False
+            bot_status["emergency_stop"] = True
+            bot_status["stop_reason"] = "license_validation_timeout_multiple_attempts"
+            
+            # Disconnect broker
+            if broker is not None:
+                try:
+                    broker.disconnect()
+                except:
+                    pass
+            
+            # Exit the bot completely
+            logger.critical("Shutting down bot in 5 seconds...")
+            time_module.sleep(5)
+            logger.critical("BOT SHUTDOWN - License validation timeout")
+            sys.exit(1)  # Exit with error code
     
     except Exception as e:
-        # Other error - log but continue trading
-        logger.warning(f"License validation error: {e} - will retry in 5 minutes")
+        # Other error - track failures and shut down after multiple attempts
+        failure_count = bot_status.get("license_validation_failures", 0) + 1
+        bot_status["license_validation_failures"] = failure_count
+        
+        logger.warning(f"License validation error: {e} - attempt {failure_count}/3 - will retry in 5 minutes")
+        
+        # After 3 consecutive errors (15 minutes), shut down the bot
+        if failure_count >= 3:
+            logger.critical("=" * 70)
+            logger.critical("")
+            logger.critical("  ⚠️ LICENSE VALIDATION ERROR - BOT SHUTDOWN")
+            logger.critical("")
+            logger.critical(f"  Failed to validate license after {failure_count} attempts (15 minutes)")
+            logger.critical(f"  Last error: {e}")
+            logger.critical("")
+            logger.critical("  The bot cannot continue without confirming a valid license.")
+            logger.critical("")
+            logger.critical("  Please check:")
+            logger.critical("  1. Your internet connection")
+            logger.critical("  2. License server status")
+            logger.critical("  3. Contact support if issue persists")
+            logger.critical("")
+            logger.critical("  Contact: support@quotrading.com")
+            logger.critical("")
+            logger.critical("=" * 70)
+            
+            bot_status["license_expired"] = True
+            bot_status["trading_enabled"] = False
+            bot_status["emergency_stop"] = True
+            bot_status["stop_reason"] = "license_validation_error_multiple_attempts"
+            
+            # Disconnect broker
+            if broker is not None:
+                try:
+                    broker.disconnect()
+                except:
+                    pass
+            
+            # Exit the bot completely
+            logger.critical("Shutting down bot in 5 seconds...")
+            time_module.sleep(5)
+            logger.critical("BOT SHUTDOWN - License validation error")
+            sys.exit(1)  # Exit with error code
 
 
 def send_heartbeat() -> None:
