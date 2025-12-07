@@ -424,10 +424,9 @@ def display_quick_rainbow_header(message=None, duration=2.0, fps=10):
         color_offset = frame % len(rainbow)
         
         # Move cursor up to overwrite previous frame (after first frame)
+        # Combined ANSI escape sequences for better performance
         if frame > 0:
-            sys.stdout.write('\033[1A')  # Move up 1 line
-            sys.stdout.write('\r')  # Move to start of line
-            sys.stdout.write('\033[2K')  # Clear line
+            sys.stdout.write('\033[1A\r\033[2K')  # Move up, return to start, clear line
         
         # Display rainbow header with offset
         colored_header = ''.join(
@@ -436,15 +435,13 @@ def display_quick_rainbow_header(message=None, duration=2.0, fps=10):
         )
         sys.stdout.write(" " * msg_padding + colored_header)
         
-        # Add newline for cursor positioning (so we can move back up on next frame)
+        # Add newline for cursor positioning
+        sys.stdout.write('\n')
+        sys.stdout.flush()
+        
+        # Sleep between frames (except after last frame)
         if frame < frames - 1:
-            sys.stdout.write('\n')
-            sys.stdout.flush()
             time.sleep(delay)
-        else:
-            # Last frame - add newline and flush
-            sys.stdout.write('\n')
-            sys.stdout.flush()
     
     # Print closing separator
     print(" " * sep_padding + separator)
