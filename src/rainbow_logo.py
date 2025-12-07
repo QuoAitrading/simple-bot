@@ -340,8 +340,9 @@ def display_animated_logo(duration=3.0, fps=20, with_headers=True, non_blocking=
     
     # Clear screen or add spacing after logo
     if clear_after:
-        # Clear screen like a loading screen in a video game
-        # Use ANSI escape code to clear screen and move cursor to top
+        # Clear screen AND scrollback buffer completely
+        # Use ANSI escape codes to ensure logo doesn't remain visible when scrolling up
+        sys.stdout.write('\033[3J')  # Clear scrollback buffer (prevents scrolling up to see logo)
         sys.stdout.write('\033[2J')  # Clear entire screen
         sys.stdout.write('\033[H')   # Move cursor to home position (top-left)
         sys.stdout.flush()
