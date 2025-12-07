@@ -437,12 +437,9 @@ def display_quick_rainbow_header(message=None, duration=2.0, fps=10):
         sys.stdout.write(" " * msg_padding + colored_header)
         sys.stdout.flush()
         
-        # Only add newline after last frame
-        if frame == frames - 1:
-            sys.stdout.write('\n')
-        else:
-            # For all other frames, add newline so we can move back up
-            sys.stdout.write('\n')
+        # Add newline and sleep between frames
+        sys.stdout.write('\n')
+        if frame < frames - 1:
             time.sleep(delay)
     
     # Print closing separator
