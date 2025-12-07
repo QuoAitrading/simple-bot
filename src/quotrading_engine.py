@@ -7604,18 +7604,27 @@ def main(symbol_override: str = None) -> None:
     # Track session start time for runtime display
     bot_status["session_start_time"] = datetime.now(pytz.timezone(CONFIG.get("timezone", "US/Eastern")))
     
-    # Simple welcome message after logo (no animation)
-    # Logo already animated for 8 seconds, now show static header and continue
+    # Display animated rainbow welcome header (10 seconds, blocking)
+    # Shows "Welcome to QuoTrading AI Professional Trading System" with rainbow animation
+    # Colors cycle through the text but it stays in place - exactly like the thank you message
+    # Logo has already completed (8 seconds), now show welcome header (10 seconds)
     # Only in live mode (skip in backtest)
-    if not is_backtest_mode():
-        # Static header - no animation (logo already provided visual interest)
+    if RAINBOW_LOGO_AVAILABLE and display_animated_welcome_header and not is_backtest_mode():
+        try:
+            # Animate header for 10 seconds (blocking) - same behavior as thank you message
+            # Header stays in place while colors cycle through - neat and professional
+            # This appears AFTER logo completes (logo is now blocking)
+            display_animated_welcome_header(duration=10.0, fps=10, non_blocking=False)
+        except Exception as e:
+            # Fallback to static header if animation fails
+            logger.warning(f"Rainbow header animation failed: {e}")
+            logger.info("=" * 80)
+            logger.info("Welcome to QuoTrading AI Professional Trading System")
+            logger.info("=" * 80)
+    else:
+        # Backtest mode or rainbow not available - use static header
         logger.info("=" * 80)
         logger.info("Welcome to QuoTrading AI Professional Trading System")
-        logger.info("=" * 80)
-    else:
-        # Backtest mode - minimal header (logo skipped in backtest)
-        logger.info("=" * 80)
-        logger.info("QuoTrading AI - Backtest Mode")
         logger.info("=" * 80)
     
     # CRITICAL: Validate license after startup logo
