@@ -108,9 +108,10 @@ def ensure_utc_aware(dt: datetime) -> datetime:
 def check_launcher_lock(api_key: str) -> tuple[bool, dict]:
     """
     Check if another launcher instance is using this API key on this machine.
+    Also enforces a 60-second cooldown after lock release.
     
     Returns:
-        (is_locked, lock_info) - is_locked=True if another launcher is active
+        (is_locked, lock_info) - is_locked=True if another launcher is active OR within cooldown period
     """
     locks_dir = Path("locks")
     locks_dir.mkdir(exist_ok=True)
@@ -137,7 +138,22 @@ def check_launcher_lock(api_key: str) -> tuple[bool, dict]:
             except (psutil.NoSuchProcess, psutil.AccessDenied):
                 pass
         
-        # Stale lock - remove it
+        # Process not running - check cooldown period (60 seconds)
+        released_at = lock_data.get("released_at")
+        if released_at:
+            try:
+                released_time = datetime.fromisoformat(released_at)
+                time_since_release = (datetime.now() - released_time).total_seconds()
+                
+                if time_since_release < 60:
+                    # Still in cooldown period
+                    lock_data["in_cooldown"] = True
+                    lock_data["cooldown_remaining"] = int(60 - time_since_release)
+                    return True, lock_data
+            except Exception:
+                pass
+        
+        # Cooldown expired or no release time - remove stale lock
         lock_file.unlink()
         return False, {}
     except Exception:
@@ -176,6 +192,7 @@ def create_launcher_lock(api_key: str) -> bool:
 def release_launcher_lock(api_key: str) -> bool:
     """
     Release the launcher lock for this API key.
+    Updates the lock file with release timestamp for cooldown tracking.
     
     Returns:
         True if lock released successfully
@@ -190,12 +207,18 @@ def release_launcher_lock(api_key: str) -> bool:
     
     if lock_file.exists():
         try:
-            # Only remove if it's our lock
+            # Only update if it's our lock
             with open(lock_file, 'r') as f:
                 lock_data = json.load(f)
             
             if lock_data.get("pid") == os.getpid():
-                lock_file.unlink()
+                # Update lock file with release timestamp instead of deleting
+                # This enables cooldown period tracking
+                lock_data["released_at"] = datetime.now().isoformat()
+                lock_data["pid"] = None  # Clear PID since process is ending
+                
+                with open(lock_file, 'w') as f:
+                    json.dump(lock_data, f, indent=2)
                 return True
         except Exception:
             pass
@@ -296,7 +319,111 @@ class QuoTradingLauncher:
         # Register cleanup on window close
         self.root.protocol("WM_DELETE_WINDOW", self.on_closing)
         
-        # Start with broker screen (Screen 0)
+        # Start with splash screen, then proceed to broker screen
+        self.show_splash_screen()
+    
+    def show_splash_screen(self):
+        """Show QuoTrading AI splash screen with logo animation for 8 seconds."""
+        # Clear window
+        for widget in self.root.winfo_children():
+            widget.destroy()
+        
+        # Create splash screen container
+        splash_frame = tk.Frame(self.root, bg=self.colors['background'])
+        splash_frame.pack(fill=tk.BOTH, expand=True)
+        
+        # Logo container
+        logo_container = tk.Frame(splash_frame, bg=self.colors['background'])
+        logo_container.pack(expand=True)
+        
+        # QuoTrading AI Logo Text with larger font
+        logo_label = tk.Label(
+            logo_container,
+            text="QuoTrading AI",
+            font=("Segoe UI", 42, "bold"),
+            bg=self.colors['background'],
+            fg=self.colors['success']
+        )
+        logo_label.pack(pady=(0, 30))
+        
+        # Animated dots below logo
+        self.splash_dots_label = tk.Label(
+            logo_container,
+            text="●",
+            font=("Segoe UI", 24),
+            bg=self.colors['background'],
+            fg=self.colors['success']
+        )
+        self.splash_dots_label.pack(pady=10)
+        
+        # Welcome message (will appear after animation)
+        self.welcome_label = tk.Label(
+            logo_container,
+            text="",
+            font=("Segoe UI", 18, "bold"),
+            bg=self.colors['background'],
+            fg=self.colors['success']
+        )
+        self.welcome_label.pack(pady=20)
+        
+        # Animation state
+        self.splash_animation_step = 0
+        self.splash_running = True
+        
+        # Start animations
+        self.animate_splash_dots()
+        
+        # Schedule welcome message and transition after 8 seconds
+        self.root.after(4000, self.show_welcome_message)
+        self.root.after(8000, self.finish_splash_screen)
+    
+    def animate_splash_dots(self):
+        """Animate loading dots on splash screen."""
+        if not self.splash_running:
+            return
+        
+        dot_frames = ["●", "●●", "●●●", "●●●●", "●●●●●", "●●●●", "●●●", "●●", "●"]
+        
+        current_dots = dot_frames[self.splash_animation_step % len(dot_frames)]
+        self.splash_dots_label.config(text=current_dots)
+        
+        self.splash_animation_step += 1
+        self.root.after(150, self.animate_splash_dots)
+    
+    def show_welcome_message(self):
+        """Show rainbow animated welcome message."""
+        if not self.splash_running:
+            return
+        
+        # Rainbow colors for text animation
+        rainbow_colors = ['#FF0000', '#FF7F00', '#FFFF00', '#00FF00', '#0000FF', '#4B0082', '#9400D3']
+        
+        welcome_text = "Welcome to QuoTrading AI System"
+        self.welcome_label.config(text=welcome_text)
+        
+        # Animate welcome text color through rainbow
+        self.welcome_color_index = 0
+        self.animate_welcome_rainbow()
+    
+    def animate_welcome_rainbow(self):
+        """Animate welcome message through rainbow colors."""
+        if not self.splash_running:
+            return
+        
+        rainbow_colors = ['#FF0000', '#FF7F00', '#FFFF00', '#00FF00', '#0000FF', '#4B0082', '#9400D3']
+        
+        color = rainbow_colors[self.welcome_color_index % len(rainbow_colors)]
+        self.welcome_label.config(fg=color)
+        
+        self.welcome_color_index += 1
+        
+        # Continue animation for 4 seconds (until splash finishes)
+        if self.welcome_color_index < 20:  # About 4 seconds at 200ms intervals
+            self.root.after(200, self.animate_welcome_rainbow)
+    
+    def finish_splash_screen(self):
+        """Finish splash screen and proceed to broker screen."""
+        self.splash_running = False
         self.setup_broker_screen()
     
     def on_closing(self):
@@ -942,22 +1069,40 @@ class QuoTradingLauncher:
             return
         
         # CHECK LAUNCHER LOCK - Prevent multiple launchers with same API key on this machine
+        # Also enforces 60-second cooldown after lock release
         is_locked, lock_info = check_launcher_lock(quotrading_api_key)
         if is_locked:
-            pid = lock_info.get("pid", "unknown")
-            created_at = lock_info.get("created_at", "unknown time")
-            messagebox.showerror(
-                "License Already in Use",
-                f"⚠️ ANOTHER LAUNCHER INSTANCE IS ALREADY RUNNING ⚠️\n\n"
-                f"This license key is currently in use by another\n"
-                f"launcher instance on this computer.\n\n"
-                f"Process ID: {pid}\n"
-                f"Started: {created_at}\n\n"
-                f"You can only run ONE launcher instance per license key.\n\n"
-                f"To fix this:\n"
-                f"1. Close the other launcher window\n"
-                f"2. Or use a different license key"
-            )
+            # Check if this is a cooldown period or active lock
+            if lock_info.get("in_cooldown"):
+                # Cooldown period - show remaining time
+                cooldown_remaining = lock_info.get("cooldown_remaining", 60)
+                messagebox.showerror(
+                    "License Key Cooldown Period",
+                    f"⚠️ LICENSE KEY RECENTLY USED ⚠️\n\n"
+                    f"This license key was recently used and is in a\n"
+                    f"60-second cooldown period.\n\n"
+                    f"Remaining cooldown time: {cooldown_remaining} seconds\n\n"
+                    f"This prevents rapid-fire login attempts and ensures\n"
+                    f"proper session cleanup.\n\n"
+                    f"Please wait {cooldown_remaining} seconds before trying again."
+                )
+            else:
+                # Active launcher instance
+                pid = lock_info.get("pid", "unknown")
+                created_at = lock_info.get("created_at", "unknown time")
+                messagebox.showerror(
+                    "License Already in Use",
+                    f"⚠️ ANOTHER LAUNCHER INSTANCE IS ALREADY RUNNING ⚠️\n\n"
+                    f"This license key is currently in use by another\n"
+                    f"launcher instance on this computer.\n\n"
+                    f"Process ID: {pid}\n"
+                    f"Started: {created_at}\n\n"
+                    f"You can only run ONE launcher instance per license key.\n\n"
+                    f"To fix this:\n"
+                    f"1. Close the other launcher window\n"
+                    f"2. Wait 60 seconds after closing\n"
+                    f"3. Or use a different license key"
+                )
             return
         
         # Validate license key with Azure server (server will check if it's admin or regular)
