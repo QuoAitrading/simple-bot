@@ -1650,10 +1650,12 @@ def heartbeat():
                         }), 403
                     
                     # Update session for this symbol
-                    create_or_update_symbol_session(
+                    update_success = create_or_update_symbol_session(
                         conn, license_key, symbol, device_fingerprint,
                         metadata=data.get('metadata', {})
                     )
+                    if update_success:
+                        logging.info(f"✅ Heartbeat updated session timer for {license_key}/{symbol}")
                     
                     # Also insert into heartbeats table for history
                     with conn.cursor() as cursor:
