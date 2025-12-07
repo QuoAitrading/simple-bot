@@ -418,7 +418,7 @@ def display_quick_rainbow_header(message=None, duration=2.0, fps=10):
     print()
     print(" " * sep_padding + separator)
     
-    # Initial display of the header text (frame 0)
+    # Display animated header
     for frame in range(frames):
         # Calculate color offset for flowing rainbow effect
         color_offset = frame % len(rainbow)
@@ -427,20 +427,24 @@ def display_quick_rainbow_header(message=None, duration=2.0, fps=10):
         if frame > 0:
             sys.stdout.write('\033[1A')  # Move up 1 line
             sys.stdout.write('\r')  # Move to start of line
+            sys.stdout.write('\033[2K')  # Clear line
         
-        # Clear line and display rainbow header with offset
-        sys.stdout.write('\033[2K')  # Clear line
+        # Display rainbow header with offset
         colored_header = ''.join(
             f"{rainbow[(i + color_offset) % len(rainbow)]}{char}{Colors.RESET}" 
             for i, char in enumerate(message)
         )
         sys.stdout.write(" " * msg_padding + colored_header)
-        sys.stdout.flush()
         
-        # Add newline and sleep between frames
-        sys.stdout.write('\n')
+        # Add newline for cursor positioning (so we can move back up on next frame)
         if frame < frames - 1:
+            sys.stdout.write('\n')
+            sys.stdout.flush()
             time.sleep(delay)
+        else:
+            # Last frame - add newline and flush
+            sys.stdout.write('\n')
+            sys.stdout.flush()
     
     # Print closing separator
     print(" " * sep_padding + separator)
