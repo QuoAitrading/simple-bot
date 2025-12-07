@@ -397,19 +397,18 @@ WELCOME_HEADER = "Welcome to QuoTrading AI Professional Trading System"
 
 def display_animated_welcome_header(duration=3600.0, fps=5, non_blocking=False):
     """
-    Display animated rainbow "QuoTrading AI Professional Trading System" header.
-    Colors flow/cycle through the text for a smooth animation effect.
-    Runs for 60 minutes (3600 seconds) by default at 5 fps (reduced for long duration).
+    Display rainbow "QuoTrading AI Professional Trading System" header.
     
-    Note: This function manipulates terminal cursor position to create animation.
-    It overwrites the previous output line during the animation loop.
-    Can be interrupted with Ctrl+C without affecting the rest of the program.
+    In blocking mode: Colors flow/cycle through the text for a smooth animation effect.
+    In non-blocking mode: Displays static rainbow header once (neat and professional).
     
     Args:
-        duration: How long to animate in seconds (default: 3600.0 = 60 minutes)
-        fps: Frames per second for animation (default: 5, reduced for long-running animation)
-        non_blocking: If True, runs animation in background thread and returns immediately (default: False)
-                     In non-blocking mode, animation continues while main program proceeds
+        duration: How long to keep thread alive in seconds (default: 3600.0 = 60 minutes)
+                 In blocking mode, this is animation duration.
+                 In non-blocking mode, thread stays alive but header is static.
+        fps: Frames per second for animation in blocking mode (default: 5)
+        non_blocking: If True, displays static rainbow header in background thread (default: False)
+                     Static header is neat and professional - doesn't move or spam
     
     Returns:
         If non_blocking=True, returns the thread object. Otherwise returns None.
@@ -417,9 +416,7 @@ def display_animated_welcome_header(duration=3600.0, fps=5, non_blocking=False):
     # If non_blocking mode, start animation in background and return immediately
     if non_blocking:
         def animate_continuously():
-            """Run animation in background thread"""
-            frames = int(duration * fps)
-            delay = 1.0 / fps
+            """Run animation in background thread - displays static rainbow header"""
             rainbow = get_rainbow_colors()
             
             # Get terminal width for centering
@@ -436,41 +433,29 @@ def display_animated_welcome_header(duration=3600.0, fps=5, non_blocking=False):
             separator = "=" * 80
             sep_padding = max(0, (terminal_width - 80) // 2)
             
-            # Print initial frame with separators
-            print()
-            print(" " * sep_padding + separator)
-            
             try:
-                for frame in range(frames):
-                    # Calculate color offset for flowing rainbow effect
-                    color_offset = frame % len(rainbow)
-                    
-                    # Move cursor up to overwrite previous frame (just 1 line: the header)
-                    if frame > 0:
-                        sys.stdout.write('\033[1A')  # Move up 1 line
-                    
-                    # Clear line and display rainbow header with offset
-                    sys.stdout.write('\033[2K')  # Clear line
-                    colored_header = ''.join(
-                        f"{rainbow[(i + color_offset) % len(rainbow)]}{char}{Colors.RESET}" 
-                        for i, char in enumerate(WELCOME_HEADER)
-                    )
-                    sys.stdout.write(" " * msg_padding + colored_header + "\n")
-                    
-                    sys.stdout.flush()
-                    
-                    if frame < frames - 1:
-                        time.sleep(delay)
+                # Print static rainbow header once - neat and professional
+                print()
+                print(" " * sep_padding + separator)
+                
+                # Display header with rainbow colors (static, not animated)
+                # Each character gets a color from the rainbow sequence
+                colored_header = ''.join(
+                    f"{rainbow[i % len(rainbow)]}{char}{Colors.RESET}" 
+                    for i, char in enumerate(WELCOME_HEADER)
+                )
+                print(" " * msg_padding + colored_header)
+                
+                print(" " * sep_padding + separator)
+                print()
+                
+                # Stay alive for the duration to keep thread active
+                # but don't update anything - header remains static and neat
+                time.sleep(duration)
+                
             except (KeyboardInterrupt, OSError, IOError):
                 # Allow graceful interruption or handle terminal errors
                 pass
-            finally:
-                # Always print closing separator, even if interrupted
-                try:
-                    print(" " * sep_padding + separator)
-                    print()
-                except:
-                    pass  # Ignore any errors during cleanup
         
         thread = threading.Thread(
             target=animate_continuously,

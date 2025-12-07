@@ -7604,14 +7604,15 @@ def main(symbol_override: str = None) -> None:
     # Track session start time for runtime display
     bot_status["session_start_time"] = datetime.now(pytz.timezone(CONFIG.get("timezone", "US/Eastern")))
     
-    # Display animated rainbow welcome header (1 hour, non-blocking)
-    # Shows "Welcome to QuoTrading AI Professional Trading System" with rainbow animation
-    # Runs in background thread so it doesn't block bot execution
+    # Display rainbow welcome header (static, professional)
+    # Shows "Welcome to QuoTrading AI Professional Trading System" with rainbow colors
+    # Prints once and stays neat - doesn't move or spam
+    # Runs in background thread (1 hour duration) so it doesn't block bot execution
     # Only in live mode (skip in backtest)
     if RAINBOW_LOGO_AVAILABLE and display_animated_welcome_header and not is_backtest_mode():
         try:
-            # Use non_blocking=True so animation runs for 1 hour in background
-            # while bot continues to execute normally
+            # Use non_blocking=True to print header without blocking
+            # Header displays with static rainbow colors - neat and professional
             display_animated_welcome_header(duration=3600.0, fps=5, non_blocking=True)
         except Exception as e:
             # Fallback to static header if animation fails
