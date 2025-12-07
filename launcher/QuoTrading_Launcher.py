@@ -298,7 +298,8 @@ class QuoTradingLauncher:
             title: Header title text
             subtitle: Optional subtitle text
             rainbow: If True, renders title in rainbow colors
-            rainbow_animated: If True and rainbow=True, animates the rainbow colors (default: True)
+            rainbow_animated: If True and rainbow=True, animates the rainbow colors. 
+                            Ignored when rainbow=False. (default: True)
         """
         header = tk.Frame(self.root, bg=self.colors['success_dark'], height=80)
         header.pack(fill=tk.X)
