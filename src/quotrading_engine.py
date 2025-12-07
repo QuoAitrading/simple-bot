@@ -8106,9 +8106,18 @@ def handle_connection_health_event(data: Dict[str, Any]) -> None:
     """
     Handle periodic connection health check event.
     Verifies broker connection is alive and reconnects if needed.
+    Sends heartbeat to maintain active session.
     Runs every 20 seconds.
     """
     check_broker_connection()
+    
+    # Send heartbeat to maintain session (every 20 seconds)
+    # This ensures the server knows the session is active and blocks re-login
+    # for 60 seconds after force-close (3x heartbeat interval)
+    try:
+        send_heartbeat()
+    except Exception as e:
+        pass  # Silent - heartbeat failure not customer-facing
 
 
 def handle_license_check_event(data: Dict[str, Any]) -> None:
