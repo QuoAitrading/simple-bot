@@ -147,7 +147,7 @@ def initialize_rl_brain(symbol: str, exploration_rate: float) -> Tuple[SignalCon
     rl_brain = SignalConfidenceRL(
         experience_file=signal_exp_file,
         backtest_mode=True,
-        confidence_threshold=None,  # Use adaptive threshold
+        confidence_threshold=0.40,  # Use 40% confidence threshold
         exploration_rate=exploration_rate,
         min_exploration=exploration_rate,  # Keep exploration constant
         exploration_decay=1.0  # No decay
