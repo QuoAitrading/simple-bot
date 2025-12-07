@@ -7604,20 +7604,48 @@ def main(symbol_override: str = None) -> None:
     # Track session start time for runtime display
     bot_status["session_start_time"] = datetime.now(pytz.timezone(CONFIG.get("timezone", "US/Eastern")))
     
-    # Display animated rainbow welcome header (10 seconds, blocking)
-    # Shows "Welcome to QuoTrading AI Professional Trading System" with rainbow animation
-    # Colors cycle through the text but it stays in place - exactly like the thank you message
-    # Logo has already completed (8 seconds), now show welcome header (10 seconds)
+    # Display static rainbow welcome header after logo completes
+    # Shows "Welcome to QuoTrading AI Professional Trading System" with rainbow colors
+    # Static display (no animation) - logo already provided 8 seconds of animation
     # Only in live mode (skip in backtest)
-    if RAINBOW_LOGO_AVAILABLE and display_animated_welcome_header and not is_backtest_mode():
+    if RAINBOW_LOGO_AVAILABLE and not is_backtest_mode():
         try:
-            # Animate header for 10 seconds (blocking) - same behavior as thank you message
-            # Header stays in place while colors cycle through - neat and professional
-            # This appears AFTER logo completes (logo is now blocking)
-            display_animated_welcome_header(duration=10.0, fps=10, non_blocking=False)
+            # Display static rainbow header (no animation, just rainbow colored text)
+            # This appears immediately after logo completes
+            rainbow = [
+                '\033[91m', '\033[38;5;208m', '\033[93m', '\033[92m',
+                '\033[96m', '\033[94m', '\033[95m', '\033[35m'
+            ]
+            reset = '\033[0m'
+            
+            # Get terminal width for centering
+            try:
+                import os
+                terminal_size = os.get_terminal_size()
+                terminal_width = terminal_size.columns
+            except:
+                terminal_width = 120
+            
+            # Create rainbow-colored welcome message
+            welcome_msg = "Welcome to QuoTrading AI Professional Trading System"
+            colored_welcome = ''.join(
+                f"{rainbow[i % len(rainbow)]}{char}{reset}" 
+                for i, char in enumerate(welcome_msg)
+            )
+            
+            # Display with separators
+            separator = "=" * 80
+            sep_padding = max(0, (terminal_width - 80) // 2)
+            msg_padding = max(0, (terminal_width - len(welcome_msg)) // 2)
+            
+            logger.info("")
+            print(" " * sep_padding + separator)
+            print(" " * msg_padding + colored_welcome)
+            print(" " * sep_padding + separator)
+            logger.info("")
         except Exception as e:
-            # Fallback to static header if animation fails
-            logger.warning(f"Rainbow header animation failed: {e}")
+            # Fallback to static header if rainbow display fails
+            logger.warning(f"Rainbow header display failed: {e}")
             logger.info("=" * 80)
             logger.info("Welcome to QuoTrading AI Professional Trading System")
             logger.info("=" * 80)
