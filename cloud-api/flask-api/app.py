@@ -1232,18 +1232,26 @@ def check_symbol_session_conflict(conn, license_key: str, symbol: str, device_fi
                 heartbeat = last_heartbeat if last_heartbeat.tzinfo else last_heartbeat.replace(tzinfo=timezone.utc)
                 time_since_last = now_utc - heartbeat
                 
+                logging.info(f"🔍 Session check for {license_key}/{symbol}: time_since_last={int(time_since_last.total_seconds())}s, timeout={SESSION_TIMEOUT_SECONDS}s, allow_same_device={allow_same_device}, stored_device={stored_device[:8]}..., requested_device={device_fingerprint[:8]}...")
+                
                 if time_since_last < timedelta(seconds=SESSION_TIMEOUT_SECONDS):
                     # Active session exists
                     if allow_same_device and stored_device == device_fingerprint:
                         # Heartbeat from same device - allow to continue
+                        logging.info(f"✅ Allowing same device to continue: {device_fingerprint[:8]}...")
                         return False, None
                     else:
                         # Different device OR validation/login - block ALL
+                        same_device_str = "SAME DEVICE" if stored_device == device_fingerprint else "DIFFERENT DEVICE"
+                        logging.warning(f"🚫 BLOCKING login/validation ({same_device_str}): allow_same_device={allow_same_device}, active session {int(time_since_last.total_seconds())}s old")
                         return True, {
                             "device_fingerprint": stored_device,
                             "last_heartbeat": last_heartbeat,
                             "seconds_remaining": max(0, SESSION_TIMEOUT_SECONDS - int(time_since_last.total_seconds()))
                         }
+                else:
+                    logging.info(f"⏰ Session expired ({int(time_since_last.total_seconds())}s > {SESSION_TIMEOUT_SECONDS}s), cleaning up...")
+
                 else:
                     # Session expired - clean it up
                     cursor.execute("""
