@@ -122,7 +122,7 @@ except ImportError:
     display_quick_rainbow_header = None
 
 # Startup logo configuration
-STARTUP_LOGO_DURATION = 8.0  # Seconds to display startup logo
+STARTUP_LOGO_DURATION = 600.0  # Seconds to display startup logo (10 minutes)
 
 # ===== EXE-COMPATIBLE FILE PATH HELPERS =====
 # These ensure files are saved in the correct location whether running as:
@@ -8922,15 +8922,14 @@ Multi-Symbol Mode:
     # SKIP in backtest mode to prevent spam
     if RAINBOW_LOGO_AVAILABLE and not is_backtest_mode():
         try:
-            # Show logo immediately without clearing first - instant display
-            # This creates a professional loading screen effect
-            display_animated_logo(duration=STARTUP_LOGO_DURATION, fps=20, with_headers=False)
+            # Show logo in background thread so it doesn't block bot startup
+            # This creates a professional loading screen effect that continues while bot initializes
+            # Reduced FPS (5) for 10-minute animation to minimize resource usage
+            # Animation updates at top of screen while bot output appears below
+            display_animated_logo(duration=STARTUP_LOGO_DURATION, fps=5, with_headers=False, non_blocking=True)
             
-            # Clear screen after logo to make room for logs
-            if os.name == 'nt':
-                os.system('cls')
-            else:
-                os.system('clear')
+            # No delay needed - animation is non-blocking
+            # No screen clear - let animation stay at top while output appears below
         except Exception as e:
             # Logo display failed - log and continue (not critical)
             # Use logger if available, otherwise print
