@@ -211,6 +211,12 @@ class QuoTradingLauncher:
         for widget in self.root.winfo_children():
             widget.destroy()
         
+        # Set root background to black to prevent text bleed-through
+        self.root.configure(bg='black')
+        
+        # Force UI refresh to ensure background is applied before creating widgets
+        self.root.update()
+        
         # Black background for splash
         splash_frame = tk.Frame(self.root, bg='black')
         splash_frame.pack(fill=tk.BOTH, expand=True)
