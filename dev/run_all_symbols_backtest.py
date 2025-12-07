@@ -27,6 +27,13 @@ sys.path.insert(0, os.path.join(PROJECT_ROOT, 'src'))
 # All symbols to run backtest for
 SYMBOLS = ['ES', 'MES', 'MNQ', 'NQ']
 
+# Configuration constants
+MIN_EXPERIENCES_FOR_SUBSEQUENT_RUN = 10  # Threshold to determine if this is a first run
+FIRST_RUN_EXPLORATION_RATE = 1.0  # 100% exploration for discovering initial experiences
+SUBSEQUENT_RUN_EXPLORATION_RATE = 0.30  # 30% exploration for refining knowledge
+FIRST_RUN_MAX_ITERATIONS = 50  # Limit iterations for first run
+SUBSEQUENT_RUN_MAX_ITERATIONS = 100  # Full iterations for subsequent runs
+
 def check_experience_file_empty(symbol):
     """Check if the experience file for a symbol is empty or has very few experiences."""
     exp_file = os.path.join(PROJECT_ROOT, f"experiences/{symbol}/signal_experience.json")
@@ -38,8 +45,8 @@ def check_experience_file_empty(symbol):
         with open(exp_file, 'r') as f:
             data = json.load(f)
             experiences = data.get('experiences', [])
-            # Consider it "empty" if less than 10 experiences
-            return len(experiences) < 10
+            # Consider it "empty" if less than MIN_EXPERIENCES_FOR_SUBSEQUENT_RUN
+            return len(experiences) < MIN_EXPERIENCES_FOR_SUBSEQUENT_RUN
     except Exception as e:
         print(f"Error reading {exp_file}: {e}")
         return True
@@ -86,8 +93,8 @@ def main():
     print("="*70)
     print(f"  Symbols: {', '.join(SYMBOLS)}")
     print(f"  Strategy:")
-    print(f"    - First run: 100% exploration (if < 10 experiences)")
-    print(f"    - Subsequent runs: 30% exploration")
+    print(f"    - First run: {FIRST_RUN_EXPLORATION_RATE*100:.0f}% exploration (if < {MIN_EXPERIENCES_FOR_SUBSEQUENT_RUN} experiences)")
+    print(f"    - Subsequent runs: {SUBSEQUENT_RUN_EXPLORATION_RATE*100:.0f}% exploration")
     print(f"    - Confidence threshold: 40%")
     print(f"    - Full date range: First day to last day in data")
     print("="*70)
@@ -106,14 +113,14 @@ def main():
         
         if is_first_run:
             print(f"\n  This is the FIRST RUN for {symbol}")
-            print(f"  Using 100% exploration rate to discover initial experiences")
-            exploration_rate = 1.0  # 100% exploration for first run
-            max_iterations = 50  # Limit first run iterations
+            print(f"  Using {FIRST_RUN_EXPLORATION_RATE*100:.0f}% exploration rate to discover initial experiences")
+            exploration_rate = FIRST_RUN_EXPLORATION_RATE
+            max_iterations = FIRST_RUN_MAX_ITERATIONS
         else:
             print(f"\n  This is a SUBSEQUENT RUN for {symbol}")
-            print(f"  Using 30% exploration rate")
-            exploration_rate = 0.30  # 30% exploration for subsequent runs
-            max_iterations = 100  # Full iterations for subsequent runs
+            print(f"  Using {SUBSEQUENT_RUN_EXPLORATION_RATE*100:.0f}% exploration rate")
+            exploration_rate = SUBSEQUENT_RUN_EXPLORATION_RATE
+            max_iterations = SUBSEQUENT_RUN_MAX_ITERATIONS
         
         # Run the saturation backtest
         success = run_saturation_backtest(symbol, exploration_rate, max_iterations)
