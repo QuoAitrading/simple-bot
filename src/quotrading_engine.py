@@ -747,13 +747,35 @@ def setup_logging() -> logging.Logger:
     signalr_logger = logging.getLogger('signalrcore')
     signalr_logger.setLevel(logging.WARNING)  # Only warnings and above
     
-    # SignalRCoreClient is the internal logger that logs tracebacks - set to WARNING
+    # Custom filter to suppress expected WebSocket connection close errors
+    class SuppressWebSocketCloseErrors(logging.Filter):
+        """Filter to suppress expected WebSocket connection close errors during maintenance"""
+        def filter(self, record):
+            # Suppress WebSocketConnectionClosedException errors - these are expected during maintenance
+            if record.levelno == logging.ERROR:
+                msg = str(record.getMessage())
+                # Check if this is a connection close error
+                if any(x in msg for x in [
+                    'WebSocketConnectionClosedException',
+                    'Connection is already closed',
+                    'Connection closed',
+                    'recv_strict',
+                    'recv_header', 
+                    'recv_frame',
+                    'socket is already closed'
+                ]):
+                    return False  # Suppress this error
+            return True  # Allow other log messages
+    
+    # SignalRCoreClient is the internal logger that logs tracebacks - add filter to suppress connection close errors
     signalr_client_logger = logging.getLogger('SignalRCoreClient')
     signalr_client_logger.setLevel(logging.WARNING)  # Suppress DEBUG/INFO but keep warnings
+    signalr_client_logger.addFilter(SuppressWebSocketCloseErrors())  # Filter out connection close errors
     
     # Websocket library - connection errors during maintenance are expected
     websocket_logger = logging.getLogger('websocket')
     websocket_logger.setLevel(logging.WARNING)  # Only warnings and above
+    websocket_logger.addFilter(SuppressWebSocketCloseErrors())  # Filter out connection close errors
     
     # Suppress all nested project_x_py loggers (they use deeply nested child loggers)
     # These loggers output JSON which clutters customer UI
