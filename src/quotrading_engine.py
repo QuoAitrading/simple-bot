@@ -2376,12 +2376,6 @@ def inject_complete_bar(symbol: str, bar: Dict[str, Any]) -> None:
     """
     global backtest_current_time
     
-    # DEBUG: Confirm bars are being injected
-    inject_count = state[symbol].get("inject_count", 0) + 1
-    state[symbol]["inject_count"] = inject_count
-    if inject_count <= 3:
-        print(f"DEBUG: inject_complete_bar called #{inject_count}, timestamp={bar.get('timestamp')}")
-    
     # BACKTEST MODE: Update simulation time so all time-based logic uses historical time
     if is_backtest_mode() and 'timestamp' in bar:
         backtest_current_time = bar['timestamp']
@@ -3647,11 +3641,7 @@ def check_for_signals(symbol: str) -> None:
     Args:
         symbol: Instrument symbol
     """
-    # DEBUG: Confirm function is being called
-    call_count = state[symbol].get("check_for_signals_count", 0) + 1
-    state[symbol]["check_for_signals_count"] = call_count
-    if call_count <= 5:
-        print(f"DEBUG: check_for_signals called #{call_count}")
+
     
     # Check safety conditions first
     is_safe, reason = check_safety_conditions(symbol)
@@ -3659,11 +3649,6 @@ def check_for_signals(symbol: str) -> None:
         # SILENCE DURING MAINTENANCE - no spam in logs
         if not bot_status.get("maintenance_idle", False):
             logger.info(f"[SIGNAL CHECK] Safety check failed: {reason}")
-        # DEBUG: Log first few safety failures
-        safety_fail_count = state[symbol].get("safety_fail_count", 0) + 1
-        state[symbol]["safety_fail_count"] = safety_fail_count
-        if safety_fail_count <= 3:
-            print(f"DEBUG: Safety check failed - {reason}")
         return
     
     # Get the latest bar
@@ -3681,10 +3666,6 @@ def check_for_signals(symbol: str) -> None:
         # This helps users understand the bot is running but conditions aren't met
         validation_fail_counter = state[symbol].get("validation_fail_counter", 0) + 1
         state[symbol]["validation_fail_counter"] = validation_fail_counter
-        
-        # DEBUG: Log first few validation failures
-        if validation_fail_counter <= 5:
-            print(f"DEBUG: Validation failed - {reason}")
         
         # Log every 15 minutes (15 bars) - just show the reason, not strategy details
         if validation_fail_counter % 15 == 0:
@@ -4594,13 +4575,16 @@ def check_reversal_signal(symbol: str, current_bar: Dict[str, Any], position: Di
     - Trailing stop handles all profit-taking (activates at 15+ ticks profit)
     - Early exit check: If price reverses before trailing activates, exit early
     - Once trailing is active (15+ ticks), let trailing ride
+    - REQUIRES MINIMUM PROFIT: Position must be at least 2 ticks in profit
     
     Logic:
+    - Position must be in profit (minimum 2 ticks) to use VWAP reversal exit
     - If price reverses before trailing activates (before 15 ticks profit): exit early
     - If trailing activates first (15+ ticks profit): let it ride
-    - Trailing stop eventually exits the position
+    - If position is at a loss: let stop loss handle the exit
+    - Trailing stop eventually exits profitable positions
     
-    This captures more profit on big reversals while still protecting gains on weak ones.
+    This captures profit on reversals while preventing premature exits at losses.
     
     Args:
         symbol: Instrument symbol
@@ -4638,15 +4622,25 @@ def check_reversal_signal(symbol: str, current_bar: Dict[str, Any], position: Di
         # Trailing stop should be active - don't use VWAP target
         return False, None
     
-    # Trailing not active yet - check if we've reached reversal point (early exit)
+    # CRITICAL FIX: Only exit at VWAP if position is in profit
+    # Minimum profit requirement prevents exits at losses
+    # Configurable threshold ensures we're actually profitable before VWAP exit
+    min_profit_for_vwap_exit = CONFIG.get("min_profit_for_vwap_exit_ticks", 2.0)
+    
+    if profit_ticks < min_profit_for_vwap_exit:
+        # Not in sufficient profit - don't exit at VWAP yet
+        # Let the stop loss handle losing positions
+        return False, None
+    
+    # Trailing not active yet AND in profit - check if we've reached reversal point (early exit)
     if side == "long":
         if current_price >= vwap:
-            logger.info(f"📊 REVERSAL HIT (before trailing): Price ${current_price:.2f} >= ${vwap:.2f}")
+            logger.info(f"📊 REVERSAL HIT (before trailing): Price ${current_price:.2f} >= ${vwap:.2f} | Profit: {profit_ticks:.1f} ticks")
             return True, current_price
     
     if side == "short":
         if current_price <= vwap:
-            logger.info(f"📊 REVERSAL HIT (before trailing): Price ${current_price:.2f} <= ${vwap:.2f}")
+            logger.info(f"📊 REVERSAL HIT (before trailing): Price ${current_price:.2f} <= ${vwap:.2f} | Profit: {profit_ticks:.1f} ticks")
             return True, current_price
     
     return False, None
@@ -4692,7 +4686,7 @@ def check_breakeven_protection(symbol: str, current_price: float) -> None:
     
     CAPITULATION REVERSAL STRATEGY - FIXED RULES (no regime adjustments):
     - Trigger: After 12 ticks profit
-    - Action: Move stop to entry + 1 tick
+    - Action: Move stop to entry + 3 ticks (covers fees)
     - Same rule every time, no exceptions
     
     Args:
@@ -4714,8 +4708,8 @@ def check_breakeven_protection(symbol: str, current_price: float) -> None:
     # CAPITULATION REVERSAL: Fixed breakeven threshold at 12 ticks (no regime adjustment)
     breakeven_threshold_ticks = CONFIG.get("breakeven_trigger_ticks", 12)
     
-    # Stop at entry + 1 tick (locks in 1 tick profit)
-    breakeven_offset_ticks = CONFIG.get("breakeven_offset_ticks", 1)
+    # Stop at entry + 3 ticks (locks in 3 tick profit to cover fees)
+    breakeven_offset_ticks = CONFIG.get("breakeven_offset_ticks", 3)
     
     # Step 2 - Calculate current profit in ticks
     if side == "long":
@@ -5388,7 +5382,7 @@ def check_regime_change(symbol: str, current_price: float) -> None:
     logger.info("=" * 60)
     logger.info(f"  Time: {get_current_time().strftime('%H:%M:%S')}")
     logger.info(f"  Trade management UNCHANGED (fixed rules):")
-    logger.info(f"  - Breakeven: 12 ticks | Trailing: 8 ticks | Stop: Set at entry")
+    logger.info(f"  - Breakeven: +12 ticks → Entry +3 ticks | Trailing: +15 ticks → 8 ticks trail")
     logger.info("=" * 60)
 
 
