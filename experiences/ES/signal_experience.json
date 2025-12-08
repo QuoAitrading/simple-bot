@@ -18670,25 +18670,6 @@
       "took_trade": true
     },
     {
-      "flush_size_ticks": 18.0,
-      "flush_velocity": 2.57,
-      "volume_climax_ratio": 2.83,
-      "flush_direction": "DOWN",
-      "rsi": 43.1,
-      "distance_from_flush_low": 9.0,
-      "reversal_candle": true,
-      "no_new_extreme": true,
-      "vwap_distance_ticks": -10.1,
-      "regime": "HIGH_VOL_CHOPPY",
-      "session": "ETH",
-      "hour": 19,
-      "symbol": "ES",
-      "timestamp": "2025-10-13T19:30:00-04:00",
-      "price": 6692.0,
-      "pnl": 172.5,
-      "took_trade": true
-    },
-    {
       "flush_size_ticks": 11.0,
       "flush_velocity": 1.57,
       "volume_climax_ratio": 1.8,
@@ -18857,25 +18838,6 @@
       "timestamp": "2025-10-26T20:02:00-04:00",
       "price": 6875.75,
       "pnl": 110.0,
-      "took_trade": true
-    },
-    {
-      "flush_size_ticks": 13.7,
-      "flush_velocity": 1.96,
-      "volume_climax_ratio": 2.14,
-      "flush_direction": "UP",
-      "rsi": 55.8,
-      "distance_from_flush_low": 3.5,
-      "reversal_candle": true,
-      "no_new_extreme": true,
-      "vwap_distance_ticks": 15.2,
-      "regime": "NORMAL_CHOPPY",
-      "session": "ETH",
-      "hour": 18,
-      "symbol": "ES",
-      "timestamp": "2025-10-27T18:05:00-04:00",
-      "price": 6907.45211370558,
-      "pnl": -279.8943147210048,
       "took_trade": true
     },
     {
@@ -19563,25 +19525,6 @@
       "took_trade": true
     },
     {
-      "flush_size_ticks": 42.0,
-      "flush_velocity": 6.0,
-      "volume_climax_ratio": 1.83,
-      "flush_direction": "DOWN",
-      "rsi": 23.5,
-      "distance_from_flush_low": 6.0,
-      "reversal_candle": true,
-      "no_new_extreme": true,
-      "vwap_distance_ticks": -153.8,
-      "regime": "HIGH_VOL_TRENDING",
-      "session": "ETH",
-      "hour": 20,
-      "symbol": "ES",
-      "timestamp": "2025-11-04T20:06:00-05:00",
-      "price": 6764.5,
-      "pnl": 160.0,
-      "took_trade": true
-    },
-    {
       "flush_size_ticks": 18.0,
       "flush_velocity": 2.57,
       "volume_climax_ratio": 1.27,
@@ -19636,25 +19579,6 @@
       "timestamp": "2025-11-05T21:59:00-05:00",
       "price": 6822.25,
       "pnl": 60.0,
-      "took_trade": true
-    },
-    {
-      "flush_size_ticks": 21.0,
-      "flush_velocity": 3.0,
-      "volume_climax_ratio": 1.57,
-      "flush_direction": "DOWN",
-      "rsi": 32.5,
-      "distance_from_flush_low": 9.0,
-      "reversal_candle": true,
-      "no_new_extreme": true,
-      "vwap_distance_ticks": -7.5,
-      "regime": "NORMAL_TRENDING",
-      "session": "ETH",
-      "hour": 9,
-      "symbol": "ES",
-      "timestamp": "2025-11-06T09:02:00-05:00",
-      "price": 6833.25,
-      "pnl": -402.5,
       "took_trade": true
     },
     {
