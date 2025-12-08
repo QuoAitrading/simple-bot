@@ -4624,8 +4624,8 @@ def check_reversal_signal(symbol: str, current_bar: Dict[str, Any], position: Di
     
     # CRITICAL FIX: Only exit at VWAP if position is in profit
     # Minimum profit requirement prevents exits at losses
-    # Use small positive threshold (e.g., 2 ticks) to ensure we're actually profitable
-    min_profit_for_vwap_exit = 2.0  # Minimum 2 ticks profit required
+    # Configurable threshold ensures we're actually profitable before VWAP exit
+    min_profit_for_vwap_exit = CONFIG.get("min_profit_for_vwap_exit_ticks", 2.0)
     
     if profit_ticks < min_profit_for_vwap_exit:
         # Not in sufficient profit - don't exit at VWAP yet
