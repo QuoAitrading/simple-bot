@@ -90,19 +90,7 @@ class BrokerWebSocketStreamer:
         self.reconnect_attempt = 0  # Reset reconnect counter on successful connection
         
         # Resubscribe to previous subscriptions after reconnection
-        if self.subscriptions:
-            pass  # Silent - Resubscribing
-            for sub_type, symbol in self.subscriptions:
-                try:
-                    if sub_type == "quotes":
-                        self.connection.send("SubscribeContractQuotes", [symbol])
-                    elif sub_type == "trades":
-                        self.connection.send("SubscribeContractTrades", [symbol])
-                    elif sub_type == "depth":
-                        self.connection.send("Subscribe", [symbol, "Depth"])
-                    pass  # Silent - Resubscribed
-                except Exception as e:
-                    logger.error(f"Failed to resubscribe to {sub_type} for {symbol}: {e}")
+        self._resubscribe_to_all()
     
     def _on_reconnect(self):
         """Called when WebSocket connection reconnects automatically"""
@@ -111,8 +99,12 @@ class BrokerWebSocketStreamer:
         self.reconnect_attempt = 0
         
         # Resubscribe to previous subscriptions after automatic reconnection
+        self._resubscribe_to_all()
+    
+    def _resubscribe_to_all(self):
+        """Resubscribe to all previous subscriptions after reconnection"""
         if self.subscriptions:
-            logger.info(f"[WebSocket] Resubscribing to {len(self.subscriptions)} subscription(s)")
+            logger.debug(f"[WebSocket] Resubscribing to {len(self.subscriptions)} subscription(s)")
             for sub_type, symbol in self.subscriptions:
                 try:
                     if sub_type == "quotes":

@@ -750,21 +750,25 @@ def setup_logging() -> logging.Logger:
     # Custom filter to suppress expected WebSocket connection close errors
     class SuppressWebSocketCloseErrors(logging.Filter):
         """Filter to suppress expected WebSocket connection close errors during maintenance"""
+        import re
+        
+        # Compile regex patterns once for efficiency
+        CONNECTION_CLOSE_PATTERNS = [
+            re.compile(r'WebSocketConnectionClosedException', re.IGNORECASE),
+            re.compile(r'Connection\s+(is\s+)?already\s+closed', re.IGNORECASE),
+            re.compile(r'Connection\s+closed', re.IGNORECASE),
+            re.compile(r'recv_(strict|header|frame|data)', re.IGNORECASE),
+            re.compile(r'socket\s+is\s+already\s+closed', re.IGNORECASE),
+        ]
+        
         def filter(self, record):
             # Suppress WebSocketConnectionClosedException errors - these are expected during maintenance
             if record.levelno == logging.ERROR:
                 msg = str(record.getMessage())
-                # Check if this is a connection close error
-                if any(x in msg for x in [
-                    'WebSocketConnectionClosedException',
-                    'Connection is already closed',
-                    'Connection closed',
-                    'recv_strict',
-                    'recv_header', 
-                    'recv_frame',
-                    'socket is already closed'
-                ]):
-                    return False  # Suppress this error
+                # Check if this is a connection close error using regex patterns
+                for pattern in self.CONNECTION_CLOSE_PATTERNS:
+                    if pattern.search(msg):
+                        return False  # Suppress this error
             return True  # Allow other log messages
     
     # SignalRCoreClient is the internal logger that logs tracebacks - add filter to suppress connection close errors
