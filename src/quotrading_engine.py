@@ -2287,6 +2287,11 @@ def update_1min_bar(symbol: str, price: float, volume: int, dt: datetime) -> Non
             # Calculate VWAP after new bar is added
             calculate_vwap(symbol)
             
+            # Update all indicators after each 1-minute bar (consistent with backtest mode)
+            update_macd(symbol)
+            update_rsi(symbol)
+            update_volume_average(symbol)
+            
             # Classify market condition on every bar if bid_ask_manager available
             if bid_ask_manager is not None:
                 try:
