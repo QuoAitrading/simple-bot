@@ -6,16 +6,16 @@ Detects and classifies market regimes based on volatility and price action.
 CAPITULATION REVERSAL STRATEGY - SIMPLIFIED:
 Regime detection is now just a GO/NO-GO FILTER, not a parameter adjuster.
 
-TRADE these regimes:
-- NORMAL: Baseline regime, good for catching standard reversals
-- NORMAL_TRENDING: Clear trend to reverse from
-- HIGH_VOL_TRENDING: Strong trending moves that exhaust (best capitulation setups)
-- HIGH_VOL_CHOPPY: High volatility choppy regime (still has flushes)
+TRADE these regimes (reversal-friendly environments):
+- HIGH_VOL_CHOPPY: Best of the best - big moves, fast rotations, liquidity grabs (TRADE AGGRESSIVELY)
+- NORMAL_CHOPPY: Second best - clean, predictable swing reversals (TRADE CONFIDENTLY)
+- NORMAL: Stable, balanced - clean and controlled reversals (TRADE NORMALLY)
+- LOW_VOL_RANGING: Slow but reliable micro-reversals, high win-rate scalps (TRADE WITH SMALLER TARGETS)
 
-SKIP these regimes:
-- NORMAL_CHOPPY: ATR is average, choppy (fake moves)
-- LOW_VOL_RANGING: ATR is below average (dead market, no flushes)
-- LOW_VOL_TRENDING: ATR is below average (dead market)
+SKIP these regimes (trending environments destroy reversals):
+- HIGH_VOL_TRENDING: Market keeps extending, no exhaustion - reversal killer
+- NORMAL_TRENDING: Small fake-out reversals appear but most fail
+- LOW_VOL_TRENDING: Worst for reversals - slow grind, no liquidity grabs, no exhaustion
 
 OPTIMIZED FOR FAST DETECTION:
 - Minimum 34 bars required (20 baseline + 14 current) - ~34 minutes warmup
@@ -63,20 +63,27 @@ class RegimeParameters:
 
 
 # Tradeable regimes for Capitulation Reversal Strategy
-# Trade in trending regimes (normal and high vol), baseline NORMAL, and high vol choppy
-TRADEABLE_REGIMES = {"NORMAL", "NORMAL_TRENDING", "HIGH_VOL_TRENDING", "HIGH_VOL_CHOPPY"}
+# Trade in choppy/ranging environments where reversals are high-probability
+# Avoid trending environments where reversals fail
+TRADEABLE_REGIMES = {"HIGH_VOL_CHOPPY", "NORMAL_CHOPPY", "NORMAL", "LOW_VOL_RANGING"}
 
 
 def is_regime_tradeable(regime: str) -> bool:
     """
     Check if the current regime allows trading.
     
-    CAPITULATION REVERSAL: Trade in trending regimes, baseline NORMAL, and high vol choppy.
-    - NORMAL: TRADE (baseline regime, good for catching standard reversals)
-    - NORMAL_TRENDING: TRADE (clear trend to reverse from)
-    - HIGH_VOL_TRENDING: TRADE (strong trending moves that exhaust - best capitulation setups)
-    - HIGH_VOL_CHOPPY: TRADE (high volatility choppy - still has flushes)
-    - All others: SKIP (normal choppy or low volatility regimes)
+    CAPITULATION REVERSAL: Trade ONLY in choppy/ranging environments.
+    
+    ✅ TRADE IN THESE 4 REGIMES (reversal-friendly):
+    - HIGH_VOL_CHOPPY: Best - big moves, fast rotations, liquidity grabs
+    - NORMAL_CHOPPY: Second best - clean, predictable swing reversals
+    - NORMAL: Stable - clean and controlled reversals
+    - LOW_VOL_RANGING: Slow but reliable micro-reversals
+    
+    ❌ AVOID THESE 3 REGIMES (trending environments kill reversals):
+    - HIGH_VOL_TRENDING: Market keeps extending, no exhaustion
+    - NORMAL_TRENDING: Fake-out reversals that fail
+    - LOW_VOL_TRENDING: Slow grind, no liquidity grabs
     
     Args:
         regime: Current market regime name
@@ -317,13 +324,16 @@ def is_regime_tradeable(regime_name: str) -> bool:
     """
     Check if a regime is tradeable for the Capitulation Reversal Strategy.
     
-    The strategy trades in trending regimes, baseline NORMAL, and high vol choppy:
-    - NORMAL: Baseline regime, good for catching standard reversals
-    - NORMAL_TRENDING: Clear trend to reverse from
-    - HIGH_VOL_TRENDING: Strong trending moves that exhaust (best capitulation setups)
-    - HIGH_VOL_CHOPPY: High volatility choppy (still has flushes)
+    ✅ TRADE IN THESE 4 REGIMES (reversal-friendly):
+    - HIGH_VOL_CHOPPY: Best - big moves, fast rotations, liquidity grabs
+    - NORMAL_CHOPPY: Second best - clean, predictable swing reversals
+    - NORMAL: Stable - clean and controlled reversals
+    - LOW_VOL_RANGING: Slow but reliable micro-reversals
     
-    Other regimes are skipped (normal choppy or low volatility).
+    ❌ AVOID THESE 3 REGIMES (trending environments kill reversals):
+    - HIGH_VOL_TRENDING: Market keeps extending, no exhaustion
+    - NORMAL_TRENDING: Fake-out reversals that fail
+    - LOW_VOL_TRENDING: Slow grind, no liquidity grabs
     
     Args:
         regime_name: Name of the regime to check
