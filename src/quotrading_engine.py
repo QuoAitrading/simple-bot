@@ -4686,7 +4686,7 @@ def check_breakeven_protection(symbol: str, current_price: float) -> None:
     
     CAPITULATION REVERSAL STRATEGY - FIXED RULES (no regime adjustments):
     - Trigger: After 12 ticks profit
-    - Action: Move stop to entry + 1 tick
+    - Action: Move stop to entry + 3 ticks (covers fees)
     - Same rule every time, no exceptions
     
     Args:
@@ -4708,8 +4708,8 @@ def check_breakeven_protection(symbol: str, current_price: float) -> None:
     # CAPITULATION REVERSAL: Fixed breakeven threshold at 12 ticks (no regime adjustment)
     breakeven_threshold_ticks = CONFIG.get("breakeven_trigger_ticks", 12)
     
-    # Stop at entry + 1 tick (locks in 1 tick profit)
-    breakeven_offset_ticks = CONFIG.get("breakeven_offset_ticks", 1)
+    # Stop at entry + 3 ticks (locks in 3 tick profit to cover fees)
+    breakeven_offset_ticks = CONFIG.get("breakeven_offset_ticks", 3)
     
     # Step 2 - Calculate current profit in ticks
     if side == "long":
@@ -5382,7 +5382,7 @@ def check_regime_change(symbol: str, current_price: float) -> None:
     logger.info("=" * 60)
     logger.info(f"  Time: {get_current_time().strftime('%H:%M:%S')}")
     logger.info(f"  Trade management UNCHANGED (fixed rules):")
-    logger.info(f"  - Breakeven: 12 ticks | Trailing: 8 ticks | Stop: Set at entry")
+    logger.info(f"  - Breakeven: +12 ticks → Entry +3 ticks | Trailing: +15 ticks → 8 ticks trail")
     logger.info("=" * 60)
 
 
