@@ -3,19 +3,18 @@ Market Regime Detection System
 ================================
 Detects and classifies market regimes based on volatility and price action.
 
-CAPITULATION REVERSAL STRATEGY - SIMPLIFIED:
-Regime detection is now just a GO/NO-GO FILTER, not a parameter adjuster.
+CAPITULATION REVERSAL STRATEGY - ALL REGIMES ENABLED:
+Regime detection classifies market conditions but ALL regimes are tradeable.
+The RL signal confidence system provides sufficient filtering without regime blocking.
 
-TRADE these regimes (reversal-friendly environments):
-- HIGH_VOL_CHOPPY: Best of the best - big moves, fast rotations, liquidity grabs (TRADE AGGRESSIVELY)
-- NORMAL_CHOPPY: Second best - clean, predictable swing reversals (TRADE CONFIDENTLY)
-- NORMAL: Stable, balanced - clean and controlled reversals (TRADE NORMALLY)
-- LOW_VOL_RANGING: Slow but reliable micro-reversals, high win-rate scalps (TRADE WITH SMALLER TARGETS)
-
-SKIP these regimes (trending environments destroy reversals):
-- HIGH_VOL_TRENDING: Market keeps extending, no exhaustion - reversal killer
-- NORMAL_TRENDING: Small fake-out reversals appear but most fail
-- LOW_VOL_TRENDING: Worst for reversals - slow grind, no liquidity grabs, no exhaustion
+ALL 7 REGIMES ARE TRADEABLE:
+- HIGH_VOL_CHOPPY: Big moves, fast rotations, liquidity grabs
+- NORMAL_CHOPPY: Clean, predictable swing reversals
+- NORMAL: Stable, balanced - clean and controlled reversals
+- LOW_VOL_RANGING: Slow but reliable micro-reversals, high win-rate scalps
+- HIGH_VOL_TRENDING: High volatility trending markets
+- NORMAL_TRENDING: Normal volatility trending markets
+- LOW_VOL_TRENDING: Low volatility trending markets
 
 OPTIMIZED FOR FAST DETECTION:
 - Minimum 34 bars required (20 baseline + 14 current) - ~34 minutes warmup
