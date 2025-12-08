@@ -21,9 +21,10 @@
 
 ### 4. Futures Schedule Handling (Already Implemented)
 - Daily reset at 6:00 PM ET (futures trading day start)
-- Maintenance window: 4:45 PM - 6:00 PM ET (61-minute gap)
+- Maintenance window: 5:00 PM - 6:00 PM ET (1 hour)
+- Bot flattens positions at 4:45 PM (15 min safety buffer before maintenance)
 - Weekend handling: Friday close to Sunday open
-- Verified in historical data: All symbols show proper 61-min gaps
+- Verified in historical data: All symbols show proper 60-minute gaps at 5:00 PM
 
 ## ⚠️ ISSUE UNDER INVESTIGATION
 

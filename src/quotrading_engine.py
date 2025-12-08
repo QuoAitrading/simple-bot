@@ -28,7 +28,7 @@ SKIP THESE REGIMES:
 This bot is designed to run continuously using US Eastern wall-clock time:
 
 Γ£à US EASTERN TIME: Uses US/Eastern timezone (handles EST/EDT automatically via pytz)
-Γ£à AUTO-FLATTEN: Automatically closes positions at 4:45 PM ET (15 min before maintenance)
+Γ£à AUTO-FLATTEN: Automatically closes positions at 4:45 PM ET (15 min before maintenance starts at 5:00 PM)
 Γ£à AUTO-RESUME: Automatically resumes trading when market reopens (6:00 PM ET)
 Γ£à NO MANUAL SHUTDOWN: Bot runs 24/7, just pauses trading when market closed
 Γ£à DST-AWARE: pytz automatically handles daylight saving time transitions
@@ -36,23 +36,24 @@ This bot is designed to run continuously using US Eastern wall-clock time:
 CME Futures Trading Schedule (US Eastern Wall-Clock):
 - MAIN SESSION OPENS: 6:00 PM Eastern (market resumes after maintenance)
 - ENTRY CUTOFF: 4:00 PM Eastern (no new positions after this time)
-- FLATTEN POSITIONS: 4:45 PM Eastern (close existing positions before maintenance)
-- DAILY MAINTENANCE: 4:45-6:00 PM Eastern (1hr 15min daily break)
+- FLATTEN POSITIONS: 4:45 PM Eastern (safety buffer - close positions before maintenance)
+- DAILY MAINTENANCE: 5:00-6:00 PM Eastern (1 hour daily break)
 - SUNDAY OPEN: 6:00 PM Eastern Sunday (weekly start)
 - FRIDAY CLOSE: 4:45 PM Eastern (weekly close, start of weekend maintenance)
 - THANKSGIVING: Last Thursday of November - flatten at 12:45 PM, market closes 1:00 PM ET
 
 IMPORTANT ENTRY/EXIT RULES:
 - Bot can OPEN new positions: 6:00 PM - 4:00 PM next day
-- Bot can HOLD existing positions: Until 4:45 PM (forced flatten time)
+- Bot can HOLD existing positions: Until 4:45 PM (forced flatten time, 15 min before maintenance)
 - Gap between 4:00 PM - 4:45 PM: Can hold positions but cannot open new ones
+- Maintenance window: 5:00 PM - 6:00 PM (bot flattens at 4:45 PM as safety buffer)
 
 NOTE: These times NEVER change - always same wall-clock time regardless of DST.
 pytz handles EST (UTC-5) and EDT (UTC-4) conversions automatically.
 
 Bot States:
 - entry_window: Market open, can trade (6:00 PM - 4:45 PM)
-- closed: During maintenance (4:45-6:00 PM ET) or weekend, auto-flatten positions
+- closed: During maintenance (5:00-6:00 PM ET) or weekend, auto-flatten positions
 
 Friday Special Rules:
 - Trading ends at 4:45 PM ET (start of weekend maintenance)
@@ -1122,7 +1123,7 @@ def check_azure_time_service() -> str:
     Azure provides single source of truth for:
     - Current UTC time (timezone-accurate)
     - Market hours status
-    - Maintenance windows (4:45-6:00 PM ET daily)
+    - Maintenance windows (5:00-6:00 PM ET daily, bot flattens at 4:45 PM)
     - Trading permission (go/no-go flag)
     
     Returns:
@@ -1228,8 +1229,8 @@ def check_broker_connection() -> None:
         is_weekend = is_friday_close or is_saturday or is_sunday_before_open
         
         is_maintenance = (eastern_time.weekday() < 4 and  # Mon-Thu only
-                         eastern_time.time() >= datetime_time(16, 45) and 
-                         eastern_time.time() < datetime_time(18, 0))
+                         eastern_time.time() >= datetime_time(17, 0) and  # 5:00 PM ET - maintenance starts
+                         eastern_time.time() < datetime_time(18, 0))   # 6:00 PM ET - maintenance ends
         
         if is_maintenance or is_weekend or "maintenance" in halt_reason.lower() or "weekend" in halt_reason.lower():
             # Determine idle reason for clear messaging
@@ -1239,7 +1240,7 @@ def check_broker_connection() -> None:
                 reopen_msg = "Will auto-reconnect Sunday at 6:00 PM ET"
             else:
                 idle_type = "MAINTENANCE"
-                idle_msg = "Daily maintenance window (4:45 PM - 6:00 PM ET)"
+                idle_msg = "Daily maintenance window (5:00 PM - 6:00 PM ET)"
                 reopen_msg = "Will auto-reconnect at 6:00 PM ET"
             
             # Display session summary before going idle (like Ctrl+C)
@@ -2990,7 +2991,7 @@ def validate_signal_requirements(symbol: str, bar_time: datetime) -> Tuple[bool,
             f"Between 4:00-6:00 PM ET, no new trades (flatten/maintenance window)",
             {"time": current_time.strftime('%H:%M:%S')}
         )
-        logger.debug(f"4:00-6:00 PM ET window - no new entries (flatten at 4:45 PM, maintenance starts at 4:45 PM, reopens at 6:00 PM)")
+        logger.debug(f"4:00-6:00 PM ET window - no new entries (flatten at 4:45 PM, maintenance 5:00-6:00 PM, reopens at 6:00 PM)")
         return False, "Daily entry cutoff (4:00-6:00 PM ET)"
     
     # Check if already have position
@@ -3114,9 +3115,9 @@ def validate_signal_requirements(symbol: str, bar_time: datetime) -> Tuple[bool,
     # Price checks are done in capitulation_detector.py condition #8
     
     # Check bid/ask spread and market condition (Phase: Bid/Ask Strategy)
-    # SKIP IN BACKTEST MODE - historical data doesn't have bid/ask spreads
-    # NOTE: Bid/ask validation is OPTIONAL - the bot uses market orders for entry
-    # Bid/ask is only used for exit optimization (collecting spread), not required for trading
+    # ✓ BACKTEST MODE: Bid/ask validation SKIPPED - uses bar close prices only (no bid/ask in historical data)
+    # ✓ LIVE MODE: Optional bid/ask spread validation - bot uses market orders which work without quotes
+    # NOTE: Bid/ask is only used for exit optimization in live trading, not required for signal detection
     if bid_ask_manager is not None and not is_backtest_mode():
         # Validate spread (Requirement 8) - but don't block signals if unavailable
         # Market orders work fine without bid/ask quotes
@@ -7256,7 +7257,7 @@ def get_trading_state(dt: datetime = None) -> str:
     CME Futures trading - uses US Eastern wall-clock time (DST-aware).
     
     **AZURE-FIRST DESIGN**: Checks Azure time service first for:
-    - Maintenance windows (4:45-6:00 PM ET daily)
+    - Maintenance windows (5:00-6:00 PM ET daily, bot flattens at 4:45 PM)
     - Single source of truth for all time-based decisions
     
     Falls back to local Eastern time logic if Azure unreachable.
