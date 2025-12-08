@@ -122,9 +122,7 @@ class HistoricalDataLoader:
                 self.logger.warning(f"Tick data file not found: {filepath}")
                 return ticks
             else:
-                self.logger.debug(f"Using regular tick data (enhanced not available)")
         else:
-            self.logger.debug(f"Using ENHANCED tick data for realistic ATR calculation")
             
         try:
             start_date, end_date = self._normalize_date_range()
@@ -145,7 +143,6 @@ class HistoricalDataLoader:
                             'volume': volume
                         })
                         
-            self.logger.debug(f"Loaded {len(ticks):,} ticks for {symbol}")
             
         except Exception as e:
             self.logger.error(f"Error loading tick data: {e}")
@@ -192,11 +189,9 @@ class HistoricalDataLoader:
                             'volume': int(float(row['volume']))
                         })
                         
-            self.logger.debug(f"Loaded {len(bars)} {timeframe} bars for {symbol} (from {filepath})")
             if len(bars) == 0:
                 self.logger.warning(f"NO BARS loaded for date range {start_date} to {end_date}")
             else:
-                self.logger.debug(f"  Date range in loaded bars: {bars[0]['timestamp']} to {bars[-1]['timestamp']}")
             
         except Exception as e:
             self.logger.error(f"Error loading bar data: {e}")
@@ -612,12 +607,6 @@ class BacktestEngine:
             Performance metrics dictionary
         """
         # Suppress verbose logging - reporter handles all output
-        self.logger.debug("="*60)
-        self.logger.debug("Starting Backtest")
-        self.logger.debug("="*60)
-        self.logger.debug(f"Period: {self.config.start_date} to {self.config.end_date}")
-        self.logger.debug(f"Initial Equity: ${self.config.initial_equity:,.2f}")
-        self.logger.debug(f"Symbols: {', '.join(self.config.symbols)}")
         
         for symbol in self.config.symbols:
             self._run_symbol_backtest_integrated(symbol, strategy_func)
@@ -625,9 +614,6 @@ class BacktestEngine:
         # Calculate and return metrics
         results = self.metrics.get_summary()
         
-        self.logger.debug("="*60)
-        self.logger.debug("Backtest Complete")
-        self.logger.debug("="*60)
         # Don't log results here - reporter handles summary
         
         return results
@@ -651,7 +637,6 @@ class BacktestEngine:
                           Signature: func(bars_1min: List[Dict], bars_15min: List[Dict]) -> None
         """
         # Suppress verbose logging during backtest
-        self.logger.debug(f"\nBacktesting {symbol}...")
         
         # Load data based on replay mode
         if self.config.use_tick_data:
@@ -660,14 +645,12 @@ class BacktestEngine:
             if len(ticks) == 0:
                 self.logger.warning(f"No tick data available for {symbol}")
                 return
-            self.logger.debug(f"Running TICK-BY-TICK replay with {len(ticks):,} actual ticks")
             
             # Still load bar data for higher timeframe analysis
             bars_15min = self.data_loader.load_bar_data(symbol, "15min")
             
             # Convert ticks to 1-min bars for compatibility with strategy
             bars_1min = self.data_loader._aggregate_ticks_to_bars(ticks, "1min")
-            self.logger.debug(f"Aggregated {len(ticks):,} ticks into {len(bars_1min)} 1-minute bars")
         else:
             # BAR-BY-BAR MODE: Load pre-aggregated bars (default)
             bars_1min = self.data_loader.load_bar_data(symbol, "1min")
@@ -687,7 +670,6 @@ class BacktestEngine:
         # Execute strategy with historical bars
         # The strategy function will process bars and update bot state/positions
         # The backtest engine monitors bot state to track trades
-        self.logger.debug(f"Running bar-by-bar replay with {len(bars_1min)} 1-minute bars")
         
         try:
             # Call the integrated strategy function with historical data
@@ -749,7 +731,6 @@ class BacktestEngine:
         # Clear position
         self.current_position = None
         
-        self.logger.debug(f"Trade closed: {reason}, P&L: ${pnl:+.2f}")
     
     def set_bot_instance(self, bot) -> None:
         """Set bot instance for RL tracking"""

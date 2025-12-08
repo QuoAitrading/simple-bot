@@ -41,7 +41,6 @@ class CloudAPIClient:
         self.license_valid = True  # Set to False only on 401 license errors
         self.session: Optional[aiohttp.ClientSession] = None
         
-        pass  # Silent - cloud API is transparent to customer
 
     async def _get_session(self) -> aiohttp.ClientSession:
         """Get or create the shared ClientSession"""
@@ -79,7 +78,6 @@ class CloudAPIClient:
         """
         # Skip reporting if license is invalid
         if not self.license_valid:
-            pass  # Silent - license check internal
             return False
         
         try:
@@ -106,14 +104,12 @@ class CloudAPIClient:
                 data = response.json()
                 total_exp = data.get('total_experiences', '?')
                 win_rate = data.get('win_rate', 0) * 100
-                pass  # Silent - cloud sync is transparent
                 return True
             else:
                 logger.warning(f"⚠️ Failed to report outcome: HTTP {response.status_code}")
                 return False
                 
         except Exception as e:
-            pass  # Silent - cloud sync failure is non-critical
             return False
 
     async def report_trade_outcome_async(self, state: Dict, took_trade: bool, pnl: float, duration: float, execution_data: Optional[Dict] = None) -> bool:
@@ -122,7 +118,6 @@ class CloudAPIClient:
         """
         # Skip reporting if license is invalid
         if not self.license_valid:
-            pass  # Silent - license check internal
             return False
         
         try:
@@ -150,14 +145,12 @@ class CloudAPIClient:
                         data = await response.json()
                         total_exp = data.get('total_experiences', '?')
                         win_rate = data.get('win_rate', 0) * 100
-                        pass  # Silent - cloud sync is transparent
                         return True
                     else:
                         logger.warning(f"⚠️ Failed to report outcome: HTTP {response.status}")
                         return False
                 
         except Exception as e:
-            pass  # Silent - cloud sync failure is non-critical (async)
             return False
     
     def set_license_valid(self, valid: bool):
@@ -167,4 +160,3 @@ class CloudAPIClient:
         """
         self.license_valid = valid
         status = "valid" if valid else "invalid"
-        pass  # Silent - license status is internal

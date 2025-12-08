@@ -136,7 +136,6 @@ class RegimeDetector:
         
         if len(bars) < MINIMUM_BARS:
             # Not enough data yet
-            logger.debug(f"Insufficient bars ({len(bars)}) for regime detection, using NORMAL")
             return REGIME_DEFINITIONS["NORMAL"]
         
         all_bars = list(bars)
@@ -163,7 +162,6 @@ class RegimeDetector:
         avg_atr = self._calculate_average_atr(baseline_bars, atr_period)
         
         if avg_atr == 0:
-            logger.debug("Average ATR is 0, using NORMAL regime")
             return REGIME_DEFINITIONS["NORMAL"]
         
         # Classify volatility: high, normal, or low
@@ -182,7 +180,6 @@ class RegimeDetector:
         # Map to regime
         regime = self._map_to_regime(volatility, price_action)
         
-        logger.debug(f"Regime detected: {regime.name} (ATR ratio: {atr_ratio:.2f}, "
                     f"volatility: {volatility}, action: {price_action}, "
                     f"baseline_bars: {len(baseline_bars)})")
         

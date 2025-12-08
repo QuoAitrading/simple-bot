@@ -48,7 +48,6 @@ class BrokerWebSocketStreamer:
     def connect(self) -> bool:
         """Connect to broker SignalR market hub"""
         try:
-            pass  # Silent - Connecting to WebSocket
             
             auth_url = f"{self.hub_url}?access_token={self.session_token}"
             
@@ -65,7 +64,6 @@ class BrokerWebSocketStreamer:
             time.sleep(1)
             
             self.is_connected = True
-            pass  # Silent - WebSocket connected
             return True
             
         except Exception as e:
@@ -85,7 +83,6 @@ class BrokerWebSocketStreamer:
     
     def _on_open(self):
         """Called when WebSocket connection opens"""
-        pass  # Silent - WebSocket opened
         self.is_connected = True
         self.reconnect_attempt = 0  # Reset reconnect counter on successful connection
         
@@ -104,7 +101,6 @@ class BrokerWebSocketStreamer:
     def _resubscribe_to_all(self):
         """Resubscribe to all previous subscriptions after reconnection"""
         if self.subscriptions:
-            logger.debug(f"[WebSocket] Resubscribing to {len(self.subscriptions)} subscription(s)")
             for sub_type, symbol in self.subscriptions:
                 try:
                     if sub_type == "quotes":
@@ -113,7 +109,6 @@ class BrokerWebSocketStreamer:
                         self.connection.send("SubscribeContractTrades", [symbol])
                     elif sub_type == "depth":
                         self.connection.send("Subscribe", [symbol, "Depth"])
-                    logger.debug(f"Resubscribed to {sub_type} for {symbol}")
                 except Exception as e:
                     logger.error(f"Failed to resubscribe to {sub_type} for {symbol}: {e}")
     
@@ -172,7 +167,6 @@ class BrokerWebSocketStreamer:
         self.last_message_time = time.time()
         if self.on_quote_callback:
             try:
-                pass  # Silent - First quote structure logged
                 self.on_quote_callback(data)
             except Exception as e:
                 logger.error(f"Error in quote callback: {e}")
@@ -183,7 +177,6 @@ class BrokerWebSocketStreamer:
         self.last_message_time = time.time()
         if self.on_trade_callback:
             try:
-                pass  # Silent - First trade structure logged
                 self.on_trade_callback(data)
             except Exception as e:
                 logger.error(f"Error in trade callback: {e}")
@@ -206,7 +199,6 @@ class BrokerWebSocketStreamer:
             # Some brokers use contract IDs, others use symbols
             # The calling code should pass the appropriate identifier
             self.connection.send("SubscribeContractQuotes", [symbol])
-            pass  # Silent - Subscribed to quotes
             
             # Track subscription for reconnection
             sub = ("quotes", symbol)
@@ -223,7 +215,6 @@ class BrokerWebSocketStreamer:
             # Some brokers use contract IDs, others use symbols
             # The calling code should pass the appropriate identifier
             self.connection.send("SubscribeContractTrades", [symbol])
-            pass  # Silent - Subscribed to trades
             
             # Track subscription for reconnection
             sub = ("trades", symbol)
@@ -238,7 +229,6 @@ class BrokerWebSocketStreamer:
         try:
             # Try common SignalR method variations
             self.connection.send("Subscribe", [symbol, "Depth"])
-            pass  # Silent - Subscribed to market depth
             
             # Track subscription for reconnection
             sub = ("depth", symbol)
