@@ -1,11 +1,11 @@
 {
-  "symbol": "MNQ",
+  "symbol": "MES",
   "direction": "SHORT",
-  "entry_price": 25664.75,
-  "exit_price": 25662.0,
+  "entry_price": 6865.25,
+  "exit_price": 6860.0,
   "contracts": 1,
-  "pnl": 3.0,
-  "pnl_percent": 0.023378369163931073,
-  "timestamp": "2025-12-03T15:06:00-05:00",
+  "pnl": 23.75,
+  "pnl_percent": 0.276756126870835,
+  "timestamp": "2025-12-04T12:12:00-05:00",
   "reason": "stop_loss"
 }
