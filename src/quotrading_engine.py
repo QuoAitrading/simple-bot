@@ -1228,6 +1228,8 @@ def check_broker_connection() -> None:
         is_sunday_before_open = (eastern_time.weekday() == 6 and eastern_time.time() < datetime_time(18, 0))
         is_weekend = is_friday_close or is_saturday or is_sunday_before_open
         
+        # Maintenance detection: 5:00 PM - 6:00 PM ET (1 hour)
+        # Note: Bot flattens positions at 4:45 PM (15-minute safety buffer before maintenance)
         is_maintenance = (eastern_time.weekday() < 4 and  # Mon-Thu only
                          eastern_time.time() >= datetime_time(17, 0) and  # 5:00 PM ET - maintenance starts
                          eastern_time.time() < datetime_time(18, 0))   # 6:00 PM ET - maintenance ends
