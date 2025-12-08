@@ -4575,13 +4575,16 @@ def check_reversal_signal(symbol: str, current_bar: Dict[str, Any], position: Di
     - Trailing stop handles all profit-taking (activates at 15+ ticks profit)
     - Early exit check: If price reverses before trailing activates, exit early
     - Once trailing is active (15+ ticks), let trailing ride
+    - REQUIRES MINIMUM PROFIT: Position must be at least 2 ticks in profit
     
     Logic:
+    - Position must be in profit (minimum 2 ticks) to use VWAP reversal exit
     - If price reverses before trailing activates (before 15 ticks profit): exit early
     - If trailing activates first (15+ ticks profit): let it ride
-    - Trailing stop eventually exits the position
+    - If position is at a loss: let stop loss handle the exit
+    - Trailing stop eventually exits profitable positions
     
-    This captures more profit on big reversals while still protecting gains on weak ones.
+    This captures profit on reversals while preventing premature exits at losses.
     
     Args:
         symbol: Instrument symbol
@@ -4619,15 +4622,25 @@ def check_reversal_signal(symbol: str, current_bar: Dict[str, Any], position: Di
         # Trailing stop should be active - don't use VWAP target
         return False, None
     
-    # Trailing not active yet - check if we've reached reversal point (early exit)
+    # CRITICAL FIX: Only exit at VWAP if position is in profit
+    # Minimum profit requirement prevents exits at losses
+    # Use small positive threshold (e.g., 2 ticks) to ensure we're actually profitable
+    min_profit_for_vwap_exit = 2.0  # Minimum 2 ticks profit required
+    
+    if profit_ticks < min_profit_for_vwap_exit:
+        # Not in sufficient profit - don't exit at VWAP yet
+        # Let the stop loss handle losing positions
+        return False, None
+    
+    # Trailing not active yet AND in profit - check if we've reached reversal point (early exit)
     if side == "long":
         if current_price >= vwap:
-            logger.info(f"📊 REVERSAL HIT (before trailing): Price ${current_price:.2f} >= ${vwap:.2f}")
+            logger.info(f"📊 REVERSAL HIT (before trailing): Price ${current_price:.2f} >= ${vwap:.2f} | Profit: {profit_ticks:.1f} ticks")
             return True, current_price
     
     if side == "short":
         if current_price <= vwap:
-            logger.info(f"📊 REVERSAL HIT (before trailing): Price ${current_price:.2f} <= ${vwap:.2f}")
+            logger.info(f"📊 REVERSAL HIT (before trailing): Price ${current_price:.2f} <= ${vwap:.2f} | Profit: {profit_ticks:.1f} ticks")
             return True, current_price
     
     return False, None
