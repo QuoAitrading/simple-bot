@@ -747,13 +747,39 @@ def setup_logging() -> logging.Logger:
     signalr_logger = logging.getLogger('signalrcore')
     signalr_logger.setLevel(logging.WARNING)  # Only warnings and above
     
-    # SignalRCoreClient is the internal logger that logs tracebacks - set to WARNING
+    # Custom filter to suppress expected WebSocket connection close errors
+    class SuppressWebSocketCloseErrors(logging.Filter):
+        """Filter to suppress expected WebSocket connection close errors during maintenance"""
+        import re
+        
+        # Compile regex patterns once for efficiency
+        CONNECTION_CLOSE_PATTERNS = [
+            re.compile(r'WebSocketConnectionClosedException', re.IGNORECASE),
+            re.compile(r'Connection\s+(is\s+)?already\s+closed', re.IGNORECASE),
+            re.compile(r'Connection\s+closed', re.IGNORECASE),
+            re.compile(r'recv_(strict|header|frame|data)', re.IGNORECASE),
+            re.compile(r'socket\s+is\s+already\s+closed', re.IGNORECASE),
+        ]
+        
+        def filter(self, record):
+            # Suppress WebSocketConnectionClosedException errors - these are expected during maintenance
+            if record.levelno == logging.ERROR:
+                msg = str(record.getMessage())
+                # Check if this is a connection close error using regex patterns
+                for pattern in self.CONNECTION_CLOSE_PATTERNS:
+                    if pattern.search(msg):
+                        return False  # Suppress this error
+            return True  # Allow other log messages
+    
+    # SignalRCoreClient is the internal logger that logs tracebacks - add filter to suppress connection close errors
     signalr_client_logger = logging.getLogger('SignalRCoreClient')
     signalr_client_logger.setLevel(logging.WARNING)  # Suppress DEBUG/INFO but keep warnings
+    signalr_client_logger.addFilter(SuppressWebSocketCloseErrors())  # Filter out connection close errors
     
     # Websocket library - connection errors during maintenance are expected
     websocket_logger = logging.getLogger('websocket')
     websocket_logger.setLevel(logging.WARNING)  # Only warnings and above
+    websocket_logger.addFilter(SuppressWebSocketCloseErrors())  # Filter out connection close errors
     
     # Suppress all nested project_x_py loggers (they use deeply nested child loggers)
     # These loggers output JSON which clutters customer UI
@@ -2721,16 +2747,23 @@ def update_rsi(symbol: str) -> None:
     rsi_period = CONFIG.get("rsi_period", 14)  # Standard 14-period RSI
     
     if len(bars) < rsi_period + 1:
-        pass  # Silent - RSI calculation internal
+        # Not enough bars yet - keep RSI as None
         return
     
     # Use recent bars for calculation
     closes = [bar["close"] for bar in list(bars)[-100:]]
+    
+    # Validate we have closing prices
+    if not closes or len(closes) < rsi_period + 1:
+        logger.warning(f"RSI calculation failed - insufficient close prices: {len(closes)}")
+        return
+    
     rsi = calculate_rsi(closes, rsi_period)
     
     if rsi is not None:
         state[symbol]["rsi"] = rsi
-        pass  # Silent - RSI value internal
+    else:
+        logger.warning(f"RSI calculation returned None despite having {len(closes)} closes")
 
 
 def update_macd(symbol: str) -> None:

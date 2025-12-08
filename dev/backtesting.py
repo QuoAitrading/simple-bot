@@ -189,7 +189,7 @@ class HistoricalDataLoader:
                             'high': float(row['high']),
                             'low': float(row['low']),
                             'close': float(row['close']),
-                            'volume': int(row['volume'])
+                            'volume': int(float(row['volume']))
                         })
                         
             self.logger.debug(f"Loaded {len(bars)} {timeframe} bars for {symbol} (from {filepath})")
