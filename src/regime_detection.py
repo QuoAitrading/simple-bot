@@ -63,27 +63,27 @@ class RegimeParameters:
 
 
 # Tradeable regimes for Capitulation Reversal Strategy
+# MODIFIED: Allow ALL regimes - no blocking
 # Trade in choppy/ranging environments where reversals are high-probability
 # Avoid trending environments where reversals fail
-TRADEABLE_REGIMES = {"HIGH_VOL_CHOPPY", "NORMAL_CHOPPY", "NORMAL", "LOW_VOL_RANGING"}
+TRADEABLE_REGIMES = {"HIGH_VOL_CHOPPY", "NORMAL_CHOPPY", "NORMAL", "LOW_VOL_RANGING", 
+                     "HIGH_VOL_TRENDING", "NORMAL_TRENDING", "LOW_VOL_TRENDING"}
 
 
 def is_regime_tradeable(regime: str) -> bool:
     """
     Check if the current regime allows trading.
     
-    CAPITULATION REVERSAL: Trade ONLY in choppy/ranging environments.
+    MODIFIED: ALL REGIMES ENABLED - No blocking.
     
-    ✅ TRADE IN THESE 4 REGIMES (reversal-friendly):
+    Previously filtered out trending regimes, but now trading in ALL market conditions:
     - HIGH_VOL_CHOPPY: Best - big moves, fast rotations, liquidity grabs
     - NORMAL_CHOPPY: Second best - clean, predictable swing reversals
     - NORMAL: Stable - clean and controlled reversals
     - LOW_VOL_RANGING: Slow but reliable micro-reversals
-    
-    ❌ AVOID THESE 3 REGIMES (trending environments kill reversals):
-    - HIGH_VOL_TRENDING: Market keeps extending, no exhaustion
-    - NORMAL_TRENDING: Fake-out reversals that fail
-    - LOW_VOL_TRENDING: Slow grind, no liquidity grabs
+    - HIGH_VOL_TRENDING: Now enabled
+    - NORMAL_TRENDING: Now enabled
+    - LOW_VOL_TRENDING: Now enabled
     
     Args:
         regime: Current market regime name
@@ -324,16 +324,16 @@ def is_regime_tradeable(regime_name: str) -> bool:
     """
     Check if a regime is tradeable for the Capitulation Reversal Strategy.
     
-    ✅ TRADE IN THESE 4 REGIMES (reversal-friendly):
+    MODIFIED: ALL REGIMES ENABLED - No blocking.
+    
+    Previously filtered out trending regimes, but now trading in ALL market conditions:
     - HIGH_VOL_CHOPPY: Best - big moves, fast rotations, liquidity grabs
     - NORMAL_CHOPPY: Second best - clean, predictable swing reversals
     - NORMAL: Stable - clean and controlled reversals
     - LOW_VOL_RANGING: Slow but reliable micro-reversals
-    
-    ❌ AVOID THESE 3 REGIMES (trending environments kill reversals):
-    - HIGH_VOL_TRENDING: Market keeps extending, no exhaustion
-    - NORMAL_TRENDING: Fake-out reversals that fail
-    - LOW_VOL_TRENDING: Slow grind, no liquidity grabs
+    - HIGH_VOL_TRENDING: Now enabled
+    - NORMAL_TRENDING: Now enabled
+    - LOW_VOL_TRENDING: Now enabled
     
     Args:
         regime_name: Name of the regime to check
