@@ -2710,7 +2710,7 @@ def update_rsi(symbol: str) -> None:
         symbol: Instrument symbol
     """
     bars = state[symbol]["bars_1min"]  # Changed from 15-min to 1-min
-    rsi_period = CONFIG.get("rsi_period", 10)  # Iteration 3 - fast RSI
+    rsi_period = CONFIG.get("rsi_period", 14)  # Standard 14-period RSI
     
     if len(bars) < rsi_period + 1:
         pass  # Silent - RSI calculation internal
