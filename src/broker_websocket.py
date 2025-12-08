@@ -78,6 +78,7 @@ class BrokerWebSocketStreamer:
         self.connection.on_open(self._on_open)
         self.connection.on_close(self._on_close)
         self.connection.on_error(self._on_error)
+        self.connection.on_reconnect(self._on_reconnect)
         self.connection.on("GatewayQuote", self._on_quote)
         self.connection.on("GatewayTrade", self._on_trade)
         self.connection.on("GatewayDepth", self._on_depth)
@@ -100,6 +101,27 @@ class BrokerWebSocketStreamer:
                     elif sub_type == "depth":
                         self.connection.send("Subscribe", [symbol, "Depth"])
                     pass  # Silent - Resubscribed
+                except Exception as e:
+                    logger.error(f"Failed to resubscribe to {sub_type} for {symbol}: {e}")
+    
+    def _on_reconnect(self):
+        """Called when WebSocket connection reconnects automatically"""
+        logger.info("[WebSocket] Automatic reconnection successful")
+        self.is_connected = True
+        self.reconnect_attempt = 0
+        
+        # Resubscribe to previous subscriptions after automatic reconnection
+        if self.subscriptions:
+            logger.info(f"[WebSocket] Resubscribing to {len(self.subscriptions)} subscription(s)")
+            for sub_type, symbol in self.subscriptions:
+                try:
+                    if sub_type == "quotes":
+                        self.connection.send("SubscribeContractQuotes", [symbol])
+                    elif sub_type == "trades":
+                        self.connection.send("SubscribeContractTrades", [symbol])
+                    elif sub_type == "depth":
+                        self.connection.send("Subscribe", [symbol, "Depth"])
+                    logger.debug(f"Resubscribed to {sub_type} for {symbol}")
                 except Exception as e:
                     logger.error(f"Failed to resubscribe to {sub_type} for {symbol}: {e}")
     
