@@ -10,9 +10,9 @@ TRADE these regimes:
 - NORMAL: Baseline regime, good for catching standard reversals
 - NORMAL_TRENDING: Clear trend to reverse from
 - HIGH_VOL_TRENDING: Strong trending moves that exhaust (best capitulation setups)
+- HIGH_VOL_CHOPPY: High volatility choppy regime (still has flushes)
 
 SKIP these regimes:
-- HIGH_VOL_CHOPPY: Too choppy, hard to catch clean reversals
 - NORMAL_CHOPPY: ATR is average, choppy (fake moves)
 - LOW_VOL_RANGING: ATR is below average (dead market, no flushes)
 - LOW_VOL_TRENDING: ATR is below average (dead market)
@@ -63,19 +63,20 @@ class RegimeParameters:
 
 
 # Tradeable regimes for Capitulation Reversal Strategy
-# Trade in trending regimes (normal and high vol) and baseline NORMAL regime
-TRADEABLE_REGIMES = {"NORMAL", "NORMAL_TRENDING", "HIGH_VOL_TRENDING"}
+# Trade in trending regimes (normal and high vol), baseline NORMAL, and high vol choppy
+TRADEABLE_REGIMES = {"NORMAL", "NORMAL_TRENDING", "HIGH_VOL_TRENDING", "HIGH_VOL_CHOPPY"}
 
 
 def is_regime_tradeable(regime: str) -> bool:
     """
     Check if the current regime allows trading.
     
-    CAPITULATION REVERSAL: Trade in trending regimes and baseline NORMAL.
+    CAPITULATION REVERSAL: Trade in trending regimes, baseline NORMAL, and high vol choppy.
     - NORMAL: TRADE (baseline regime, good for catching standard reversals)
     - NORMAL_TRENDING: TRADE (clear trend to reverse from)
     - HIGH_VOL_TRENDING: TRADE (strong trending moves that exhaust - best capitulation setups)
-    - All others: SKIP (choppy or low volatility regimes)
+    - HIGH_VOL_CHOPPY: TRADE (high volatility choppy - still has flushes)
+    - All others: SKIP (normal choppy or low volatility regimes)
     
     Args:
         regime: Current market regime name
@@ -322,12 +323,13 @@ def is_regime_tradeable(regime_name: str) -> bool:
     """
     Check if a regime is tradeable for the Capitulation Reversal Strategy.
     
-    The strategy trades in trending regimes and baseline NORMAL regime:
+    The strategy trades in trending regimes, baseline NORMAL, and high vol choppy:
     - NORMAL: Baseline regime, good for catching standard reversals
     - NORMAL_TRENDING: Clear trend to reverse from
     - HIGH_VOL_TRENDING: Strong trending moves that exhaust (best capitulation setups)
+    - HIGH_VOL_CHOPPY: High volatility choppy (still has flushes)
     
-    Other regimes are skipped (choppy or low volatility).
+    Other regimes are skipped (normal choppy or low volatility).
     
     Args:
         regime_name: Name of the regime to check

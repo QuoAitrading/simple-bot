@@ -52,6 +52,7 @@ import logging
 from typing import Dict, Optional, Tuple, Any
 from collections import deque
 from dataclasses import dataclass
+from regime_detection import TRADEABLE_REGIMES
 
 logger = logging.getLogger(__name__)
 
@@ -172,10 +173,9 @@ class CapitulationDetector:
         # CONDITION 8: Price Is Below VWAP (buying at discount)
         conditions["8_below_vwap"] = current_price < vwap
         
-        # CONDITION 9: Regime Allows Trading - RELAXED to allow more regimes
-        # Now allows NORMAL regimes too, to catch daily reversals
-        tradeable_regimes = {"HIGH_VOL_TRENDING", "HIGH_VOL_CHOPPY", "NORMAL_TRENDING", "NORMAL_CHOPPY", "NORMAL"}
-        conditions["9_regime_allows"] = regime in tradeable_regimes
+        # CONDITION 9: Regime Allows Trading
+        # Use centralized TRADEABLE_REGIMES from regime_detection module
+        conditions["9_regime_allows"] = regime in TRADEABLE_REGIMES
         
         # ALL 9 CONDITIONS MUST BE TRUE
         all_passed = all(conditions.values())
@@ -335,10 +335,9 @@ class CapitulationDetector:
         # CONDITION 8: Price Is Above VWAP (selling at premium)
         conditions["8_above_vwap"] = current_price > vwap
         
-        # CONDITION 9: Regime Allows Trading - RELAXED to allow more regimes
-        # Now allows NORMAL regimes too, to catch daily reversals
-        tradeable_regimes = {"HIGH_VOL_TRENDING", "HIGH_VOL_CHOPPY", "NORMAL_TRENDING", "NORMAL_CHOPPY", "NORMAL"}
-        conditions["9_regime_allows"] = regime in tradeable_regimes
+        # CONDITION 9: Regime Allows Trading
+        # Use centralized TRADEABLE_REGIMES from regime_detection module
+        conditions["9_regime_allows"] = regime in TRADEABLE_REGIMES
         
         # ALL 9 CONDITIONS MUST BE TRUE
         all_passed = all(conditions.values())
