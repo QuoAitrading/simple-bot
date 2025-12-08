@@ -3700,6 +3700,19 @@ def check_for_signals(symbol: str) -> None:
     vwap = state[symbol].get("vwap", 0)
     regime = state[symbol].get("current_regime", "NORMAL")
     
+    # REGIME FILTER: Check if current regime allows trading
+    # Only trade in choppy/ranging environments where reversals work best
+    if not is_regime_tradeable(regime):
+        # Regime not tradeable - skip signal generation silently
+        # Log periodically (every 30 bars) so users know why no signals in trending markets
+        regime_skip_counter = state[symbol].get("regime_skip_counter", 0) + 1
+        state[symbol]["regime_skip_counter"] = regime_skip_counter
+        if regime_skip_counter % 30 == 0:
+            logger.info(f"⏸️  Regime filter: {regime} - Not trading (waiting for choppy/ranging market)")
+        return
+    
+    # Reset regime skip counter when in tradeable regime
+    state[symbol]["regime_skip_counter"] = 0
     
     # PERIODIC HEARTBEAT: Show bot is actively scanning for signals (every 15 minutes)
     # Does NOT reveal strategy details - just confirms bot is running
