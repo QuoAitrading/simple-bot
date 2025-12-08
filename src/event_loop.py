@@ -365,6 +365,7 @@ class TimerManager:
                 
                 # Connection health check (every 20 seconds)
                 # Run even during maintenance to detect market reopen and auto-reconnect
+                # Note: check_broker_connection() remains silent during maintenance (no log spam)
                 if self._should_check("connection_health", current_time, 20):
                     self.event_loop.post_event(
                         EventType.CONNECTION_HEALTH,
