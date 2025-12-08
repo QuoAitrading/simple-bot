@@ -1,11 +1,11 @@
 {
-  "symbol": "ES",
-  "direction": "LONG",
-  "entry_price": 6760.0,
-  "exit_price": 6767.25,
+  "symbol": "NQ",
+  "direction": "SHORT",
+  "entry_price": 25711.0,
+  "exit_price": 25729.0,
   "contracts": 1,
-  "pnl": 360.0,
-  "pnl_percent": 0.42603550295857984,
-  "timestamp": "2025-10-02T21:00:00-04:00",
+  "pnl": -362.5,
+  "pnl_percent": -0.28198047528295284,
+  "timestamp": "2025-12-05T01:09:00-05:00",
   "reason": "stop_loss"
 }
