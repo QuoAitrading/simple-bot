@@ -3681,15 +3681,15 @@ def check_for_signals(symbol: str) -> None:
     vwap = state[symbol].get("vwap", 0)
     regime = state[symbol].get("current_regime", "NORMAL")
     
-    # REGIME FILTER: Check if current regime allows trading
-    # Only trade in choppy/ranging environments where reversals work best
+    # REGIME CHECK: All regimes are now tradeable (no blocking)
+    # The RL signal confidence system provides sufficient filtering
+    # This check is maintained for future extensibility but currently allows all regimes
     if not is_regime_tradeable(regime):
-        # Regime not tradeable - skip signal generation silently
-        # Log periodically (every 30 bars) so users know why no signals in trending markets
+        # This should never happen since all regimes are enabled, but keeping for safety
         regime_skip_counter = state[symbol].get("regime_skip_counter", 0) + 1
         state[symbol]["regime_skip_counter"] = regime_skip_counter
         if regime_skip_counter % 30 == 0:
-            logger.info(f"⏸️  Regime filter: {regime} - Not trading (waiting for choppy/ranging market)")
+            logger.info(f"⏸️  Regime check: {regime} - Regime not configured as tradeable")
         return
     
     # Reset regime skip counter when in tradeable regime

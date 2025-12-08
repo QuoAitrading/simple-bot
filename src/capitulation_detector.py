@@ -17,7 +17,7 @@ LONG SIGNAL CONDITIONS (AFTER FLUSH DOWN) - ALL 9 MUST BE TRUE:
 6. Flush Stopped Making New Lows - Current bar low >= previous bar low
 7. Reversal Candle - Current bar closes green (close > open)
 8. Price Is Below VWAP - Current close < VWAP
-9. Regime Allows Trading - HIGH_VOL or NORMAL regimes (blocks LOW_VOL)
+9. Regime Allows Trading - ALL regimes enabled (no blocking)
 
 SHORT SIGNAL CONDITIONS (AFTER FLUSH UP) - ALL 9 MUST BE TRUE:
 1. Pump Happened - Range of last 7 bars >= 8 ticks (2.0 points)
@@ -28,7 +28,7 @@ SHORT SIGNAL CONDITIONS (AFTER FLUSH UP) - ALL 9 MUST BE TRUE:
 6. Pump Stopped Making New Highs - Current bar high <= previous bar high
 7. Reversal Candle - Current bar closes red (close < open)
 8. Price Is Above VWAP - Current close > VWAP
-9. Regime Allows Trading - HIGH_VOL or NORMAL regimes (blocks LOW_VOL)
+9. Regime Allows Trading - ALL regimes enabled (no blocking)
 
 STOP LOSS:
 - Long: 2 ticks below flush low
