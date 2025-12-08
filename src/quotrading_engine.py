@@ -2610,6 +2610,7 @@ def calculate_macd(prices: List[float], fast_period: int = 12,
 def calculate_atr(symbol: str, period: int = 14) -> Optional[float]:
     """
     Calculate Average True Range (ATR) for volatility measurement using 15-minute bars.
+    Uses Wilder's Smoothing method (industry standard).
     
     Args:
         symbol: Instrument symbol
@@ -2620,7 +2621,8 @@ def calculate_atr(symbol: str, period: int = 14) -> Optional[float]:
     """
     bars = state[symbol]["bars_15min"]
     
-    if len(bars) < 2:
+    # Need at least period+1 bars (one for prev_close reference)
+    if len(bars) < period + 1:
         return None
     
     true_ranges = []
@@ -2640,14 +2642,16 @@ def calculate_atr(symbol: str, period: int = 14) -> Optional[float]:
         )
         true_ranges.append(tr)
     
-    if not true_ranges:
+    if len(true_ranges) < period:
         return None
     
-    # Calculate ATR (simple moving average of TR)
-    if len(true_ranges) >= period:
-        atr = sum(true_ranges[-period:]) / period
-    else:
-        atr = sum(true_ranges) / len(true_ranges)
+    # Calculate ATR using Wilder's Smoothing (industry standard)
+    # First ATR = SMA of first 'period' TRs
+    atr = sum(true_ranges[:period]) / period
+    
+    # Subsequent values use Wilder's smoothing: ATR = (Previous ATR * (period-1) + Current TR) / period
+    for i in range(period, len(true_ranges)):
+        atr = (atr * (period - 1) + true_ranges[i]) / period
     
     return atr
 
@@ -2655,6 +2659,7 @@ def calculate_atr(symbol: str, period: int = 14) -> Optional[float]:
 def calculate_atr_1min(symbol: str, period: int = 14) -> Optional[float]:
     """
     Calculate Average True Range (ATR) using 1-minute bars for regime detection.
+    Uses Wilder's Smoothing method (industry standard).
     
     This function uses 1-minute bars to provide higher-resolution volatility data
     for accurate regime detection. The regime detector needs ATR calculated from
@@ -2669,7 +2674,8 @@ def calculate_atr_1min(symbol: str, period: int = 14) -> Optional[float]:
     """
     bars = state[symbol]["bars_1min"]
     
-    if len(bars) < 2:
+    # Need at least period+1 bars (one for prev_close reference)
+    if len(bars) < period + 1:
         return None
     
     true_ranges = []
@@ -2689,14 +2695,16 @@ def calculate_atr_1min(symbol: str, period: int = 14) -> Optional[float]:
         )
         true_ranges.append(tr)
     
-    if not true_ranges:
+    if len(true_ranges) < period:
         return None
     
-    # Calculate ATR (simple moving average of TR)
-    if len(true_ranges) >= period:
-        atr = sum(true_ranges[-period:]) / period
-    else:
-        atr = sum(true_ranges) / len(true_ranges)
+    # Calculate ATR using Wilder's Smoothing (industry standard)
+    # First ATR = SMA of first 'period' TRs
+    atr = sum(true_ranges[:period]) / period
+    
+    # Subsequent values use Wilder's smoothing: ATR = (Previous ATR * (period-1) + Current TR) / period
+    for i in range(period, len(true_ranges)):
+        atr = (atr * (period - 1) + true_ranges[i]) / period
     
     return atr
 
@@ -2710,7 +2718,7 @@ def update_rsi(symbol: str) -> None:
         symbol: Instrument symbol
     """
     bars = state[symbol]["bars_1min"]  # Changed from 15-min to 1-min
-    rsi_period = CONFIG.get("rsi_period", 10)  # Iteration 3 - fast RSI
+    rsi_period = CONFIG.get("rsi_period", 14)  # Standard 14-period RSI
     
     if len(bars) < rsi_period + 1:
         pass  # Silent - RSI calculation internal
@@ -3366,11 +3374,12 @@ def calculate_slope(values: List[float], periods: int = 5) -> float:
 def calculate_stochastic(bars: deque, k_period: int = 14, d_period: int = 3) -> Dict[str, float]:
     """
     Calculate Stochastic oscillator (%K and %D).
+    Industry standard: %K uses k_period, %D is SMA of %K over d_period.
     
     Args:
         bars: Deque of OHLC bars
-        k_period: Period for %K calculation
-        d_period: Period for %D calculation (SMA of %K)
+        k_period: Period for %K calculation (default 14)
+        d_period: Period for %D calculation - SMA of %K (default 3)
     
     Returns:
         Dictionary with 'k' and 'd' values (0-100)
@@ -3378,24 +3387,59 @@ def calculate_stochastic(bars: deque, k_period: int = 14, d_period: int = 3) -> 
     if len(bars) < k_period:
         return {"k": 50.0, "d": 50.0}
     
-    recent_bars = list(bars)[-k_period:]
+    bars_list = list(bars)
     
-    # Get current close and highest/lowest over period
+    # Calculate current %K
+    recent_bars = bars_list[-k_period:]
     current_close = recent_bars[-1]["close"]
     highest_high = max(bar["high"] for bar in recent_bars)
     lowest_low = min(bar["low"] for bar in recent_bars)
     
-    # Calculate %K
     if highest_high == lowest_low:
-        k_value = 50.0
+        current_k = 50.0
     else:
-        k_value = ((current_close - lowest_low) / (highest_high - lowest_low)) * 100
+        current_k = ((current_close - lowest_low) / (highest_high - lowest_low)) * 100
     
-    # Calculate %D (SMA of %K) - simplified: just return %K for now
-    # Full implementation would track recent %K values
-    d_value = k_value
+    # If not enough bars for %D, return current %K for both
+    if len(bars) < k_period + d_period - 1:
+        return {"k": current_k, "d": current_k}
     
-    return {"k": k_value, "d": d_value}
+    # Calculate %K values for the last d_period periods to get %D
+    k_values = []
+    
+    # We need d_period %K values, so iterate backwards from current position
+    for i in range(d_period):
+        # End index for this %K calculation (working backwards)
+        end_idx = len(bars_list) - i
+        start_idx = end_idx - k_period
+        
+        if start_idx < 0:
+            # Not enough data for this %K value, skip it
+            break
+            
+        period_bars = bars_list[start_idx:end_idx]
+        close_price = period_bars[-1]["close"]
+        high_price = max(bar["high"] for bar in period_bars)
+        low_price = min(bar["low"] for bar in period_bars)
+        
+        if high_price == low_price:
+            k = 50.0
+        else:
+            k = ((close_price - low_price) / (high_price - low_price)) * 100
+        
+        k_values.append(k)
+    
+    # If we don't have exactly d_period %K values, use what we have
+    if len(k_values) < d_period:
+        # Not enough %K values for proper %D, return current %K
+        return {"k": current_k, "d": current_k}
+    
+    # %D is the SMA of the last d_period %K values (industry standard)
+    # Reverse k_values since we calculated them backwards
+    k_values.reverse()
+    d_value = sum(k_values) / len(k_values)
+    
+    return {"k": current_k, "d": d_value}
 
 
 def get_session_type(current_time) -> str:
