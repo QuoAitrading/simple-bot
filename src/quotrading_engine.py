@@ -2747,16 +2747,23 @@ def update_rsi(symbol: str) -> None:
     rsi_period = CONFIG.get("rsi_period", 14)  # Standard 14-period RSI
     
     if len(bars) < rsi_period + 1:
-        pass  # Silent - RSI calculation internal
+        # Not enough bars yet - keep RSI as None
         return
     
     # Use recent bars for calculation
     closes = [bar["close"] for bar in list(bars)[-100:]]
+    
+    # Validate we have closing prices
+    if not closes or len(closes) < rsi_period + 1:
+        logger.warning(f"RSI calculation failed - insufficient close prices: {len(closes)}")
+        return
+    
     rsi = calculate_rsi(closes, rsi_period)
     
     if rsi is not None:
         state[symbol]["rsi"] = rsi
-        pass  # Silent - RSI value internal
+    else:
+        logger.warning(f"RSI calculation returned None despite having {len(closes)} closes")
 
 
 def update_macd(symbol: str) -> None:
