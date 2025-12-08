@@ -60,6 +60,7 @@ class DataRecorderLauncher:
             'success': '#0078D4',
             'success_dark': '#005A9E',
             'error': '#DC2626',
+            'error_dark': '#B91C1C',
             'warning': '#F59E0B',
             'background': '#E0E0E0',
             'card': '#ECECEC',
@@ -69,6 +70,7 @@ class DataRecorderLauncher:
             'border': '#0078D4',
             'border_subtle': '#BBBBBB',
             'input_bg': '#FFFFFF',
+            'disabled': '#888888',
         }
         
         self.root.configure(bg=self.colors['background'])
@@ -346,7 +348,7 @@ class DataRecorderLauncher:
         
         def on_stop_enter(e):
             if self.stop_button['state'] != tk.DISABLED:
-                self.stop_button.config(bg='#B91C1C')
+                self.stop_button.config(bg=self.colors['error_dark'])
         
         def on_stop_leave(e):
             if self.stop_button['state'] != tk.DISABLED:
@@ -441,7 +443,7 @@ class DataRecorderLauncher:
         self.save_config()
         
         # Update UI
-        self.start_button.config(state=tk.DISABLED, bg='#888888')
+        self.start_button.config(state=tk.DISABLED, bg=self.colors['disabled'])
         self.stop_button.config(state=tk.NORMAL)
         self.is_recording = True
         
