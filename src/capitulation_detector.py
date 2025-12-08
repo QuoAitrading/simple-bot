@@ -249,7 +249,7 @@ class CapitulationDetector:
                 rsi_str = f"{rsi:.1f}" if rsi is not None else "N/A"
                 print(f"\n🔍 SIGNAL CHECK DIAGNOSTIC (Passed: {passed_count}/9)")
                 print(f"   1. Flush Size: {flush_range_ticks:.1f}t (need >={self.MIN_FLUSH_TICKS}) {'✅' if conditions.get('1_flush_happened') else '❌'}")
-                print(f"   2. Velocity: {velocity:.2f} t/bar (need >={self.MIN_VELOCITY_TICKS_PER_BAR}) {'✅' if conditions.get('2_fast_flush') else '❌'}")
+                print(f"   2. Velocity: {velocity:.2f} t/bar (need >={self.MIN_VELOCITY_TICKS_PER_BAR}) {'✅' if conditions.get('2_flush_fast') else '❌'}")
                 print(f"   3. Near Extreme: {distance_from_low:.1f}t from low (need <={self.NEAR_EXTREME_TICKS}) {'✅' if conditions.get('3_near_bottom') else '❌'}")
                 print(f"   4. RSI: {rsi_str} (need <{self.RSI_OVERSOLD_EXTREME}) {'✅' if conditions.get('4_rsi_oversold') else '❌'}")
                 print(f"   5. Volume Spike: {current_volume:.0f} / {avg_volume_20:.0f} = {current_volume/avg_volume_20 if avg_volume_20 > 0 else 0:.2f}x (need >={self.VOLUME_SPIKE_THRESHOLD}x) {'✅' if conditions.get('5_volume_spike') else '❌'}")
@@ -407,7 +407,7 @@ class CapitulationDetector:
                 rsi_str = f"{rsi:.1f}" if rsi is not None else "N/A"
                 print(f"\n🔍 SHORT SIGNAL CHECK DIAGNOSTIC (Passed: {passed_count}/9)")
                 print(f"   1. Pump Size: {flush_range_ticks:.1f}t (need >={self.MIN_FLUSH_TICKS}) {'✅' if conditions.get('1_pump_happened') else '❌'}")
-                print(f"   2. Velocity: {velocity:.2f} t/bar (need >={self.MIN_VELOCITY_TICKS_PER_BAR}) {'✅' if conditions.get('2_fast_pump') else '❌'}")
+                print(f"   2. Velocity: {velocity:.2f} t/bar (need >={self.MIN_VELOCITY_TICKS_PER_BAR}) {'✅' if conditions.get('2_pump_fast') else '❌'}")
                 print(f"   3. Near Extreme: {distance_from_high:.1f}t from high (need <={self.NEAR_EXTREME_TICKS}) {'✅' if conditions.get('3_near_top') else '❌'}")
                 print(f"   4. RSI: {rsi_str} (need >{self.RSI_OVERBOUGHT_EXTREME}) {'✅' if conditions.get('4_rsi_overbought') else '❌'}")
                 print(f"   5. Volume Spike: {current_volume:.0f} / {avg_volume_20:.0f} = {current_volume/avg_volume_20 if avg_volume_20 > 0 else 0:.2f}x (need >={self.VOLUME_SPIKE_THRESHOLD}x) {'✅' if conditions.get('5_volume_spike') else '❌'}")
