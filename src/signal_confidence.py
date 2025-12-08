@@ -75,10 +75,8 @@ class SignalConfidenceRL:
         if not backtest_mode and confidence_threshold is None:
             # LIVE/SHADOW mode with no user config - use safe default of 50%
             self.user_threshold = 0.5
-            pass  # Silent - live mode configuration
         else:
             self.user_threshold = confidence_threshold
-            pass  # Silent - RL brain configuration
         
         # Cached optimal threshold (only used in backtest mode when user_threshold is None)
         self.cached_threshold = None
@@ -104,23 +102,22 @@ class SignalConfidenceRL:
         }
         
         self.load_experience()
-        pass  # Silent - RL brain initialized
         
         # Log threshold configuration
         if self.user_threshold is not None:
             if self.backtest_mode:
-                pass  # Silent - threshold configuration
+                pass
             else:
-                pass  # Silent - threshold configuration
+                pass
         else:
             # Only happens in backtest mode now
-            pass  # Silent - threshold will be calculated
+            pass
         
         # Log exploration mode
         if self.backtest_mode:
-            pass  # Silent - exploration mode
+            pass
         else:
-            pass  # Silent - live mode exploitation
+            pass
     
     def _generate_experience_key(self, experience: Dict) -> str:
         """
@@ -291,7 +288,6 @@ class SignalConfidenceRL:
         """
         # Need at least 10 experiences before using them for decisions
         if len(self.experiences) < 10:
-            logger.debug(f"[RL] Limited experience: {len(self.experiences)}/10 required - using safety default 35%")
             return 0.35, f"Limited experience ({len(self.experiences)} trades) - safety default"
         
         # Step 1: Find 10 most similar past trades
@@ -299,10 +295,6 @@ class SignalConfidenceRL:
         
         if not similar:
             logger.warning(f"[RL] No similar trades found despite {len(self.experiences)} experiences - pattern matching may be too strict")
-            logger.debug(f"[RL] Current state: flush_size={current_state.get('flush_size_ticks')}, "
-                        f"velocity={current_state.get('flush_velocity')}, "
-                        f"rsi={current_state.get('rsi')}, "
-                        f"regime={current_state.get('regime')}")
             # Print to console for diagnostics
             print(f"[RL Confidence] 35.0% (DEFAULT) - No similar trades found despite {len(self.experiences)} experiences")
             return 0.35, "No similar situations - safety default"
@@ -315,8 +307,6 @@ class SignalConfidenceRL:
         # Average Profit = Sum of profits / Count
         avg_profit = sum(exp.get('pnl', 0) for exp in similar) / len(similar)
         
-        logger.debug(f"[RL] Found {len(similar)} similar trades: {wins} wins, {len(similar)-wins} losses, "
-                    f"WR={win_rate*100:.0f}%, avg_profit=${avg_profit:.2f}")
         
         # Step 3: If average profit is negative → Auto reject (0% confidence)
         if avg_profit < 0:
@@ -332,7 +322,6 @@ class SignalConfidenceRL:
         confidence = max(0.0, min(1.0, confidence))
         
         reason = f"{len(similar)} similar: {win_rate*100:.0f}% WR, ${avg_profit:.0f} avg"
-        logger.debug(f"[RL] Calculated confidence: {confidence:.1%} - {reason}")
         
         # Print to console for diagnostics (shows in backtest)
         print(f"[RL Confidence] {confidence*100:.1f}% - {reason}")
@@ -375,12 +364,6 @@ class SignalConfidenceRL:
             return []
         
         # DEBUG: Log current state for diagnosis
-        logger.debug(f"[RL Pattern Matching] Searching for similar trades among {len(self.experiences)} experiences")
-        logger.debug(f"[RL Pattern Matching] Current: flush_size={current.get('flush_size_ticks', 0):.1f}, "
-                    f"velocity={current.get('flush_velocity', 0):.1f}, "
-                    f"direction={current.get('flush_direction', 'NONE')}, "
-                    f"rsi={current.get('rsi', 50):.1f}, "
-                    f"regime={current.get('regime', 'NORMAL')}")
         
         # Calculate similarity score for each past experience
         scored = []
@@ -463,13 +446,7 @@ class SignalConfidenceRL:
         # DEBUG: Show similarity scores of top matches
         if scored:
             top_5 = scored[:min(5, len(scored))]
-            logger.debug(f"[RL Pattern Matching] Top 5 similarity scores: {[f'{s:.3f}' for s, _ in top_5]}")
             best_match = top_5[0][1]
-            logger.debug(f"[RL Pattern Matching] Best match: flush_size={best_match.get('flush_size_ticks', 0):.1f}, "
-                        f"velocity={best_match.get('flush_velocity', 0):.1f}, "
-                        f"direction={best_match.get('flush_direction', 'NONE')}, "
-                        f"rsi={best_match.get('rsi', 50):.1f}, "
-                        f"pnl=${best_match.get('pnl', 0):.2f}")
         else:
             logger.warning(f"[RL Pattern Matching] No scored experiences - this should not happen!")
         
@@ -566,7 +543,6 @@ class SignalConfidenceRL:
         
         if not valid_thresholds:
             # No threshold meets criteria - use conservative default (50% minimum)
-            pass  # Silent - using default threshold
             return 0.50
         
         # Choose threshold that maximizes AVERAGE PROFIT PER TRADE (not total profit)
@@ -578,7 +554,6 @@ class SignalConfidenceRL:
         best_result = valid_thresholds[best_threshold]
         
         total_profit_potential = best_result['avg_profit'] * best_result['trades']
-        pass  # Silent - optimal threshold learned
         
         return best_threshold
     
@@ -660,7 +635,6 @@ class SignalConfidenceRL:
             
             # Check if this exact experience already exists (O(1) lookup with set)
             if exp_key in self.experience_keys:
-                pass  # Silent - duplicate prevention working
                 # Early return - don't update any state for duplicates
                 # Duplicates should not affect recent_trades, streaks, or trigger saves
                 return
@@ -685,7 +659,6 @@ class SignalConfidenceRL:
             # Log learning progress
             outcome = "WIN" if pnl > 0 else "LOSS"
             log_msg = f"πΎ [16-FIELD] Recorded {outcome}: ${pnl:.2f} | Streak: W{self.current_win_streak}/L{self.current_loss_streak}"
-            pass  # Silent - learning progress is internal (not customer-facing)
     
     def get_stats(self) -> Dict:
         """Get current performance statistics."""
@@ -731,7 +704,6 @@ class SignalConfidenceRL:
                         exp_key = self._generate_experience_key(exp)
                         self.experience_keys.add(exp_key)
                     
-                    pass  # Silent - experiences loaded
             except Exception as e:
                 logger.error(f"Failed to load experiences: {e}")
                 import traceback

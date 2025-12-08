@@ -268,7 +268,6 @@ class StatePersistence:
             with open(self.state_file, 'w') as f:
                 json.dump(state, f, indent=2, default=str)
             
-            logger.debug(f"State saved to {self.state_file}")
             return True
         
         except Exception as e:

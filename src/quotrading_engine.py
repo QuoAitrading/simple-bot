@@ -900,7 +900,6 @@ async def save_trade_experience_async(
     
     # LIVE MODE: Report to cloud ONLY (don't save locally)
     if cloud_api_client is None:
-        pass  # Silent - not customer-facing
         return
     
     try:
@@ -924,10 +923,9 @@ async def save_trade_experience_async(
             execution_data  # Pass execution metrics to cloud
         )
         
-        pass  # Silent - cloud outcome reporting is transparent
         
     except Exception as e:
-        pass  # Silent - cloud sync is transparent to customer
+        pass
 
 
 
@@ -965,7 +963,6 @@ def validate_license_at_startup() -> None:
     
     # Skip in backtest mode
     if is_backtest_mode():
-        pass  # Silent - backtest mode initialization
         return
     
     license_key = os.getenv("QUOTRADING_LICENSE_KEY")
@@ -978,7 +975,6 @@ def validate_license_at_startup() -> None:
         logger.critical("=" * 70)
         sys.exit(1)
     
-    pass  # Silent - license validation in progress
     try:
         import requests
         api_url = os.getenv("QUOTRADING_API_URL", "https://quotrading-flask-api.azurewebsites.net")
@@ -989,7 +985,6 @@ def validate_license_at_startup() -> None:
         device_fp = get_device_fingerprint(symbol_for_session)
         import os as os_mod
         pid = os_mod.getpid()
-        pass  # Silent - device fingerprint internal
         
         # Validate with server using /api/validate-license (session locking)
         # Include device fingerprint for session locking (symbol-specific)
@@ -1112,7 +1107,6 @@ def initialize_broker() -> None:
     if CONFIG.get("shadow_mode", False):
         logger.info("≡ƒôè SIGNAL-ONLY MODE - Shows signals without executing trades")
     
-    pass  # Silent - broker initialization is internal
     
     # Create error recovery manager
     recovery_manager = ErrorRecoveryManager(CONFIG)
@@ -1122,7 +1116,6 @@ def initialize_broker() -> None:
     broker = create_broker(_bot_config.api_token, _bot_config.username, CONFIG["instrument"])
     
     # Connect to broker (initial connection doesn't use circuit breaker)
-    pass  # Silent - connection in progress
     if not broker.connect():
         logger.error("Failed to connect to broker")
         return False
@@ -1138,7 +1131,7 @@ def initialize_broker() -> None:
             error_type="Bot Started"
         )
     except Exception as e:
-        pass  # Silent - notification failure not critical
+        pass
 
 
 def check_azure_time_service() -> str:
@@ -1197,13 +1190,11 @@ def check_azure_time_service() -> str:
             return state
         else:
             # Azure unreachable - clear cached state to trigger fallback
-            pass  # Silent fallback to local time
             bot_status["azure_trading_state"] = None
             return None  # Signal to use local get_trading_state()
             
     except Exception as e:
         # Non-critical - if cloud unreachable, fall back to local time
-        pass  # Silent - cloud service optional
         bot_status["azure_trading_state"] = None
         return None  # Signal to use local get_trading_state()
 
@@ -1225,13 +1216,13 @@ def check_broker_connection() -> None:
     try:
         check_azure_time_service()
     except Exception as e:
-        pass  # Silent - time service optional
+        pass
     
     # Send heartbeat to show bot is online
     try:
         send_heartbeat()
     except Exception as e:
-        pass  # Silent - heartbeat failure not customer-facing
+        pass
     
     # AUTO-IDLE: Disconnect broker during maintenance (no data needed)
     current_time = get_current_time()
@@ -1364,7 +1355,7 @@ def check_broker_connection() -> None:
                 error_type="Connection Error"
             )
         except Exception as e:
-            pass  # Silent - notification error not customer-facing
+            pass
         
         try:
             # Immediate reconnect with 3 retries
@@ -1442,7 +1433,6 @@ def get_account_equity() -> float:
         success, equity = breaker.call(broker.get_account_equity)
         
         if success:
-            pass  # Silent - account equity query internal
             return equity
         else:
             logger.error("Failed to get account equity")
@@ -1469,7 +1459,6 @@ def place_market_order(symbol: str, side: str, quantity: int) -> Optional[Dict[s
     """
     # Backtest mode: Simulate order without broker
     if is_backtest_mode():
-        pass  # Silent - backtest order simulated
         return {
             "order_id": f"BACKTEST_{datetime.now().timestamp()}",
             "symbol": symbol,
@@ -1480,7 +1469,6 @@ def place_market_order(symbol: str, side: str, quantity: int) -> Optional[Dict[s
             "backtest": True
         }
     
-    pass  # Silent - order logged at higher level (entry/exit)
     
     if broker is None:
         logger.error("Broker not initialized")
@@ -1511,7 +1499,7 @@ def place_market_order(symbol: str, side: str, quantity: int) -> Optional[Dict[s
                     error_type="Order Error"
                 )
             except Exception as e:
-                pass  # Silent - alert failure not critical
+                pass
             
             action = recovery_manager.handle_error(
                 RecoveryErrorType.ORDER_REJECTION,
@@ -1529,7 +1517,7 @@ def place_market_order(symbol: str, side: str, quantity: int) -> Optional[Dict[s
                 error_type="Order Error"
             )
         except Exception as alert_error:
-            pass  # Silent - alert failure not critical
+            pass
         
         action = recovery_manager.handle_error(
             RecoveryErrorType.SDK_CRASH,
@@ -1553,7 +1541,6 @@ def place_stop_order(symbol: str, side: str, quantity: int, stop_price: float) -
     """
     # Backtest mode: Simulate order without broker
     if is_backtest_mode():
-        pass  # Silent - backtest stop order simulated
         return {
             "order_id": f"BACKTEST_STOP_{datetime.now().timestamp()}",
             "symbol": symbol,
@@ -1566,7 +1553,6 @@ def place_stop_order(symbol: str, side: str, quantity: int, stop_price: float) -
         }
     
     shadow_mode = _bot_config.shadow_mode
-    pass  # Silent - stop order logged at higher level
     
     if shadow_mode:
         return {
@@ -1623,7 +1609,6 @@ def place_limit_order(symbol: str, side: str, quantity: int, limit_price: float)
     """
     # Backtest mode: Simulate order without broker
     if is_backtest_mode():
-        pass  # Silent - backtest limit order simulated
         return {
             "order_id": f"BACKTEST_LIMIT_{datetime.now().timestamp()}",
             "symbol": symbol,
@@ -1636,7 +1621,6 @@ def place_limit_order(symbol: str, side: str, quantity: int, limit_price: float)
         }
     
     shadow_mode = _bot_config.shadow_mode
-    pass  # Silent - limit order logged at higher level
     
     if shadow_mode:
         return {
@@ -1694,7 +1678,6 @@ def cancel_order(symbol: str, order_id: str) -> bool:
         return True
     
     shadow_mode = _bot_config.shadow_mode
-    pass  # Silent - order cancellation logged at higher level
     
     if shadow_mode:
         logger.info(f"[SHADOW MODE] Order {order_id} cancelled (simulated)")
@@ -1719,14 +1702,12 @@ def cancel_order(symbol: str, order_id: str) -> bool:
         # Handle 'NoneType' object has no attribute 'send' - asyncio shutdown issue
         # This is expected during bot shutdown and not a real error
         if "'NoneType' object has no attribute 'send'" in str(e):
-            logger.debug(f"Cancel order skipped - asyncio shutdown in progress (order {order_id})")
             return False
         logger.error(f"Error cancelling order {order_id}: {e}")
         return False
     except Exception as e:
         # Suppress event loop closed errors during shutdown
         if "Event loop is closed" in str(e):
-            logger.debug(f"Event loop closed during cancel order {order_id}")
             return False
         logger.error(f"Error cancelling order {order_id}: {e}")
         return False
@@ -1815,7 +1796,6 @@ def get_all_open_positions() -> List[Dict[str, Any]]:
             return broker.get_all_open_positions()
         return []
     except Exception as e:
-        logger.debug(f"Error getting all positions: {e}")
         return []
 
 
@@ -1827,7 +1807,6 @@ def subscribe_market_data(symbol: str, callback: Callable[[str, float, int, int]
         symbol: Instrument symbol
         callback: Function to call with tick data (symbol, price, volume, timestamp)
     """
-    pass  # Silent - market data subscription internal
     
     if broker is None:
         logger.error("Broker not initialized")
@@ -1836,7 +1815,6 @@ def subscribe_market_data(symbol: str, callback: Callable[[str, float, int, int]
     try:
         # Subscribe through broker interface
         broker.subscribe_market_data(symbol, callback)
-        pass  # Silent - subscription successful
     except Exception as e:
         logger.error(f"Error subscribing to market data: {e}")
         action = recovery_manager.handle_error(
@@ -1892,7 +1870,6 @@ def fetch_historical_bars(symbol: str, timeframe: int, count: int) -> List[Dict[
     Returns:
         List of bar dictionaries with OHLCV data
     """
-    pass  # Silent - historical data fetch internal
     
     
     if broker is None:
@@ -1905,7 +1882,6 @@ def fetch_historical_bars(symbol: str, timeframe: int, count: int) -> List[Dict[
         success, bars = breaker.call(broker.fetch_historical_bars, symbol, f"{timeframe}m", count)
         
         if success and bars:
-            pass  # Silent - bars fetched
             return bars
         else:
             logger.warning("Failed to fetch historical bars")
@@ -2048,7 +2024,6 @@ def initialize_state(symbol: str) -> None:
         "volume_history": deque(maxlen=CONFIG["max_bars_storage"])
     }
     
-    pass  # Silent - state initialization internal
 
 
 # ============================================================================
@@ -2145,9 +2120,9 @@ def save_position_state(symbol: str) -> None:
         
         # Safe logging with None checks
         if position.get('entry_price') is not None:
-            pass  # Silent - position state saved internally
+            pass
         else:
-            pass  # Silent - position state saved
+            pass
         
     except Exception as e:
         logger.error(f"CRITICAL: Failed to save position state: {e}", exc_info=True)
@@ -2176,7 +2151,6 @@ def load_position_state(symbol: str) -> bool:
         account_id = os.getenv('SELECTED_ACCOUNT_ID', 'default')
         state_file = get_data_file_path(f"data/bot_state_{account_id}.json")
         if not state_file.exists():
-            pass  # Silent - clean start
             return False
         
         with open(state_file, 'r') as f:
@@ -2184,11 +2158,9 @@ def load_position_state(symbol: str) -> bool:
         
         # Check if saved state is for this symbol and has an active position
         if saved_state.get("symbol") != symbol:
-            pass  # Silent - different symbol
             return False
         
         if not saved_state.get("active"):
-            pass  # Silent - no active position
             return False
         
         # CRITICAL: Verify with broker before restoring state
@@ -2298,7 +2270,6 @@ def update_1min_bar(symbol: str, price: float, volume: int, dt: datetime) -> Non
                     condition, _ = bid_ask_manager.classify_market_condition(symbol)
                     state[symbol]["market_condition"] = condition
                 except Exception as e:
-                    logger.debug(f"Could not classify market condition: {e}")
                     state[symbol]["market_condition"] = "UNKNOWN"
             
             # Display market snapshot on every 1-minute bar close
@@ -2306,7 +2277,7 @@ def update_1min_bar(symbol: str, price: float, volume: int, dt: datetime) -> Non
             # with rapid bar creation during startup
             # SILENCE DURING MAINTENANCE - no spam in logs
             if bot_status.get("maintenance_idle", False):
-                pass  # Silent during maintenance - no market updates
+                pass
             elif bot_status.get("session_start_time"):
                 time_since_start = (get_current_time() - bot_status["session_start_time"]).total_seconds()
                 if time_since_start < 60:
@@ -2417,7 +2388,7 @@ def inject_complete_bar(symbol: str, bar: Dict[str, Any]) -> None:
     
     # First bar check
     if len(state[symbol]["bars_1min"]) == 0:
-        pass  # Silent - bar injection internal (backtest mode)
+        pass
     
     # Finalize any pending bar first
     if state[symbol]["current_1min_bar"] is not None:
@@ -2493,7 +2464,6 @@ def update_trend_filter(symbol: str) -> None:
     period = CONFIG.get("trend_ema_period", 20)
     
     if len(bars) < period:
-        pass  # Silent - technical detail not for customers
         return
     
     # Calculate EMA
@@ -2514,7 +2484,6 @@ def update_trend_filter(symbol: str) -> None:
         else:
             state[symbol]["trend_direction"] = "neutral"
         
-        pass  # Silent - trend calculation internal
 
 
 def calculate_ema(values: List[float], period: int) -> Optional[float]:
@@ -2787,7 +2756,6 @@ def update_macd(symbol: str) -> None:
     signal_period = CONFIG.get("macd_signal", 9)
     
     if len(bars) < slow_period + signal_period:
-        pass  # Silent - MACD calculation internal
         return
     
     # Use recent bars for calculation
@@ -2796,7 +2764,6 @@ def update_macd(symbol: str) -> None:
     
     if macd_data is not None:
         state[symbol]["macd"] = macd_data
-        pass  # Silent - MACD value internal
 
 
 def update_volume_average(symbol: str) -> None:
@@ -2811,7 +2778,6 @@ def update_volume_average(symbol: str) -> None:
     lookback = CONFIG.get("volume_lookback", 20)
     
     if len(bars) < lookback:
-        pass  # Silent - volume calculation internal
         return
     
     # Calculate average volume over lookback period
@@ -2827,7 +2793,6 @@ def update_volume_average(symbol: str) -> None:
         current_volume = bars_1min[-1]["volume"]
         state[symbol]["recent_volume_history"].append(current_volume)
     
-    pass  # Silent - volume average internal
 
 
 def detect_volume_surge(symbol: str) -> Tuple[bool, float]:
@@ -2995,7 +2960,6 @@ def validate_signal_requirements(symbol: str, bar_time: datetime) -> Tuple[bool,
     trading_state = get_trading_state(current_time)
     
     if trading_state == "closed":
-        logger.debug(f"Market closed, skipping signal check")
         return False, f"Market closed"
     
     # Trading state is "entry_window" - market is open, proceed with checks
@@ -3025,7 +2989,6 @@ def validate_signal_requirements(symbol: str, bar_time: datetime) -> Tuple[bool,
                 f"Thanksgiving Day - no new entries after 12:00 PM (market closes 1:00 PM)",
                 {"time": current_time_et.strftime('%H:%M:%S')}
             )
-            logger.debug(f"Thanksgiving Day - no new entries after 12:00 PM (flatten at 12:45 PM, market closes at 1:00 PM)")
             return False, "Thanksgiving entry cutoff (12:00 PM ET)"
     
     # Daily entry cutoff - no new positions after 4:00 PM ET (can hold until 4:45 PM flatten)
@@ -3039,17 +3002,14 @@ def validate_signal_requirements(symbol: str, bar_time: datetime) -> Tuple[bool,
             f"Between 4:00-6:00 PM ET, no new trades (flatten/maintenance window)",
             {"time": current_time.strftime('%H:%M:%S')}
         )
-        logger.debug(f"4:00-6:00 PM ET window - no new entries (flatten at 4:45 PM, maintenance 5:00-6:00 PM, reopens at 6:00 PM)")
         return False, "Daily entry cutoff (4:00-6:00 PM ET)"
     
     # Check if already have position
     if state[symbol]["position"]["active"]:
-        logger.debug("Position already active, skipping signal generation")
         return False, "Position active"
     
     # Check daily trade limit (skip in backtest mode)
     if not is_backtest_mode() and state[symbol]["daily_trade_count"] >= CONFIG["max_trades_per_day"]:
-        logger.debug(f"Daily trade limit reached ({CONFIG['max_trades_per_day']}), stopping for the day")
         
         # Send max trades reached alert (only once)
         if state[symbol]["daily_trade_count"] == CONFIG["max_trades_per_day"]:
@@ -3060,7 +3020,7 @@ def validate_signal_requirements(symbol: str, bar_time: datetime) -> Tuple[bool,
                     error_type="Max Trades Reached"
                 )
             except Exception as e:
-                logger.debug(f"Failed to send max trades alert: {e}")
+                pass
         
         return False, "Daily trade limit"
     
@@ -3088,13 +3048,12 @@ def validate_signal_requirements(symbol: str, bar_time: datetime) -> Tuple[bool,
                 )
                 state[symbol]["loss_limit_alerted"] = True
             except Exception as e:
-                logger.debug(f"Failed to send loss limit alert: {e}")
+                pass
         
         return False, "Daily loss limit"
     
     # Check data availability
     if len(state[symbol]["bars_1min"]) < 2:
-        pass  # Silent - signal check skipped (not enough bars)
         return False, "Insufficient bars"
     
     # ========================================================================
@@ -3139,7 +3098,6 @@ def validate_signal_requirements(symbol: str, bar_time: datetime) -> Tuple[bool,
     # Note: VWAP is not the primary target in current strategy
     vwap = state[symbol].get("vwap")
     if vwap is None or vwap <= 0:
-        pass  # Silent - VWAP not ready
         return False, "VWAP not ready"
     
     # Trend filter - DISABLED for Capitulation Reversal strategy
@@ -3151,13 +3109,13 @@ def validate_signal_requirements(symbol: str, bar_time: datetime) -> Tuple[bool,
     # Note: RSI thresholds (25/75) are hardcoded in capitulation_detector.py
     rsi = state[symbol]["rsi"]
     if rsi is None:
-        pass  # Silent - RSI not yet calculated, allow to proceed
+        pass
         # Signal-specific functions will handle RSI check with 25/75 thresholds
     
     # Volume check - handled by capitulation_detector.py (condition #5: 2x average)
     avg_volume = state[symbol].get("avg_volume")
     if avg_volume is None:
-        pass  # Silent - average volume not yet calculated, allow to proceed
+        pass
         # Signal-specific functions will handle volume check with 2x threshold
     
     # VWAP direction filter - DISABLED for Capitulation Reversal strategy
@@ -3200,7 +3158,6 @@ def validate_signal_requirements(symbol: str, bar_time: datetime) -> Tuple[bool,
         # Classify market condition (Requirement 11)
         try:
             condition, condition_reason = bid_ask_manager.classify_market_condition(symbol)
-            pass  # Silent - market condition check (internal filter)
             
             # Save market condition to state for monitoring display
             state[symbol]["market_condition"] = condition
@@ -3250,12 +3207,10 @@ def check_long_signal_conditions(symbol: str, prev_bar: Dict[str, Any],
     
     # VWAP check (still calculated for reference)
     if vwap is None or vwap <= 0:
-        logger.debug("Long rejected - VWAP not available")
         return False
     
     # Need at least 10 bars for flush detection
     if len(bars) < 10:
-        logger.debug("Long rejected - insufficient bars for flush detection")
         return False
     
     # Calculate 20-bar average volume
@@ -3293,7 +3248,7 @@ def check_long_signal_conditions(symbol: str, prev_bar: Dict[str, Any],
     if not all_passed:
         # Log periodically which conditions are failing (for debugging)
         if details.get("reason"):
-            logger.debug(f"Long rejected: {details['reason']}")
+            pass
         return False
     
     # Store flush extremes for position management (only on success)
@@ -3334,12 +3289,10 @@ def check_short_signal_conditions(symbol: str, prev_bar: Dict[str, Any],
     
     # VWAP check (still calculated for reference)
     if vwap is None or vwap <= 0:
-        logger.debug("Short rejected - VWAP not available")
         return False
     
     # Need at least 10 bars for flush detection
     if len(bars) < 10:
-        logger.debug("Short rejected - insufficient bars for flush detection")
         return False
     
     # Calculate 20-bar average volume
@@ -3377,7 +3330,7 @@ def check_short_signal_conditions(symbol: str, prev_bar: Dict[str, Any],
     if not all_passed:
         # Log periodically which conditions are failing (for debugging)
         if details.get("reason"):
-            logger.debug(f"Short rejected: {details['reason']}")
+            pass
         return False
     
     # Store flush extremes for position management (only on success)
@@ -3747,8 +3700,19 @@ def check_for_signals(symbol: str) -> None:
     vwap = state[symbol].get("vwap", 0)
     regime = state[symbol].get("current_regime", "NORMAL")
     
-    logger.debug(f"Signal check: regime={regime}, prev_low={prev_bar['low']:.2f}, "
-                f"current_close={current_bar['close']:.2f}, vwap={vwap:.2f}")
+    # REGIME FILTER: Check if current regime allows trading
+    # Only trade in choppy/ranging environments where reversals work best
+    if not is_regime_tradeable(regime):
+        # Regime not tradeable - skip signal generation silently
+        # Log periodically (every 30 bars) so users know why no signals in trending markets
+        regime_skip_counter = state[symbol].get("regime_skip_counter", 0) + 1
+        state[symbol]["regime_skip_counter"] = regime_skip_counter
+        if regime_skip_counter % 30 == 0:
+            logger.info(f"⏸️  Regime filter: {regime} - Not trading (waiting for choppy/ranging market)")
+        return
+    
+    # Reset regime skip counter when in tradeable regime
+    state[symbol]["regime_skip_counter"] = 0
     
     # PERIODIC HEARTBEAT: Show bot is actively scanning for signals (every 15 minutes)
     # Does NOT reveal strategy details - just confirms bot is running
@@ -4129,7 +4093,7 @@ def is_market_moving_too_fast(symbol: str) -> Tuple[bool, str]:
         if is_widening:
             return True, f"Fast market detected: {widening_reason}"
     except Exception as e:
-        logger.debug(f"Could not check spread widening: {e}")
+        pass
     
     # Check recent price volatility
     bars = state[symbol]["bars_1min"]
@@ -4205,7 +4169,7 @@ def execute_entry(symbol: str, side: str, entry_price: float) -> None:
                 mode="SIGNAL_ONLY"
             )
         except Exception as e:
-            logger.debug(f"Notification send failed: {e}")
+            pass
         
         # EXIT - Don't execute the trade, just return
         return
@@ -4391,7 +4355,7 @@ def execute_entry(symbol: str, side: str, entry_price: float) -> None:
             actual_fill_price = actual_fill_from_broker
             logger.info(f"  Validated Fill Price: ${actual_fill_price:.2f}")
     except Exception as e:
-        logger.debug(f"Could not validate entry fill price: {e}")
+        pass
     
     logger.info(f"  Final Entry Price: ${actual_fill_price:.2f}")
     
@@ -4406,7 +4370,7 @@ def execute_entry(symbol: str, side: str, entry_price: float) -> None:
             side="LONG" if side == 'long' else "SHORT"
         )
     except Exception as e:
-        logger.debug(f"Failed to send entry alert: {e}")
+        pass
     
     # Record trade execution for cost tracking (Requirement 5)
     if bid_ask_manager is not None:
@@ -4784,7 +4748,7 @@ def check_breakeven_protection(symbol: str, current_price: float) -> None:
         if old_stop_order_id:
             cancel_success = cancel_order(symbol, old_stop_order_id)
             if cancel_success:
-                logger.debug(f"✔ Replaced stop order: {old_stop_order_id} → {new_stop_order.get('order_id')}")
+                pass
             else:
                 logger.warning(f"⚠ New stop active but failed to cancel old stop {old_stop_order_id}")
     
@@ -4915,7 +4879,7 @@ def check_trailing_stop(symbol: str, current_price: float) -> None:
         if old_stop_order_id:
             cancel_success = cancel_order(symbol, old_stop_order_id)
             if cancel_success:
-                logger.debug(f"✔ Replaced stop order: {old_stop_order_id} → {new_stop_order.get('order_id')}")
+                pass
             else:
                 logger.warning(f"⚠ New trailing stop active but failed to cancel old stop {old_stop_order_id}")
     
@@ -5021,7 +4985,7 @@ def check_time_decay_tightening(symbol: str, current_time: datetime) -> None:
             )
             position["stuck_alert_sent"] = True
         except Exception as e:
-            logger.debug(f"Failed to send position stuck alert: {e}")
+            pass
     
     # Step 2 - Determine tightening level
     tightening_pct = None
@@ -5049,7 +5013,6 @@ def check_time_decay_tightening(symbol: str, current_time: datetime) -> None:
         unrealized_profit_ticks = (entry_price - current_price) / tick_size
     
     if unrealized_profit_ticks <= 0:
-        logger.debug(f"Time-decay skipped: position not profitable ({unrealized_profit_ticks:.1f} ticks)")
         return
     
     # Step 4 - Calculate new stop distance
@@ -5082,7 +5045,6 @@ def check_time_decay_tightening(symbol: str, current_time: datetime) -> None:
             should_update = True
     
     if not should_update:
-        logger.debug(f"Time-decay skipped: new stop ${new_stop_price:.2f} not better than current ${current_stop:.2f}")
         return
     
     # Step 7 - Update stop loss with continuous protection
@@ -5097,7 +5059,7 @@ def check_time_decay_tightening(symbol: str, current_time: datetime) -> None:
         if old_stop_order_id:
             cancel_success = cancel_order(symbol, old_stop_order_id)
             if cancel_success:
-                logger.debug(f"Γ£ô Replaced stop order: {old_stop_order_id} ΓåÆ {new_stop_order.get('order_id')}")
+                pass
             else:
                 logger.warning(f"ΓÜá New tightened stop active but failed to cancel old stop {old_stop_order_id}")
     
@@ -5175,7 +5137,6 @@ def check_partial_exits(symbol: str, current_price: float) -> None:
     original_quantity = position["original_quantity"]
     if original_quantity <= 1:
         # Step 10 - Handle edge case: skip partials for single contract
-        logger.debug("Skipping partial exits: only 1 contract")
         return
     
     # Check each partial exit threshold in order
@@ -5356,7 +5317,7 @@ def update_current_regime(symbol: str) -> None:
     if prev_regime != detected_regime.name and not bot_status.get("maintenance_idle", False):
         logger.info(f"📊 Market Regime Changed: {prev_regime} → {detected_regime.name}")
     else:
-        pass  # Silent - no regime change or in maintenance
+        pass
 
 
 def check_regime_change(symbol: str, current_price: float) -> None:
@@ -5394,7 +5355,6 @@ def check_regime_change(symbol: str, current_price: float) -> None:
     current_atr = calculate_atr_1min(symbol, CONFIG.get("atr_period", 14))
     
     if current_atr is None:
-        logger.debug("ATR not calculable, skipping regime change check")
         return  # Can't detect regime without ATR
     
     current_regime = regime_detector.detect_regime(bars, current_atr, CONFIG.get("atr_period", 14))
@@ -5495,7 +5455,6 @@ def check_exit_conditions(symbol: str) -> None:
                 elapsed = (datetime.now() - flatten_since).total_seconds()
                 # Allow up to FLATTEN_IN_PROGRESS_TIMEOUT seconds for flatten to complete before retrying
                 if elapsed < FLATTEN_IN_PROGRESS_TIMEOUT:
-                    logger.debug(f"Flatten already in progress for {elapsed:.1f}s - skipping duplicate attempt")
                     return
                 else:
                     # Flatten has been pending too long - clear and retry
@@ -5563,7 +5522,6 @@ def check_exit_conditions(symbol: str) -> None:
         if position["active"] and not position.get("flatten_pending", False):
             # FIX: Check if flatten is already in progress
             if bot_status.get("flatten_in_progress", False):
-                logger.debug("Flatten already in progress - skipping emergency flatten")
                 return
             
             # SAFEGUARD: Verify with broker that we actually have this position
@@ -5619,7 +5577,7 @@ def check_exit_conditions(symbol: str) -> None:
                     error_type="Emergency Flatten - Market Closed"
                 )
             except Exception as e:
-                logger.debug(f"Failed to send emergency flatten alert: {e}")
+                pass
             
             # FIX: Mark position as inactive to prevent spam
             position["active"] = False
@@ -5660,7 +5618,7 @@ def check_exit_conditions(symbol: str) -> None:
                 error_type="Daily Recap"
             )
         except Exception as e:
-            logger.debug(f"Failed to send daily recap alert: {e}")
+            pass
     
     # ========================================================================
     # PHASE SEVEN: Integration Priority and Execution Order
@@ -5744,7 +5702,7 @@ def check_exit_conditions(symbol: str) -> None:
                     if old_stop_order_id:
                         cancel_success = cancel_order(symbol, old_stop_order_id)
                         if cancel_success:
-                            logger.debug(f"Γ£ô Replaced stop order: {old_stop_order_id} ΓåÆ {new_stop_order.get('order_id')}")
+                            pass
                         else:
                             logger.warning(f"ΓÜá New divergence stop active but failed to cancel old stop {old_stop_order_id}")
                 
@@ -5846,7 +5804,7 @@ def calculate_pnl(position: Dict[str, Any], exit_price: float, symbol: str = Non
                     error_type="High Slippage Warning"
                 )
             except Exception as e:
-                logger.debug(f"Failed to send high slippage alert: {e}")
+                pass
         elif slippage_ticks_actual > 0:
             # Normal slippage logging
             logger.info(f"  Exit Slippage: {slippage_ticks_actual:.1f} ticks (${slippage_cost_dollars:.2f})")
@@ -6019,7 +5977,7 @@ def handle_exit_orders(symbol: str, position: Dict[str, Any], exit_price: float,
                 error_type="FLATTEN FAILED - URGENT"
             )
         except Exception as e:
-            logger.debug(f"Failed to send flatten failure alert: {e}")
+            pass
         
         return  # Cannot continue - manual intervention needed
     
@@ -6178,7 +6136,7 @@ def execute_exit(symbol: str, exit_price: float, reason: str) -> None:
     if stop_order_id:
         cancel_success = cancel_order(symbol, stop_order_id)
         if cancel_success:
-            logger.debug(f"Γ£ô Cancelled stop order {stop_order_id} before exit")
+            pass
         else:
             logger.warning(f"ΓÜá Failed to cancel stop order {stop_order_id} - may remain active!")
     
@@ -6206,7 +6164,7 @@ def execute_exit(symbol: str, exit_price: float, reason: str) -> None:
             side="LONG" if position['side'] == 'long' else "SHORT"
         )
     except Exception as e:
-        logger.debug(f"Failed to send exit alert: {e}")
+        pass
     
     # REINFORCEMENT LEARNING - Record outcome to cloud API (shared learning pool)
     try:
@@ -6277,7 +6235,7 @@ def execute_exit(symbol: str, exit_price: float, reason: str) -> None:
                 del state[symbol]["entry_rl_confidence"]
         
     except Exception as e:
-        logger.debug(f"RL outcome recording failed: {e}")
+        pass
     
     # Store exit reason in state for backtest tracking (position gets reset)
     state[symbol]["last_exit_reason"] = reason
@@ -6362,9 +6320,8 @@ def execute_exit(symbol: str, exit_price: float, reason: str) -> None:
         with open(daily_file, 'w') as f:
             json.dump(daily_summary, f, indent=2)
             
-        logger.debug(f"[GUI] Trade summary written to {summary_file}")
     except Exception as e:
-        logger.debug(f"[GUI] Failed to write trade summary: {e}")
+        pass
     
     # Reset position tracking
     state[symbol]["position"] = {
@@ -6438,7 +6395,7 @@ def execute_exit(symbol: str, exit_price: float, reason: str) -> None:
                 error_type="License Expired - Grace Period Ended"
             )
         except Exception as e:
-            pass  # Silent
+            pass
         
         # Disconnect broker cleanly
         logger.critical("Disconnecting from broker...")
@@ -6449,7 +6406,7 @@ def execute_exit(symbol: str, exit_price: float, reason: str) -> None:
                 broker.disconnect()
                 logger.critical("Websocket disconnected - No data streaming")
         except Exception as e:
-            pass  # Silent disconnect
+            pass
         
         # Bot stays ON but IDLE - never exits unless user presses Ctrl+C
         logger.critical("Bot will remain ON but IDLE (no trading)")
@@ -6499,7 +6456,6 @@ def wait_for_fill(symbol: str, attempt: int, max_attempts: int) -> int:
     
     if attempt < max_attempts:
         wait_seconds = 5 if attempt < 5 else 2  # Shorter waits as we get more urgent
-        logger.debug(f"Waiting {wait_seconds} seconds for fill...")
         time_module.sleep(wait_seconds)
     
     return get_position_quantity(symbol)
@@ -6627,7 +6583,6 @@ def check_daily_reset(symbol: str, current_time: datetime) -> None:
     else:
         # First run - initialize trading day
         state[symbol]["trading_day"] = current_date
-        pass  # Silent - trading day initialization
 
 
 def perform_daily_reset(symbol: str, new_date: Any) -> None:
@@ -6721,7 +6676,7 @@ def check_daily_loss_limit(symbol: str) -> Tuple[bool, Optional[str]]:
                     error_type="Daily Loss Limit Breached"
                 )
             except Exception as e:
-                logger.debug(f"Failed to send loss limit breach alert: {e}")
+                pass
         return False, "Daily loss limit exceeded"
     return True, None
 
@@ -6757,7 +6712,7 @@ def check_approaching_failure(symbol: str) -> Tuple[bool, Optional[str], Optiona
                 limit=daily_loss_limit
             )
         except Exception as e:
-            logger.debug(f"Failed to send daily limit warning: {e}")
+            pass
         
         return True, reason, daily_loss_severity
     
@@ -6812,7 +6767,6 @@ def check_trade_limits(current_time: datetime) -> Tuple[bool, Optional[str]]:
     # Check for weekend (Saturday + Sunday before 6:00 PM ET)
     if eastern_time.weekday() == 5:  # Saturday - always closed
         if bot_status["trading_enabled"]:
-            logger.debug(f"Saturday detected - market closed")
             bot_status["trading_enabled"] = False
             bot_status["stop_reason"] = "weekend"
         return False, "Weekend - market closed"
@@ -6820,7 +6774,6 @@ def check_trade_limits(current_time: datetime) -> Tuple[bool, Optional[str]]:
     if eastern_time.weekday() == 6:  # Sunday
         if eastern_time.time() < datetime_time(18, 0):  # Before 6:00 PM ET Sunday
             if bot_status["trading_enabled"]:
-                logger.debug(f"Sunday before 6:00 PM ET - market closed")
                 bot_status["trading_enabled"] = False
                 bot_status["stop_reason"] = "weekend"
             return False, "Weekend - market closed (opens 6:00 PM ET)"
@@ -6831,14 +6784,12 @@ def check_trade_limits(current_time: datetime) -> Tuple[bool, Optional[str]]:
         maintenance_end = datetime_time(18, 0)    # 6:00 PM ET
         if maintenance_start <= eastern_time.time() < maintenance_end:
             if bot_status["trading_enabled"]:
-                logger.debug(f"Maintenance window - disabling trading")
                 bot_status["trading_enabled"] = False
                 bot_status["stop_reason"] = "maintenance"
             return False, "Maintenance window (5:00-6:00 PM ET)"
     
     # Re-enable trading after maintenance/weekend
     if not bot_status["trading_enabled"]:
-        logger.debug(f"Re-enabling trading - market open at {eastern_time}")
         bot_status["trading_enabled"] = True
         bot_status["stop_reason"] = None
     
@@ -6865,7 +6816,6 @@ def check_safety_conditions(symbol: str) -> Tuple[bool, Optional[str]]:
         # Only block NEW trades, not position management
         if symbol in state and state[symbol]["position"]["active"]:
             # Position active - allow management during grace period
-            logger.debug(f"License expired but position active - managing until close")
             # Don't block - let position management continue
             return True, None
         else:
@@ -6878,7 +6828,6 @@ def check_safety_conditions(symbol: str) -> Tuple[bool, Optional[str]]:
         # Block NEW trades but allow managing existing positions
         if symbol in state and state[symbol]["position"]["active"]:
             # Position active - allow management
-            logger.debug(f"Near expiry mode but position active - managing until close")
             return True, None
         else:
             # No position - block new trades
@@ -6919,7 +6868,7 @@ def check_safety_conditions(symbol: str) -> Tuple[bool, Optional[str]]:
                     error_type="DAILY_LIMIT_REACHED"
                 )
             except Exception as e:
-                logger.debug(f"Failed to send daily limit alert: {e}")
+                pass
         
         bot_status["trading_enabled"] = False
         
@@ -7226,7 +7175,6 @@ def log_session_summary(symbol: str, logout_success: bool = True, show_logout_st
             display_animated_thank_you(duration=60.0, fps=15)
         except Exception as e:
             # Fallback to static display if animation fails
-            logger.debug(f"Animation failed, using static display: {e}")
             if display_static_thank_you:
                 display_static_thank_you()
     
@@ -7256,7 +7204,7 @@ def log_session_summary(symbol: str, logout_success: bool = True, show_logout_st
             max_drawdown=max_drawdown
         )
     except Exception as e:
-        logger.debug(f"Failed to send daily summary alert: {e}")
+        pass
 
 
 def update_session_stats(symbol: str, pnl: float) -> None:
@@ -7753,9 +7701,8 @@ def main(symbol_override: str = None) -> None:
     # LIVE MODE: Reads from local symbol-specific folder for pattern matching, saves to cloud only
     # BACKTEST MODE: Reads and saves to local symbol-specific folder
     if is_backtest_mode() or CONFIG.get("backtest_mode", False):
-        pass  # Silent - backtest mode initialization
+        pass
     else:
-        pass  # Silent - live mode initialization
         # Use symbol-specific folder for experiences
         signal_exp_file = str(get_data_file_path(f"experiences/{trading_symbol}/signal_experience.json"))
         rl_brain = SignalConfidenceRL(
@@ -7767,8 +7714,6 @@ def main(symbol_override: str = None) -> None:
             exploration_decay=0.995,
             save_local=False  # Live mode: read local but save to cloud only
         )
-        pass  # Silent - RL brain initialized
-        pass  # Silent - live mode save configuration
         
         # Initialize Cloud API Client for reporting trade outcomes to cloud
         license_key = os.getenv("QUOTRADING_LICENSE_KEY")
@@ -7779,7 +7724,6 @@ def main(symbol_override: str = None) -> None:
                 license_key=license_key,
                 timeout=10
             )
-            pass  # Silent - cloud API initialized
         else:
             logger.warning(f"No license key - cloud outcome reporting disabled")
     
@@ -7787,13 +7731,11 @@ def main(symbol_override: str = None) -> None:
     # (Tick value, slippage, etc. are technical details customers don't need)
     
     # Operating mode and settings already shown in header - no need to repeat
-    pass  # Silent - configuration already displayed in header
     
     # Phase Fifteen: Validate timezone configuration
     validate_timezone_configuration()
     
     # Initialize bid/ask manager
-    pass  # Silent - bid/ask manager initialization
     bid_ask_manager = BidAskManager(CONFIG)
     
     # Initialize broker (replaces initialize_sdk)
@@ -7815,19 +7757,16 @@ def main(symbol_override: str = None) -> None:
     initialize_state(trading_symbol)
     
     # CRITICAL: Try to restore position state from disk if bot was restarted
-    pass  # Silent - checking for saved position state
     position_restored = load_position_state(trading_symbol)
     if position_restored:
         logger.warning(f"[{trading_symbol}] ⚠️  BOT RESTARTED WITH ACTIVE POSITION - Managing existing trade")
     else:
-        pass  # Silent - no saved position
+        pass
     
     # Skip historical bars fetching in live mode - not needed for real-time trading
     # The bot will build bars from live tick data
-    pass  # Silent - skipping historical bars fetch
     
     # Initialize event loop
-    pass  # Silent - event loop initialization
     event_loop = EventLoop(bot_status, CONFIG)
     
     # Register event handlers
@@ -7868,7 +7807,6 @@ def main(symbol_override: str = None) -> None:
     
     # Subscribe to bid/ask quotes if broker supports it
     if broker is not None and hasattr(broker, 'subscribe_quotes'):
-        pass  # Silent - quote subscription
         try:
             broker.subscribe_quotes(trading_symbol, on_quote)
         except Exception as e:
@@ -7878,7 +7816,6 @@ def main(symbol_override: str = None) -> None:
     # RL is CLOUD-ONLY - no local RL components
     # Users get confidence from cloud, contribute to cloud hive mind
     # Only the dev (Kevin) gets the experience data saved to cloud
-    pass  # Silent - RL cloud mode (not customer-facing)
     
     # Show current date/time before starting
     current_time = datetime.now(tz)
@@ -7895,7 +7832,6 @@ def main(symbol_override: str = None) -> None:
     except Exception as e:
         logger.error(f"Event loop error: {e}")
     finally:
-        pass  # Silent - event loop cleanup
         
         # CRITICAL: Release session immediately on ANY exit
         release_session()
@@ -8073,7 +8009,6 @@ def handle_position_reconciliation_event(data: Dict[str, Any]) -> None:
             # Note: This timeout could be made configurable via CONFIG if needed
             max_pending_seconds = 60
             if elapsed < max_pending_seconds:
-                logger.debug(f"Skipping reconciliation - entry order pending for {elapsed:.1f}s")
                 return
             else:
                 # Order has been pending too long - something is wrong
@@ -8189,8 +8124,8 @@ def handle_position_reconciliation_event(data: Dict[str, Any]) -> None:
             # send_telegram_alert(f"Position mismatch: Broker={broker_position}, Bot={bot_position}")
             
         else:
+            pass
             # Positions match - silent per LOGGING_SPECIFICATION.md
-            pass  # Silent - position reconciliation
     
     except Exception as e:
         logger.error(f"Error during position reconciliation: {e}", exc_info=True)
@@ -8306,7 +8241,7 @@ def handle_license_check_event(data: Dict[str, Any]) -> None:
                             error_type="License Expired - Grace Period"
                         )
                     except Exception as e:
-                        logger.debug(f"Failed to send grace period notification: {e}")
+                        pass
                     
                 else:
                     # No active position - stop immediately
@@ -8334,7 +8269,7 @@ def handle_license_check_event(data: Dict[str, Any]) -> None:
                             error_type="License Expired"
                         )
                     except Exception as e:
-                        pass  # Silent - no logs after expiration
+                        pass
                     
                     # Disconnect broker cleanly
                     logger.critical("Disconnecting from broker...")
@@ -8344,7 +8279,7 @@ def handle_license_check_event(data: Dict[str, Any]) -> None:
                             broker.disconnect()
                             logger.critical("Websocket disconnected - No data streaming")
                     except Exception as e:
-                        pass  # Silent disconnect
+                        pass
                     
                     # Bot stays ON but IDLE - never exits unless user presses Ctrl+C
                     logger.critical("Bot will remain ON but IDLE (no trading)")
@@ -8352,7 +8287,6 @@ def handle_license_check_event(data: Dict[str, Any]) -> None:
                     logger.critical("Press Ctrl+C to stop bot")
             else:
                 # License is still valid
-                logger.debug("Γ£à License validation successful")
                 
                 # PRE-EXPIRATION WARNINGS
                 # Store expiration info in bot_status
@@ -8386,7 +8320,7 @@ def handle_license_check_event(data: Dict[str, Any]) -> None:
                                 error_type="License Expiration Warning - 24 Hours"
                             )
                         except Exception as e:
-                            logger.debug(f"Failed to send 24h expiry warning: {e}")
+                            pass
                 
                 # WARNING: License expiring within 7 days
                 elif days_until_expiration is not None and days_until_expiration <= 7 and days_until_expiration > 1:
@@ -8410,7 +8344,7 @@ def handle_license_check_event(data: Dict[str, Any]) -> None:
                                 error_type=f"License Expiration Warning - {days_until_expiration} Days"
                             )
                         except Exception as e:
-                            logger.debug(f"Failed to send 7d expiry warning: {e}")
+                            pass
                 
                 # CRITICAL: Don't enter new trades if expiring within 2 hours
                 if hours_until_expiration is not None and hours_until_expiration <= 2 and hours_until_expiration > 0:
@@ -8435,7 +8369,7 @@ def handle_license_check_event(data: Dict[str, Any]) -> None:
                                 error_type="License Near Expiry - 2 Hours"
                             )
                         except Exception as e:
-                            logger.debug(f"Failed to send near expiry notification: {e}")
+                            pass
                 else:
                     # Clear near expiry mode if we have more than 2 hours
                     bot_status["near_expiry_mode"] = False
@@ -8662,7 +8596,6 @@ def send_heartbeat() -> None:
             }
         }
         
-        pass  # Silent - heartbeat is internal health check
         
         response = requests.post(
             f"{api_url}/api/heartbeat",
@@ -8740,7 +8673,6 @@ def send_heartbeat() -> None:
                 logger.critical("BOT SHUTDOWN - Session conflict detected")
                 sys.exit(1)  # Exit with error code
             
-            logger.debug("Heartbeat sent successfully")
         elif response.status_code == 403:
             # Could be either expired license or session conflict - check license_valid first
             try:
@@ -8877,10 +8809,10 @@ def send_heartbeat() -> None:
                 logger.critical("BOT SHUTDOWN - License validation failed")
                 sys.exit(1)  # Exit with error code
         else:
-            logger.debug(f"Heartbeat returned HTTP {response.status_code}")
+            pass
     
     except Exception as e:
-        logger.debug(f"Heartbeat error: {e}")
+        pass
 
 
 
@@ -8917,9 +8849,9 @@ def release_session() -> None:
                 timeout=5
             )
             if response.status_code == 200:
-                pass  # Silent - session released
+                pass
             else:
-                pass  # Silent - release failed
+                pass
     except Exception as e:
         logger.warning(f"⚠️ Error releasing session lock: {e}")
 
@@ -8934,7 +8866,6 @@ def cleanup_on_shutdown() -> None:
         release_session()
     except Exception as e:
         cleanup_success = False
-        logger.debug(f"Failed to release session: {e}")
     
     # Send bot shutdown alert
     try:
@@ -8944,7 +8875,7 @@ def cleanup_on_shutdown() -> None:
             error_type="Bot Shutdown"
         )
     except Exception as e:
-        logger.debug(f"Failed to send shutdown alert: {e}")
+        pass
     
     # Save state to disk
     if recovery_manager:
@@ -8952,7 +8883,6 @@ def cleanup_on_shutdown() -> None:
             recovery_manager.save_state(state)
         except Exception as e:
             cleanup_success = False
-            logger.debug(f"Failed to save state: {e}")
     
     # Disconnect broker
     if broker and broker.is_connected():
@@ -8960,7 +8890,6 @@ def cleanup_on_shutdown() -> None:
             broker.disconnect()
         except Exception as e:
             cleanup_success = False
-            logger.debug(f"Failed to disconnect broker: {e}")
     
     # Stop timer manager
     if timer_manager:
@@ -8968,7 +8897,6 @@ def cleanup_on_shutdown() -> None:
             timer_manager.stop()
         except Exception as e:
             cleanup_success = False
-            logger.debug(f"Failed to stop timer: {e}")
     
     # Log session summary with logout status
     symbol = CONFIG["instrument"]
@@ -9029,7 +8957,7 @@ Multi-Symbol Mode:
             # Logo display failed - log and continue (not critical)
             # Use logger if available, otherwise print
             try:
-                logger.debug(f"Could not display startup logo: {e}")
+                pass
             except:
                 pass  # Logger not initialized yet, silently continue
     
