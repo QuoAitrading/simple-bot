@@ -64,8 +64,7 @@ class RegimeParameters:
 
 # Tradeable regimes for Capitulation Reversal Strategy
 # MODIFIED: Allow ALL regimes - no blocking
-# Trade in choppy/ranging environments where reversals are high-probability
-# Avoid trending environments where reversals fail
+# Now trading in ALL market conditions including trending environments
 TRADEABLE_REGIMES = {"HIGH_VOL_CHOPPY", "NORMAL_CHOPPY", "NORMAL", "LOW_VOL_RANGING", 
                      "HIGH_VOL_TRENDING", "NORMAL_TRENDING", "LOW_VOL_TRENDING"}
 
