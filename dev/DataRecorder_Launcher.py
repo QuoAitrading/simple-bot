@@ -50,7 +50,7 @@ class DataRecorderLauncher:
     def __init__(self):
         self.root = tk.Tk()
         self.root.title("QuoTrading - Market Data Recorder")
-        self.root.geometry("700x650")
+        self.root.geometry("700x700")
         self.root.resizable(False, False)
         
         # Professional color scheme
@@ -102,7 +102,7 @@ class DataRecorderLauncher:
         
         tk.Label(
             header,
-            text="Record live market data for backtesting",
+            text="Record live market data for backtesting • Configure settings and click START",
             font=("Segoe UI", 9),
             bg=self.colors['success_dark'],
             fg='white'
@@ -288,7 +288,76 @@ class DataRecorderLauncher:
             fg=self.colors['text_secondary']
         ).grid(row=1, column=0, columnspan=2, sticky=tk.W, pady=(0, 5))
         
-        # Status section
+        # Control buttons - MOVED UP for better visibility
+        button_container = tk.Frame(main, bg=self.colors['background'])
+        button_container.pack(fill=tk.X, pady=(0, 15))
+        
+        # Add instruction label above buttons
+        self.instruction_label = tk.Label(
+            button_container,
+            text="👇 Click START to begin recording market data 👇",
+            font=("Segoe UI", 10, "bold"),
+            bg=self.colors['background'],
+            fg=self.colors['success'],
+            pady=8
+        )
+        self.instruction_label.pack(fill=tk.X)
+        
+        button_frame = tk.Frame(button_container, bg=self.colors['background'])
+        button_frame.pack(fill=tk.X, pady=(5, 0))
+        
+        self.start_button = tk.Button(
+            button_frame,
+            text="▶ START RECORDING",
+            command=self.start_recording,
+            font=("Segoe UI", 12, "bold"),
+            bg=self.colors['success'],
+            fg='white',
+            relief=tk.FLAT,
+            cursor="hand2",
+            padx=30,
+            pady=15
+        )
+        self.start_button.pack(side=tk.LEFT, expand=True, fill=tk.X, padx=(0, 5))
+        
+        self.stop_button = tk.Button(
+            button_frame,
+            text="⬛ STOP RECORDING",
+            command=self.stop_recording,
+            font=("Segoe UI", 12, "bold"),
+            bg=self.colors['error'],
+            fg='white',
+            relief=tk.FLAT,
+            cursor="hand2",
+            padx=30,
+            pady=15,
+            state=tk.DISABLED
+        )
+        self.stop_button.pack(side=tk.LEFT, expand=True, fill=tk.X, padx=(5, 0))
+        
+        # Add hover effects for better user feedback
+        def on_start_enter(e):
+            if self.start_button['state'] != tk.DISABLED:
+                self.start_button.config(bg=self.colors['success_dark'])
+        
+        def on_start_leave(e):
+            if self.start_button['state'] != tk.DISABLED:
+                self.start_button.config(bg=self.colors['success'])
+        
+        def on_stop_enter(e):
+            if self.stop_button['state'] != tk.DISABLED:
+                self.stop_button.config(bg='#B91C1C')
+        
+        def on_stop_leave(e):
+            if self.stop_button['state'] != tk.DISABLED:
+                self.stop_button.config(bg=self.colors['error'])
+        
+        self.start_button.bind("<Enter>", on_start_enter)
+        self.start_button.bind("<Leave>", on_start_leave)
+        self.stop_button.bind("<Enter>", on_stop_enter)
+        self.stop_button.bind("<Leave>", on_stop_leave)
+        
+        # Status section - MOVED DOWN
         status_frame = tk.LabelFrame(
             main,
             text="Recording Status",
@@ -298,11 +367,11 @@ class DataRecorderLauncher:
             padx=15,
             pady=10
         )
-        status_frame.pack(fill=tk.BOTH, expand=True, pady=(0, 15))
+        status_frame.pack(fill=tk.BOTH, expand=True)
         
         self.status_text = tk.Text(
             status_frame,
-            height=8,
+            height=6,
             font=("Consolas", 9),
             bg='#1E1E1E',
             fg='#00FF00',
@@ -310,41 +379,9 @@ class DataRecorderLauncher:
         )
         self.status_text.pack(fill=tk.BOTH, expand=True)
         
-        # Control buttons
-        button_frame = tk.Frame(main, bg=self.colors['background'])
-        button_frame.pack(fill=tk.X)
-        
-        self.start_button = tk.Button(
-            button_frame,
-            text="▶ START RECORDING",
-            command=self.start_recording,
-            font=("Segoe UI", 11, "bold"),
-            bg=self.colors['success'],
-            fg='white',
-            relief=tk.FLAT,
-            cursor="hand2",
-            padx=30,
-            pady=12
-        )
-        self.start_button.pack(side=tk.LEFT, expand=True, fill=tk.X, padx=(0, 5))
-        
-        self.stop_button = tk.Button(
-            button_frame,
-            text="⬛ STOP RECORDING",
-            command=self.stop_recording,
-            font=("Segoe UI", 11, "bold"),
-            bg=self.colors['error'],
-            fg='white',
-            relief=tk.FLAT,
-            cursor="hand2",
-            padx=30,
-            pady=12,
-            state=tk.DISABLED
-        )
-        self.stop_button.pack(side=tk.LEFT, expand=True, fill=tk.X, padx=(5, 0))
-        
         # Add status log
-        self.log_message("Ready to record market data. Configure settings and click START.")
+        self.log_message("✓ Ready to record market data!")
+        self.log_message("➤ Configure your settings above, then click START RECORDING.")
     
     def browse_output_dir(self):
         """Open directory browser for output directory selection."""
@@ -404,9 +441,16 @@ class DataRecorderLauncher:
         self.save_config()
         
         # Update UI
-        self.start_button.config(state=tk.DISABLED)
+        self.start_button.config(state=tk.DISABLED, bg='#888888')
         self.stop_button.config(state=tk.NORMAL)
         self.is_recording = True
+        
+        # Update instruction label
+        if hasattr(self, 'instruction_label'):
+            self.instruction_label.config(
+                text="🔴 RECORDING IN PROGRESS - Click STOP when done 🔴",
+                fg=self.colors['error']
+            )
         
         # Start recorder in background thread
         self.log_message(f"Starting data recorder for symbols: {', '.join(selected_symbols)}")
@@ -455,9 +499,18 @@ class DataRecorderLauncher:
                 self.log_message(f"Error stopping recorder: {e}")
         
         # Update UI
-        self.start_button.config(state=tk.NORMAL)
+        self.start_button.config(state=tk.NORMAL, bg=self.colors['success'])
         self.stop_button.config(state=tk.DISABLED)
+        
+        # Update instruction label
+        if hasattr(self, 'instruction_label'):
+            self.instruction_label.config(
+                text="👇 Click START to begin recording market data 👇",
+                fg=self.colors['success']
+            )
+        
         self.log_message("Recording stopped.")
+        self.log_message("➤ Ready to start new recording session.")
     
     def load_config(self) -> Dict:
         """Load configuration from file."""
