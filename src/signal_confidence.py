@@ -124,7 +124,8 @@ class SignalConfidenceRL:
     
     def _generate_experience_key(self, experience: Dict) -> str:
         """
-        Generate a unique key for duplicate detection using 16-field structure.
+        Generate a unique key for duplicate detection based on PATTERN only.
+        Excludes timestamp and pnl to detect the same pattern regardless of when/outcome.
         
         Args:
             experience: The experience dictionary with 16 fields
@@ -134,14 +135,15 @@ class SignalConfidenceRL:
         """
         import hashlib
         
-        # ALL 16 fields that make an experience unique
+        # Pattern fields only - excludes timestamp and pnl (outcomes can vary)
+        # This ensures we detect duplicates based on market pattern, not timing
         key_fields = [
             # The 12 Pattern Matching Fields
             'flush_size_ticks', 'flush_velocity', 'volume_climax_ratio', 'flush_direction',
             'rsi', 'distance_from_flush_low', 'reversal_candle', 'no_new_extreme',
             'vwap_distance_ticks', 'regime', 'session', 'hour',
-            # The 4 Metadata Fields
-            'symbol', 'timestamp', 'pnl', 'took_trade'
+            # Metadata: symbol and took_trade only (exclude timestamp and pnl)
+            'symbol', 'took_trade'
         ]
         
         # Build key from all significant values
