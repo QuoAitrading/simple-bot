@@ -2610,6 +2610,7 @@ def calculate_macd(prices: List[float], fast_period: int = 12,
 def calculate_atr(symbol: str, period: int = 14) -> Optional[float]:
     """
     Calculate Average True Range (ATR) for volatility measurement using 15-minute bars.
+    Uses Wilder's Smoothing method (industry standard).
     
     Args:
         symbol: Instrument symbol
@@ -2620,7 +2621,7 @@ def calculate_atr(symbol: str, period: int = 14) -> Optional[float]:
     """
     bars = state[symbol]["bars_15min"]
     
-    if len(bars) < 2:
+    if len(bars) < period + 1:
         return None
     
     true_ranges = []
@@ -2640,14 +2641,16 @@ def calculate_atr(symbol: str, period: int = 14) -> Optional[float]:
         )
         true_ranges.append(tr)
     
-    if not true_ranges:
+    if len(true_ranges) < period:
         return None
     
-    # Calculate ATR (simple moving average of TR)
-    if len(true_ranges) >= period:
-        atr = sum(true_ranges[-period:]) / period
-    else:
-        atr = sum(true_ranges) / len(true_ranges)
+    # Calculate ATR using Wilder's Smoothing (industry standard)
+    # First ATR = SMA of first 'period' TRs
+    atr = sum(true_ranges[:period]) / period
+    
+    # Subsequent values use Wilder's smoothing: ATR = (Previous ATR * (period-1) + Current TR) / period
+    for i in range(period, len(true_ranges)):
+        atr = (atr * (period - 1) + true_ranges[i]) / period
     
     return atr
 
@@ -2655,6 +2658,7 @@ def calculate_atr(symbol: str, period: int = 14) -> Optional[float]:
 def calculate_atr_1min(symbol: str, period: int = 14) -> Optional[float]:
     """
     Calculate Average True Range (ATR) using 1-minute bars for regime detection.
+    Uses Wilder's Smoothing method (industry standard).
     
     This function uses 1-minute bars to provide higher-resolution volatility data
     for accurate regime detection. The regime detector needs ATR calculated from
@@ -2669,7 +2673,7 @@ def calculate_atr_1min(symbol: str, period: int = 14) -> Optional[float]:
     """
     bars = state[symbol]["bars_1min"]
     
-    if len(bars) < 2:
+    if len(bars) < period + 1:
         return None
     
     true_ranges = []
@@ -2689,14 +2693,16 @@ def calculate_atr_1min(symbol: str, period: int = 14) -> Optional[float]:
         )
         true_ranges.append(tr)
     
-    if not true_ranges:
+    if len(true_ranges) < period:
         return None
     
-    # Calculate ATR (simple moving average of TR)
-    if len(true_ranges) >= period:
-        atr = sum(true_ranges[-period:]) / period
-    else:
-        atr = sum(true_ranges) / len(true_ranges)
+    # Calculate ATR using Wilder's Smoothing (industry standard)
+    # First ATR = SMA of first 'period' TRs
+    atr = sum(true_ranges[:period]) / period
+    
+    # Subsequent values use Wilder's smoothing: ATR = (Previous ATR * (period-1) + Current TR) / period
+    for i in range(period, len(true_ranges)):
+        atr = (atr * (period - 1) + true_ranges[i]) / period
     
     return atr
 
@@ -3366,11 +3372,12 @@ def calculate_slope(values: List[float], periods: int = 5) -> float:
 def calculate_stochastic(bars: deque, k_period: int = 14, d_period: int = 3) -> Dict[str, float]:
     """
     Calculate Stochastic oscillator (%K and %D).
+    Industry standard: %K uses k_period, %D is SMA of %K over d_period.
     
     Args:
         bars: Deque of OHLC bars
-        k_period: Period for %K calculation
-        d_period: Period for %D calculation (SMA of %K)
+        k_period: Period for %K calculation (default 14)
+        d_period: Period for %D calculation - SMA of %K (default 3)
     
     Returns:
         Dictionary with 'k' and 'd' values (0-100)
@@ -3378,22 +3385,53 @@ def calculate_stochastic(bars: deque, k_period: int = 14, d_period: int = 3) -> 
     if len(bars) < k_period:
         return {"k": 50.0, "d": 50.0}
     
-    recent_bars = list(bars)[-k_period:]
+    # Need at least k_period + d_period - 1 bars for proper %D calculation
+    if len(bars) < k_period + d_period - 1:
+        # Calculate just %K if not enough bars for %D
+        recent_bars = list(bars)[-k_period:]
+        current_close = recent_bars[-1]["close"]
+        highest_high = max(bar["high"] for bar in recent_bars)
+        lowest_low = min(bar["low"] for bar in recent_bars)
+        
+        if highest_high == lowest_low:
+            k_value = 50.0
+        else:
+            k_value = ((current_close - lowest_low) / (highest_high - lowest_low)) * 100
+        
+        return {"k": k_value, "d": k_value}
     
-    # Get current close and highest/lowest over period
-    current_close = recent_bars[-1]["close"]
-    highest_high = max(bar["high"] for bar in recent_bars)
-    lowest_low = min(bar["low"] for bar in recent_bars)
+    # Calculate %K values for the last d_period bars
+    k_values = []
+    bars_list = list(bars)
     
-    # Calculate %K
-    if highest_high == lowest_low:
-        k_value = 50.0
-    else:
-        k_value = ((current_close - lowest_low) / (highest_high - lowest_low)) * 100
+    for i in range(-d_period, 0):
+        # Get k_period bars ending at position i
+        end_idx = len(bars_list) + i + 1
+        start_idx = end_idx - k_period
+        
+        if start_idx < 0:
+            continue
+            
+        period_bars = bars_list[start_idx:end_idx]
+        current_close = period_bars[-1]["close"]
+        highest_high = max(bar["high"] for bar in period_bars)
+        lowest_low = min(bar["low"] for bar in period_bars)
+        
+        if highest_high == lowest_low:
+            k = 50.0
+        else:
+            k = ((current_close - lowest_low) / (highest_high - lowest_low)) * 100
+        
+        k_values.append(k)
     
-    # Calculate %D (SMA of %K) - simplified: just return %K for now
-    # Full implementation would track recent %K values
-    d_value = k_value
+    if not k_values:
+        return {"k": 50.0, "d": 50.0}
+    
+    # Current %K is the last calculated value
+    k_value = k_values[-1]
+    
+    # %D is the SMA of the last d_period %K values (industry standard)
+    d_value = sum(k_values) / len(k_values)
     
     return {"k": k_value, "d": d_value}
 
