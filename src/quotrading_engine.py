@@ -1985,7 +1985,7 @@ def initialize_state(symbol: str) -> None:
         "trading_day": None,
         "daily_trade_count": 0,
         "daily_pnl": 0.0,
-        "warmup_complete": False,  # Track when 114 bars collected for regime detection
+        "warmup_complete": False,  # Track when 34 bars collected for regime detection
         
         # Session tracking (Phase 13)
         "session_stats": {
@@ -3100,9 +3100,10 @@ def validate_signal_requirements(symbol: str, bar_time: datetime) -> Tuple[bool,
     # ========================================================================
     # WARMUP PERIOD: Block signals until enough bars for regime detection
     # ========================================================================
-    # Regime detection requires 114 bars for accurate classification
+    # Regime detection requires 34 bars for accurate classification
+    # (20 baseline + 14 current ATR) - optimized from 114 bars
     # During warmup, we use NORMAL regime as fallback but should not trade
-    WARMUP_BARS_REQUIRED = 114
+    WARMUP_BARS_REQUIRED = 34
     current_bar_count = len(state[symbol]["bars_1min"])
     
     if current_bar_count < WARMUP_BARS_REQUIRED:
@@ -5324,14 +5325,17 @@ def update_current_regime(symbol: str) -> None:
     Update the current regime for the symbol based on latest bars.
     This is called after each bar completion to keep regime detection current.
     
+    OPTIMIZED: Now requires only 34 bars (20 baseline + 14 current) instead of 114
+    
     Args:
         symbol: Instrument symbol
     """
     regime_detector = get_regime_detector()
     bars = state[symbol]["bars_1min"]
     
-    # Need enough bars for regime detection (114 = 100 baseline + 14 current)
-    if len(bars) < 114:
+    # Need enough bars for regime detection (34 = 20 baseline + 14 current)
+    # Optimized from 114 bars for faster startup
+    if len(bars) < 34:
         state[symbol]["current_regime"] = "NORMAL"
         return
     
