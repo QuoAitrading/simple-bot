@@ -180,9 +180,6 @@ class RegimeDetector:
         # Map to regime
         regime = self._map_to_regime(volatility, price_action)
         
-                    f"volatility: {volatility}, action: {price_action}, "
-                    f"baseline_bars: {len(baseline_bars)})")
-        
         return regime
     
     def _calculate_average_atr(self, bars: list, period: int = 14) -> float:

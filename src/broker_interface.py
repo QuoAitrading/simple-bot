@@ -561,6 +561,7 @@ class BrokerSDKImplementation(BrokerInterface):
                     if session_token:
                         self.websocket_streamer = BrokerWebSocketStreamer(session_token)
                         if self.websocket_streamer.connect():
+                            pass
                         else:
                             logger.warning("WebSocket connection failed - will use REST API polling")
                     else:
@@ -674,6 +675,7 @@ class BrokerSDKImplementation(BrokerInterface):
                     self.websocket_streamer.disconnect()
                     self.websocket_streamer = None
                 except Exception as e:
+                    pass
             
             # Close SDK connections
             if self.trading_suite:
@@ -926,6 +928,7 @@ class BrokerSDKImplementation(BrokerInterface):
                 
         except Exception as e:
             if "Event loop is closed" not in str(e):
+                pass
             return []
     
     def place_market_order(self, symbol: str, side: str, quantity: int) -> Optional[Dict[str, Any]]:

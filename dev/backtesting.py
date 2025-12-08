@@ -122,7 +122,9 @@ class HistoricalDataLoader:
                 self.logger.warning(f"Tick data file not found: {filepath}")
                 return ticks
             else:
+                pass
         else:
+            pass
             
         try:
             start_date, end_date = self._normalize_date_range()
@@ -192,6 +194,7 @@ class HistoricalDataLoader:
             if len(bars) == 0:
                 self.logger.warning(f"NO BARS loaded for date range {start_date} to {end_date}")
             else:
+                pass
             
         except Exception as e:
             self.logger.error(f"Error loading bar data: {e}")

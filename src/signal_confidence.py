@@ -106,13 +106,18 @@ class SignalConfidenceRL:
         # Log threshold configuration
         if self.user_threshold is not None:
             if self.backtest_mode:
+                pass
             else:
+                pass
         else:
             # Only happens in backtest mode now
+            pass
         
         # Log exploration mode
         if self.backtest_mode:
+            pass
         else:
+            pass
     
     def _generate_experience_key(self, experience: Dict) -> str:
         """
@@ -359,10 +364,6 @@ class SignalConfidenceRL:
             return []
         
         # DEBUG: Log current state for diagnosis
-                    f"velocity={current.get('flush_velocity', 0):.1f}, "
-                    f"direction={current.get('flush_direction', 'NONE')}, "
-                    f"rsi={current.get('rsi', 50):.1f}, "
-                    f"regime={current.get('regime', 'NORMAL')}")
         
         # Calculate similarity score for each past experience
         scored = []
@@ -446,10 +447,6 @@ class SignalConfidenceRL:
         if scored:
             top_5 = scored[:min(5, len(scored))]
             best_match = top_5[0][1]
-                        f"velocity={best_match.get('flush_velocity', 0):.1f}, "
-                        f"direction={best_match.get('flush_direction', 'NONE')}, "
-                        f"rsi={best_match.get('rsi', 50):.1f}, "
-                        f"pnl=${best_match.get('pnl', 0):.2f}")
         else:
             logger.warning(f"[RL Pattern Matching] No scored experiences - this should not happen!")
         

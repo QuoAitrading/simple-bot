@@ -403,6 +403,7 @@ class QueuePositionMonitor:
                     logger.info(f"  [SUCCESS] Passive fill after {elapsed:.1f}s ({check_count} checks)")
                     return True, "filled"
             except Exception as e:
+                pass
             
             # Check if price moving away
             try:
@@ -435,6 +436,7 @@ class QueuePositionMonitor:
                             logger.error(f"  [ERROR] Cancel failed - original order may still be pending!")
                             return False, "cancel_failed"
             except Exception as e:
+                pass
             
             # Wait before next check
             time.sleep(queue_check_interval)
@@ -1326,6 +1328,7 @@ class BidAskManager:
             self.spread_analyzers[symbol].update(quote.spread, dt)
         else:
             # Skip invalid quotes to prevent spread history corruption
+            pass
         
     
     def get_current_quote(self, symbol: str) -> Optional[BidAskQuote]:
