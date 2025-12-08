@@ -2621,6 +2621,7 @@ def calculate_atr(symbol: str, period: int = 14) -> Optional[float]:
     """
     bars = state[symbol]["bars_15min"]
     
+    # Need at least period+1 bars (one for prev_close reference)
     if len(bars) < period + 1:
         return None
     
@@ -2673,6 +2674,7 @@ def calculate_atr_1min(symbol: str, period: int = 14) -> Optional[float]:
     """
     bars = state[symbol]["bars_1min"]
     
+    # Need at least period+1 bars (one for prev_close reference)
     if len(bars) < period + 1:
         return None
     
@@ -3385,55 +3387,59 @@ def calculate_stochastic(bars: deque, k_period: int = 14, d_period: int = 3) -> 
     if len(bars) < k_period:
         return {"k": 50.0, "d": 50.0}
     
-    # Need at least k_period + d_period - 1 bars for proper %D calculation
-    if len(bars) < k_period + d_period - 1:
-        # Calculate just %K if not enough bars for %D
-        recent_bars = list(bars)[-k_period:]
-        current_close = recent_bars[-1]["close"]
-        highest_high = max(bar["high"] for bar in recent_bars)
-        lowest_low = min(bar["low"] for bar in recent_bars)
-        
-        if highest_high == lowest_low:
-            k_value = 50.0
-        else:
-            k_value = ((current_close - lowest_low) / (highest_high - lowest_low)) * 100
-        
-        return {"k": k_value, "d": k_value}
-    
-    # Calculate %K values for the last d_period bars
-    k_values = []
     bars_list = list(bars)
     
-    for i in range(-d_period, 0):
-        # Get k_period bars ending at position i
-        end_idx = len(bars_list) + i + 1
+    # Calculate current %K
+    recent_bars = bars_list[-k_period:]
+    current_close = recent_bars[-1]["close"]
+    highest_high = max(bar["high"] for bar in recent_bars)
+    lowest_low = min(bar["low"] for bar in recent_bars)
+    
+    if highest_high == lowest_low:
+        current_k = 50.0
+    else:
+        current_k = ((current_close - lowest_low) / (highest_high - lowest_low)) * 100
+    
+    # If not enough bars for %D, return current %K for both
+    if len(bars) < k_period + d_period - 1:
+        return {"k": current_k, "d": current_k}
+    
+    # Calculate %K values for the last d_period periods to get %D
+    k_values = []
+    
+    # We need d_period %K values, so iterate backwards from current position
+    for i in range(d_period):
+        # End index for this %K calculation (working backwards)
+        end_idx = len(bars_list) - i
         start_idx = end_idx - k_period
         
         if start_idx < 0:
-            continue
+            # Not enough data for this %K value, skip it
+            break
             
         period_bars = bars_list[start_idx:end_idx]
-        current_close = period_bars[-1]["close"]
-        highest_high = max(bar["high"] for bar in period_bars)
-        lowest_low = min(bar["low"] for bar in period_bars)
+        close_price = period_bars[-1]["close"]
+        high_price = max(bar["high"] for bar in period_bars)
+        low_price = min(bar["low"] for bar in period_bars)
         
-        if highest_high == lowest_low:
+        if high_price == low_price:
             k = 50.0
         else:
-            k = ((current_close - lowest_low) / (highest_high - lowest_low)) * 100
+            k = ((close_price - low_price) / (high_price - low_price)) * 100
         
         k_values.append(k)
     
-    if not k_values:
-        return {"k": 50.0, "d": 50.0}
-    
-    # Current %K is the last calculated value
-    k_value = k_values[-1]
+    # If we don't have exactly d_period %K values, use what we have
+    if len(k_values) < d_period:
+        # Not enough %K values for proper %D, return current %K
+        return {"k": current_k, "d": current_k}
     
     # %D is the SMA of the last d_period %K values (industry standard)
+    # Reverse k_values since we calculated them backwards
+    k_values.reverse()
     d_value = sum(k_values) / len(k_values)
     
-    return {"k": k_value, "d": d_value}
+    return {"k": current_k, "d": d_value}
 
 
 def get_session_type(current_time) -> str:
