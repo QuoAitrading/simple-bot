@@ -7,21 +7,28 @@ CAPITULATION REVERSAL STRATEGY - SIMPLIFIED:
 Regime detection is now just a GO/NO-GO FILTER, not a parameter adjuster.
 
 TRADE these regimes:
-- HIGH_VOL_TRENDING: ATR is above average AND price making directional moves
-- HIGH_VOL_CHOPPY: ATR is above average BUT price chopping in range
+- NORMAL: Baseline regime, good for catching standard reversals
+- NORMAL_TRENDING: Clear trend to reverse from
+- HIGH_VOL_TRENDING: Strong trending moves that exhaust (best capitulation setups)
+- HIGH_VOL_CHOPPY: High volatility choppy regime (still has flushes)
 
 SKIP these regimes:
-- NORMAL_TRENDING: ATR is average, trending (not enough volatility for flushes)
-- NORMAL: ATR is average, no trend (fake moves)
 - NORMAL_CHOPPY: ATR is average, choppy (fake moves)
 - LOW_VOL_RANGING: ATR is below average (dead market, no flushes)
 - LOW_VOL_TRENDING: ATR is below average (dead market)
 
+OPTIMIZED FOR FAST DETECTION:
+- Minimum 34 bars required (20 baseline + 14 current) - ~34 minutes warmup
+- Adaptive baseline: uses 20-50 bars depending on availability
+- Progressive accuracy: more bars = more accurate, but 34 bars is sufficient
+- Previous version required 114 bars (114 minutes warmup)
+
 How to detect:
-- Calculate 20-period ATR
-- Calculate 50-period ATR average
-- If current ATR > 1.2x average, it is HIGH_VOL
-- Use ADX and price structure to determine trending vs choppy
+- Calculate 14-period ATR (current volatility)
+- Calculate baseline ATR from 20-50 historical bars (adaptive)
+- If current ATR > 1.15x baseline, it is HIGH_VOL
+- If current ATR < 0.85x baseline, it is LOW_VOL
+- Use price action analysis to determine trending vs choppy
 """
 
 import logging
@@ -56,18 +63,20 @@ class RegimeParameters:
 
 
 # Tradeable regimes for Capitulation Reversal Strategy
-# Only HIGH_VOL regimes have real flushes - others have fake moves, no edge
-TRADEABLE_REGIMES = {"HIGH_VOL_TRENDING", "HIGH_VOL_CHOPPY"}
+# Trade in trending regimes (normal and high vol), baseline NORMAL, and high vol choppy
+TRADEABLE_REGIMES = {"NORMAL", "NORMAL_TRENDING", "HIGH_VOL_TRENDING", "HIGH_VOL_CHOPPY"}
 
 
 def is_regime_tradeable(regime: str) -> bool:
     """
     Check if the current regime allows trading.
     
-    CAPITULATION REVERSAL: Only trade in HIGH_VOL regimes.
-    - HIGH_VOL_TRENDING: TRADE (big moves happen, good for this strategy)
-    - HIGH_VOL_CHOPPY: TRADE (still has flushes, just choppier)
-    - All others: SKIP (not enough volatility for real flushes)
+    CAPITULATION REVERSAL: Trade in trending regimes, baseline NORMAL, and high vol choppy.
+    - NORMAL: TRADE (baseline regime, good for catching standard reversals)
+    - NORMAL_TRENDING: TRADE (clear trend to reverse from)
+    - HIGH_VOL_TRENDING: TRADE (strong trending moves that exhaust - best capitulation setups)
+    - HIGH_VOL_CHOPPY: TRADE (high volatility choppy - still has flushes)
+    - All others: SKIP (normal choppy or low volatility regimes)
     
     Args:
         regime: Current market regime name
@@ -108,6 +117,11 @@ class RegimeDetector:
         """
         Detect current market regime from recent bars.
         
+        OPTIMIZED FOR FAST DETECTION:
+        - Minimum 34 bars required (20 baseline + 14 current)
+        - Uses adaptive baseline: 20-50 bars depending on availability
+        - Progressive accuracy: more bars = more accurate, but 34 bars is sufficient
+        
         Args:
             bars: Recent price bars (OHLCV data)
             current_atr: Current ATR value (from last 14 bars)
@@ -116,15 +130,34 @@ class RegimeDetector:
         Returns:
             RegimeParameters for the detected regime
         """
-        if len(bars) < 114:
-            # Not enough data - need 100 bars for baseline + 14 for current
+        # OPTIMIZED: Minimum 34 bars (20 baseline + 14 current) instead of 114
+        # This allows regime detection to start in ~34 minutes instead of 114 minutes
+        MINIMUM_BARS = 34  # 20 for baseline + 14 for current ATR
+        
+        if len(bars) < MINIMUM_BARS:
+            # Not enough data yet
             logger.debug(f"Insufficient bars ({len(bars)}) for regime detection, using NORMAL")
             return REGIME_DEFINITIONS["NORMAL"]
         
-        # Get bars: use 15-114 for baseline (100 bars), last 20 for price action
         all_bars = list(bars)
-        baseline_bars = all_bars[-114:-14]  # Bars 15-114 from end (100 bars)
-        recent_bars = all_bars[-20:]  # Last 20 for price action analysis
+        
+        # ADAPTIVE BASELINE CALCULATION:
+        # Use 20-50 bars for baseline depending on what's available
+        # More bars = more accurate, but 20 is sufficient for good detection
+        available_bars = len(all_bars)
+        
+        if available_bars >= 64:  # 50 baseline + 14 current
+            # Optimal: Use 50 bars for baseline (excludes last 14 for current ATR)
+            baseline_bars = all_bars[-64:-14]  # 50 bars
+        elif available_bars >= 44:  # 30 baseline + 14 current
+            # Good: Use 30 bars for baseline
+            baseline_bars = all_bars[-44:-14]  # 30 bars
+        else:  # 34-43 bars available
+            # Minimum: Use 20 bars for baseline
+            baseline_bars = all_bars[-34:-14]  # 20 bars
+        
+        # Use last 20 bars for price action (or fewer if not available)
+        recent_bars = all_bars[-min(20, len(all_bars)):]
         
         # Calculate baseline ATR from earlier period (NOT including current 14 bars)
         avg_atr = self._calculate_average_atr(baseline_bars, atr_period)
@@ -150,7 +183,8 @@ class RegimeDetector:
         regime = self._map_to_regime(volatility, price_action)
         
         logger.debug(f"Regime detected: {regime.name} (ATR ratio: {atr_ratio:.2f}, "
-                    f"volatility: {volatility}, action: {price_action})")
+                    f"volatility: {volatility}, action: {price_action}, "
+                    f"baseline_bars: {len(baseline_bars)})")
         
         return regime
     
@@ -289,8 +323,13 @@ def is_regime_tradeable(regime_name: str) -> bool:
     """
     Check if a regime is tradeable for the Capitulation Reversal Strategy.
     
-    The strategy only trades in HIGH_VOL regimes where real flushes happen.
-    Other regimes have fake moves with no follow-through.
+    The strategy trades in trending regimes, baseline NORMAL, and high vol choppy:
+    - NORMAL: Baseline regime, good for catching standard reversals
+    - NORMAL_TRENDING: Clear trend to reverse from
+    - HIGH_VOL_TRENDING: Strong trending moves that exhaust (best capitulation setups)
+    - HIGH_VOL_CHOPPY: High volatility choppy (still has flushes)
+    
+    Other regimes are skipped (normal choppy or low volatility).
     
     Args:
         regime_name: Name of the regime to check
