@@ -22832,12 +22832,11 @@
     }
   ],
   "stats": {
-    "total_signals": 521,
-    "taken": 311,
-    "skipped": 210,
-    "take_rate": 59.69289827255279,
-    "recent_pnl": -1475.0,
-    "recent_win_rate": 65.0,
-    "exploration_rate": 30.0
+    "total_signals": 0,
+    "taken": 0,
+    "skipped": 0,
+    "take_rate": 0,
+    "recent_pnl": 0,
+    "recent_win_rate": 0
   }
 }

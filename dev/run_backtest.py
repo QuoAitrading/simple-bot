@@ -153,6 +153,27 @@ def initialize_rl_brains_for_backtest(bot_config) -> Tuple[Any, ModuleType]:
     # Get symbol for symbol-specific experience folder
     symbol = bot_config.instrument
     
+    # CRITICAL: Update CONFIG with symbol-specific tick size/value
+    # The bot module loads CONFIG at import time, so we need to update it for each symbol
+    from symbol_specs import get_symbol_spec
+    symbol_spec = get_symbol_spec(symbol)
+    
+    # Update both CONFIG dict and _bot_config object in bot module
+    bot_module.CONFIG['instrument'] = symbol
+    bot_module.CONFIG['tick_size'] = symbol_spec.tick_size
+    bot_module.CONFIG['tick_value'] = symbol_spec.tick_value
+    bot_module._bot_config.instrument = symbol
+    bot_module._bot_config.tick_size = symbol_spec.tick_size
+    bot_module._bot_config.tick_value = symbol_spec.tick_value
+    
+    # Also update SYMBOL_SPEC in bot module
+    bot_module.SYMBOL_SPEC = symbol_spec
+    
+    # CRITICAL: Reset capitulation detector to use new symbol's tick size/value
+    # The detector is a singleton and needs to be recreated for each symbol
+    import capitulation_detector
+    capitulation_detector._detector = None
+    
     # Initialize RL brain with symbol-specific experience file
     # Using 30% exploration and 70% confidence threshold
     signal_exp_file = os.path.join(PROJECT_ROOT, f"experiences/{symbol}/signal_experience.json")
@@ -216,6 +237,13 @@ def run_backtest(args: argparse.Namespace) -> Dict[str, Any]:
     
     # Extract symbol once - used throughout this function
     symbol = bot_config.instrument
+    
+    # CRITICAL FIX: Update tick_size and tick_value based on symbol
+    # This ensures MES, MNQ, NQ use correct values (not ES defaults)
+    from symbol_specs import get_symbol_spec
+    symbol_spec = get_symbol_spec(symbol)
+    bot_config.tick_size = symbol_spec.tick_size
+    bot_config.tick_value = symbol_spec.tick_value
     
     # Convert config to dict early for header
     bot_config_dict = bot_config.to_dict()
