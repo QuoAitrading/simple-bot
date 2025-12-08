@@ -7,12 +7,12 @@ CAPITULATION REVERSAL STRATEGY - SIMPLIFIED:
 Regime detection is now just a GO/NO-GO FILTER, not a parameter adjuster.
 
 TRADE these regimes:
-- HIGH_VOL_TRENDING: ATR is above average AND price making directional moves
-- HIGH_VOL_CHOPPY: ATR is above average BUT price chopping in range
+- NORMAL: Baseline regime, good for catching standard reversals
+- NORMAL_TRENDING: Clear trend to reverse from
+- HIGH_VOL_TRENDING: Strong trending moves that exhaust (best capitulation setups)
 
 SKIP these regimes:
-- NORMAL_TRENDING: ATR is average, trending (not enough volatility for flushes)
-- NORMAL: ATR is average, no trend (fake moves)
+- HIGH_VOL_CHOPPY: Too choppy, hard to catch clean reversals
 - NORMAL_CHOPPY: ATR is average, choppy (fake moves)
 - LOW_VOL_RANGING: ATR is below average (dead market, no flushes)
 - LOW_VOL_TRENDING: ATR is below average (dead market)
@@ -63,18 +63,19 @@ class RegimeParameters:
 
 
 # Tradeable regimes for Capitulation Reversal Strategy
-# Only HIGH_VOL regimes have real flushes - others have fake moves, no edge
-TRADEABLE_REGIMES = {"HIGH_VOL_TRENDING", "HIGH_VOL_CHOPPY"}
+# Trade in trending regimes (normal and high vol) and baseline NORMAL regime
+TRADEABLE_REGIMES = {"NORMAL", "NORMAL_TRENDING", "HIGH_VOL_TRENDING"}
 
 
 def is_regime_tradeable(regime: str) -> bool:
     """
     Check if the current regime allows trading.
     
-    CAPITULATION REVERSAL: Only trade in HIGH_VOL regimes.
-    - HIGH_VOL_TRENDING: TRADE (big moves happen, good for this strategy)
-    - HIGH_VOL_CHOPPY: TRADE (still has flushes, just choppier)
-    - All others: SKIP (not enough volatility for real flushes)
+    CAPITULATION REVERSAL: Trade in trending regimes and baseline NORMAL.
+    - NORMAL: TRADE (baseline regime, good for catching standard reversals)
+    - NORMAL_TRENDING: TRADE (clear trend to reverse from)
+    - HIGH_VOL_TRENDING: TRADE (strong trending moves that exhaust - best capitulation setups)
+    - All others: SKIP (choppy or low volatility regimes)
     
     Args:
         regime: Current market regime name
@@ -321,8 +322,12 @@ def is_regime_tradeable(regime_name: str) -> bool:
     """
     Check if a regime is tradeable for the Capitulation Reversal Strategy.
     
-    The strategy only trades in HIGH_VOL regimes where real flushes happen.
-    Other regimes have fake moves with no follow-through.
+    The strategy trades in trending regimes and baseline NORMAL regime:
+    - NORMAL: Baseline regime, good for catching standard reversals
+    - NORMAL_TRENDING: Clear trend to reverse from
+    - HIGH_VOL_TRENDING: Strong trending moves that exhaust (best capitulation setups)
+    
+    Other regimes are skipped (choppy or low volatility).
     
     Args:
         regime_name: Name of the regime to check
