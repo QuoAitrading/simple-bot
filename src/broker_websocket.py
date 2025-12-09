@@ -98,6 +98,7 @@ class BrokerWebSocketStreamer:
         
         # Wait for connection to be fully ready before resubscribing
         # The hub needs time to initialize on the server side
+        # Note: This sleep is in SignalR's callback thread, not blocking the main event loop
         time.sleep(1)
         
         # Resubscribe to previous subscriptions after reconnection
@@ -111,6 +112,7 @@ class BrokerWebSocketStreamer:
         
         # Wait for connection to be fully ready before resubscribing
         # The hub needs time to initialize on the server side
+        # Note: This sleep is in SignalR's callback thread, not blocking the main event loop
         time.sleep(1)
         
         # Resubscribe to previous subscriptions after automatic reconnection
@@ -119,6 +121,11 @@ class BrokerWebSocketStreamer:
     def _resubscribe_to_all(self):
         """Resubscribe to all previous subscriptions after reconnection"""
         if not self.subscriptions:
+            return
+        
+        # Early check: verify connection is ready before attempting any subscriptions
+        if not self.is_connected or self.connection is None:
+            logger.warning("[WebSocket] Connection not ready, skipping resubscription")
             return
         
         logger.info(f"[WebSocket] Resubscribing to {len(self.subscriptions)} subscription(s)...")
@@ -130,7 +137,7 @@ class BrokerWebSocketStreamer:
             
             for attempt in range(max_retries):
                 try:
-                    # Verify connection is ready before sending
+                    # Verify connection is still ready before each attempt
                     if not self.is_connected or self.connection is None:
                         logger.warning(f"Connection not ready for resubscription (attempt {attempt + 1}/{max_retries})")
                         time.sleep(retry_delay)
@@ -252,7 +259,7 @@ class BrokerWebSocketStreamer:
         try:
             # Verify connection is ready before subscribing
             if not self.is_connected or self.connection is None:
-                logger.error(f"Cannot subscribe to quotes - connection not ready")
+                logger.error(f"Cannot subscribe to quotes for {symbol} - connection not ready")
                 return
             
             # Some brokers use contract IDs, others use symbols
@@ -275,7 +282,7 @@ class BrokerWebSocketStreamer:
         try:
             # Verify connection is ready before subscribing
             if not self.is_connected or self.connection is None:
-                logger.error(f"Cannot subscribe to trades - connection not ready")
+                logger.error(f"Cannot subscribe to trades for {symbol} - connection not ready")
                 return
             
             # Some brokers use contract IDs, others use symbols
@@ -297,7 +304,7 @@ class BrokerWebSocketStreamer:
         try:
             # Verify connection is ready before subscribing
             if not self.is_connected or self.connection is None:
-                logger.error(f"Cannot subscribe to depth - connection not ready")
+                logger.error(f"Cannot subscribe to depth for {symbol} - connection not ready")
                 return
             
             # Try common SignalR method variations
