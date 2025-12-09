@@ -328,8 +328,12 @@ class MarketDataRecorder:
         if not self.is_recording:
             return
         
+        # Count this tick regardless of whether we can parse it
+        self.stats[symbol]['ticks'] += 1
+        
         try:
-            timestamp = datetime.now()  # Use current timestamp for the trade
+            # Try to extract timestamp from trade data first
+            timestamp = None
             trade_price = None
             trade_size = 1
             
@@ -363,11 +367,30 @@ class MarketDataRecorder:
                               trade_dict.get('p') or trade_dict.get('Price'))
                 trade_size = (trade_dict.get('size') or trade_dict.get('volume') or 
                              trade_dict.get('v') or trade_dict.get('qty') or 1)
+                
+                # Try to extract timestamp from trade data
+                timestamp_str = (trade_dict.get('timestamp') or trade_dict.get('time') or 
+                                trade_dict.get('t') or trade_dict.get('Timestamp'))
+                if timestamp_str:
+                    try:
+                        if isinstance(timestamp_str, str):
+                            timestamp = datetime.fromisoformat(timestamp_str)
+                        elif isinstance(timestamp_str, (int, float)):
+                            # Unix timestamp in seconds or milliseconds
+                            if timestamp_str > 1e12:  # Milliseconds
+                                timestamp = datetime.fromtimestamp(timestamp_str / 1000.0)
+                            else:  # Seconds
+                                timestamp = datetime.fromtimestamp(timestamp_str)
+                    except:
+                        pass
+            
+            # Fallback to current time if we couldn't extract timestamp
+            if timestamp is None:
+                timestamp = datetime.now()
             
             # Update bar aggregation with this trade
             if trade_price is not None:
                 self._update_or_complete_bar(symbol, trade_price, trade_size, timestamp)
-                self.stats[symbol]['ticks'] += 1
             
         except Exception as e:
             logger.error(f"Error processing trade for {symbol}: {e}")
