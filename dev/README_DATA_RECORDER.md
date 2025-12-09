@@ -6,14 +6,16 @@ The Market Data Recorder allows you to capture live market data from your broker
 
 ### How to Launch
 
+Simply run the data recorder launcher directly:
+
 **Windows:**
 ```bash
-launch_recorder.bat
+python dev/DataRecorder_Launcher.py
 ```
 
 **Linux/Mac:**
 ```bash
-./launch_recorder.sh
+python3 dev/DataRecorder_Launcher.py
 ```
 
 ### Using the Data Recorder
@@ -34,8 +36,9 @@ Select one or more symbols you want to record:
 - **GC** - Gold Futures
 
 #### 3. Output Settings
-- **Output Directory**: Choose where to save the CSV files
+- **Output Directory**: By default, data is saved to `data/historical_data/`
 - Each symbol will be saved to a separate CSV file (e.g., `ES.csv`, `NQ.csv`)
+- You can change the output directory if needed by clicking "Browse"
 
 #### 4. Start Recording
 Look for the **large green button** that says:
@@ -64,11 +67,30 @@ The instruction label will change to show recording is in progress.
 
 Each symbol creates its own CSV file with the following columns:
 - `timestamp` - ISO format timestamp
-- `data_type` - Type of data (quote, trade, or depth)
+- `data_type` - Type of data (quote, trade, depth, or **GAP**)
 - `bid_price`, `bid_size` - Best bid information
 - `ask_price`, `ask_size` - Best ask information
 - `trade_price`, `trade_size`, `trade_side` - Trade information
 - `depth_level`, `depth_side`, `depth_price`, `depth_size` - Market depth
+
+**Gap Detection:**
+When a gap of more than 60 seconds is detected between data points, a **GAP row** is automatically written to the CSV:
+- `data_type` = "GAP"
+- `bid_price` = Gap duration (e.g., "Gap: 2.5h")
+- `bid_size` = From timestamp
+- `ask_price` = To timestamp
+
+Example GAP row:
+```
+2024-12-09T12:00:00,GAP,Gap: 2.5h,From: 2024-12-09T09:30:00,To: 2024-12-09T12:00:00,,,,,,,,,
+```
+
+**Key Features:**
+- **Separate file per symbol** for easy backtesting
+- **24/7 continuous operation** (runs through weekends and maintenance)
+- **Automatic gap marking** directly in CSV files
+- **Resume capability** - loads last timestamp and continues where it left off
+- **Unlimited symbols** - can record multiple symbols simultaneously
 
 ### Troubleshooting
 
@@ -89,9 +111,23 @@ Each symbol creates its own CSV file with the following columns:
 - The status log shows live updates
 
 **Q: Where are my CSV files?**
-- Check the output directory you specified
-- Files are named by symbol (e.g., `ES.csv`, `NQ.csv`)
+- By default, files are saved to `data/historical_data/` directory
+- Each symbol gets its own file (e.g., `ES.csv`, `NQ.csv`)
 - Files are created/appended when recording starts
+- You can check the output directory path in the GUI or change it using the Browse button
+
+**Q: What happens during weekends or maintenance windows?**
+- The recorder continues running and waiting for data
+- When data resumes, any gaps are automatically detected
+- GAP rows are written directly into the CSV files
+- The recorder is designed for 24/7 continuous operation
+
+**Q: How are gaps handled?**
+- If more than 60 seconds pass between data points, a gap is detected
+- A GAP row is written directly to the CSV file with type "GAP"
+- The row includes gap duration and from/to timestamps
+- Example: `2024-12-09T12:00:00,GAP,Gap: 2.5h,From: 2024-12-09T09:30:00,To: 2024-12-09T12:00:00,...`
+- These GAP rows are part of the CSV and will be visible during backtesting
 
 ### Need Help?
 

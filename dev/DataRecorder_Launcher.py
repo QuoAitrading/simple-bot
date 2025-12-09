@@ -258,8 +258,10 @@ class DataRecorderLauncher:
         file_frame = tk.Frame(output_frame, bg=self.colors['card'])
         file_frame.grid(row=0, column=1, sticky=tk.W, pady=5, padx=(10, 0))
         
+        # Default to data/historical_data directory for recorded market data
+        default_output_dir = str(Path(__file__).parent.parent / "data" / "historical_data")
         self.output_dir_var = tk.StringVar(
-            value=self.config.get("output_dir", "market_data")
+            value=self.config.get("output_dir", default_output_dir)
         )
         output_entry = tk.Entry(
             file_frame,
