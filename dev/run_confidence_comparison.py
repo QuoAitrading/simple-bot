@@ -121,32 +121,38 @@ def extract_metrics_from_output(output):
         line = line.strip()
         
         # Look for metrics in the summary
-        if 'Total Trades:' in line:
+        if 'Total Trades:' in line or 'Total trades:' in line:
             try:
-                metrics['total_trades'] = int(line.split(':')[1].strip())
-            except:
-                pass
-        elif 'Winning:' in line:
-            try:
-                metrics['winning_trades'] = int(line.split(':')[1].split()[0])
-            except:
-                pass
-        elif 'Losing:' in line:
-            try:
-                metrics['losing_trades'] = int(line.split(':')[1].split()[0])
-            except:
-                pass
+                # Format: "Total Trades:      508 (Wins: 338, Losses: 170, B/E: 0)"
+                parts = line.split('(')
+                total = parts[0].split(':')[1].strip().split()[0]
+                metrics['total_trades'] = int(total)
+                
+                # Extract wins and losses from parentheses
+                if len(parts) > 1:
+                    win_part = parts[1].split(',')[0]  # "Wins: 338"
+                    loss_part = parts[1].split(',')[1]  # " Losses: 170"
+                    metrics['winning_trades'] = int(win_part.split(':')[1].strip())
+                    metrics['losing_trades'] = int(loss_part.split(':')[1].strip())
+            except Exception as e:
+                print(f"Error parsing total trades: {e}")
         elif 'Win Rate:' in line:
             try:
                 metrics['win_rate'] = float(line.split(':')[1].strip().replace('%', ''))
             except:
                 pass
-        elif 'Total P&L:' in line:
+        elif 'Net P&L:' in line:
             try:
-                pnl_str = line.split(':')[1].strip().replace('$', '').replace(',', '')
+                # Format: "Net P&L:           $+10,315.86 (+20.63%)"
+                pnl_str = line.split(':')[1].strip().split()[0].replace('$', '').replace(',', '').replace('+', '')
                 metrics['total_pnl'] = float(pnl_str)
-            except:
-                pass
+                
+                # Extract return percentage
+                if '(' in line:
+                    ret_str = line.split('(')[1].split(')')[0].replace('%', '').replace('+', '')
+                    metrics['return_pct'] = float(ret_str)
+            except Exception as e:
+                print(f"Error parsing Net P&L: {e}")
         elif 'Avg Win:' in line:
             try:
                 avg_str = line.split(':')[1].strip().replace('$', '').replace(',', '')
@@ -166,14 +172,9 @@ def extract_metrics_from_output(output):
                 pass
         elif 'Max Drawdown:' in line:
             try:
+                # Format: "Max Drawdown:      $2,250.00 (3.71%)"
                 dd_str = line.split(':')[1].strip().split()[0].replace('$', '').replace(',', '')
                 metrics['max_drawdown'] = float(dd_str)
-            except:
-                pass
-        elif 'Return:' in line and '%' in line:
-            try:
-                ret_str = line.split(':')[1].strip().replace('%', '')
-                metrics['return_pct'] = float(ret_str)
             except:
                 pass
     
