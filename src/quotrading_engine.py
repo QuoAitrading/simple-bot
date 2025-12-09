@@ -5380,7 +5380,6 @@ def check_regime_change(symbol: str, current_price: float) -> None:
     # Log the regime change for awareness (informational only - no parameter changes)
     logger.info("=" * 60)
     logger.info(f"📊 REGIME CHANGE DETECTED: {last_regime_name} → {current_regime.name}")
-    logger.info("=" * 60)
     logger.info(f"  Time: {get_current_time().strftime('%H:%M:%S')}")
     logger.info(f"  Trade management: Active with fixed risk controls")
     logger.info("=" * 60)
