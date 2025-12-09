@@ -556,6 +556,10 @@ IDLE_STATUS_MESSAGE_INTERVAL = 300  # Show status message every 5 minutes (300 s
 # Regime Detection Constants
 DEFAULT_FALLBACK_ATR = 5.0  # Default ATR when calculation not possible (ES futures typical value)
 
+# BOS + FVG Strategy Constants
+BOS_FVG_STOP_BUFFER_TICKS = 2  # Ticks beyond FVG zone for stop placement
+BOS_FVG_PROFIT_TARGET_MULTIPLIER = 1.5  # Risk-reward ratio (1:1.5)
+
 # Global broker instance (replaces sdk_client)
 broker: Optional[BrokerInterface] = None
 
@@ -2858,7 +2862,12 @@ def process_bos_fvg(symbol: str) -> None:
     fvg_detector = state[symbol]["fvg_detector"]
     
     # Need detectors initialized and at least 3 bars for FVG
-    if bos_detector is None or fvg_detector is None or len(bars) < 3:
+    if bos_detector is None or fvg_detector is None:
+        if len(bars) >= 3:
+            logger.warning(f"BOS/FVG detectors not initialized for {symbol} - strategy may not work properly")
+        return
+    
+    if len(bars) < 3:
         return
     
     # Process BOS detection
@@ -3323,6 +3332,8 @@ def check_long_signal_conditions(symbol: str, prev_bar: Dict[str, Any],
         return False
     
     # Check if any FVG is filled by current bar
+    # Note: We take the first filled FVG (FIFO order) as per BOS+FVG strategy
+    # This ensures consistent behavior and prevents over-trading
     for fvg in unfilled_bullish_fvgs:
         if fvg_detector.is_fvg_filled(fvg, current_bar):
             # Found a filled FVG - this is our entry signal
@@ -3396,6 +3407,8 @@ def check_short_signal_conditions(symbol: str, prev_bar: Dict[str, Any],
         return False
     
     # Check if any FVG is filled by current bar
+    # Note: We take the first filled FVG (FIFO order) as per BOS+FVG strategy
+    # This ensures consistent behavior and prevents over-trading
     for fvg in unfilled_bearish_fvgs:
         if fvg_detector.is_fvg_filled(fvg, current_bar):
             # Found a filled FVG - this is our entry signal
@@ -3999,8 +4012,7 @@ def calculate_position_size(symbol: str, side: str, entry_price: float, rl_confi
     
     if entry_details and "fvg_bottom" in entry_details and "fvg_top" in entry_details:
         # Use FVG-based stops (BOS+FVG strategy)
-        stop_buffer_ticks = 2  # 2 ticks beyond FVG
-        stop_buffer = stop_buffer_ticks * tick_size
+        stop_buffer = BOS_FVG_STOP_BUFFER_TICKS * tick_size
         
         if side == "long":
             # Long: Stop 2 ticks below FVG bottom
@@ -4016,7 +4028,7 @@ def calculate_position_size(symbol: str, side: str, entry_price: float, rl_confi
         stop_distance = abs(entry_price - stop_price)
         ticks_at_risk = stop_distance / tick_size
         
-        logger.info(f"[BOS+FVG] Using FVG-based stop: {ticks_at_risk:.0f} ticks (2 ticks beyond FVG)")
+        logger.info(f"[BOS+FVG] Using FVG-based stop: {ticks_at_risk:.0f} ticks ({BOS_FVG_STOP_BUFFER_TICKS} ticks beyond FVG)")
     else:
         # Fallback to user's max loss setting (original capitulation strategy logic)
         if side == "long":
@@ -4479,9 +4491,9 @@ def execute_entry(symbol: str, side: str, entry_price: float) -> None:
     stop_distance_ticks = abs(actual_fill_price - stop_price) / CONFIG["tick_size"]
     
     # Calculate profit target for BOS+FVG strategy (1.5x risk-reward)
-    # Target = Entry ± (Risk × 1.5)
+    # Target = Entry ± (Risk × BOS_FVG_PROFIT_TARGET_MULTIPLIER)
     risk_distance = abs(actual_fill_price - stop_price)
-    profit_target_distance = risk_distance * 1.5
+    profit_target_distance = risk_distance * BOS_FVG_PROFIT_TARGET_MULTIPLIER
     
     if side == "long":
         profit_target_price = actual_fill_price + profit_target_distance
@@ -4515,12 +4527,12 @@ def execute_entry(symbol: str, side: str, entry_price: float) -> None:
     logger.info(f"  Entry Regime: {entry_regime.name}")
     logger.info(f"")
     logger.info(f"  Stop Loss:")
-    logger.info(f"    Rule: 2 ticks beyond FVG zone")
+    logger.info(f"    Rule: {BOS_FVG_STOP_BUFFER_TICKS} ticks beyond FVG zone")
     logger.info(f"    Stop Distance: {stop_distance_ticks:.1f} ticks (${abs(actual_fill_price - stop_price):.2f})")
     logger.info(f"    Stop Price: ${stop_price:.2f}")
     logger.info(f"")
     logger.info(f"  Profit Target:")
-    logger.info(f"    Rule: 1.5x risk-reward ratio")
+    logger.info(f"    Rule: {BOS_FVG_PROFIT_TARGET_MULTIPLIER}x risk-reward ratio")
     logger.info(f"    Target Distance: {profit_target_ticks:.1f} ticks (${profit_target_distance:.2f})")
     logger.info(f"    Target Price: ${profit_target_price:.2f}")
     logger.info(f"")

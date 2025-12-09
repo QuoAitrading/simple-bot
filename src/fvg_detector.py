@@ -81,14 +81,21 @@ class FVGDetector:
         # Check for Bullish FVG (gap size 2-20 ticks)
         if self.min_fvg_size_ticks <= bullish_gap_ticks <= self.max_fvg_size_ticks:
             self.fvg_id_counter += 1
+            
+            # Calculate expiry time (if timestamp available)
+            bar3_timestamp = bar3.get('timestamp')
+            expires_at = None
+            if bar3_timestamp is not None:
+                expires_at = bar3_timestamp + timedelta(minutes=self.fvg_expiry_minutes)
+            
             return {
                 'id': self.fvg_id_counter,
                 'type': 'bullish',
                 'top': bar3['low'],  # Top of the gap
                 'bottom': bar1['high'],  # Bottom of the gap
                 'size_ticks': bullish_gap_ticks,
-                'created_at': bar3.get('timestamp'),
-                'expires_at': bar3.get('timestamp') + timedelta(minutes=self.fvg_expiry_minutes) if bar3.get('timestamp') else None,
+                'created_at': bar3_timestamp,
+                'expires_at': expires_at,
                 'filled': False,
                 'traded': False,  # Prevents trading same FVG twice
                 'bar1': bar1,
@@ -99,14 +106,21 @@ class FVGDetector:
         # Check for Bearish FVG (gap size 2-20 ticks)
         if self.min_fvg_size_ticks <= bearish_gap_ticks <= self.max_fvg_size_ticks:
             self.fvg_id_counter += 1
+            
+            # Calculate expiry time (if timestamp available)
+            bar3_timestamp = bar3.get('timestamp')
+            expires_at = None
+            if bar3_timestamp is not None:
+                expires_at = bar3_timestamp + timedelta(minutes=self.fvg_expiry_minutes)
+            
             return {
                 'id': self.fvg_id_counter,
                 'type': 'bearish',
                 'top': bar1['low'],  # Top of the gap
                 'bottom': bar3['high'],  # Bottom of the gap
                 'size_ticks': bearish_gap_ticks,
-                'created_at': bar3.get('timestamp'),
-                'expires_at': bar3.get('timestamp') + timedelta(minutes=self.fvg_expiry_minutes) if bar3.get('timestamp') else None,
+                'created_at': bar3_timestamp,
+                'expires_at': expires_at,
                 'filled': False,
                 'traded': False,  # Prevents trading same FVG twice
                 'bar1': bar1,
