@@ -10,11 +10,9 @@ Captures:
 - Timestamps
 
 Output:
-- Single CSV file for all symbols
+- Separate CSV file per symbol
 - Append mode for continuous recording
 - Chronologically ordered
-- Gap detection and logging
-- Continuous streaming (24/7, including weekends and maintenance)
 """
 
 import csv
@@ -86,28 +84,21 @@ class MarketDataRecorder:
         # Recording state
         self.is_recording = False
         
-        # Single CSV file for all symbols
-        self.csv_file = None
-        self.csv_writer = None
-        self.csv_lock = threading.Lock()
+        # Per-symbol CSV files and writers
+        self.csv_files = {}  # symbol -> file handle
+        self.csv_writers = {}  # symbol -> csv.writer
+        self.csv_locks = {symbol: threading.Lock() for symbol in symbols}
         
         # Gap detection - track last timestamp per symbol
         self.last_timestamps = {symbol: None for symbol in symbols}
-        self.gap_threshold_seconds = 60  # Report gap if > 60 seconds between data points
+        self.gap_threshold_seconds = 60  # Write gap row if > 60 seconds between data points
         
-        # Statistics (combined for all symbols)
-        self.stats = {
+        # Statistics
+        self.stats = {symbol: {
             'quotes': 0,
             'trades': 0,
             'depth_updates': 0,
             'gaps_detected': 0
-        }
-        
-        # Per-symbol statistics
-        self.symbol_stats = {symbol: {
-            'quotes': 0,
-            'trades': 0,
-            'depth_updates': 0
         } for symbol in symbols}
         
         # Contract ID mapping (symbol -> contract_id)
@@ -215,11 +206,9 @@ class MarketDataRecorder:
                     self.log(f"✓ Subscribed to {symbol}")
                 
                 self.log("=" * 50)
-                self.log("RECORDING STARTED - CONTINUOUS MODE")
+                self.log("RECORDING STARTED")
                 self.log(f"Recording {len(self.contract_ids)} symbols: {', '.join(self.contract_ids.keys())}")
-                self.log(f"Output file: {self.output_dir / 'market_data.csv'}")
-                self.log("Recorder will run continuously (24/7)")
-                self.log("Gaps in data will be logged automatically")
+                self.log(f"Output directory: {self.output_dir}")
                 self.log("=" * 50)
                 
                 # Start statistics reporter
@@ -234,11 +223,10 @@ class MarketDataRecorder:
             raise
     
     def _initialize_csv(self):
-        """Initialize single CSV file for all symbols with headers (append mode)."""
+        """Initialize CSV files for each symbol with headers (append mode)."""
         headers = [
             'timestamp',
-            'symbol',  # NEW: Symbol identifier
-            'data_type',  # quote, trade, depth, or gap
+            'data_type',  # quote, trade, depth, or GAP
             'bid_price',
             'bid_size',
             'ask_price',
@@ -249,110 +237,102 @@ class MarketDataRecorder:
             'depth_level',
             'depth_side',  # bid or ask
             'depth_price',
-            'depth_size',
-            'notes'  # NEW: For gap information or other notes
+            'depth_size'
         ]
         
-        # Single CSV file for all symbols
-        csv_path = self.output_dir / "market_data.csv"
-        
-        # Check if file exists to determine if we need to write headers
-        file_exists = csv_path.exists()
-        
-        # Open in append mode to continue from where we left off
-        self.csv_file = open(csv_path, 'a', newline='')
-        self.csv_writer = csv.writer(self.csv_file)
-        
-        # Write header only if file is new
-        if not file_exists:
-            self.csv_writer.writerow(headers)
-            self.csv_file.flush()
-            self.log(f"✓ Created new CSV file: {csv_path}")
-        else:
-            self.log(f"✓ Appending to existing CSV file: {csv_path}")
-            # Load last timestamps from existing file for gap detection
-            self._load_last_timestamps(csv_path)
+        for symbol in self.symbols:
+            csv_path = self.output_dir / f"{symbol}.csv"
+            
+            # Check if file exists to determine if we need to write headers
+            file_exists = csv_path.exists()
+            
+            # Load last timestamp from existing file for gap detection
+            if file_exists:
+                self._load_last_timestamp(symbol, csv_path)
+            
+            # Open in append mode to continue from where we left off
+            self.csv_files[symbol] = open(csv_path, 'a', newline='')
+            self.csv_writers[symbol] = csv.writer(self.csv_files[symbol])
+            
+            # Write header only if file is new
+            if not file_exists:
+                self.csv_writers[symbol].writerow(headers)
+                self.csv_files[symbol].flush()
+                self.log(f"✓ Created new CSV file: {csv_path}")
+            else:
+                if self.last_timestamps[symbol]:
+                    self.log(f"✓ Appending to {csv_path} (last data: {self.last_timestamps[symbol].strftime('%Y-%m-%d %H:%M:%S')})")
+                else:
+                    self.log(f"✓ Appending to existing CSV file: {csv_path}")
     
-    def _load_last_timestamps(self, csv_path: Path):
-        """Load last timestamp for each symbol from existing CSV for gap detection."""
+    def _load_last_timestamp(self, symbol: str, csv_path: Path):
+        """Load last timestamp from existing CSV for gap detection."""
         try:
             with open(csv_path, 'r') as f:
-                # Read last 1000 lines to find most recent timestamp per symbol
+                # Read last few lines to find most recent timestamp
                 lines = f.readlines()
-                for line in reversed(lines[-1000:]):
+                for line in reversed(lines[-100:]):
                     try:
                         parts = line.strip().split(',')
-                        if len(parts) >= 2 and parts[0] != 'timestamp':
+                        if len(parts) > 1 and parts[0] != 'timestamp' and parts[1] != 'GAP':
                             timestamp_str = parts[0]
-                            symbol = parts[1]
-                            if symbol in self.last_timestamps and self.last_timestamps[symbol] is None:
-                                try:
-                                    self.last_timestamps[symbol] = datetime.fromisoformat(timestamp_str)
-                                except:
-                                    pass
+                            try:
+                                self.last_timestamps[symbol] = datetime.fromisoformat(timestamp_str)
+                                break
+                            except:
+                                pass
                     except:
                         continue
-                    
-                    # Stop if we've found timestamps for all symbols
-                    if all(ts is not None for ts in self.last_timestamps.values()):
-                        break
-            
-            # Log loaded timestamps
-            for symbol, ts in self.last_timestamps.items():
-                if ts:
-                    self.log(f"  Last {symbol} data: {ts.strftime('%Y-%m-%d %H:%M:%S')}")
         except Exception as e:
-            self.log(f"Could not load last timestamps: {e}")
+            logger.debug(f"Could not load last timestamp for {symbol}: {e}")
     
-    def _check_for_gap(self, symbol: str, current_timestamp: datetime):
-        """Check if there's a significant gap in data and log it."""
+    def _check_and_write_gap(self, symbol: str, current_timestamp: datetime):
+        """Check for gap and write GAP row to CSV if detected."""
         last_ts = self.last_timestamps.get(symbol)
         if last_ts:
             gap_seconds = (current_timestamp - last_ts).total_seconds()
             if gap_seconds > self.gap_threshold_seconds:
-                # Significant gap detected - log it
+                # Significant gap detected - write GAP row to CSV
                 gap_minutes = gap_seconds / 60
                 gap_hours = gap_minutes / 60
                 
                 if gap_hours >= 1:
-                    gap_str = f"{gap_hours:.1f} hours"
+                    gap_str = f"{gap_hours:.1f}h"
                 else:
-                    gap_str = f"{gap_minutes:.1f} minutes"
+                    gap_str = f"{gap_minutes:.1f}m"
                 
-                self.log(f"⚠️  GAP DETECTED for {symbol}: {gap_str} since last data point")
-                
-                # Write gap marker to CSV
-                with self.csv_lock:
-                    gap_row = [
-                        current_timestamp.isoformat(),
-                        symbol,
-                        'gap',
-                        '', '', '', '', '', '', '', '', '', '', '',
-                        f"Gap of {gap_str} (from {last_ts.isoformat()} to {current_timestamp.isoformat()})"
-                    ]
-                    self.csv_writer.writerow(gap_row)
-                    self.csv_file.flush()
-                    self.stats['gaps_detected'] += 1
+                # Write GAP marker row
+                gap_row = [
+                    current_timestamp.isoformat(),
+                    'GAP',
+                    f'Gap: {gap_str}',
+                    f'From: {last_ts.isoformat()}',
+                    f'To: {current_timestamp.isoformat()}',
+                    '', '', '', '', '', '', '', ''
+                ]
+                self.csv_writers[symbol].writerow(gap_row)
+                self.csv_files[symbol].flush()
+                self.stats[symbol]['gaps_detected'] += 1
+                self.log(f"⚠️  GAP in {symbol}: {gap_str} gap from {last_ts.strftime('%H:%M:%S')} to {current_timestamp.strftime('%H:%M:%S')}")
         
         # Update last timestamp
         self.last_timestamps[symbol] = current_timestamp
     
     def _write_csv_row(self, symbol: str, data: Dict[str, Any]):
-        """Write a row to the CSV file (thread-safe, single file for all symbols)."""
-        with self.csv_lock:
-            if self.csv_writer and self.is_recording:
-                # Check for gaps before writing
+        """Write a row to the symbol's CSV file (thread-safe) with gap detection."""
+        with self.csv_locks[symbol]:
+            if symbol in self.csv_writers and self.is_recording:
+                # Check for gaps before writing data
                 timestamp_str = data.get('timestamp', '')
                 if timestamp_str:
                     try:
                         current_ts = datetime.fromisoformat(timestamp_str)
-                        self._check_for_gap(symbol, current_ts)
+                        self._check_and_write_gap(symbol, current_ts)
                     except:
                         pass
                 
                 row = [
                     timestamp_str,
-                    symbol,  # Add symbol to row
                     data.get('data_type', ''),
                     data.get('bid_price', ''),
                     data.get('bid_size', ''),
@@ -364,15 +344,13 @@ class MarketDataRecorder:
                     data.get('depth_level', ''),
                     data.get('depth_side', ''),
                     data.get('depth_price', ''),
-                    data.get('depth_size', ''),
-                    data.get('notes', '')  # Add notes field
+                    data.get('depth_size', '')
                 ]
-                self.csv_writer.writerow(row)
+                self.csv_writers[symbol].writerow(row)
                 
                 # Flush periodically to ensure data is written
-                total_records = sum(self.stats.values())
-                if total_records % CSV_FLUSH_FREQUENCY == 0:
-                    self.csv_file.flush()
+                if sum(self.stats[symbol].values()) % CSV_FLUSH_FREQUENCY == 0:
+                    self.csv_files[symbol].flush()
     
     def _on_quote(self, symbol: str, data: Any):
         """Handle quote data."""
@@ -408,8 +386,7 @@ class MarketDataRecorder:
             }
             
             self._write_csv_row(symbol, row_data)
-            self.stats['quotes'] += 1
-            self.symbol_stats[symbol]['quotes'] += 1
+            self.stats[symbol]['quotes'] += 1
             
         except Exception as e:
             logger.error(f"Error processing quote for {symbol}: {e}")
@@ -443,8 +420,7 @@ class MarketDataRecorder:
             }
             
             self._write_csv_row(symbol, row_data)
-            self.stats['trades'] += 1
-            self.symbol_stats[symbol]['trades'] += 1
+            self.stats[symbol]['trades'] += 1
             
         except Exception as e:
             logger.error(f"Error processing trade for {symbol}: {e}")
@@ -480,8 +456,7 @@ class MarketDataRecorder:
                         }
                         self._write_csv_row(symbol, row_data)
             
-            self.stats['depth_updates'] += 1
-            self.symbol_stats[symbol]['depth_updates'] += 1
+            self.stats[symbol]['depth_updates'] += 1
             
         except Exception as e:
             logger.error(f"Error processing depth for {symbol}: {e}")
@@ -492,17 +467,15 @@ class MarketDataRecorder:
             while self.is_recording:
                 time.sleep(STATS_REPORT_INTERVAL_SECONDS)
                 if self.is_recording:
-                    # Report combined stats
-                    self.log(
-                        f"📊 Total: Quotes={self.stats['quotes']}, Trades={self.stats['trades']}, "
-                        f"Depth={self.stats['depth_updates']}, Gaps={self.stats['gaps_detected']}"
-                    )
+                    total_quotes = sum(s['quotes'] for s in self.stats.values())
+                    total_trades = sum(s['trades'] for s in self.stats.values())
+                    total_depth = sum(s['depth_updates'] for s in self.stats.values())
+                    total_gaps = sum(s['gaps_detected'] for s in self.stats.values())
                     
-                    # Report per-symbol stats
-                    for symbol, stats in self.symbol_stats.items():
-                        self.log(
-                            f"  {symbol}: Q={stats['quotes']}, T={stats['trades']}, D={stats['depth_updates']}"
-                        )
+                    self.log(
+                        f"📊 Stats: Q={total_quotes}, T={total_trades}, "
+                        f"D={total_depth}, Gaps={total_gaps}"
+                    )
         
         stats_thread = threading.Thread(target=report_stats, daemon=True)
         stats_thread.start()
@@ -512,16 +485,16 @@ class MarketDataRecorder:
         self.log("Stopping recorder...")
         self.is_recording = False
         
-        # Close CSV file
-        if self.csv_file:
+        # Close all CSV files
+        for symbol, csv_file in self.csv_files.items():
             try:
-                with self.csv_lock:
-                    self.csv_file.flush()
-                    self.csv_file.close()
-                csv_path = self.output_dir / "market_data.csv"
+                with self.csv_locks[symbol]:
+                    csv_file.flush()
+                    csv_file.close()
+                csv_path = self.output_dir / f"{symbol}.csv"
                 self.log(f"✓ CSV file saved: {csv_path}")
             except Exception as e:
-                self.log(f"⚠ Error closing file: {e}")
+                self.log(f"⚠ Error closing file for {symbol}: {e}")
         
         # Disconnect WebSocket
         if self.websocket:
@@ -543,11 +516,10 @@ class MarketDataRecorder:
         self.log("=" * 50)
         self.log("RECORDING STOPPED")
         self.log("Final Statistics:")
-        self.log(f"  Total: Quotes={self.stats['quotes']}, Trades={self.stats['trades']}, "
-                f"Depth={self.stats['depth_updates']}, Gaps Detected={self.stats['gaps_detected']}")
-        for symbol, stats in self.symbol_stats.items():
+        for symbol, stats in self.stats.items():
             self.log(
                 f"  {symbol}: Quotes={stats['quotes']}, "
-                f"Trades={stats['trades']}, Depth={stats['depth_updates']}"
+                f"Trades={stats['trades']}, Depth={stats['depth_updates']}, "
+                f"Gaps={stats['gaps_detected']}"
             )
         self.log("=" * 50)
