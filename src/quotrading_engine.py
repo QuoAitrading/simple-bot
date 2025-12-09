@@ -4004,10 +4004,11 @@ def calculate_position_size(symbol: str, side: str, entry_price: float, rl_confi
     
     if atr is not None:
         entry_regime = regime_detector.detect_regime(bars, atr, CONFIG.get("atr_period", 14))
-    # STEP 3: Calculate stop price based on BOS+FVG strategy or fallback to max loss
+    # STEP 3: Calculate stop price based on BOS+FVG strategy with safety net
     # BOS+FVG Strategy: Stop is 2 ticks beyond FVG zone
     # - Long: Stop 2 ticks below FVG bottom
     # - Short: Stop 2 ticks above FVG top
+    # SAFETY NET: GUI max loss per trade acts as a cap on risk
     entry_details = state[symbol].get("entry_details", {})
     
     if entry_details and "fvg_bottom" in entry_details and "fvg_top" in entry_details:
@@ -4016,19 +4017,43 @@ def calculate_position_size(symbol: str, side: str, entry_price: float, rl_confi
         
         if side == "long":
             # Long: Stop 2 ticks below FVG bottom
-            stop_price = entry_details["fvg_bottom"] - stop_buffer
+            fvg_stop_price = entry_details["fvg_bottom"] - stop_buffer
         else:  # short
             # Short: Stop 2 ticks above FVG top
-            stop_price = entry_details["fvg_top"] + stop_buffer
+            fvg_stop_price = entry_details["fvg_top"] + stop_buffer
         
         # Round to nearest valid tick
-        stop_price = round_to_tick(stop_price)
+        fvg_stop_price = round_to_tick(fvg_stop_price)
         
-        # Calculate actual stop distance
-        stop_distance = abs(entry_price - stop_price)
-        ticks_at_risk = stop_distance / tick_size
+        # Calculate FVG-based stop distance
+        fvg_stop_distance = abs(entry_price - fvg_stop_price)
+        fvg_ticks_at_risk = fvg_stop_distance / tick_size
+        fvg_risk_dollars = fvg_ticks_at_risk * tick_value
         
-        logger.info(f"[BOS+FVG] Using FVG-based stop: {ticks_at_risk:.0f} ticks ({BOS_FVG_STOP_BUFFER_TICKS} ticks beyond FVG)")
+        # SAFETY NET: Apply GUI max loss per trade as a cap
+        # If FVG stop would risk more than user's configured max, use the max instead
+        if fvg_risk_dollars > max_stop_dollars:
+            logger.warning(f"[SAFETY NET] FVG stop (${fvg_risk_dollars:.2f}) exceeds max loss per trade (${max_stop_dollars:.2f})")
+            logger.warning(f"[SAFETY NET] Capping stop at user's configured maximum")
+            
+            # Use the GUI max loss setting as the stop
+            if side == "long":
+                stop_price = entry_price - stop_distance
+            else:  # short
+                stop_price = entry_price + stop_distance
+            
+            stop_price = round_to_tick(stop_price)
+            stop_distance = abs(entry_price - stop_price)
+            ticks_at_risk = stop_distance / tick_size
+            
+            logger.info(f"[SAFETY NET] Using capped stop: {ticks_at_risk:.0f} ticks (${max_stop_dollars:.2f})")
+        else:
+            # FVG stop is within safe limits, use it
+            stop_price = fvg_stop_price
+            stop_distance = fvg_stop_distance
+            ticks_at_risk = fvg_ticks_at_risk
+            
+            logger.info(f"[BOS+FVG] Using FVG-based stop: {ticks_at_risk:.0f} ticks (${fvg_risk_dollars:.2f}) - within max loss limit")
     else:
         # Fallback to user's max loss setting (original capitulation strategy logic)
         if side == "long":
@@ -4527,9 +4552,10 @@ def execute_entry(symbol: str, side: str, entry_price: float) -> None:
     logger.info(f"  Entry Regime: {entry_regime.name}")
     logger.info(f"")
     logger.info(f"  Stop Loss:")
-    logger.info(f"    Rule: {BOS_FVG_STOP_BUFFER_TICKS} ticks beyond FVG zone")
+    logger.info(f"    Rule: {BOS_FVG_STOP_BUFFER_TICKS} ticks beyond FVG zone (capped by max loss per trade)")
     logger.info(f"    Stop Distance: {stop_distance_ticks:.1f} ticks (${abs(actual_fill_price - stop_price):.2f})")
     logger.info(f"    Stop Price: ${stop_price:.2f}")
+    logger.info(f"    Safety Net: GUI max loss per trade = ${max_stop_dollars:.2f}")
     logger.info(f"")
     logger.info(f"  Profit Target:")
     logger.info(f"    Rule: {BOS_FVG_PROFIT_TARGET_MULTIPLIER}x risk-reward ratio")
