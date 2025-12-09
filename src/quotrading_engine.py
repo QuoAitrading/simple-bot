@@ -4552,6 +4552,8 @@ def execute_entry(symbol: str, side: str, entry_price: float) -> None:
         "entry_time": entry_time,
         "order_id": order.get("order_id"),
         "order_type_used": order_type_used,  # Track for exit optimization
+        "stop_order_id": None,  # Will be set after stop order is placed
+        "target_order_id": None,  # Will be set after target order is placed
         # Signal & RL Information - Preserved for partial fills and exits
         "entry_rl_confidence": rl_confidence,  # RL confidence at entry (for tracking)
         "entry_rl_state": state[symbol].get("entry_rl_state"),  # RL market state
@@ -4603,6 +4605,20 @@ def execute_entry(symbol: str, side: str, entry_price: float) -> None:
         state[symbol]["position"]["stop_order_id"] = stop_order.get("order_id")
         logger.info(f"  [OK] Stop loss placed and validated: ${stop_price:.2f}")
         logger.info(f"     Stop Order ID: {stop_order.get('order_id')}")
+        
+        # ===== BOS+FVG: Place Profit Target Limit Order =====
+        # Automatically place profit target order at 1.5x risk-reward
+        target_side = "SELL" if side == "long" else "BUY"
+        target_order = place_limit_order(symbol, target_side, contracts, profit_target_price)
+        
+        if target_order:
+            state[symbol]["position"]["target_order_id"] = target_order.get("order_id")
+            logger.info(f"  [OK] Profit target placed and validated: ${profit_target_price:.2f}")
+            logger.info(f"     Target Order ID: {target_order.get('order_id')}")
+        else:
+            # WARNING: Target order failed but position is still protected by stop
+            logger.warning(f"  [WARN] Profit target order failed to place at ${profit_target_price:.2f}")
+            logger.warning(f"  Position still protected by stop loss - will use manual exit monitoring")
     else:
         # CRITICAL: Stop order rejected - this is DANGEROUS!
         logger.error(SEPARATOR_LINE)
@@ -6279,14 +6295,23 @@ def execute_exit(symbol: str, exit_price: float, reason: str) -> None:
     if not position["active"]:
         return
     
-    # Cancel stop order BEFORE exiting position (prevents orphaned stop orders)
+    # Cancel stop and target orders BEFORE exiting position (prevents orphaned orders)
     stop_order_id = position.get("stop_order_id")
     if stop_order_id:
         cancel_success = cancel_order(symbol, stop_order_id)
         if cancel_success:
             pass
         else:
-            logger.warning(f"ΓÜá Failed to cancel stop order {stop_order_id} - may remain active!")
+            logger.warning(f"⚠ Failed to cancel stop order {stop_order_id} - may remain active!")
+    
+    # Cancel profit target order if it exists
+    target_order_id = position.get("target_order_id")
+    if target_order_id:
+        cancel_success = cancel_order(symbol, target_order_id)
+        if cancel_success:
+            pass
+        else:
+            logger.warning(f"⚠ Failed to cancel target order {target_order_id} - may remain active!")
     
     exit_time = get_current_time()  # Use get_current_time() for backtest compatibility
     
