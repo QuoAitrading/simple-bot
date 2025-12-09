@@ -48,6 +48,10 @@ class BrokerWebSocketStreamer:
         # Configuration constants
         self._HUB_INIT_DELAY = 1.0  # Seconds to wait for hub initialization
         self._RETRY_BASE_DELAY = 0.5  # Base delay for exponential backoff
+        self._MAX_RESUBSCRIBE_RETRIES = 3  # Maximum resubscription attempts
+        self._INITIAL_CONNECTION_DELAY = 2.0  # Seconds to wait after connection start
+        self._RECONNECT_BASE_DELAY = 2  # Base delay for reconnection backoff
+        self._RECONNECT_MAX_DELAY = 30  # Maximum delay for reconnection backoff
     
     def _is_connection_ready(self) -> bool:
         """Check if connection is ready for sending messages"""
@@ -91,7 +95,7 @@ class BrokerWebSocketStreamer:
             
             # Wait longer for connection to fully establish
             # This allows the SignalR hub to fully initialize before we try to subscribe
-            time.sleep(2)
+            time.sleep(self._INITIAL_CONNECTION_DELAY)
             
             self.is_connected = True
             return True
@@ -146,9 +150,10 @@ class BrokerWebSocketStreamer:
         
         logger.info(f"[WebSocket] Resubscribing to {len(self.subscriptions)} subscription(s)...")
         
-        for sub_type, symbol in self.subscriptions:
+        # Iterate over a copy to avoid issues if subscriptions are modified during iteration
+        for sub_type, symbol in self.subscriptions.copy():
             # Retry logic for resubscription with exponential backoff
-            max_retries = 3
+            max_retries = self._MAX_RESUBSCRIBE_RETRIES
             
             for attempt in range(max_retries):
                 try:
@@ -190,7 +195,7 @@ class BrokerWebSocketStreamer:
         # Unexpected disconnect - attempt reconnect
         if was_connected and self.reconnect_attempt < self.max_reconnect_attempts:
             self.reconnect_attempt += 1
-            wait_time = min(2 ** self.reconnect_attempt, 30)  # Exponential backoff (2s, 4s, 8s...)
+            wait_time = min(self._RECONNECT_BASE_DELAY ** self.reconnect_attempt, self._RECONNECT_MAX_DELAY)  # Exponential backoff
             logger.info(f"[WebSocket] Connection closed unexpectedly - reconnecting in {wait_time}s (attempt {self.reconnect_attempt}/{self.max_reconnect_attempts})...")
             time.sleep(wait_time)
             
