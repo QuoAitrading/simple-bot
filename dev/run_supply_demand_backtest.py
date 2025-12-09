@@ -19,7 +19,7 @@ import os
 import logging
 import csv
 from datetime import datetime, timedelta
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Tuple
 from collections import deque
 import pytz
 

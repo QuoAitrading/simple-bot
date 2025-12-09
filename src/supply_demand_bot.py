@@ -31,7 +31,7 @@ Exit Rules:
 
 import logging
 from datetime import datetime, timedelta
-from typing import List, Dict, Optional, Tuple
+from typing import List, Dict, Optional, Tuple, Deque
 from dataclasses import dataclass
 from collections import deque
 import pytz
@@ -181,7 +181,7 @@ class SupplyDemandStrategy:
         self.logger = logger or logging.getLogger(__name__)
         
         # State
-        self.candles: deque[Candle] = deque(maxlen=lookback_period + 100)
+        self.candles: Deque[Candle] = deque(maxlen=lookback_period + 100)
         self.supply_zones: List[Zone] = []
         self.demand_zones: List[Zone] = []
         self.current_candle_index = 0
