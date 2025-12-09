@@ -79,52 +79,59 @@ python dev/run_supply_demand_backtest.py --days 30 --symbol ES --contracts 2 --i
 
 ## Performance Results
 
-**30-Day Backtest on ES (Nov 9 - Dec 5, 2025)** - Optimized Parameters
+**30-Day Backtest on ES (Nov 9 - Dec 5, 2025)** - LuxAlgo-Style Quality Zones
 
-- **Total Trades**: 27 (more than double with optimized parameters)
-- **Win Rate**: 44.4% (12 wins, 15 losses)
-- **Total P&L**: **$1,851.25** (4.8x improvement)
-- **Average Win**: $367.19
-- **Average Loss**: -$165.83
-- **Profit Factor**: **1.77** (strong positive edge)
-- **Max Drawdown**: 2.50%
-- **Return**: 3.70%
-- **Average Trade Duration**: 21.5 minutes
+- **Total Trades**: 17 (focused on highest-quality setups only)
+- **Win Rate**: 35.3% (6 wins, 11 losses)
+- **Total P&L**: **$732.50**
+- **Average Win**: $437.50
+- **Average Loss**: -$168.18
+- **Profit Factor**: **1.42** (consistent positive edge)
+- **Max Drawdown**: 1.61%
+- **Return**: 1.47%
+- **Average Trade Duration**: 16.1 minutes
 
 **Strategy Statistics**
-- Zones Created: 171 (LuxAlgo-style order blocks with 8-hour lifetime)
-- Signals Generated: 41
-- Signal-to-Trade Ratio: 66% (27/41 signals executed)
+- **Zones Created**: 58 (only STRONG zones, like LuxAlgo - typically 3-6 active at once)
+- Signals Generated: 23
+- Signal-to-Trade Ratio: 74% (17/23 signals executed)
 
-**Key Improvements from Default Parameters:**
-- Extended zone lifetime from 3.3 hours to 8 hours (allows price more time to return)
-- Slightly relaxed impulse requirement (1.4x vs 1.5x) for more zone detection
-- Reduced rejection wick requirement (28% vs 30%) for more signal sensitivity
-- Result: 2.25x more trades with better win rate and profit factor
+**LuxAlgo-Style Zone Quality:**
+This matches LuxAlgo's approach of showing only the STRONGEST, most significant institutional levels:
+- Minimum 1.6x average candle impulse (strong moves only)
+- Minimum 6 tick impulse size (filters out noise)
+- Maximum 12 active zones (6 supply + 6 demand - keeps charts clean)
+- 2-day zone persistence (like LuxAlgo's major levels)
+- Only replaces zones with stronger ones when limit reached
+
+**Result**: Clean charts with 3-6 key zones visible at any time, matching LuxAlgo's behavior.
 
 ## Strategy Parameters
 
-Optimized parameters (configurable in `SupplyDemandStrategy` constructor):
+LuxAlgo-Style Parameters (configurable in `SupplyDemandStrategy` constructor):
 
 ```python
 tick_size = 0.25              # ES tick size
 tick_value = 12.50            # ES tick value ($12.50 per tick)
 lookback_period = 20          # Bars for average range calculation
-impulse_multiplier = 1.4      # Impulse must be 1.4x avg range (balanced)
-min_zone_ticks = 3            # Minimum zone thickness (slightly more sensitive)
-max_zone_ticks = 25           # Maximum zone thickness (allows larger zones)
-rejection_wick_pct = 0.28     # Rejection wick must be 28% of candle (balanced)
+impulse_multiplier = 1.6      # Impulse must be 1.6x avg range (STRONG moves only)
+min_zone_ticks = 4            # Minimum zone thickness (quality filter)
+max_zone_ticks = 30           # Maximum zone thickness
+rejection_wick_pct = 0.25     # Rejection wick must be 25% of candle
 stop_loss_ticks = 2           # Stop placement beyond zone
 risk_reward_ratio = 1.5       # Target is 1.5x risk (1.5:1 R:R)
-max_zone_age = 480            # Zone expires after 480 candles (8 hours on 1-min)
-max_zone_tests = 4            # Zone deleted after 4 tests
+max_zone_age = 2880           # Zone expires after 2880 candles (2 days on 1-min)
+max_zone_tests = 3            # Zone deleted after 3 tests
+max_active_zones = 12         # Maximum 12 zones total (6 supply + 6 demand)
+min_impulse_ticks = 6         # Minimum impulse size (6 ticks = strong move)
 ```
 
-**Parameter Tuning Philosophy:**
-- Zones last 8 hours to give price adequate time to return and test levels
-- Slightly relaxed impulse (1.4x) and rejection (28%) thresholds to capture more valid setups
-- Maintains quality through zone thickness validation and strong R:R ratio
-- Balances trade frequency with win rate for optimal profitability
+**Quality Over Quantity Philosophy:**
+- Only the STRONGEST zones are created (1.6x impulse + 6 tick minimum)
+- Maximum 12 zones active at once (keeps charts clean like LuxAlgo)
+- Weaker zones are replaced by stronger ones when limit is reached
+- Zones persist for 2 days to allow price time to return
+- Focus on major institutional levels, not every small move
 stop_loss_ticks = 2           # Stop placement beyond zone
 risk_reward_ratio = 1.5       # Target is 1.5x risk
 max_zone_age = 200            # Zone expires after 200 candles

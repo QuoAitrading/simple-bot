@@ -149,31 +149,38 @@ class SupplyDemandStrategy:
         tick_size: float = 0.25,
         tick_value: float = 1.25,
         lookback_period: int = 20,
-        impulse_multiplier: float = 1.4,  # Balanced: not too strict, not too loose
-        min_zone_ticks: float = 3,  # Allow slightly smaller zones
-        max_zone_ticks: float = 25,  # Allow slightly larger zones
-        rejection_wick_pct: float = 0.28,  # Slightly reduced from 0.30
+        impulse_multiplier: float = 1.6,  # 1.6x for strong but not extreme
+        min_zone_ticks: float = 4,
+        max_zone_ticks: float = 30,
+        rejection_wick_pct: float = 0.25,
         stop_loss_ticks: float = 2,
         risk_reward_ratio: float = 1.5,
-        max_zone_age: int = 480,  # 8 hours on 1-min data (balanced persistence)
-        max_zone_tests: int = 4,  # Increased from 3
+        max_zone_age: int = 2880,  # 2 days (48 hours) on 1-min data
+        max_zone_tests: int = 3,
+        max_active_zones: int = 12,  # Maximum 12 zones active at once (6 supply + 6 demand)
+        min_impulse_ticks: float = 6,  # Impulse must be at least 6 ticks (balanced)
         logger: Optional[logging.Logger] = None
     ):
         """
-        Initialize the Supply/Demand strategy (LuxAlgo-style)
+        Initialize the Supply/Demand strategy (LuxAlgo-style - STRONG zones only)
+        
+        LuxAlgo only shows the STRONGEST, most significant zones where heavy institutional
+        activity occurred. Not every small impulse creates a zone - only major levels.
         
         Args:
             tick_size: Minimum price movement (e.g., 0.25 for ES)
             tick_value: Dollar value per tick (e.g., 12.50 for ES, 1.25 for MES)
             lookback_period: Bars to use for average candle range calculation
-            impulse_multiplier: Impulse must be this many times avg candle range (1.4x)
-            min_zone_ticks: Minimum zone thickness in ticks (3 ticks)
-            max_zone_ticks: Maximum zone thickness in ticks (25 ticks)
-            rejection_wick_pct: Minimum wick size as % of total candle (28%)
+            impulse_multiplier: Impulse must be 1.6x avg range (strong moves)
+            min_zone_ticks: Minimum zone thickness (4 ticks for quality)
+            max_zone_ticks: Maximum zone thickness (30 ticks)
+            rejection_wick_pct: Minimum wick size as % of total candle (25%)
             stop_loss_ticks: Ticks to place stop beyond zone
             risk_reward_ratio: Target is this times the risk distance
-            max_zone_age: Maximum age of zone in candles (480 = 8 hours)
-            max_zone_tests: Maximum number of times zone can be tested (4)
+            max_zone_age: Maximum age of zone in candles (2880 = 2 days)
+            max_zone_tests: Maximum number of times zone can be tested (3)
+            max_active_zones: Maximum active zones at once (12 total: 6 supply + 6 demand)
+            min_impulse_ticks: Minimum impulse size in ticks (6 ticks = strong move)
             logger: Optional logger instance
         """
         self.tick_size = tick_size
@@ -187,6 +194,8 @@ class SupplyDemandStrategy:
         self.risk_reward_ratio = risk_reward_ratio
         self.max_zone_age = max_zone_age
         self.max_zone_tests = max_zone_tests
+        self.max_active_zones = max_active_zones
+        self.min_impulse_ticks = min_impulse_ticks
         
         self.logger = logger or logging.getLogger(__name__)
         
@@ -280,71 +289,125 @@ class SupplyDemandStrategy:
         
         # Check for SUPPLY zone (up trend → base → drop)
         if impulse_candle.is_bearish and impulse_candle.body_size >= avg_range * self.impulse_multiplier:
-            # Check if we have upward movement before base (at least 1 bullish in last 2)
-            prev_candles = candles_list[check_index - 2:check_index]
-            bullish_count = sum(1 for c in prev_candles if c.is_bullish)
-            if len(prev_candles) >= 2 and bullish_count >= 1:
-                # Potential supply zone at base candle
-                zone_top = base_candle.high
-                zone_bottom = base_candle.body_top  # Where body ended (higher of open/close)
-                
-                zone_thickness = (zone_top - zone_bottom) / self.tick_size
-                
-                # Validate zone thickness
-                if self.min_zone_ticks <= zone_thickness <= self.max_zone_ticks:
-                    impulse_ticks = impulse_candle.body_size / self.tick_size
+            impulse_ticks = impulse_candle.body_size / self.tick_size
+            
+            # NEW: Only create zone if impulse is STRONG (at least min_impulse_ticks)
+            if impulse_ticks >= self.min_impulse_ticks:
+                # Check if we have upward movement before base (at least 1 bullish in last 2)
+                prev_candles = candles_list[check_index - 2:check_index]
+                bullish_count = sum(1 for c in prev_candles if c.is_bullish)
+                if len(prev_candles) >= 2 and bullish_count >= 1:
+                    # Potential supply zone at base candle
+                    zone_top = base_candle.high
+                    zone_bottom = base_candle.body_top  # Where body ended (higher of open/close)
                     
-                    # Check if we already have a zone at this location
-                    if not self._zone_exists_at_price(zone_top, zone_bottom, 'supply'):
-                        zone = Zone(
-                            zone_type='supply',
-                            top=zone_top,
-                            bottom=zone_bottom,
-                            created_at=base_candle.timestamp,
-                            base_candle_index=self.current_candle_index - 2,
-                            impulse_size=impulse_ticks
-                        )
-                        self.supply_zones.append(zone)
-                        self.zones_created += 1
-                        self.logger.info(
-                            f"🔴 SUPPLY ZONE (Bearish Order Block) created at {zone_top:.2f}-{zone_bottom:.2f} "
-                            f"| Thickness: {zone_thickness:.1f} ticks | Impulse: {impulse_ticks:.1f} ticks | "
-                            f"Time: {base_candle.timestamp.strftime('%Y-%m-%d %H:%M')}"
-                        )
+                    zone_thickness = (zone_top - zone_bottom) / self.tick_size
+                    
+                    # Validate zone thickness
+                    if self.min_zone_ticks <= zone_thickness <= self.max_zone_ticks:
+                        # Check if we already have a zone at this location
+                        if not self._zone_exists_at_price(zone_top, zone_bottom, 'supply'):
+                            # NEW: Check if we have room for more zones
+                            if len(self.supply_zones) < self.max_active_zones // 2:
+                                zone = Zone(
+                                    zone_type='supply',
+                                    top=zone_top,
+                                    bottom=zone_bottom,
+                                    created_at=base_candle.timestamp,
+                                    base_candle_index=self.current_candle_index - 2,
+                                    impulse_size=impulse_ticks
+                                )
+                                self.supply_zones.append(zone)
+                                self.zones_created += 1
+                                self.logger.info(
+                                    f"🔴 SUPPLY ZONE (Bearish Order Block) created at {zone_top:.2f}-{zone_bottom:.2f} "
+                                    f"| Thickness: {zone_thickness:.1f} ticks | Impulse: {impulse_ticks:.1f} ticks | "
+                                    f"Time: {base_candle.timestamp.strftime('%Y-%m-%d %H:%M')}"
+                                )
+                            else:
+                                # Too many zones - need to replace weakest one if this is stronger
+                                self._maybe_replace_weakest_zone('supply', zone_top, zone_bottom, 
+                                                                base_candle, impulse_ticks)
         
         # Check for DEMAND zone (down trend → base → rally)
         if impulse_candle.is_bullish and impulse_candle.body_size >= avg_range * self.impulse_multiplier:
-            # Check if we have downward movement before base (at least 1 bearish in last 2)
-            prev_candles = candles_list[check_index - 2:check_index]
-            bearish_count = sum(1 for c in prev_candles if c.is_bearish)
-            if len(prev_candles) >= 2 and bearish_count >= 1:
-                # Potential demand zone at base candle
-                zone_bottom = base_candle.low
-                zone_top = base_candle.body_bottom  # Where body ended (lower of open/close)
-                
-                zone_thickness = (zone_top - zone_bottom) / self.tick_size
-                
-                # Validate zone thickness
-                if self.min_zone_ticks <= zone_thickness <= self.max_zone_ticks:
-                    impulse_ticks = impulse_candle.body_size / self.tick_size
+            impulse_ticks = impulse_candle.body_size / self.tick_size
+            
+            # NEW: Only create zone if impulse is STRONG (at least min_impulse_ticks)
+            if impulse_ticks >= self.min_impulse_ticks:
+                # Check if we have downward movement before base (at least 1 bearish in last 2)
+                prev_candles = candles_list[check_index - 2:check_index]
+                bearish_count = sum(1 for c in prev_candles if c.is_bearish)
+                if len(prev_candles) >= 2 and bearish_count >= 1:
+                    # Potential demand zone at base candle
+                    zone_bottom = base_candle.low
+                    zone_top = base_candle.body_bottom  # Where body ended (lower of open/close)
                     
-                    # Check if we already have a zone at this location
-                    if not self._zone_exists_at_price(zone_top, zone_bottom, 'demand'):
-                        zone = Zone(
-                            zone_type='demand',
-                            top=zone_top,
-                            bottom=zone_bottom,
-                            created_at=base_candle.timestamp,
-                            base_candle_index=self.current_candle_index - 2,
-                            impulse_size=impulse_ticks
-                        )
-                        self.demand_zones.append(zone)
-                        self.zones_created += 1
-                        self.logger.info(
-                            f"🔵 DEMAND ZONE (Bullish Order Block) created at {zone_top:.2f}-{zone_bottom:.2f} "
-                            f"| Thickness: {zone_thickness:.1f} ticks | Impulse: {impulse_ticks:.1f} ticks | "
-                            f"Time: {base_candle.timestamp.strftime('%Y-%m-%d %H:%M')}"
-                        )
+                    zone_thickness = (zone_top - zone_bottom) / self.tick_size
+                    
+                    # Validate zone thickness
+                    if self.min_zone_ticks <= zone_thickness <= self.max_zone_ticks:
+                        # Check if we already have a zone at this location
+                        if not self._zone_exists_at_price(zone_top, zone_bottom, 'demand'):
+                            # NEW: Check if we have room for more zones
+                            if len(self.demand_zones) < self.max_active_zones // 2:
+                                zone = Zone(
+                                    zone_type='demand',
+                                    top=zone_top,
+                                    bottom=zone_bottom,
+                                    created_at=base_candle.timestamp,
+                                    base_candle_index=self.current_candle_index - 2,
+                                    impulse_size=impulse_ticks
+                                )
+                                self.demand_zones.append(zone)
+                                self.zones_created += 1
+                                self.logger.info(
+                                    f"🔵 DEMAND ZONE (Bullish Order Block) created at {zone_top:.2f}-{zone_bottom:.2f} "
+                                    f"| Thickness: {zone_thickness:.1f} ticks | Impulse: {impulse_ticks:.1f} ticks | "
+                                    f"Time: {base_candle.timestamp.strftime('%Y-%m-%d %H:%M')}"
+                                )
+                            else:
+                                # Too many zones - need to replace weakest one if this is stronger
+                                self._maybe_replace_weakest_zone('demand', zone_top, zone_bottom,
+                                                                base_candle, impulse_ticks)
+    
+    def _maybe_replace_weakest_zone(self, zone_type: str, top: float, bottom: float, 
+                                   base_candle: 'Candle', impulse_ticks: float):
+        """
+        Replace the weakest zone if the new zone is stronger.
+        Keeps only the STRONGEST zones active, like LuxAlgo.
+        """
+        zones = self.supply_zones if zone_type == 'supply' else self.demand_zones
+        
+        # Find weakest zone (smallest impulse)
+        if not zones:
+            return
+        
+        weakest_zone = min(zones, key=lambda z: z.impulse_size)
+        
+        # If new zone is stronger, replace the weakest
+        if impulse_ticks > weakest_zone.impulse_size:
+            zones.remove(weakest_zone)
+            self.zones_deleted += 1
+            
+            zone = Zone(
+                zone_type=zone_type,
+                top=top,
+                bottom=bottom,
+                created_at=base_candle.timestamp,
+                base_candle_index=self.current_candle_index - 2,
+                impulse_size=impulse_ticks
+            )
+            zones.append(zone)
+            self.zones_created += 1
+            
+            zone_thickness = (top - bottom) / self.tick_size
+            self.logger.info(
+                f"{'🔴' if zone_type == 'supply' else '🔵'} {zone_type.upper()} ZONE "
+                f"(Replaced weaker zone) created at {top:.2f}-{bottom:.2f} "
+                f"| Thickness: {zone_thickness:.1f} ticks | Impulse: {impulse_ticks:.1f} ticks | "
+                f"Time: {base_candle.timestamp.strftime('%Y-%m-%d %H:%M')}"
+            )
     
     def _zone_exists_at_price(self, top: float, bottom: float, zone_type: str) -> bool:
         """Check if a zone already exists at approximately the same price level"""
