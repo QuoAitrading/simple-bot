@@ -117,16 +117,40 @@ Note: All trading parameters (account_size, max_contracts, rl_exploration_rate, 
         help='Logging level (default: INFO)'
     )
     
-    return parser.parse_args()
+    parser.add_argument(
+        '--confidence-threshold',
+        type=float,
+        default=0.70,
+        help='Confidence threshold for signal approval (0.0-1.0, default: 0.70)'
+    )
+    
+    parser.add_argument(
+        '--exploration-rate',
+        type=float,
+        default=0.30,
+        help='Exploration rate for RL learning (0.0-1.0, default: 0.30)'
+    )
+    
+    args = parser.parse_args()
+    
+    # Validate confidence threshold and exploration rate
+    if not 0.0 <= args.confidence_threshold <= 1.0:
+        parser.error("--confidence-threshold must be between 0.0 and 1.0")
+    if not 0.0 <= args.exploration_rate <= 1.0:
+        parser.error("--exploration-rate must be between 0.0 and 1.0")
+    
+    return args
 
 
-def initialize_rl_brains_for_backtest(bot_config) -> Tuple[Any, ModuleType]:
+def initialize_rl_brains_for_backtest(bot_config, confidence_threshold=0.70, exploration_rate=0.30) -> Tuple[Any, ModuleType]:
     """
     Initialize RL brain (signal confidence) for backtest mode.
     This ensures experience files are loaded before the backtest runs.
     
     Args:
         bot_config: Bot configuration object with RL parameters
+        confidence_threshold: Confidence threshold for signal approval (0.0-1.0)
+        exploration_rate: Exploration rate for RL learning (0.0-1.0)
     
     Returns:
         Tuple of (rl_brain, bot_module) where rl_brain is the SignalConfidenceRL 
@@ -175,14 +199,14 @@ def initialize_rl_brains_for_backtest(bot_config) -> Tuple[Any, ModuleType]:
     capitulation_detector._detector = None
     
     # Initialize RL brain with symbol-specific experience file
-    # Using 30% exploration and 70% confidence threshold
+    # Using command-line specified exploration and confidence threshold
     signal_exp_file = os.path.join(PROJECT_ROOT, f"experiences/{symbol}/signal_experience.json")
     rl_brain = SignalConfidenceRL(
         experience_file=signal_exp_file,
         backtest_mode=True,
-        confidence_threshold=0.70,  # 70% confidence threshold
-        exploration_rate=0.30,  # 30% exploration
-        min_exploration=0.30,   # Keep at 30%
+        confidence_threshold=confidence_threshold,  # From command-line args
+        exploration_rate=exploration_rate,  # From command-line args
+        min_exploration=exploration_rate,   # Keep at same level
         exploration_decay=1.0  # No decay - maintain exploration rate
     )
     
@@ -313,7 +337,11 @@ def run_backtest(args: argparse.Namespace) -> Dict[str, Any]:
         engine.logger.setLevel(logging.CRITICAL)
     
     # Initialize RL brain and bot module with config values
-    rl_brain, bot_module = initialize_rl_brains_for_backtest(bot_config)
+    rl_brain, bot_module = initialize_rl_brains_for_backtest(
+        bot_config,
+        confidence_threshold=args.confidence_threshold,
+        exploration_rate=args.exploration_rate
+    )
     
     # Track initial experience count to show how many were added during backtest
     initial_experience_count = len(rl_brain.experiences) if rl_brain else 0

@@ -1,0 +1,28 @@
+{
+  "timestamp": "2025-12-09T02:26:49.744165",
+  "symbol": "ES",
+  "0_confidence": {
+    "total_trades": 429,
+    "winning_trades": 295,
+    "losing_trades": 134,
+    "win_rate": 68.8,
+    "total_pnl": 14300.86,
+    "avg_win": 169.52,
+    "avg_loss": -266.48,
+    "profit_factor": 1.4,
+    "max_drawdown": 2277.5,
+    "return_pct": 28.6
+  },
+  "70_confidence": {
+    "total_trades": 290,
+    "winning_trades": 212,
+    "losing_trades": 78,
+    "win_rate": 73.1,
+    "total_pnl": 16545.86,
+    "avg_win": 174.66,
+    "avg_loss": -262.58,
+    "profit_factor": 1.81,
+    "max_drawdown": 2857.4,
+    "return_pct": 33.09
+  }
+}
