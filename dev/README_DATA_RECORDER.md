@@ -65,13 +65,22 @@ The instruction label will change to show recording is in progress.
 
 ### Output Format
 
-Each symbol creates its own CSV file with the following columns:
+The recorder creates a **single CSV file** (`market_data.csv`) containing data for all selected symbols with the following columns:
 - `timestamp` - ISO format timestamp
-- `data_type` - Type of data (quote, trade, or depth)
+- `symbol` - Symbol identifier (ES, NQ, etc.)
+- `data_type` - Type of data (quote, trade, depth, or gap)
 - `bid_price`, `bid_size` - Best bid information
 - `ask_price`, `ask_size` - Best ask information
 - `trade_price`, `trade_size`, `trade_side` - Trade information
 - `depth_level`, `depth_side`, `depth_price`, `depth_size` - Market depth
+- `notes` - Additional information (gap details, etc.)
+
+**Key features:**
+- All symbols in one CSV file for easy analysis
+- Continuous recording (24/7, including weekends and maintenance)
+- Automatic gap detection and logging
+- Continues from where it left off when restarted
+- No limit on number of symbols (can record multiple simultaneously)
 
 ### Troubleshooting
 
@@ -93,9 +102,21 @@ Each symbol creates its own CSV file with the following columns:
 
 **Q: Where are my CSV files?**
 - By default, files are saved to `data/historical_data/` directory
-- Files are named by symbol (e.g., `ES.csv`, `NQ.csv`)
-- Files are created/appended when recording starts
+- All symbols are saved to a single file: `market_data.csv`
+- File is created/appended when recording starts
 - You can check the output directory path in the GUI or change it using the Browse button
+
+**Q: What happens during weekends or maintenance windows?**
+- The recorder continues running and waiting for data
+- When data resumes, any gaps will be automatically detected
+- Gap markers are added to the CSV with details about the gap duration
+- The recorder is designed for 24/7 continuous operation
+
+**Q: How are gaps handled?**
+- If more than 60 seconds pass between data points for a symbol, a gap is detected
+- A gap marker row is added to the CSV with type "gap" and details in the notes column
+- Example: `gap,ES,,,,,,,,,,,,,"Gap of 2.5 hours (from 2024-12-08T17:00:00 to 2024-12-08T19:30:00)"`
+- This helps you identify and fix data gaps later
 
 ### Need Help?
 
