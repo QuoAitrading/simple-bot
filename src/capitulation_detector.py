@@ -172,9 +172,16 @@ class CapitulationDetector:
         # which are bearish signals that would result in false entries
         is_green = current_bar["close"] > current_bar["open"]
         bar_range = current_bar["high"] - current_bar["low"]
-        upper_half = current_bar["low"] + (bar_range * 0.5)
-        strong_close = current_bar["close"] >= upper_half
-        conditions["7_reversal_candle"] = is_green and strong_close
+        
+        # Handle edge case of flat candle (high == low)
+        if bar_range > 0:
+            upper_half = current_bar["low"] + (bar_range * 0.5)
+            closes_in_upper_half = current_bar["close"] >= upper_half
+        else:
+            # Flat candle - treat as strong if green
+            closes_in_upper_half = is_green
+            
+        conditions["7_reversal_candle"] = is_green and closes_in_upper_half
         
         # CONDITION 8: Price Is Below VWAP (buying at discount)
         conditions["8_below_vwap"] = current_price < vwap
@@ -340,9 +347,16 @@ class CapitulationDetector:
         # which are bullish signals that would result in false entries
         is_red = current_bar["close"] < current_bar["open"]
         bar_range = current_bar["high"] - current_bar["low"]
-        lower_half = current_bar["high"] - (bar_range * 0.5)
-        strong_close = current_bar["close"] <= lower_half
-        conditions["7_reversal_candle"] = is_red and strong_close
+        
+        # Handle edge case of flat candle (high == low)
+        if bar_range > 0:
+            lower_half = current_bar["high"] - (bar_range * 0.5)
+            closes_in_lower_half = current_bar["close"] <= lower_half
+        else:
+            # Flat candle - treat as strong if red
+            closes_in_lower_half = is_red
+            
+        conditions["7_reversal_candle"] = is_red and closes_in_lower_half
         
         # CONDITION 8: Price Is Above VWAP (selling at premium)
         conditions["8_above_vwap"] = current_price > vwap

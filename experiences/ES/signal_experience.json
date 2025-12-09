@@ -20929,15 +20929,34 @@
       "price": 6886.25,
       "pnl": 47.38676662442231,
       "took_trade": true
+    },
+    {
+      "flush_size_ticks": 21.0,
+      "flush_velocity": 3.0,
+      "volume_climax_ratio": 2.16,
+      "flush_direction": "DOWN",
+      "rsi": 37.5,
+      "distance_from_flush_low": 9.0,
+      "reversal_candle": true,
+      "no_new_extreme": true,
+      "vwap_distance_ticks": -50.6,
+      "regime": "NORMAL_TRENDING",
+      "session": "ETH",
+      "hour": 22,
+      "symbol": "ES",
+      "timestamp": "2025-11-30T22:15:00-05:00",
+      "price": 6815.5,
+      "pnl": -365.0,
+      "took_trade": true
     }
   ],
   "stats": {
-    "total_signals": 489,
-    "taken": 290,
-    "skipped": 199,
-    "take_rate": 59.30470347648262,
-    "recent_pnl": 47.38676662442231,
-    "recent_win_rate": 100.0,
-    "exploration_rate": 30.0
+    "total_signals": 30,
+    "taken": 30,
+    "skipped": 0,
+    "take_rate": 100.0,
+    "recent_pnl": -365.0,
+    "recent_win_rate": 0.0,
+    "exploration_rate": 100.0
   }
 }
