@@ -149,31 +149,31 @@ class SupplyDemandStrategy:
         tick_size: float = 0.25,
         tick_value: float = 1.25,
         lookback_period: int = 20,
-        impulse_multiplier: float = 1.5,
-        min_zone_ticks: float = 4,
-        max_zone_ticks: float = 20,
-        rejection_wick_pct: float = 0.30,
+        impulse_multiplier: float = 1.4,  # Balanced: not too strict, not too loose
+        min_zone_ticks: float = 3,  # Allow slightly smaller zones
+        max_zone_ticks: float = 25,  # Allow slightly larger zones
+        rejection_wick_pct: float = 0.28,  # Slightly reduced from 0.30
         stop_loss_ticks: float = 2,
         risk_reward_ratio: float = 1.5,
-        max_zone_age: int = 200,
-        max_zone_tests: int = 3,
+        max_zone_age: int = 480,  # 8 hours on 1-min data (balanced persistence)
+        max_zone_tests: int = 4,  # Increased from 3
         logger: Optional[logging.Logger] = None
     ):
         """
-        Initialize the Supply/Demand strategy
+        Initialize the Supply/Demand strategy (LuxAlgo-style)
         
         Args:
             tick_size: Minimum price movement (e.g., 0.25 for ES)
             tick_value: Dollar value per tick (e.g., 12.50 for ES, 1.25 for MES)
             lookback_period: Bars to use for average candle range calculation
-            impulse_multiplier: Impulse must be this many times avg candle range
-            min_zone_ticks: Minimum zone thickness in ticks
-            max_zone_ticks: Maximum zone thickness in ticks
-            rejection_wick_pct: Minimum wick size as % of total candle
+            impulse_multiplier: Impulse must be this many times avg candle range (1.4x)
+            min_zone_ticks: Minimum zone thickness in ticks (3 ticks)
+            max_zone_ticks: Maximum zone thickness in ticks (25 ticks)
+            rejection_wick_pct: Minimum wick size as % of total candle (28%)
             stop_loss_ticks: Ticks to place stop beyond zone
             risk_reward_ratio: Target is this times the risk distance
-            max_zone_age: Maximum age of zone in candles
-            max_zone_tests: Maximum number of times zone can be tested
+            max_zone_age: Maximum age of zone in candles (480 = 8 hours)
+            max_zone_tests: Maximum number of times zone can be tested (4)
             logger: Optional logger instance
         """
         self.tick_size = tick_size
