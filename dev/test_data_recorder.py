@@ -1,6 +1,6 @@
 """
 Test script for Market Data Recorder
-Validates the CSV output format and data structure for per-symbol files
+Validates the CSV output format and data structure for 1-minute OHLCV bars
 """
 
 import csv
@@ -8,80 +8,42 @@ from pathlib import Path
 
 
 def test_csv_format():
-    """Test that the CSV format matches expected structure for per-symbol files."""
+    """Test that the CSV format matches expected 1-minute OHLCV structure."""
     expected_headers = [
         'timestamp',
-        'data_type',
-        'bid_price',
-        'bid_size',
-        'ask_price',
-        'ask_size',
-        'trade_price',
-        'trade_size',
-        'trade_side',
-        'depth_level',
-        'depth_side',
-        'depth_price',
-        'depth_size'
+        'open',
+        'high',
+        'low',
+        'close',
+        'volume'
     ]
     
-    # Create a sample CSV to test format (simulating ES.csv)
-    test_file = Path("test_ES.csv")
+    # Create a sample CSV to test format (simulating ES_recorded_1min.csv)
+    test_file = Path("test_ES_recorded_1min.csv")
     
     # Write sample data
     with open(test_file, 'w', newline='') as f:
         writer = csv.writer(f)
         writer.writerow(expected_headers)
         
-        # Sample quote
+        # Sample 1-minute bar
         writer.writerow([
-            '2025-12-06T14:30:15.123456',
-            'quote',
-            '4500.25',
-            '10',
-            '4500.50',
-            '8',
-            '',  # trade_price
-            '',  # trade_size
-            '',  # trade_side
-            '',  # depth_level
-            '',  # depth_side
-            '',  # depth_price
-            ''   # depth_size
+            '2025-12-05 20:23:00',
+            '6880.0',
+            '6880.75',
+            '6879.75',
+            '6880.25',
+            '1326'
         ])
         
-        # Sample trade
+        # Another sample bar
         writer.writerow([
-            '2025-12-06T14:30:15.234567',
-            'trade',
-            '',  # bid_price
-            '',  # bid_size
-            '',  # ask_price
-            '',  # ask_size
-            '4500.50',
-            '2',
-            'buy',
-            '',
-            '',
-            '',
-            ''
-        ])
-        
-        # Sample depth
-        writer.writerow([
-            '2025-12-06T14:30:15.345678',
-            'depth',
-            '',
-            '',
-            '',
-            '',
-            '',
-            '',
-            '',
-            '0',    # depth_level
-            'bid',  # depth_side
-            '4500.25',
-            '10'
+            '2025-12-05 20:24:00',
+            '6880.25',
+            '6881.00',
+            '6880.00',
+            '6880.50',
+            '1450'
         ])
     
     # Verify the file can be read
@@ -106,46 +68,36 @@ def test_csv_format():
             
             # Check that required fields are present
             assert 'timestamp' in row
-            assert 'data_type' in row
+            assert 'open' in row
+            assert 'high' in row
+            assert 'low' in row
+            assert 'close' in row
+            assert 'volume' in row
             
-            data_type = row['data_type']
+            # Validate data types
+            try:
+                float(row['open'])
+                float(row['high'])
+                float(row['low'])
+                float(row['close'])
+                int(float(row['volume']))
+            except ValueError as e:
+                print(f"❌ FAIL: Invalid data type in row {row_count}: {e}")
+                return False
             
-            if data_type == 'quote':
-                # Quote should have bid/ask data
-                if not row['bid_price'] or not row['ask_price']:
-                    print(f"⚠ Warning: Quote row missing bid/ask data")
-            elif data_type == 'trade':
-                # Trade should have trade data
-                if not row['trade_price']:
-                    print(f"⚠ Warning: Trade row missing trade data")
-            elif data_type == 'depth':
-                # Depth should have depth data
-                if not row['depth_price']:
-                    print(f"⚠ Warning: Depth row missing depth data")
+            # Validate OHLC relationships
+            o = float(row['open'])
+            h = float(row['high'])
+            l = float(row['low'])
+            c = float(row['close'])
             
-            print(f"  Row {row_count}: {data_type} - OK")
+            if not (l <= o <= h and l <= c <= h):
+                print(f"⚠ Warning: Invalid OHLC relationship in row {row_count}")
+                print(f"  O={o}, H={h}, L={l}, C={c}")
+            
+            print(f"  Row {row_count}: {row['timestamp']} O={o} H={h} L={l} C={c} V={row['volume']} - OK")
         
         print(f"✓ Read {row_count} rows successfully")
-    
-    # Test that we can filter by data type (without pandas)
-    print("\nTesting data type filtering...")
-    quote_count = 0
-    trade_count = 0
-    depth_count = 0
-    
-    with open(test_file, 'r') as f:
-        reader = csv.DictReader(f)
-        for row in reader:
-            if row['data_type'] == 'quote':
-                quote_count += 1
-            elif row['data_type'] == 'trade':
-                trade_count += 1
-            elif row['data_type'] == 'depth':
-                depth_count += 1
-    
-    print(f"✓ Quote rows: {quote_count}")
-    print(f"✓ Trade rows: {trade_count}")
-    print(f"✓ Depth rows: {depth_count}")
     
     # Clean up test file
     test_file.unlink()
