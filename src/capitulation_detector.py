@@ -168,7 +168,13 @@ class CapitulationDetector:
         conditions["6_stopped_new_lows"] = current_bar["low"] >= prev_bar["low"]
         
         # CONDITION 7: Reversal Candle (current bar closes green - close > open)
-        conditions["7_reversal_candle"] = current_bar["close"] > current_bar["open"]
+        # PLUS Strong Close Filter: Close must be in upper 50% of bar's range
+        # This filters out "Shooting Stars" (long upper wicks) which are bearish signals
+        is_green = current_bar["close"] > current_bar["open"]
+        bar_range = current_bar["high"] - current_bar["low"]
+        upper_half = current_bar["low"] + (bar_range * 0.5)
+        strong_close = current_bar["close"] >= upper_half if bar_range > 0 else True
+        conditions["7_reversal_candle"] = is_green and strong_close
         
         # CONDITION 8: Price Is Below VWAP (buying at discount)
         conditions["8_below_vwap"] = current_price < vwap
@@ -322,7 +328,13 @@ class CapitulationDetector:
         conditions["6_stopped_new_highs"] = current_bar["high"] <= prev_bar["high"]
         
         # CONDITION 7: Reversal Candle (current bar closes red - close < open)
-        conditions["7_reversal_candle"] = current_bar["close"] < current_bar["open"]
+        # PLUS Strong Close Filter: Close must be in lower 50% of bar's range
+        # This filters out "Hammers" (long lower wicks) which are bullish signals
+        is_red = current_bar["close"] < current_bar["open"]
+        bar_range = current_bar["high"] - current_bar["low"]
+        lower_half = current_bar["low"] + (bar_range * 0.5)
+        strong_close = current_bar["close"] <= lower_half if bar_range > 0 else True
+        conditions["7_reversal_candle"] = is_red and strong_close
         
         # CONDITION 8: Price Is Above VWAP (selling at premium)
         conditions["8_above_vwap"] = current_price > vwap
