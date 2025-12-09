@@ -15,7 +15,7 @@ LONG SIGNAL CONDITIONS (AFTER FLUSH DOWN) - ALL 9 MUST BE TRUE:
 4. RSI Is Oversold - RSI < 45
 5. Volume Spiked - Current volume >= 1.2x 20-bar average
 6. Flush Stopped Making New Lows - Current bar low >= previous bar low
-7. Reversal Candle - Current bar closes green (close > open)
+7. Reversal Candle - Current bar closes green (close > open) AND close in upper 50% of bar range
 8. Price Is Below VWAP - Current close < VWAP
 9. Regime Allows Trading - ALL regimes enabled (no blocking)
 
@@ -26,7 +26,7 @@ SHORT SIGNAL CONDITIONS (AFTER FLUSH UP) - ALL 9 MUST BE TRUE:
 4. RSI Is Overbought - RSI > 55
 5. Volume Spiked - Current volume >= 1.2x 20-bar average
 6. Pump Stopped Making New Highs - Current bar high <= previous bar high
-7. Reversal Candle - Current bar closes red (close < open)
+7. Reversal Candle - Current bar closes red (close < open) AND close in lower 50% of bar range
 8. Price Is Above VWAP - Current close > VWAP
 9. Regime Allows Trading - ALL regimes enabled (no blocking)
 
