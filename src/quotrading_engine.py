@@ -8069,11 +8069,19 @@ def handle_position_reconciliation_event(data: Dict[str, Any]) -> None:
             state[symbol]["position"]["quantity"] = 0
             state[symbol]["position"]["side"] = None
             
-            # Save state
+            # Save state to disk for recovery
             if recovery_manager:
                 recovery_manager.save_state(state)
+                logger.info("  ✓ Cleared state saved to disk")
             
             return  # Position is flat and override cleared
+        
+        # DIAGNOSTIC: If manual override is active, log current status (for user awareness)
+        if manual_override and broker_position != 0:
+            override_time = state[symbol]["position"].get("manual_override_time")
+            if override_time:
+                duration = (get_current_time() - override_time).total_seconds() / 60
+                logger.debug(f"Manual override active for {duration:.1f} minutes - tracking {broker_position} contracts")
         
         # Check for mismatch
         if broker_position != bot_position:
@@ -8141,18 +8149,31 @@ def handle_position_reconciliation_event(data: Dict[str, Any]) -> None:
                     logger.warning("  Bot is NOT managing this position")
                     logger.warning("  Bot will NOT enter new trades until position is closed")
                     logger.warning("=" * 60)
+                    
+                    # Update tracked position size in case it changed
+                    state[symbol]["position"]["active"] = True  # Keep as active to prevent new entries
+                    state[symbol]["position"]["quantity"] = abs(broker_position)
+                    state[symbol]["position"]["side"] = "long" if broker_position > 0 else "short"
                     return  # Don't close the position - user is managing it
                 
-                # No manual override active - this is unexpected, close it
-                logger.error("  Cause: Position opened externally or bot missed entry fill")
-                logger.error("  Action: CLOSING UNEXPECTED POSITION at market")
+                # No manual override active - this could be a manual entry
+                # Set manual override and track the position instead of closing it
+                logger.warning("=" * 60)
+                logger.warning("⚠️  MANUAL OVERRIDE DETECTED - External position opened")
+                logger.warning(f"  Broker Position: {broker_position} contracts")
+                logger.warning("  Bot will NOT manage this position")
+                logger.warning("  Bot will NOT enter new trades until position is closed")
+                logger.warning("=" * 60)
                 
-                # Emergency flatten the unexpected position
-                side = "sell" if broker_position > 0 else "buy"
-                quantity = abs(broker_position)
+                # Set manual override flag
+                state[symbol]["position"]["manual_override"] = True
+                state[symbol]["position"]["manual_override_time"] = get_current_time()
+                state[symbol]["position"]["manual_override_reason"] = "Position opened externally by user"
                 
-                logger.warning(f"Placing emergency market order: {side} {quantity} {symbol}")
-                broker.place_market_order(symbol, side, quantity)
+                # Track the position to prevent new entries
+                state[symbol]["position"]["active"] = True
+                state[symbol]["position"]["quantity"] = abs(broker_position)
+                state[symbol]["position"]["side"] = "long" if broker_position > 0 else "short"
             
             else:
                 # Both have positions but quantities don't match
@@ -8186,8 +8207,21 @@ def handle_position_reconciliation_event(data: Dict[str, Any]) -> None:
             # send_telegram_alert(f"Position mismatch: Broker={broker_position}, Bot={bot_position}")
             
         else:
-            pass
-            # Positions match - silent per LOGGING_SPECIFICATION.md
+            # Positions match - check if we need to update manual override tracking
+            if manual_override and broker_position != 0:
+                # Manual override is active and position is still open
+                # Ensure we're tracking the correct position size
+                if state[symbol]["position"]["quantity"] != abs(broker_position) or \
+                   state[symbol]["position"]["side"] != ("long" if broker_position > 0 else "short"):
+                    # Position size changed while manual override was active
+                    logger.info(f"Manual override: Position updated to {broker_position} contracts")
+                    state[symbol]["position"]["quantity"] = abs(broker_position)
+                    state[symbol]["position"]["side"] = "long" if broker_position > 0 else "short"
+                    state[symbol]["position"]["active"] = True
+                    
+                    if recovery_manager:
+                        recovery_manager.save_state(state)
+            # Positions match and no manual override - all is well (silent per LOGGING_SPECIFICATION.md)
     
     except Exception as e:
         logger.error(f"Error during position reconciliation: {e}", exc_info=True)
