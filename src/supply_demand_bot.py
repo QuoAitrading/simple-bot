@@ -1,32 +1,42 @@
 """
-Supply/Demand Rejection Strategy Bot
+Supply/Demand Rejection Strategy Bot (LuxAlgo-Style Order Blocks)
 
-A separate trading bot that implements the supply/demand zone rejection strategy.
-This bot operates independently from the main capitulation reversal bot.
+A separate trading bot that implements LuxAlgo-style supply/demand zone detection
+and rejection strategy. This bot operates independently from the main capitulation bot.
 
-STRATEGY OVERVIEW:
-1. Detect supply zones (price pauses before dropping)
-2. Detect demand zones (price pauses before rallying)
-3. Wait for price to return to zones
-4. Enter on rejection candles (wicks into zone, body stays outside)
-5. Stop loss 2 ticks beyond zone
-6. Take profit at 1.5x risk
+LUXALGO ORDER BLOCK METHODOLOGY:
+This implementation replicates the LuxAlgo supply/demand (order block) detection:
+1. Identify "base" candles where institutions placed orders (pause before big move)
+2. Confirm with strong impulse move (1.5x average candle range over 20 bars)
+3. Wait for price to return to these institutional zones
+4. Trade rejections when price respects the zone
 
-Zone Rules:
-- Supply: Up trend → 1 pause candle → big drop (1.5x avg candle)
-- Demand: Down trend → 1 pause candle → big rally (1.5x avg candle)
-- Zone thickness: 4-20 ticks
-- Zone validity: Strong impulse move (1.5x average range over last 20 bars)
-- Zone expiry: After 200 candles or 3 tests or full breakthrough
+ZONE DETECTION (LuxAlgo Algorithm):
+Supply Zone (Bearish Order Block):
+  - Look for uptrend (at least 1 bullish candle in prior 2)
+  - Find base/pause candle (small consolidation)
+  - Confirm with strong bearish impulse (1.5x avg range)
+  - Zone = base candle's body top to high (institutional sell orders)
+  
+Demand Zone (Bullish Order Block):
+  - Look for downtrend (at least 1 bearish candle in prior 2)
+  - Find base/pause candle (small consolidation)
+  - Confirm with strong bullish impulse (1.5x avg range)
+  - Zone = base candle's body bottom to low (institutional buy orders)
 
-Entry Rules:
-- Long: Price returns to demand zone, rejection candle (wick into zone, green body above)
-- Short: Price returns to supply zone, rejection candle (wick into zone, red body below)
-- Rejection wick must be at least 30% of total candle size
+ENTRY SIGNALS:
+- LONG: Price rejects from demand zone (wick touches zone, green body closes above)
+- SHORT: Price rejects from supply zone (wick touches zone, red body closes below)
+- Rejection wick must be ≥30% of total candle (shows strong rejection)
 
-Exit Rules:
-- Stop: 2 ticks beyond zone boundary
-- Target: 1.5x risk distance
+RISK MANAGEMENT:
+- Stop Loss: 2 ticks beyond zone (if zone fails, exit immediately)
+- Take Profit: 1.5x risk distance (1.5:1 reward-to-risk ratio)
+
+ZONE LIFECYCLE:
+- Delete zone if price closes through it (zone is broken)
+- Delete zone after 3 tests (zone losing strength)
+- Delete zone after 200 candles (zone too old/stale)
 """
 
 import logging
@@ -297,8 +307,9 @@ class SupplyDemandStrategy:
                         self.supply_zones.append(zone)
                         self.zones_created += 1
                         self.logger.info(
-                            f"Created SUPPLY zone at {zone_top:.2f}-{zone_bottom:.2f} "
-                            f"({zone_thickness:.1f} ticks thick, {impulse_ticks:.1f} tick impulse)"
+                            f"🔴 SUPPLY ZONE (Bearish Order Block) created at {zone_top:.2f}-{zone_bottom:.2f} "
+                            f"| Thickness: {zone_thickness:.1f} ticks | Impulse: {impulse_ticks:.1f} ticks | "
+                            f"Time: {base_candle.timestamp.strftime('%Y-%m-%d %H:%M')}"
                         )
         
         # Check for DEMAND zone (down trend → base → rally)
@@ -330,8 +341,9 @@ class SupplyDemandStrategy:
                         self.demand_zones.append(zone)
                         self.zones_created += 1
                         self.logger.info(
-                            f"Created DEMAND zone at {zone_top:.2f}-{zone_bottom:.2f} "
-                            f"({zone_thickness:.1f} ticks thick, {impulse_ticks:.1f} tick impulse)"
+                            f"🔵 DEMAND ZONE (Bullish Order Block) created at {zone_top:.2f}-{zone_bottom:.2f} "
+                            f"| Thickness: {zone_thickness:.1f} ticks | Impulse: {impulse_ticks:.1f} ticks | "
+                            f"Time: {base_candle.timestamp.strftime('%Y-%m-%d %H:%M')}"
                         )
     
     def _zone_exists_at_price(self, top: float, bottom: float, zone_type: str) -> bool:
@@ -411,8 +423,10 @@ class SupplyDemandStrategy:
                                 target_price = entry_price + (risk_ticks * self.risk_reward_ratio * self.tick_size)
                                 
                                 self.logger.info(
-                                    f"LONG signal: Entry={entry_price:.2f}, Stop={stop_price:.2f}, "
-                                    f"Target={target_price:.2f}, Risk={risk_ticks:.1f} ticks"
+                                    f"🟢 LONG SIGNAL (Demand Zone Rejection) | Entry: {entry_price:.2f} | "
+                                    f"Stop: {stop_price:.2f} | Target: {target_price:.2f} | "
+                                    f"Risk: {risk_ticks:.1f} ticks | R:R = 1:{self.risk_reward_ratio} | "
+                                    f"Wick: {wick_pct*100:.0f}% of candle"
                                 )
                                 
                                 return {
@@ -448,8 +462,10 @@ class SupplyDemandStrategy:
                                 target_price = entry_price - (risk_ticks * self.risk_reward_ratio * self.tick_size)
                                 
                                 self.logger.info(
-                                    f"SHORT signal: Entry={entry_price:.2f}, Stop={stop_price:.2f}, "
-                                    f"Target={target_price:.2f}, Risk={risk_ticks:.1f} ticks"
+                                    f"🔴 SHORT SIGNAL (Supply Zone Rejection) | Entry: {entry_price:.2f} | "
+                                    f"Stop: {stop_price:.2f} | Target: {target_price:.2f} | "
+                                    f"Risk: {risk_ticks:.1f} ticks | R:R = 1:{self.risk_reward_ratio} | "
+                                    f"Wick: {wick_pct*100:.0f}% of candle"
                                 )
                                 
                                 return {

@@ -1,16 +1,22 @@
-# Supply/Demand Rejection Strategy Bot
+# Supply/Demand Rejection Strategy Bot (LuxAlgo-Style Order Blocks)
 
-A completely separate trading bot that implements the supply/demand zone rejection strategy for ES futures. This bot operates independently from the main capitulation reversal bot.
+A completely separate trading bot that implements **LuxAlgo-style supply/demand zone detection** (order blocks) for ES futures. This bot operates independently from the main capitulation reversal bot and replicates the LuxAlgo order block methodology.
 
-## Strategy Overview
+## Strategy Overview - LuxAlgo Order Blocks
 
-The Supply/Demand Rejection Strategy identifies institutional supply and demand zones where price previously paused before making strong directional moves. When price returns to these zones, the strategy looks for rejection patterns to enter trades.
+The LuxAlgo Order Block strategy identifies institutional supply and demand zones where large players (institutions) placed significant orders. These zones appear as:
+- **🔴 Supply Zones (Red/Bearish Order Blocks)**: Areas where institutions sold heavily, causing price to drop
+- **🔵 Demand Zones (Blue/Bullish Order Blocks)**: Areas where institutions bought heavily, causing price to rally
 
-### How It Works
+When price returns to these zones, we look for rejection patterns indicating institutions are still active at those levels.
 
-1. **Zone Detection**
-   - **Supply Zones**: Identified when price shows an uptrend → pauses for one candle → drops hard
-   - **Demand Zones**: Identified when price shows a downtrend → pauses for one candle → rallies hard
+### How It Works (LuxAlgo Methodology)
+
+1. **Zone Detection (Order Block Identification)**
+   - **Supply Zones**: Identified when price shows an uptrend → pauses (base candle) → drops hard with strong bearish impulse
+   - **Demand Zones**: Identified when price shows a downtrend → pauses (base candle) → rallies hard with strong bullish impulse
+   - The "base candle" is where institutions placed their orders before the big move
+   - Similar to LuxAlgo's red (bearish) and blue (bullish) order blocks
 
 2. **Zone Validation**
    - Impulse move must be 1.5x the average candle range over the last 20 bars
