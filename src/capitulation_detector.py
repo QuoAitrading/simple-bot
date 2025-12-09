@@ -263,8 +263,7 @@ class CapitulationDetector:
                 print(f"   7. Reversal Candle {'✅' if conditions.get('7_reversal_candle') else '❌'}")
                 print(f"   8. Below VWAP {'✅' if conditions.get('8_below_vwap') else '❌'}")
                 print(f"   9. Regime {'✅' if conditions.get('9_regime_allows') else '❌'}")
-                if passed_count >= 7:
-                    print(f"   ⚠️  VERY CLOSE! Only {9-passed_count} condition(s) away from signal!")
+                # Removed "VERY CLOSE" message per user request
             
             # DIAGNOSTIC: Log ALL near-misses (8 or 9 conditions) to help debug why 0 signals
             if passed_count >= 8:
@@ -419,8 +418,7 @@ class CapitulationDetector:
                 print(f"   7. Reversal Candle {'✅' if conditions.get('7_reversal_candle') else '❌'}")
                 print(f"   8. Above VWAP {'✅' if conditions.get('8_above_vwap') else '❌'}")
                 print(f"   9. Regime {'✅' if conditions.get('9_regime_allows') else '❌'}")
-                if passed_count >= 7:
-                    print(f"   ⚠️  VERY CLOSE! Only {9-passed_count} condition(s) away from signal!")
+                # Removed "VERY CLOSE" message per user request
             
             # DIAGNOSTIC: Log ALL near-misses (8 or 9 conditions) to help debug why 0 signals
             if passed_count >= 8:

@@ -3769,24 +3769,10 @@ def check_for_signals(symbol: str) -> None:
     elif should_log_diagnostic:
         # Skip diagnostic logging if shutdown in progress
         if not _shutdown_in_progress:
-            # Log why long signal didn't trigger (every 30 bars)
-            entry_details = state[symbol].get("entry_details", {})
-            failed_conditions = entry_details.get("failed_conditions", [])
-            if failed_conditions:
-                logger.info(f"💡 Long signal check - conditions not met: {', '.join(failed_conditions)}")
-            else:
-                # If no failed_conditions, might be insufficient data
-                logger.info(f"💡 Long signal check - no signal detected (may be insufficient data or all conditions failed)")
+            # Removed verbose "conditions not met" logging per user request
+            pass
     
-    # Enhanced diagnostic every 15 minutes (more frequent than 30)
-    if not _shutdown_in_progress:
-        diagnostic_counter_15 = state[symbol].get("diagnostic_counter_15", 0) + 1
-        state[symbol]["diagnostic_counter_15"] = diagnostic_counter_15
-        if diagnostic_counter_15 % 15 == 0:
-            entry_details = state[symbol].get("entry_details", {})
-            failed_conditions = entry_details.get("failed_conditions", [])
-            if failed_conditions and len(failed_conditions) <= 3:  # Show if only a few conditions failed
-                logger.info(f"🔍 Near-signal: {9 - len(failed_conditions)}/9 conditions passed. Missing: {', '.join(failed_conditions)}")
+    # Removed verbose near-signal logging per user request
     
     # Check for short signal
     short_passed = check_short_signal_conditions(symbol, prev_bar, current_bar)
@@ -3832,11 +3818,8 @@ def check_for_signals(symbol: str) -> None:
         execute_entry(symbol, "short", current_bar["close"])
         return
     elif should_log_diagnostic:
-        # Log why short signal didn't trigger (every 30 bars)
-        entry_details = state[symbol].get("entry_details", {})
-        failed_conditions = entry_details.get("failed_conditions", [])
-        if failed_conditions:
-            logger.info(f"💡 Short signal check - conditions not met: {', '.join(failed_conditions)}")
+        # Removed verbose "conditions not met" logging per user request
+        pass
 
 
 # ============================================================================
