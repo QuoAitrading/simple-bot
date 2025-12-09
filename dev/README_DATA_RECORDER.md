@@ -6,14 +6,16 @@ The Market Data Recorder allows you to capture live market data from your broker
 
 ### How to Launch
 
+Simply run the data recorder launcher directly:
+
 **Windows:**
 ```bash
-launch_recorder.bat
+python dev/DataRecorder_Launcher.py
 ```
 
 **Linux/Mac:**
 ```bash
-./launch_recorder.sh
+python3 dev/DataRecorder_Launcher.py
 ```
 
 ### Using the Data Recorder
@@ -34,8 +36,9 @@ Select one or more symbols you want to record:
 - **GC** - Gold Futures
 
 #### 3. Output Settings
-- **Output Directory**: Choose where to save the CSV files
+- **Output Directory**: By default, data is saved to `data/historical_data/`
 - Each symbol will be saved to a separate CSV file (e.g., `ES.csv`, `NQ.csv`)
+- You can change the output directory if needed by clicking "Browse"
 
 #### 4. Start Recording
 Look for the **large green button** that says:
@@ -89,9 +92,10 @@ Each symbol creates its own CSV file with the following columns:
 - The status log shows live updates
 
 **Q: Where are my CSV files?**
-- Check the output directory you specified
+- By default, files are saved to `data/historical_data/` directory
 - Files are named by symbol (e.g., `ES.csv`, `NQ.csv`)
 - Files are created/appended when recording starts
+- You can check the output directory path in the GUI or change it using the Browse button
 
 ### Need Help?
 
