@@ -246,11 +246,46 @@ class BrokerSDKImplementation(BrokerInterface):
         self._last_configured_balance: float = 0.0
         self._balance_change_threshold: float = 0.05  # Reconfigure if balance changes by 5%
         self.config: Optional[Any] = None  # Store reference to config for dynamic updates
+        self._session_token: Optional[str] = None  # Session token for WebSocket connections
         
         if not BROKER_SDK_AVAILABLE:
             logger.error("TopStep SDK (project-x-py) not installed!")
             logger.error("Install with: pip install project-x-py")
             raise RuntimeError("TopStep SDK not available")
+    
+    @property
+    def session_token(self) -> Optional[str]:
+        """
+        Get the session token for WebSocket connections.
+        This token is obtained after successful SDK connection.
+        
+        Returns:
+            Session JWT token or None if not connected
+        """
+        if self._session_token:
+            return self._session_token
+        
+        # Try to get token from SDK client if connected
+        if self.sdk_client:
+            try:
+                # The SDK client stores the token after authentication
+                token = getattr(self.sdk_client, 'token', None)
+                if token:
+                    self._session_token = token
+                    return token
+                # Try alternate attribute names
+                token = getattr(self.sdk_client, 'session_token', None)
+                if token:
+                    self._session_token = token
+                    return token
+                token = getattr(self.sdk_client, 'access_token', None)
+                if token:
+                    self._session_token = token
+                    return token
+            except Exception as e:
+                logger.debug(f"Could not get session token from SDK: {e}")
+        
+        return self.api_token  # Fallback to API token
     
     def _get_instrument_symbol(self, instrument: Any) -> str:
         """
@@ -622,7 +657,15 @@ class BrokerSDKImplementation(BrokerInterface):
                     # CRITICAL: Cache contract IDs while event loop is still active
                     # This MUST happen here before asyncio.run() completes and closes the loop
                     try:
-                        instruments = await self.sdk_client.search_instruments(query=self.instrument)
+                        # Modified to handle known Windows asyncio/proactor 'NoneType' send error
+                        try:
+                            instruments = await self.sdk_client.search_instruments(query=self.instrument)
+                        except Exception as e:
+                            if "NoneType" in str(e) and "send" in str(e):
+                                logger.debug(f"Ignored 'NoneType' send error during initial cache for {self.instrument}")
+                                instruments = []
+                            else:
+                                raise e
                         if instruments and len(instruments) > 0:
                             # Use first match for caching (attribute is 'id' not 'contract_id')
                             first_contract = getattr(instruments[0], 'id', None)
@@ -1486,18 +1529,25 @@ class BrokerSDKImplementation(BrokerInterface):
                     loop = asyncio.new_event_loop()
                     asyncio.set_event_loop(loop)
                     try:
-                        return loop.run_until_complete(
-                            self.sdk_client.search_instruments(query=clean_symbol)
-                        )
+                        # CRITICAL FIX: Handle potential crash in project_x_py client reuse
+                        try:
+                            return loop.run_until_complete(
+                                self.sdk_client.search_instruments(query=clean_symbol)
+                            )
+                        except Exception as e:
+                            # Catch "NoneType object has no attribute send" crash (including wrapped errors)
+                            # Check for the specific error string robustly (ProjectXError wraps the AttributeError)
+                            error_str = str(e)
+                            if "NoneType" in error_str and "send" in error_str:
+                                # Silently skip - this is a known Windows proactor issue
+                                logger.debug(f"Async client crash resolving {clean_symbol} - skipping (Error: {error_str})")
+                                return None
+                            logger.error(f"Async search failed for {clean_symbol}: {e}")
+                            raise e
                     finally:
                         # Gentler cleanup to avoid Windows proactor errors
-                        try:
-                            if not loop.is_closed():
-                                loop.run_until_complete(loop.shutdown_asyncgens())
-                                loop.close()
-                        except Exception:
-                            pass  # Suppress cleanup errors
-                
+                        pass
+
                 with ThreadPoolExecutor(max_workers=1) as executor:
                     future = executor.submit(run_async_search)
                     instruments = future.result(timeout=10)

@@ -397,12 +397,19 @@ class DataRecorderLauncher:
             self.output_dir_var.set(directory)
     
     def log_message(self, message: str):
-        """Add message to status log."""
-        self.status_text.config(state=tk.NORMAL)
-        timestamp = datetime.now().strftime("%H:%M:%S")
-        self.status_text.insert(tk.END, f"[{timestamp}] {message}\n")
-        self.status_text.see(tk.END)
-        self.status_text.config(state=tk.DISABLED)
+        """Add message to status log (thread-safe)."""
+        def update_log():
+            try:
+                self.status_text.config(state=tk.NORMAL)
+                timestamp = datetime.now().strftime("%H:%M:%S")
+                self.status_text.insert(tk.END, f"[{timestamp}] {message}\n")
+                self.status_text.see(tk.END)
+                self.status_text.config(state=tk.DISABLED)
+            except Exception:
+                pass
+        
+        # Schedule update on main thread
+        self.root.after(0, update_log)
     
     def start_recording(self):
         """Start recording market data."""

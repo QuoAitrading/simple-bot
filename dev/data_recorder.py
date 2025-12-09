@@ -136,25 +136,33 @@ class MarketDataRecorder:
             if self.broker_name == "TopStep":
                 self.broker = TopStepBroker(
                     api_token=self.api_token,
-                    username=self.username
+                    username=self.username,
+                    instrument=self.symbols[0] if self.symbols else "ES"
                 )
                 
+                print("DEBUG: Calling broker.connect()...")
                 if not self.broker.connect():
+                    print("DEBUG: broker.connect() returned False")
                     raise Exception("Failed to connect to broker")
+                print("DEBUG: broker.connect() returned True")
                 
                 self.log("✓ Connected to broker")
                 
                 # Get contract IDs for symbols
                 self.log("Looking up contract IDs...")
+                print(f"DEBUG: Looking up contract IDs for: {self.symbols}")
                 for symbol in self.symbols:
                     try:
+                        print(f"DEBUG: calling get_contract_id({symbol})")
                         contract_id = self.broker.get_contract_id(symbol)
+                        print(f"DEBUG: get_contract_id({symbol}) returned {contract_id}")
                         if contract_id:
                             self.contract_ids[symbol] = contract_id
                             self.log(f"✓ {symbol} -> Contract ID: {contract_id}")
                         else:
                             self.log(f"⚠ Warning: Could not find contract ID for {symbol}")
                     except Exception as e:
+                        print(f"DEBUG: Exception in get_contract_id: {e}")
                         self.log(f"⚠ Error getting contract ID for {symbol}: {e}")
                 
                 if not self.contract_ids:
@@ -162,19 +170,27 @@ class MarketDataRecorder:
                 
                 # Connect to WebSocket
                 self.log("Connecting to market data stream...")
+                print("DEBUG: Getting session token...")
                 session_token = self.broker.session_token
+                print(f"DEBUG: token retrieved (length={len(session_token)})")
+                
+                print("DEBUG: Initializing BrokerWebSocketStreamer...")
                 self.websocket = BrokerWebSocketStreamer(
                     session_token=session_token,
                     hub_url="wss://rtc.topstepx.com/hubs/market"
                 )
                 
+                print("DEBUG: Calling websocket.connect()...")
                 if not self.websocket.connect():
+                    print("DEBUG: websocket.connect() returned False")
                     raise Exception("Failed to connect to WebSocket")
+                print("DEBUG: websocket.connect() returned True")
                 
                 self.log("✓ Connected to market data stream")
                 
                 # Initialize CSV files
                 self.log(f"Initializing CSV files in: {self.output_dir}")
+                print(f"DEBUG: Initializing CSV files in {self.output_dir}")
                 self._initialize_csv()
                 
                 # Subscribe to market data for each symbol
@@ -353,28 +369,46 @@ class MarketDataRecorder:
                     self.csv_files[symbol].flush()
     
     def _on_quote(self, symbol: str, data: Any):
-        """Handle quote data."""
+        """Handle quote data with universal parsing for signalrcore variations."""
         if not self.is_recording:
             return
         
         try:
-            # Extract quote data
-            # Data structure may vary by broker, adjust as needed
             timestamp = self._get_current_timestamp()
+            bid_price = None
+            ask_price = None
+            bid_size = 1
+            ask_size = 1
             
-            # Try to extract bid/ask from data object
-            bid_price = getattr(data, 'bid_price', None) or getattr(data, 'Bid', None)
-            bid_size = getattr(data, 'bid_size', None) or getattr(data, 'BidSize', None)
-            ask_price = getattr(data, 'ask_price', None) or getattr(data, 'Ask', None)
-            ask_size = getattr(data, 'ask_size', None) or getattr(data, 'AskSize', None)
+            # Universal parser for signalrcore variations
+            # Pattern 1: [contractId, {quoteData}] - most common
+            # Pattern 2: [contractId, [{quoteData}]] - sometimes wrapped in list
+            # Pattern 3: {quoteData} - direct dict
+            # Pattern 4: args coming as separate positional args
             
-            # If data is a list/dict, try to access it that way
-            if isinstance(data, (list, tuple)) and len(data) >= 1:
-                quote_obj = data[0]
-                bid_price = getattr(quote_obj, 'bid_price', None) or getattr(quote_obj, 'Bid', None)
-                bid_size = getattr(quote_obj, 'bid_size', None) or getattr(quote_obj, 'BidSize', None)
-                ask_price = getattr(quote_obj, 'ask_price', None) or getattr(quote_obj, 'Ask', None)
-                ask_size = getattr(quote_obj, 'ask_size', None) or getattr(quote_obj, 'AskSize', None)
+            quote_dict = None
+            
+            if isinstance(data, list) and len(data) >= 2:
+                # Pattern 1 or 2: [contractId, data]
+                payload = data[1]
+                if isinstance(payload, dict):
+                    quote_dict = payload
+                elif isinstance(payload, list) and len(payload) > 0:
+                    quote_dict = payload[0] if isinstance(payload[0], dict) else None
+            elif isinstance(data, list) and len(data) == 1:
+                # Sometimes just [{quoteData}]
+                if isinstance(data[0], dict):
+                    quote_dict = data[0]
+            elif isinstance(data, dict):
+                # Pattern 3: direct dict
+                quote_dict = data
+            
+            # Extract prices from quote dict
+            if quote_dict:
+                bid_price = quote_dict.get('bestBid') or quote_dict.get('bid') or quote_dict.get('b')
+                ask_price = quote_dict.get('bestAsk') or quote_dict.get('ask') or quote_dict.get('a')
+                bid_size = quote_dict.get('bidSize') or quote_dict.get('bs') or 1
+                ask_size = quote_dict.get('askSize') or quote_dict.get('as') or 1
             
             row_data = {
                 'timestamp': timestamp,
@@ -392,24 +426,48 @@ class MarketDataRecorder:
             logger.error(f"Error processing quote for {symbol}: {e}")
     
     def _on_trade(self, symbol: str, data: Any):
-        """Handle trade data."""
+        """Handle trade data with universal parsing for signalrcore variations."""
         if not self.is_recording:
             return
         
         try:
             timestamp = self._get_current_timestamp()
+            trade_price = None
+            trade_size = 1
+            trade_side = ''
             
-            # Try to extract trade data
-            trade_price = getattr(data, 'price', None) or getattr(data, 'Price', None)
-            trade_size = getattr(data, 'size', None) or getattr(data, 'Size', None)
-            trade_side = getattr(data, 'side', None) or getattr(data, 'Side', None)
+            # Universal parser for signalrcore variations
+            # Pattern 1: [contractId, {tradeData}] - most common
+            # Pattern 2: [contractId, [{tradeData}]] - sometimes wrapped in list
+            # Pattern 3: {tradeData} - direct dict
+            # Pattern 4: {p: price, v: volume} - compact format
             
-            # If data is a list/dict, try to access it that way
-            if isinstance(data, (list, tuple)) and len(data) >= 1:
-                trade_obj = data[0]
-                trade_price = getattr(trade_obj, 'price', None) or getattr(trade_obj, 'Price', None)
-                trade_size = getattr(trade_obj, 'size', None) or getattr(trade_obj, 'Size', None)
-                trade_side = getattr(trade_obj, 'side', None) or getattr(trade_obj, 'Side', None)
+            trade_dict = None
+            
+            if isinstance(data, list) and len(data) >= 2:
+                # Pattern 1 or 2: [contractId, data]
+                payload = data[1]
+                if isinstance(payload, dict):
+                    trade_dict = payload
+                elif isinstance(payload, list) and len(payload) > 0:
+                    trade_dict = payload[0] if isinstance(payload[0], dict) else None
+            elif isinstance(data, list) and len(data) == 1:
+                # Sometimes just [{tradeData}]
+                if isinstance(data[0], dict):
+                    trade_dict = data[0]
+            elif isinstance(data, dict):
+                # Pattern 3 or 4: direct dict
+                trade_dict = data
+            
+            # Extract trade info from dict
+            if trade_dict:
+                # Try various field names used by TopStep
+                trade_price = (trade_dict.get('price') or trade_dict.get('lastPrice') or 
+                              trade_dict.get('p') or trade_dict.get('Price'))
+                trade_size = (trade_dict.get('size') or trade_dict.get('volume') or 
+                             trade_dict.get('v') or trade_dict.get('qty') or 1)
+                trade_side = (trade_dict.get('side') or trade_dict.get('aggressor') or 
+                             trade_dict.get('s') or '')
             
             row_data = {
                 'timestamp': timestamp,

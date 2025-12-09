@@ -181,7 +181,7 @@ class BrokerWebSocketStreamer:
                     elif sub_type == "trades":
                         self.connection.send("SubscribeContractTrades", [symbol])
                     elif sub_type == "depth":
-                        self.connection.send("Subscribe", [symbol, "Depth"])
+                        self.connection.send("SubscribeContractMarketDepth", [symbol])
                     
                     logger.info(f"[WebSocket] Successfully resubscribed to {sub_type} for {symbol}")
                     break  # Success, exit retry loop
@@ -328,7 +328,7 @@ class BrokerWebSocketStreamer:
             logger.error(f"Failed to subscribe to trades: {e}", exc_info=True)
     
     def subscribe_depth(self, symbol: str, callback: Callable):
-        """Subscribe to Level 2 market depth"""
+        """Subscribe to Level 2 market depth/DOM"""
         self.on_depth_callback = callback
         try:
             # Verify connection is ready before subscribing
@@ -336,8 +336,9 @@ class BrokerWebSocketStreamer:
                 logger.error(f"Cannot subscribe to depth for {symbol} - connection not ready")
                 return
             
-            # Try common SignalR method variations
-            self.connection.send("Subscribe", [symbol, "Depth"])
+            # Correct TopStep method: SubscribeContractMarketDepth
+            # Event received: GatewayDepth
+            self.connection.send("SubscribeContractMarketDepth", [symbol])
             
             # Track subscription for reconnection
             sub = ("depth", symbol)
