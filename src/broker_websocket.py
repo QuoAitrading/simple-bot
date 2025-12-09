@@ -75,8 +75,18 @@ class BrokerWebSocketStreamer:
         time.sleep(self._HUB_INIT_DELAY)
     
     def _get_retry_delay(self, attempt: int) -> float:
-        """Calculate exponential backoff delay for retry attempts"""
+        """
+        Calculate exponential backoff delay for resubscription retry attempts.
+        Returns: 0.5s, 1s, 2s for attempts 0, 1, 2
+        """
         return self._RETRY_BASE_DELAY * (2 ** attempt)
+    
+    def _get_reconnect_delay(self, attempt: int) -> float:
+        """
+        Calculate exponential backoff delay for reconnection attempts.
+        Returns: 2s, 4s, 8s, 16s, 30s (capped) for attempts 1, 2, 3, 4, 5
+        """
+        return min(self._RECONNECT_BASE_DELAY * (2 ** (attempt - 1)), self._RECONNECT_MAX_DELAY)
     
     def connect(self) -> bool:
         """Connect to broker SignalR market hub"""
@@ -157,14 +167,12 @@ class BrokerWebSocketStreamer:
         # Iterate over a copy to avoid issues if subscriptions are modified during iteration
         for sub_type, symbol in self.subscriptions.copy():
             # Retry logic for resubscription with exponential backoff
-            max_retries = self._MAX_RESUBSCRIBE_RETRIES
-            
-            for attempt in range(max_retries):
+            for attempt in range(self._MAX_RESUBSCRIBE_RETRIES):
                 try:
                     # Verify connection is still ready before each attempt
                     if not self._is_connection_ready():
                         retry_delay = self._get_retry_delay(attempt)
-                        logger.warning(f"Connection not ready for resubscription (attempt {attempt + 1}/{max_retries})")
+                        logger.warning(f"Connection not ready for resubscription (attempt {attempt + 1}/{self._MAX_RESUBSCRIBE_RETRIES})")
                         time.sleep(retry_delay)
                         continue
                     
@@ -179,12 +187,12 @@ class BrokerWebSocketStreamer:
                     break  # Success, exit retry loop
                     
                 except Exception as e:
-                    if attempt < max_retries - 1:
+                    if attempt < self._MAX_RESUBSCRIBE_RETRIES - 1:
                         retry_delay = self._get_retry_delay(attempt)
-                        logger.warning(f"Resubscription attempt {attempt + 1}/{max_retries} failed for {sub_type} {symbol}: {e}")
+                        logger.warning(f"Resubscription attempt {attempt + 1}/{self._MAX_RESUBSCRIBE_RETRIES} failed for {sub_type} {symbol}: {e}")
                         time.sleep(retry_delay)
                     else:
-                        logger.error(f"Failed to resubscribe to {sub_type} for {symbol} after {max_retries} attempts: {e}")
+                        logger.error(f"Failed to resubscribe to {sub_type} for {symbol} after {self._MAX_RESUBSCRIBE_RETRIES} attempts: {e}")
     
     def _on_close(self):
         """Called when WebSocket connection closes"""
@@ -199,8 +207,7 @@ class BrokerWebSocketStreamer:
         # Unexpected disconnect - attempt reconnect
         if was_connected and self.reconnect_attempt < self.max_reconnect_attempts:
             self.reconnect_attempt += 1
-            # Exponential backoff: 2^1=2s, 2^2=4s, 2^3=8s, capped at 30s
-            wait_time = min(self._RECONNECT_BASE_DELAY * (2 ** (self.reconnect_attempt - 1)), self._RECONNECT_MAX_DELAY)
+            wait_time = self._get_reconnect_delay(self.reconnect_attempt)
             logger.info(f"[WebSocket] Connection closed unexpectedly - reconnecting in {wait_time}s (attempt {self.reconnect_attempt}/{self.max_reconnect_attempts})...")
             time.sleep(wait_time)
             
