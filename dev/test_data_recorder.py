@@ -18,8 +18,8 @@ def test_csv_format():
         'volume'
     ]
     
-    # Create a sample CSV to test format (simulating ES_1min.csv)
-    test_file = Path("test_ES_1min.csv")
+    # Create a sample CSV to test format (simulating ES_recorded_1min.csv)
+    test_file = Path("test_ES_recorded_1min.csv")
     
     # Write sample data
     with open(test_file, 'w', newline='') as f:

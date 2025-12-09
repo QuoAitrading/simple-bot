@@ -9,9 +9,15 @@ Captures:
 
 Output:
 - 1-minute OHLCV bars (timestamp, open, high, low, close, volume)
-- Separate CSV file per symbol ({symbol}_1min.csv)
-- Append mode for continuous recording
+- Separate CSV file per symbol ({symbol}_recorded_1min.csv)
+- Append mode for continuous recording (resumes from last bar if restarted)
+- Gap detection: Shows gaps in CSV when data is missing (e.g., weekends, maintenance)
 - Chronologically ordered
+
+Features:
+- Per-symbol recording control (pause/resume individual symbols)
+- Continuous operation (waits for data during market breaks)
+- Thread-safe multi-symbol recording
 """
 
 import csv
@@ -83,6 +89,7 @@ class MarketDataRecorder:
         
         # Recording state
         self.is_recording = False
+        self.symbol_recording_state = {symbol: True for symbol in symbols}  # Per-symbol recording control
         
         # Per-symbol CSV files and writers
         self.csv_files = {}  # symbol -> file handle
@@ -92,6 +99,9 @@ class MarketDataRecorder:
         # Current bar aggregation state for each symbol
         self.current_bars = {}  # symbol -> {timestamp, open, high, low, close, volume}
         self.bar_locks = {symbol: threading.Lock() for symbol in symbols}
+        
+        # Gap detection - track last bar timestamp per symbol
+        self.last_bar_timestamps = {symbol: None for symbol in symbols}
         
         # Statistics
         self.stats = {symbol: {
@@ -234,10 +244,15 @@ class MarketDataRecorder:
         ]
         
         for symbol in self.symbols:
-            csv_path = self.output_dir / f"{symbol}_1min.csv"
+            # Use distinct filename to avoid confusion with existing historical data
+            csv_path = self.output_dir / f"{symbol}_recorded_1min.csv"
             
             # Check if file exists to determine if we need to write headers
             file_exists = csv_path.exists()
+            
+            # Load last timestamp from existing file for gap detection
+            if file_exists:
+                self._load_last_bar_timestamp(symbol, csv_path)
             
             # Open in append mode to continue from where we left off
             self.csv_files[symbol] = open(csv_path, 'a', newline='')
@@ -249,21 +264,78 @@ class MarketDataRecorder:
                 self.csv_files[symbol].flush()
                 self.log(f"✓ Created new CSV file: {csv_path}")
             else:
-                self.log(f"✓ Appending to existing CSV file: {csv_path}")
+                if self.last_bar_timestamps[symbol]:
+                    self.log(f"✓ Appending to {csv_path} (last bar: {self.last_bar_timestamps[symbol].strftime('%Y-%m-%d %H:%M:%S')})")
+                else:
+                    self.log(f"✓ Appending to existing CSV file: {csv_path}")
             
             # Initialize current bar for this symbol (starts as None until first tick)
             self.current_bars[symbol] = None
+    
+    def _load_last_bar_timestamp(self, symbol: str, csv_path: Path):
+        """Load last bar timestamp from existing CSV for gap detection."""
+        try:
+            with open(csv_path, 'r') as f:
+                # Read last few lines to find most recent bar timestamp
+                lines = f.readlines()
+                for line in reversed(lines[-100:]):
+                    try:
+                        parts = line.strip().split(',')
+                        if len(parts) >= 6 and parts[0] != 'timestamp':
+                            timestamp_str = parts[0]
+                            try:
+                                self.last_bar_timestamps[symbol] = datetime.fromisoformat(timestamp_str)
+                                break
+                            except:
+                                pass
+                    except:
+                        continue
+        except Exception as e:
+            logger.debug(f"Could not load last bar timestamp for {symbol}: {e}")
     
     def _get_bar_timestamp(self, timestamp: datetime) -> datetime:
         """Round timestamp down to the nearest minute (bar boundary)."""
         return timestamp.replace(second=0, microsecond=0)
     
     def _write_bar_to_csv(self, symbol: str, bar: Dict[str, Any]):
-        """Write a completed 1-minute bar to CSV (thread-safe)."""
+        """Write a completed 1-minute bar to CSV (thread-safe) with gap detection."""
         with self.csv_locks[symbol]:
-            if symbol in self.csv_writers and self.is_recording:
+            if symbol in self.csv_writers and self.is_recording and self.symbol_recording_state.get(symbol, True):
+                # Check for gap before writing bar
+                bar_timestamp = bar['timestamp']
+                last_ts = self.last_bar_timestamps.get(symbol)
+                
+                if last_ts:
+                    # Calculate expected next bar time (1 minute after last bar)
+                    expected_next = last_ts.replace(second=0, microsecond=0)
+                    from datetime import timedelta
+                    expected_next = expected_next + timedelta(minutes=1)
+                    
+                    # Check if there's a gap (more than 1 minute)
+                    gap_minutes = (bar_timestamp - last_ts).total_seconds() / 60.0
+                    
+                    if gap_minutes > 1.5:  # Allow small tolerance for timing
+                        # Write gap marker
+                        gap_hours = gap_minutes / 60
+                        if gap_hours >= 1:
+                            gap_str = f"{gap_hours:.1f}h"
+                        else:
+                            gap_str = f"{int(gap_minutes)}min"
+                        
+                        gap_row = [
+                            bar_timestamp.isoformat(),
+                            f"GAP:{gap_str}",
+                            f"From:{last_ts.isoformat()}",
+                            f"To:{bar_timestamp.isoformat()}",
+                            '',
+                            ''
+                        ]
+                        self.csv_writers[symbol].writerow(gap_row)
+                        self.log(f"⚠️  {symbol} GAP detected: {gap_str} from {last_ts.strftime('%Y-%m-%d %H:%M')} to {bar_timestamp.strftime('%Y-%m-%d %H:%M')}")
+                
+                # Write the actual bar
                 row = [
-                    bar['timestamp'].isoformat(),
+                    bar_timestamp.isoformat(),
                     bar['open'],
                     bar['high'],
                     bar['low'],
@@ -272,6 +344,9 @@ class MarketDataRecorder:
                 ]
                 self.csv_writers[symbol].writerow(row)
                 self.stats[symbol]['bars_written'] += 1
+                
+                # Update last bar timestamp
+                self.last_bar_timestamps[symbol] = bar_timestamp
                 
                 # Flush periodically to ensure data is written
                 if self.stats[symbol]['bars_written'] % CSV_FLUSH_FREQUENCY == 0:
@@ -326,6 +401,10 @@ class MarketDataRecorder:
     def _on_trade(self, symbol: str, data: Any):
         """Handle trade data and aggregate into 1-minute bars."""
         if not self.is_recording:
+            return
+        
+        # Check if this symbol's recording is enabled
+        if not self.symbol_recording_state.get(symbol, True):
             return
         
         # Count this tick regardless of whether we can parse it
@@ -411,6 +490,32 @@ class MarketDataRecorder:
         stats_thread = threading.Thread(target=report_stats, daemon=True)
         stats_thread.start()
     
+    def pause_symbol(self, symbol: str):
+        """Pause recording for a specific symbol."""
+        if symbol in self.symbol_recording_state:
+            self.symbol_recording_state[symbol] = False
+            self.log(f"⏸ Paused recording for {symbol}")
+            
+            # Flush any incomplete bar for this symbol
+            with self.bar_locks[symbol]:
+                if self.current_bars[symbol] is not None:
+                    self._write_bar_to_csv(symbol, self.current_bars[symbol])
+                    self.current_bars[symbol] = None
+        else:
+            self.log(f"⚠ Symbol {symbol} not found in recorder")
+    
+    def resume_symbol(self, symbol: str):
+        """Resume recording for a specific symbol."""
+        if symbol in self.symbol_recording_state:
+            self.symbol_recording_state[symbol] = True
+            self.log(f"▶ Resumed recording for {symbol}")
+        else:
+            self.log(f"⚠ Symbol {symbol} not found in recorder")
+    
+    def get_recording_status(self) -> Dict[str, bool]:
+        """Get recording status for all symbols."""
+        return self.symbol_recording_state.copy()
+    
     def stop(self):
         """Stop recording and cleanup."""
         self.log("Stopping recorder...")
@@ -429,7 +534,7 @@ class MarketDataRecorder:
                 with self.csv_locks[symbol]:
                     csv_file.flush()
                     csv_file.close()
-                csv_path = self.output_dir / f"{symbol}_1min.csv"
+                csv_path = self.output_dir / f"{symbol}_recorded_1min.csv"
                 self.log(f"✓ CSV file saved: {csv_path}")
             except Exception as e:
                 self.log(f"⚠ Error closing file for {symbol}: {e}")
