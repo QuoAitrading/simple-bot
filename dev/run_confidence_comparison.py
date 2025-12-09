@@ -268,10 +268,11 @@ def main():
     print("\nUsing ES 1-minute bar data from start to finish.\n")
     
     # Run backtest with 0% confidence (100% exploration)
-    # Setting confidence_threshold=0.0 means accept all signals above 0%
+    # Setting confidence_threshold=0.0 accepts all signals above 0% confidence (effectively all signals)
+    # Setting exploration_rate=1.0 ensures the AI explores all possible trades for learning
     metrics_0 = run_backtest_with_settings(
         confidence_threshold=0.0,
-        exploration_rate=1.0,  # 100% exploration ensures all signals are taken
+        exploration_rate=1.0,  # 100% exploration for comprehensive testing
         label="0% Confidence (100% Exploration)"
     )
     
@@ -280,10 +281,12 @@ def main():
         return 1
     
     # Run backtest with 70% confidence
+    # This uses 70% confidence threshold (only takes signals above 70% confidence)
+    # with 30% exploration rate (occasionally takes lower-confidence signals for learning)
     metrics_70 = run_backtest_with_settings(
         confidence_threshold=0.70,
         exploration_rate=0.30,  # 30% exploration (standard setting)
-        label="70% Confidence"
+        label="70% Confidence (30% Exploration)"
     )
     
     if metrics_70 is None:

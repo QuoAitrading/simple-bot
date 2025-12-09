@@ -131,7 +131,15 @@ Note: All trading parameters (account_size, max_contracts, rl_exploration_rate, 
         help='Exploration rate for RL learning (0.0-1.0, default: 0.30)'
     )
     
-    return parser.parse_args()
+    args = parser.parse_args()
+    
+    # Validate confidence threshold and exploration rate
+    if not 0.0 <= args.confidence_threshold <= 1.0:
+        parser.error("--confidence-threshold must be between 0.0 and 1.0")
+    if not 0.0 <= args.exploration_rate <= 1.0:
+        parser.error("--exploration-rate must be between 0.0 and 1.0")
+    
+    return args
 
 
 def initialize_rl_brains_for_backtest(bot_config, confidence_threshold=0.70, exploration_rate=0.30) -> Tuple[Any, ModuleType]:
