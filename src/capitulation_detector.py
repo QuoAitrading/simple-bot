@@ -85,6 +85,7 @@ class CapitulationDetector:
     VOLUME_SPIKE_THRESHOLD = 1.2  # 1.2x 20-bar average volume - easier to trigger
     RSI_OVERSOLD_EXTREME = 45  # RSI < 45 for long entry - catches more reversals
     RSI_OVERBOUGHT_EXTREME = 55  # RSI > 55 for short entry - catches more reversals
+    STRONG_CLOSE_THRESHOLD = 0.5  # Close must be in top/bottom 50% of bar range for strong reversal
     
     # Stop loss configuration
     STOP_BUFFER_TICKS = 2  # 2 ticks beyond flush extreme
@@ -172,7 +173,7 @@ class CapitulationDetector:
         # This filters out "Shooting Stars" (long upper wicks) which are bearish signals
         is_green = current_bar["close"] > current_bar["open"]
         bar_range = current_bar["high"] - current_bar["low"]
-        upper_half = current_bar["low"] + (bar_range * 0.5)
+        upper_half = current_bar["low"] + (bar_range * self.STRONG_CLOSE_THRESHOLD)
         strong_close = current_bar["close"] >= upper_half if bar_range > 0 else True
         conditions["7_reversal_candle"] = is_green and strong_close
         
@@ -332,7 +333,7 @@ class CapitulationDetector:
         # This filters out "Hammers" (long lower wicks) which are bullish signals
         is_red = current_bar["close"] < current_bar["open"]
         bar_range = current_bar["high"] - current_bar["low"]
-        lower_half = current_bar["low"] + (bar_range * 0.5)
+        lower_half = current_bar["low"] + (bar_range * self.STRONG_CLOSE_THRESHOLD)
         strong_close = current_bar["close"] <= lower_half if bar_range > 0 else True
         conditions["7_reversal_candle"] = is_red and strong_close
         
