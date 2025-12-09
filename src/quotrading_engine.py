@@ -1987,6 +1987,10 @@ def initialize_state(symbol: str) -> None:
             "entry_price": None,
             "stop_price": None,
             "entry_time": None,
+            # Manual Override Tracking
+            "manual_override": False,  # True when user manually adjusted position
+            "manual_override_time": None,  # When manual override was detected
+            "manual_override_reason": None,  # Description of what was adjusted
             # Regime Information - For dynamic exit management
             "entry_regime": None,  # Regime at entry
             "current_regime": None,  # Current regime (updated on each tick)
@@ -3001,6 +3005,12 @@ def validate_signal_requirements(symbol: str, bar_time: datetime) -> Tuple[bool,
     # Check if already have position
     if state[symbol]["position"]["active"]:
         return False, "Position active"
+    
+    # Check if manual override is active (user is managing a position)
+    if state[symbol]["position"].get("manual_override", False):
+        override_reason = state[symbol]["position"].get("manual_override_reason", "Unknown")
+        logger.warning(f"⚠️  Cannot enter new trade - Manual override active: {override_reason}")
+        return False, "Manual override active - user managing position"
     
     # Check daily trade limit (skip in backtest mode)
     if not is_backtest_mode() and state[symbol]["daily_trade_count"] >= CONFIG["max_trades_per_day"]:
@@ -6324,6 +6334,10 @@ def execute_exit(symbol: str, exit_price: float, reason: str) -> None:
         "entry_price": None,
         "stop_price": None,
         "entry_time": None,
+        # Manual Override Tracking - KEEP THESE DURING RESET
+        "manual_override": False,
+        "manual_override_time": None,
+        "manual_override_reason": None,
         # Advanced Exit Management - Breakeven State
         "breakeven_active": False,
         "original_stop_price": None,
@@ -8026,6 +8040,7 @@ def handle_position_reconciliation_event(data: Dict[str, Any]) -> None:
         # Get bot's tracked position
         bot_active = state[symbol]["position"]["active"]
         flatten_pending = state[symbol]["position"].get("flatten_pending", False)
+        manual_override = state[symbol]["position"].get("manual_override", False)
         
         if bot_active:
             bot_qty = state[symbol]["position"]["quantity"]
@@ -8040,6 +8055,25 @@ def handle_position_reconciliation_event(data: Dict[str, Any]) -> None:
             state[symbol]["position"]["flatten_pending"] = False
             clear_flatten_flags()
             return  # No mismatch to handle
+        
+        # CHECK: If broker is flat and manual override was active, clear the override
+        if broker_position == 0 and manual_override:
+            logger.info("=" * 60)
+            logger.info("✓ MANUAL OVERRIDE CLEARED - Position fully closed")
+            logger.info("  Bot can now enter new trades")
+            logger.info("=" * 60)
+            state[symbol]["position"]["manual_override"] = False
+            state[symbol]["position"]["manual_override_time"] = None
+            state[symbol]["position"]["manual_override_reason"] = None
+            state[symbol]["position"]["active"] = False
+            state[symbol]["position"]["quantity"] = 0
+            state[symbol]["position"]["side"] = None
+            
+            # Save state
+            if recovery_manager:
+                recovery_manager.save_state(state)
+            
+            return  # Position is flat and override cleared
         
         # Check for mismatch
         if broker_position != bot_position:
@@ -8073,8 +8107,19 @@ def handle_position_reconciliation_event(data: Dict[str, Any]) -> None:
                         logger.warning(f"  [WAIT] Not clearing state yet - broker may not have reported fill")
                         return
                 
-                logger.error("  Cause: Position was closed externally or bot missed exit fill")
-                logger.error("  Action: Clearing bot's position state")
+                logger.error("  Cause: Position was closed manually by user")
+                logger.warning("=" * 60)
+                logger.warning("⚠️  MANUAL OVERRIDE DETECTED - Position closed externally")
+                logger.warning("  Bot will STOP managing this position")
+                logger.warning("  Bot will NOT enter new trades until position is fully closed")
+                logger.warning("=" * 60)
+                
+                # Set manual override flag - bot stops managing but knows position exists
+                state[symbol]["position"]["manual_override"] = True
+                state[symbol]["position"]["manual_override_time"] = get_current_time()
+                state[symbol]["position"]["manual_override_reason"] = "Position closed manually by user"
+                
+                # Clear bot's position state
                 state[symbol]["position"]["active"] = False
                 state[symbol]["position"]["quantity"] = 0
                 state[symbol]["position"]["side"] = None
@@ -8085,7 +8130,20 @@ def handle_position_reconciliation_event(data: Dict[str, Any]) -> None:
                 clear_flatten_flags()
                 
             elif broker_position != 0 and bot_position == 0:
-                # Broker has position but bot thinks it's flat - close the unexpected position
+                # Broker has position but bot thinks it's flat
+                # Check if this is a manual entry or if bot missed a fill
+                
+                # If manual override was previously set and position is still open, just track it
+                if state[symbol]["position"].get("manual_override", False):
+                    logger.warning("=" * 60)
+                    logger.warning("⚠️  MANUAL OVERRIDE ACTIVE - External position detected")
+                    logger.warning(f"  Broker Position: {broker_position} contracts")
+                    logger.warning("  Bot is NOT managing this position")
+                    logger.warning("  Bot will NOT enter new trades until position is closed")
+                    logger.warning("=" * 60)
+                    return  # Don't close the position - user is managing it
+                
+                # No manual override active - this is unexpected, close it
                 logger.error("  Cause: Position opened externally or bot missed entry fill")
                 logger.error("  Action: CLOSING UNEXPECTED POSITION at market")
                 
@@ -8098,11 +8156,22 @@ def handle_position_reconciliation_event(data: Dict[str, Any]) -> None:
             
             else:
                 # Both have positions but quantities don't match
-                logger.error("  Cause: Partial fill or quantity mismatch")
-                logger.error("  Action: Syncing bot state to match broker")
+                logger.error("  Cause: Manual position adjustment detected")
+                logger.warning("=" * 60)
+                logger.warning("⚠️  MANUAL OVERRIDE DETECTED - Position size adjusted")
+                logger.warning(f"  Bot Position: {bot_position} contracts")
+                logger.warning(f"  Broker Position: {broker_position} contracts")
+                logger.warning("  Bot will STOP managing this position")
+                logger.warning("  Bot will NOT enter new trades until position is fully closed")
+                logger.warning("=" * 60)
                 
-                # Update bot state to match broker
-                state[symbol]["position"]["active"] = True if broker_position != 0 else False
+                # Set manual override flag - bot stops managing
+                state[symbol]["position"]["manual_override"] = True
+                state[symbol]["position"]["manual_override_time"] = get_current_time()
+                state[symbol]["position"]["manual_override_reason"] = f"Position adjusted from {bot_position} to {broker_position} contracts"
+                
+                # Track the broker's position but don't manage it
+                state[symbol]["position"]["active"] = True  # Keep as active to prevent new entries
                 state[symbol]["position"]["quantity"] = abs(broker_position)
                 state[symbol]["position"]["side"] = "long" if broker_position > 0 else "short"
             
