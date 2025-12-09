@@ -15,7 +15,7 @@ LONG SIGNAL CONDITIONS (AFTER FLUSH DOWN) - ALL 9 MUST BE TRUE:
 4. RSI Is Oversold - RSI < 45
 5. Volume Spiked - Current volume >= 1.2x 20-bar average
 6. Flush Stopped Making New Lows - Current bar low >= previous bar low
-7. Reversal Candle - Current bar closes green (close > open)
+7. Strong Reversal Candle - Green candle (close > open) AND closes in upper half of range
 8. Price Is Below VWAP - Current close < VWAP
 9. Regime Allows Trading - ALL regimes enabled (no blocking)
 
@@ -26,7 +26,7 @@ SHORT SIGNAL CONDITIONS (AFTER FLUSH UP) - ALL 9 MUST BE TRUE:
 4. RSI Is Overbought - RSI > 55
 5. Volume Spiked - Current volume >= 1.2x 20-bar average
 6. Pump Stopped Making New Highs - Current bar high <= previous bar high
-7. Reversal Candle - Current bar closes red (close < open)
+7. Strong Reversal Candle - Red candle (close < open) AND closes in lower half of range
 8. Price Is Above VWAP - Current close > VWAP
 9. Regime Allows Trading - ALL regimes enabled (no blocking)
 
@@ -167,8 +167,14 @@ class CapitulationDetector:
         # CONDITION 6: Flush Stopped Making New Lows (current bar low >= prev bar low)
         conditions["6_stopped_new_lows"] = current_bar["low"] >= prev_bar["low"]
         
-        # CONDITION 7: Reversal Candle (current bar closes green - close > open)
-        conditions["7_reversal_candle"] = current_bar["close"] > current_bar["open"]
+        # CONDITION 7: Strong Reversal Candle (green AND closes in upper half)
+        # This filters out weak reversals like "Shooting Stars" (long upper wicks)
+        # which are bearish signals that would result in false entries
+        is_green = current_bar["close"] > current_bar["open"]
+        bar_range = current_bar["high"] - current_bar["low"]
+        upper_half = current_bar["low"] + (bar_range * 0.5)
+        strong_close = current_bar["close"] >= upper_half
+        conditions["7_reversal_candle"] = is_green and strong_close
         
         # CONDITION 8: Price Is Below VWAP (buying at discount)
         conditions["8_below_vwap"] = current_price < vwap
@@ -329,8 +335,14 @@ class CapitulationDetector:
         # CONDITION 6: Pump Stopped Making New Highs (current bar high <= prev bar high)
         conditions["6_stopped_new_highs"] = current_bar["high"] <= prev_bar["high"]
         
-        # CONDITION 7: Reversal Candle (current bar closes red - close < open)
-        conditions["7_reversal_candle"] = current_bar["close"] < current_bar["open"]
+        # CONDITION 7: Strong Reversal Candle (red AND closes in lower half)
+        # This filters out weak reversals like "Hammers" (long lower wicks)
+        # which are bullish signals that would result in false entries
+        is_red = current_bar["close"] < current_bar["open"]
+        bar_range = current_bar["high"] - current_bar["low"]
+        lower_half = current_bar["high"] - (bar_range * 0.5)
+        strong_close = current_bar["close"] <= lower_half
+        conditions["7_reversal_candle"] = is_red and strong_close
         
         # CONDITION 8: Price Is Above VWAP (selling at premium)
         conditions["8_above_vwap"] = current_price > vwap
