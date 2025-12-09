@@ -316,6 +316,17 @@ def is_backtest_mode() -> bool:
     return os.getenv('BOT_BACKTEST_MODE', '').lower() in ('true', '1', 'yes')
 
 
+def is_fixed_exit_mode() -> bool:
+    """
+    Check if running in fixed exit mode (no trailing stop, fixed VWAP target).
+    Used for backtesting to compare fixed vs trailing stop performance.
+    
+    Returns:
+        True if in fixed exit mode, False otherwise
+    """
+    return os.getenv('FIXED_EXIT_MODE', '').lower() in ('true', '1', 'yes')
+
+
 # Load configuration from environment and config module
 # Check if running in backtest mode from environment variable
 _is_backtest = is_backtest_mode()
@@ -4587,6 +4598,10 @@ def check_reversal_signal(symbol: str, current_bar: Dict[str, Any], position: Di
     - Once trailing is active (15+ ticks), let trailing ride
     - REQUIRES MINIMUM PROFIT: Position must be at least 2 ticks in profit
     
+    FIXED EXIT MODE (for backtesting):
+    - When FIXED_EXIT_MODE=true, always exit at VWAP (no trailing stop)
+    - Allows comparison of fixed vs trailing stop strategies
+    
     Logic:
     - Position must be in profit (minimum 2 ticks) to use VWAP reversal exit
     - If price reverses before trailing activates (before 15 ticks profit): exit early
@@ -4604,11 +4619,6 @@ def check_reversal_signal(symbol: str, current_bar: Dict[str, Any], position: Di
     Returns:
         Tuple of (should_exit_at_vwap, exit_price)
     """
-    # If trailing stop is already active, DO NOT use VWAP target
-    # Let trailing stop manage the exit for maximum profit capture
-    if position.get("trailing_stop_active", False):
-        return False, None
-    
     vwap = state[symbol].get("vwap")
     side = position["side"]
     entry_price = position.get("entry_price", 0)
@@ -4625,6 +4635,35 @@ def check_reversal_signal(symbol: str, current_bar: Dict[str, Any], position: Di
         profit_ticks = (current_price - entry_price) / tick_size
     else:
         profit_ticks = (entry_price - current_price) / tick_size
+    
+    # FIXED EXIT MODE: Always use VWAP as target (no trailing stop)
+    # This mode is used for backtesting to compare performance
+    if is_fixed_exit_mode():
+        # Minimum profit requirement still applies
+        min_profit_for_vwap_exit = CONFIG.get("min_profit_for_vwap_exit_ticks", 2.0)
+        
+        if profit_ticks < min_profit_for_vwap_exit:
+            # Not in sufficient profit - don't exit at VWAP yet
+            return False, None
+        
+        # Check if we've reached VWAP target
+        if side == "long":
+            if current_price >= vwap:
+                logger.info(f"📊 FIXED EXIT: VWAP Target Hit | Price ${current_price:.2f} >= ${vwap:.2f} | Profit: {profit_ticks:.1f} ticks")
+                return True, current_price
+        
+        if side == "short":
+            if current_price <= vwap:
+                logger.info(f"📊 FIXED EXIT: VWAP Target Hit | Price ${current_price:.2f} <= ${vwap:.2f} | Profit: {profit_ticks:.1f} ticks")
+                return True, current_price
+        
+        return False, None
+    
+    # NORMAL MODE: Use trailing stop logic
+    # If trailing stop is already active, DO NOT use VWAP target
+    # Let trailing stop manage the exit for maximum profit capture
+    if position.get("trailing_stop_active", False):
+        return False, None
     
     # Check if trailing stop would be active at this profit level
     trailing_trigger = CONFIG.get("trailing_trigger_ticks", 15)
@@ -4699,10 +4738,15 @@ def check_breakeven_protection(symbol: str, current_price: float) -> None:
     - Action: Move stop to entry + 3 ticks (covers fees)
     - Same rule every time, no exceptions
     
+    FIXED EXIT MODE: Disabled (uses only VWAP target and initial stop)
+    
     Args:
         symbol: Instrument symbol
         current_price: Current market price
     """
+    # Skip breakeven in fixed exit mode - use only VWAP target and initial stop
+    if is_fixed_exit_mode():
+        return
     
     position = state[symbol]["position"]
     
@@ -4796,6 +4840,8 @@ def check_trailing_stop(symbol: str, current_price: float) -> None:
     - Trail: 8 ticks behind the peak profit
     - Same rule every time, no exceptions
     
+    FIXED EXIT MODE: Disabled (uses only VWAP target and initial stop)
+    
     Runs AFTER breakeven check. Only processes positions where breakeven is already active.
     Continuously updates stop to follow profitable price movement while protecting gains.
     
@@ -4803,6 +4849,9 @@ def check_trailing_stop(symbol: str, current_price: float) -> None:
         symbol: Instrument symbol
         current_price: Current market price
     """
+    # Skip trailing stop in fixed exit mode - use only VWAP target and initial stop
+    if is_fixed_exit_mode():
+        return
     
     position = state[symbol]["position"]
     
