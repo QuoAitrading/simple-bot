@@ -408,6 +408,10 @@ class CapitulationDetector:
                 print(f"   9. Regime {'✅' if conditions.get('9_regime_allows') else '❌'}")
                 if passed_count >= 7:
                     print(f"   ⚠️  VERY CLOSE! Only {9-passed_count} condition(s) away from signal!")
+            
+            # DIAGNOSTIC: Log ALL near-misses (8 or 9 conditions) to help debug why 0 signals
+            if passed_count >= 8:
+                print(f"⚠️ Near-miss SHORT: {passed_count}/9 passed. Failed: {', '.join(failed)}")
         
         return all_passed, details
     
