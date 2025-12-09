@@ -5343,7 +5343,6 @@ def check_regime_change(symbol: str, current_price: float) -> None:
     # Get the last known regime (use current_regime if available, otherwise entry_regime)
     # This prevents logging the same regime change multiple times
     last_regime_name = position.get("current_regime", position.get("entry_regime", "NORMAL"))
-    entry_regime_name = position.get("entry_regime", "NORMAL")
     
     # Detect current regime
     regime_detector = get_regime_detector()
