@@ -62,12 +62,12 @@ class Zone:
         """Get zone thickness in ticks"""
         return abs(self.top - self.bottom) / tick_size
     
-    def is_valid(self, current_candle_index: int, max_age: int = 200) -> bool:
+    def is_valid(self, current_candle_index: int, max_age: int = 200, max_tests: int = 999) -> bool:
         """Check if zone is still valid"""
         age = current_candle_index - self.base_candle_index
         if age > max_age:
             return False
-        if self.test_count >= 3:
+        if self.test_count >= max_tests:
             return False
         return True
     
@@ -75,14 +75,22 @@ class Zone:
         """Check if price is within zone boundaries"""
         return self.bottom <= price <= self.top
     
-    def is_broken(self, candle_close: float) -> bool:
-        """Check if candle closed through the zone"""
+    def is_broken(self, candle_close: float, tick_size: float = 0.25) -> bool:
+        """
+        Check if candle closed through the zone significantly
+        
+        For scalping, zones need some breathing room. They're only broken if price
+        closes WELL beyond them (4+ ticks), not just touches the boundary.
+        """
+        buffer_ticks = 4  # Zone needs 4 tick buffer for scalping
+        buffer = buffer_ticks * tick_size
+        
         if self.zone_type == 'supply':
-            # Supply zone broken if close is above top
-            return candle_close > self.top
+            # Supply zone broken if close is well above top
+            return candle_close > (self.top + buffer)
         else:  # demand
-            # Demand zone broken if close is below bottom
-            return candle_close < self.bottom
+            # Demand zone broken if close is well below bottom
+            return candle_close < (self.bottom - buffer)
 
 
 @dataclass
@@ -149,38 +157,46 @@ class SupplyDemandStrategy:
         tick_size: float = 0.25,
         tick_value: float = 1.25,
         lookback_period: int = 20,
-        impulse_multiplier: float = 1.6,  # 1.6x for strong but not extreme
+        impulse_multiplier: float = 1.6,  # 1.6x for strong institutional zones
         min_zone_ticks: float = 4,
         max_zone_ticks: float = 30,
-        rejection_wick_pct: float = 0.25,
+        rejection_wick_pct: float = 0.15,  # SCALPING: 15% wick (balanced for quality)
         stop_loss_ticks: float = 2,
         risk_reward_ratio: float = 1.5,
-        max_zone_age: int = 2880,  # 2 days (48 hours) on 1-min data
-        max_zone_tests: int = 3,
+        max_zone_age: int = 14400,  # SCALPING: 10 days (zones persist longer)
+        max_zone_tests: int = 999,  # SCALPING: Unlimited tests - trade every bounce
         max_active_zones: int = 12,  # Maximum 12 zones active at once (6 supply + 6 demand)
-        min_impulse_ticks: float = 6,  # Impulse must be at least 6 ticks (balanced)
+        min_impulse_ticks: float = 6,  # Strong zones only (6 ticks minimum)
         logger: Optional[logging.Logger] = None
     ):
         """
-        Initialize the Supply/Demand strategy (LuxAlgo-style - STRONG zones only)
+        Initialize the Supply/Demand SCALPING strategy (LuxAlgo-style zones)
         
-        LuxAlgo only shows the STRONGEST, most significant zones where heavy institutional
-        activity occurred. Not every small impulse creates a zone - only major levels.
+        SCALPING APPROACH:
+        - Creates STRONG zones only (1.6x impulse, 6 tick minimum)
+        - Trades EVERY rejection from those zones (15% wick minimum)
+        - Zones persist for 10 days or until broken
+        - Unlimited re-entries on same zone (scalp every bounce)
+        
+        This generates 15-20+ trades per day by:
+        1. Establishing quality supply/demand zones (like LuxAlgo)
+        2. Trading every valid rejection from those zones repeatedly
+        3. Not limiting how many times a zone can be traded
         
         Args:
             tick_size: Minimum price movement (e.g., 0.25 for ES)
             tick_value: Dollar value per tick (e.g., 12.50 for ES, 1.25 for MES)
             lookback_period: Bars to use for average candle range calculation
-            impulse_multiplier: Impulse must be 1.6x avg range (strong moves)
+            impulse_multiplier: Impulse must be 1.6x avg range (strong institutional zones)
             min_zone_ticks: Minimum zone thickness (4 ticks for quality)
             max_zone_ticks: Maximum zone thickness (30 ticks)
-            rejection_wick_pct: Minimum wick size as % of total candle (25%)
+            rejection_wick_pct: Minimum wick size (15% for scalping - balanced quality/quantity)
             stop_loss_ticks: Ticks to place stop beyond zone
             risk_reward_ratio: Target is this times the risk distance
-            max_zone_age: Maximum age of zone in candles (2880 = 2 days)
-            max_zone_tests: Maximum number of times zone can be tested (3)
+            max_zone_age: Maximum age in candles (14400 = 10 days for scalping)
+            max_zone_tests: Max tests before deletion (999 = unlimited for scalping)
             max_active_zones: Maximum active zones at once (12 total: 6 supply + 6 demand)
-            min_impulse_ticks: Minimum impulse size in ticks (6 ticks = strong move)
+            min_impulse_ticks: Minimum impulse size (6 ticks = strong institutional move)
             logger: Optional logger instance
         """
         self.tick_size = tick_size
@@ -431,10 +447,10 @@ class SupplyDemandStrategy:
         # Remove invalid supply zones
         valid_supply = []
         for zone in self.supply_zones:
-            if zone.is_broken(current_candle.close):
+            if zone.is_broken(current_candle.close, self.tick_size):
                 self.logger.info(f"Deleted SUPPLY zone (broken by close at {current_candle.close:.2f})")
                 self.zones_deleted += 1
-            elif not zone.is_valid(self.current_candle_index, self.max_zone_age):
+            elif not zone.is_valid(self.current_candle_index, self.max_zone_age, self.max_zone_tests):
                 self.logger.info(f"Deleted SUPPLY zone (too old or tested)")
                 self.zones_deleted += 1
             else:
@@ -444,10 +460,10 @@ class SupplyDemandStrategy:
         # Remove invalid demand zones
         valid_demand = []
         for zone in self.demand_zones:
-            if zone.is_broken(current_candle.close):
+            if zone.is_broken(current_candle.close, self.tick_size):
                 self.logger.info(f"Deleted DEMAND zone (broken by close at {current_candle.close:.2f})")
                 self.zones_deleted += 1
-            elif not zone.is_valid(self.current_candle_index, self.max_zone_age):
+            elif not zone.is_valid(self.current_candle_index, self.max_zone_age, self.max_zone_tests):
                 self.logger.info(f"Deleted DEMAND zone (too old or tested)")
                 self.zones_deleted += 1
             else:
