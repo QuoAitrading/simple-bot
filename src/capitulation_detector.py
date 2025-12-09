@@ -15,7 +15,7 @@ LONG SIGNAL CONDITIONS (AFTER FLUSH DOWN) - ALL 9 MUST BE TRUE:
 4. RSI Is Oversold - RSI < 45
 5. Volume Spiked - Current volume >= 1.2x 20-bar average
 6. Flush Stopped Making New Lows - Current bar low >= previous bar low
-7. Reversal Candle - Current bar closes green (close > open)
+7. Reversal Candle - Current bar closes green (close > open) AND close in upper 50% of bar range
 8. Price Is Below VWAP - Current close < VWAP
 9. Regime Allows Trading - ALL regimes enabled (no blocking)
 
@@ -26,7 +26,7 @@ SHORT SIGNAL CONDITIONS (AFTER FLUSH UP) - ALL 9 MUST BE TRUE:
 4. RSI Is Overbought - RSI > 55
 5. Volume Spiked - Current volume >= 1.2x 20-bar average
 6. Pump Stopped Making New Highs - Current bar high <= previous bar high
-7. Reversal Candle - Current bar closes red (close < open)
+7. Reversal Candle - Current bar closes red (close < open) AND close in lower 50% of bar range
 8. Price Is Above VWAP - Current close > VWAP
 9. Regime Allows Trading - ALL regimes enabled (no blocking)
 
@@ -85,6 +85,7 @@ class CapitulationDetector:
     VOLUME_SPIKE_THRESHOLD = 1.2  # 1.2x 20-bar average volume - easier to trigger
     RSI_OVERSOLD_EXTREME = 45  # RSI < 45 for long entry - catches more reversals
     RSI_OVERBOUGHT_EXTREME = 55  # RSI > 55 for short entry - catches more reversals
+    STRONG_CLOSE_THRESHOLD = 0.5  # Close must be in top/bottom 50% of bar range for strong reversal
     
     # Stop loss configuration
     STOP_BUFFER_TICKS = 2  # 2 ticks beyond flush extreme
@@ -168,7 +169,13 @@ class CapitulationDetector:
         conditions["6_stopped_new_lows"] = current_bar["low"] >= prev_bar["low"]
         
         # CONDITION 7: Reversal Candle (current bar closes green - close > open)
-        conditions["7_reversal_candle"] = current_bar["close"] > current_bar["open"]
+        # PLUS Strong Close Filter: Close must be in upper 50% of bar's range
+        # This filters out "Shooting Stars" (long upper wicks) which are bearish signals
+        is_green = current_bar["close"] > current_bar["open"]
+        bar_range = current_bar["high"] - current_bar["low"]
+        upper_half = current_bar["low"] + (bar_range * self.STRONG_CLOSE_THRESHOLD)
+        strong_close = current_bar["close"] >= upper_half if bar_range > 0 else True
+        conditions["7_reversal_candle"] = is_green and strong_close
         
         # CONDITION 8: Price Is Below VWAP (buying at discount)
         conditions["8_below_vwap"] = current_price < vwap
@@ -246,30 +253,22 @@ class CapitulationDetector:
             
             diagnostic_sample = (random.random() < 0.1 or passed_count >= 7) and not skip_diagnostic  # 10% sample OR close to signal
             if diagnostic_sample:
-                rsi_str = f"{rsi:.1f}" if rsi is not None else "N/A"
                 print(f"\n🔍 SIGNAL CHECK DIAGNOSTIC (Passed: {passed_count}/9)")
-                print(f"   1. Flush Size: {flush_range_ticks:.1f}t (need >={self.MIN_FLUSH_TICKS}) {'✅' if conditions.get('1_flush_happened') else '❌'}")
-                print(f"   2. Velocity: {velocity:.2f} t/bar (need >={self.MIN_VELOCITY_TICKS_PER_BAR}) {'✅' if conditions.get('2_flush_fast') else '❌'}")
-                print(f"   3. Near Extreme: {distance_from_low:.1f}t from low (need <={self.NEAR_EXTREME_TICKS}) {'✅' if conditions.get('3_near_bottom') else '❌'}")
-                print(f"   4. RSI: {rsi_str} (need <{self.RSI_OVERSOLD_EXTREME}) {'✅' if conditions.get('4_rsi_oversold') else '❌'}")
-                print(f"   5. Volume Spike: {current_volume:.0f} / {avg_volume_20:.0f} = {current_volume/avg_volume_20 if avg_volume_20 > 0 else 0:.2f}x (need >={self.VOLUME_SPIKE_THRESHOLD}x) {'✅' if conditions.get('5_volume_spike') else '❌'}")
-                print(f"   6. Stopped New Lows: cur_low={current_bar['low']:.2f} >= prev_low={prev_bar['low']:.2f} {'✅' if conditions.get('6_stopped_new_lows') else '❌'}")
-                print(f"   7. Reversal Candle: close={current_bar['close']:.2f} > open={current_bar['open']:.2f} {'✅' if conditions.get('7_reversal_candle') else '❌'}")
-                print(f"   8. Below VWAP: close={current_bar['close']:.2f} < vwap={vwap:.2f} {'✅' if conditions.get('8_below_vwap') else '❌'}")
-                print(f"   9. Regime: {regime} (allowed: HIGH_VOL*, NORMAL*) {'✅' if conditions.get('9_regime_allows') else '❌'}")
+                print(f"   1. Flush Size {'✅' if conditions.get('1_flush_happened') else '❌'}")
+                print(f"   2. Velocity {'✅' if conditions.get('2_flush_fast') else '❌'}")
+                print(f"   3. Near Extreme {'✅' if conditions.get('3_near_bottom') else '❌'}")
+                print(f"   4. RSI {'✅' if conditions.get('4_rsi_oversold') else '❌'}")
+                print(f"   5. Volume Spike {'✅' if conditions.get('5_volume_spike') else '❌'}")
+                print(f"   6. Stopped New Lows {'✅' if conditions.get('6_stopped_new_lows') else '❌'}")
+                print(f"   7. Reversal Candle {'✅' if conditions.get('7_reversal_candle') else '❌'}")
+                print(f"   8. Below VWAP {'✅' if conditions.get('8_below_vwap') else '❌'}")
+                print(f"   9. Regime {'✅' if conditions.get('9_regime_allows') else '❌'}")
                 if passed_count >= 7:
                     print(f"   ⚠️  VERY CLOSE! Only {9-passed_count} condition(s) away from signal!")
             
             # DIAGNOSTIC: Log ALL near-misses (8 or 9 conditions) to help debug why 0 signals
             if passed_count >= 8:
-                rsi_str = f"{rsi:.1f}" if rsi is not None else "N/A"
                 print(f"⚠️ Near-miss LONG: {passed_count}/9 passed. Failed: {', '.join(failed)}")
-                print(f"   Bar: close={current_bar['close']:.2f}, open={current_bar['open']:.2f}, vol={current_volume:.0f}")
-                print(f"   Flush: {flush_range_ticks:.1f}t (need {self.MIN_FLUSH_TICKS}+), vel={velocity:.2f} (need {self.MIN_VELOCITY_TICKS_PER_BAR}+)")
-                print(f"   RSI: {rsi_str} (need <{self.RSI_OVERSOLD_EXTREME})")
-                print(f"   Volume: {current_volume:.0f} vs avg={avg_volume_20:.0f} (need {current_volume}/{avg_volume_20:.0f} >= {self.VOLUME_SPIKE_THRESHOLD})")
-                print(f"   Distance from low: {distance_from_low:.1f}t (need <={self.NEAR_EXTREME_TICKS})")
-                print(f"   VWAP: close={current_bar['close']:.2f} vs {vwap:.2f} (need below)")
         
         return all_passed, details
     
@@ -330,7 +329,13 @@ class CapitulationDetector:
         conditions["6_stopped_new_highs"] = current_bar["high"] <= prev_bar["high"]
         
         # CONDITION 7: Reversal Candle (current bar closes red - close < open)
-        conditions["7_reversal_candle"] = current_bar["close"] < current_bar["open"]
+        # PLUS Strong Close Filter: Close must be in lower 50% of bar's range
+        # This filters out "Hammers" (long lower wicks) which are bullish signals
+        is_red = current_bar["close"] < current_bar["open"]
+        bar_range = current_bar["high"] - current_bar["low"]
+        lower_half = current_bar["low"] + (bar_range * self.STRONG_CLOSE_THRESHOLD)
+        strong_close = current_bar["close"] <= lower_half if bar_range > 0 else True
+        conditions["7_reversal_candle"] = is_red and strong_close
         
         # CONDITION 8: Price Is Above VWAP (selling at premium)
         conditions["8_above_vwap"] = current_price > vwap
@@ -404,19 +409,22 @@ class CapitulationDetector:
             
             diagnostic_sample = (random.random() < 0.1 or passed_count >= 7) and not skip_diagnostic  # 10% sample OR close to signal
             if diagnostic_sample:
-                rsi_str = f"{rsi:.1f}" if rsi is not None else "N/A"
                 print(f"\n🔍 SHORT SIGNAL CHECK DIAGNOSTIC (Passed: {passed_count}/9)")
-                print(f"   1. Pump Size: {flush_range_ticks:.1f}t (need >={self.MIN_FLUSH_TICKS}) {'✅' if conditions.get('1_pump_happened') else '❌'}")
-                print(f"   2. Velocity: {velocity:.2f} t/bar (need >={self.MIN_VELOCITY_TICKS_PER_BAR}) {'✅' if conditions.get('2_pump_fast') else '❌'}")
-                print(f"   3. Near Extreme: {distance_from_high:.1f}t from high (need <={self.NEAR_EXTREME_TICKS}) {'✅' if conditions.get('3_near_top') else '❌'}")
-                print(f"   4. RSI: {rsi_str} (need >{self.RSI_OVERBOUGHT_EXTREME}) {'✅' if conditions.get('4_rsi_overbought') else '❌'}")
-                print(f"   5. Volume Spike: {current_volume:.0f} / {avg_volume_20:.0f} = {current_volume/avg_volume_20 if avg_volume_20 > 0 else 0:.2f}x (need >={self.VOLUME_SPIKE_THRESHOLD}x) {'✅' if conditions.get('5_volume_spike') else '❌'}")
-                print(f"   6. Stopped New Highs: cur_high={current_bar['high']:.2f} <= prev_high={prev_bar['high']:.2f} {'✅' if conditions.get('6_stopped_new_highs') else '❌'}")
-                print(f"   7. Reversal Candle: close={current_bar['close']:.2f} < open={current_bar['open']:.2f} {'✅' if conditions.get('7_reversal_candle') else '❌'}")
-                print(f"   8. Above VWAP: close={current_bar['close']:.2f} > vwap={vwap:.2f} {'✅' if conditions.get('8_above_vwap') else '❌'}")
-                print(f"   9. Regime: {regime} (allowed: HIGH_VOL*, NORMAL*) {'✅' if conditions.get('9_regime_allows') else '❌'}")
+                print(f"   1. Pump Size {'✅' if conditions.get('1_pump_happened') else '❌'}")
+                print(f"   2. Velocity {'✅' if conditions.get('2_pump_fast') else '❌'}")
+                print(f"   3. Near Extreme {'✅' if conditions.get('3_near_top') else '❌'}")
+                print(f"   4. RSI {'✅' if conditions.get('4_rsi_overbought') else '❌'}")
+                print(f"   5. Volume Spike {'✅' if conditions.get('5_volume_spike') else '❌'}")
+                print(f"   6. Stopped New Highs {'✅' if conditions.get('6_stopped_new_highs') else '❌'}")
+                print(f"   7. Reversal Candle {'✅' if conditions.get('7_reversal_candle') else '❌'}")
+                print(f"   8. Above VWAP {'✅' if conditions.get('8_above_vwap') else '❌'}")
+                print(f"   9. Regime {'✅' if conditions.get('9_regime_allows') else '❌'}")
                 if passed_count >= 7:
                     print(f"   ⚠️  VERY CLOSE! Only {9-passed_count} condition(s) away from signal!")
+            
+            # DIAGNOSTIC: Log ALL near-misses (8 or 9 conditions) to help debug why 0 signals
+            if passed_count >= 8:
+                print(f"⚠️ Near-miss SHORT: {passed_count}/9 passed. Failed: {', '.join(failed)}")
         
         return all_passed, details
     

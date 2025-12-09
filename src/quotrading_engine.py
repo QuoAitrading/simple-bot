@@ -5340,8 +5340,9 @@ def check_regime_change(symbol: str, current_price: float) -> None:
     if not position["active"]:
         return
     
-    # Get entry regime
-    entry_regime_name = position.get("entry_regime", "NORMAL")
+    # Get the last known regime (use current_regime if available, otherwise entry_regime)
+    # This prevents logging the same regime change multiple times
+    last_regime_name = position.get("current_regime", position.get("entry_regime", "NORMAL"))
     
     # Detect current regime
     regime_detector = get_regime_detector()
@@ -5353,9 +5354,9 @@ def check_regime_change(symbol: str, current_price: float) -> None:
     
     current_regime = regime_detector.detect_regime(bars, current_atr, CONFIG.get("atr_period", 14))
     
-    # Check if regime has changed
+    # Check if regime has changed from the last known regime
     has_changed, new_regime = regime_detector.check_regime_change(
-        entry_regime_name, current_regime
+        last_regime_name, current_regime
     )
     
     if not has_changed:
@@ -5371,18 +5372,16 @@ def check_regime_change(symbol: str, current_price: float) -> None:
         position["regime_history"] = []
     
     position["regime_history"].append({
-        "from_regime": entry_regime_name,
+        "from_regime": last_regime_name,
         "to_regime": current_regime.name,
         "timestamp": change_time
     })
     
     # Log the regime change for awareness (informational only - no parameter changes)
     logger.info("=" * 60)
-    logger.info(f"📊 REGIME CHANGE DETECTED: {entry_regime_name} → {current_regime.name}")
-    logger.info("=" * 60)
+    logger.info(f"📊 REGIME CHANGE DETECTED: {last_regime_name} → {current_regime.name}")
     logger.info(f"  Time: {get_current_time().strftime('%H:%M:%S')}")
-    logger.info(f"  Trade management UNCHANGED (fixed rules):")
-    logger.info(f"  - Breakeven: +12 ticks → Entry +3 ticks | Trailing: +15 ticks → 8 ticks trail")
+    logger.info(f"  Trade management: Active with fixed risk controls")
     logger.info("=" * 60)
 
 
