@@ -96,9 +96,10 @@ class BrokerWebSocketStreamer:
         self.is_connected = True
         self.reconnect_attempt = 0  # Reset reconnect counter on successful connection
         
-        # Wait for connection to be fully ready before resubscribing
-        # The hub needs time to initialize on the server side
-        # Note: This sleep is in SignalR's callback thread, not blocking the main event loop
+        # IMPORTANT: Wait for SignalR hub to fully initialize before resubscribing
+        # This 1-second delay is critical to prevent "Hub is not running" errors
+        # The sleep is in SignalR's dedicated callback thread, not the main event loop
+        # This is a known requirement for SignalR connections after laptop sleep/resume
         time.sleep(1)
         
         # Resubscribe to previous subscriptions after reconnection
@@ -110,9 +111,10 @@ class BrokerWebSocketStreamer:
         self.is_connected = True
         self.reconnect_attempt = 0
         
-        # Wait for connection to be fully ready before resubscribing
-        # The hub needs time to initialize on the server side
-        # Note: This sleep is in SignalR's callback thread, not blocking the main event loop
+        # IMPORTANT: Wait for SignalR hub to fully initialize before resubscribing
+        # This 1-second delay is critical to prevent "Hub is not running" errors
+        # The sleep is in SignalR's dedicated callback thread, not the main event loop
+        # This is a known requirement for SignalR connections after laptop sleep/resume
         time.sleep(1)
         
         # Resubscribe to previous subscriptions after automatic reconnection
@@ -131,14 +133,15 @@ class BrokerWebSocketStreamer:
         logger.info(f"[WebSocket] Resubscribing to {len(self.subscriptions)} subscription(s)...")
         
         for sub_type, symbol in self.subscriptions:
-            # Retry logic for resubscription
+            # Retry logic for resubscription with exponential backoff
             max_retries = 3
-            retry_delay = 2  # seconds
             
             for attempt in range(max_retries):
                 try:
                     # Verify connection is still ready before each attempt
                     if not self.is_connected or self.connection is None:
+                        # Use exponential backoff: 0.5s, 1s, 2s
+                        retry_delay = 0.5 * (2 ** attempt)
                         logger.warning(f"Connection not ready for resubscription (attempt {attempt + 1}/{max_retries})")
                         time.sleep(retry_delay)
                         continue
@@ -155,6 +158,8 @@ class BrokerWebSocketStreamer:
                     
                 except Exception as e:
                     if attempt < max_retries - 1:
+                        # Use exponential backoff: 0.5s, 1s, 2s
+                        retry_delay = 0.5 * (2 ** attempt)
                         logger.warning(f"Resubscription attempt {attempt + 1}/{max_retries} failed for {sub_type} {symbol}: {e}")
                         time.sleep(retry_delay)
                     else:
