@@ -53,6 +53,15 @@ class BrokerWebSocketStreamer:
         self._RECONNECT_BASE_DELAY = 2  # Base delay for reconnection backoff
         self._RECONNECT_MAX_DELAY = 30  # Maximum delay for reconnection backoff
     
+    def _cleanup_connection(self):
+        """Clean up existing connection before creating a new one"""
+        if self.connection is not None:
+            try:
+                self.connection.stop()
+            except Exception:
+                pass  # Ignore errors stopping old/stale connection
+            self.connection = None
+    
     def _is_connection_ready(self) -> bool:
         """Check if connection is ready for sending messages"""
         return self.is_connected and self.connection is not None
@@ -73,12 +82,7 @@ class BrokerWebSocketStreamer:
         """Connect to broker SignalR market hub"""
         try:
             # Clean up old connection if it exists
-            if self.connection is not None:
-                try:
-                    self.connection.stop()
-                except Exception:
-                    pass  # Ignore errors stopping old connection
-                self.connection = None
+            self._cleanup_connection()
             
             auth_url = f"{self.hub_url}?access_token={self.session_token}"
             
@@ -195,19 +199,15 @@ class BrokerWebSocketStreamer:
         # Unexpected disconnect - attempt reconnect
         if was_connected and self.reconnect_attempt < self.max_reconnect_attempts:
             self.reconnect_attempt += 1
-            wait_time = min(self._RECONNECT_BASE_DELAY ** self.reconnect_attempt, self._RECONNECT_MAX_DELAY)  # Exponential backoff
+            # Exponential backoff: 2^1=2s, 2^2=4s, 2^3=8s, capped at 30s
+            wait_time = min(self._RECONNECT_BASE_DELAY * (2 ** (self.reconnect_attempt - 1)), self._RECONNECT_MAX_DELAY)
             logger.info(f"[WebSocket] Connection closed unexpectedly - reconnecting in {wait_time}s (attempt {self.reconnect_attempt}/{self.max_reconnect_attempts})...")
             time.sleep(wait_time)
             
             try:
                 # Force cleanup of old connection before reconnecting
                 # This is critical after laptop sleep/resume where the old connection is stale
-                if self.connection is not None:
-                    try:
-                        self.connection.stop()
-                    except Exception:
-                        pass  # Ignore errors stopping stale connection
-                    self.connection = None
+                self._cleanup_connection()
                 
                 # Attempt to reconnect
                 success = self.connect()
