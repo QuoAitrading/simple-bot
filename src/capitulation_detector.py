@@ -248,28 +248,21 @@ class CapitulationDetector:
             if diagnostic_sample:
                 rsi_str = f"{rsi:.1f}" if rsi is not None else "N/A"
                 print(f"\n🔍 SIGNAL CHECK DIAGNOSTIC (Passed: {passed_count}/9)")
-                print(f"   1. Flush Size: {flush_range_ticks:.1f}t (need >={self.MIN_FLUSH_TICKS}) {'✅' if conditions.get('1_flush_happened') else '❌'}")
-                print(f"   2. Velocity: {velocity:.2f} t/bar (need >={self.MIN_VELOCITY_TICKS_PER_BAR}) {'✅' if conditions.get('2_flush_fast') else '❌'}")
-                print(f"   3. Near Extreme: {distance_from_low:.1f}t from low (need <={self.NEAR_EXTREME_TICKS}) {'✅' if conditions.get('3_near_bottom') else '❌'}")
-                print(f"   4. RSI: {rsi_str} (need <{self.RSI_OVERSOLD_EXTREME}) {'✅' if conditions.get('4_rsi_oversold') else '❌'}")
-                print(f"   5. Volume Spike: {current_volume:.0f} / {avg_volume_20:.0f} = {current_volume/avg_volume_20 if avg_volume_20 > 0 else 0:.2f}x (need >={self.VOLUME_SPIKE_THRESHOLD}x) {'✅' if conditions.get('5_volume_spike') else '❌'}")
-                print(f"   6. Stopped New Lows: cur_low={current_bar['low']:.2f} >= prev_low={prev_bar['low']:.2f} {'✅' if conditions.get('6_stopped_new_lows') else '❌'}")
-                print(f"   7. Reversal Candle: close={current_bar['close']:.2f} > open={current_bar['open']:.2f} {'✅' if conditions.get('7_reversal_candle') else '❌'}")
-                print(f"   8. Below VWAP: close={current_bar['close']:.2f} < vwap={vwap:.2f} {'✅' if conditions.get('8_below_vwap') else '❌'}")
-                print(f"   9. Regime: {regime} (allowed: HIGH_VOL*, NORMAL*) {'✅' if conditions.get('9_regime_allows') else '❌'}")
+                print(f"   1. Flush Size {'✅' if conditions.get('1_flush_happened') else '❌'}")
+                print(f"   2. Velocity {'✅' if conditions.get('2_flush_fast') else '❌'}")
+                print(f"   3. Near Extreme {'✅' if conditions.get('3_near_bottom') else '❌'}")
+                print(f"   4. RSI {'✅' if conditions.get('4_rsi_oversold') else '❌'}")
+                print(f"   5. Volume Spike {'✅' if conditions.get('5_volume_spike') else '❌'}")
+                print(f"   6. Stopped New Lows {'✅' if conditions.get('6_stopped_new_lows') else '❌'}")
+                print(f"   7. Reversal Candle {'✅' if conditions.get('7_reversal_candle') else '❌'}")
+                print(f"   8. Below VWAP {'✅' if conditions.get('8_below_vwap') else '❌'}")
+                print(f"   9. Regime {'✅' if conditions.get('9_regime_allows') else '❌'}")
                 if passed_count >= 7:
                     print(f"   ⚠️  VERY CLOSE! Only {9-passed_count} condition(s) away from signal!")
             
             # DIAGNOSTIC: Log ALL near-misses (8 or 9 conditions) to help debug why 0 signals
             if passed_count >= 8:
-                rsi_str = f"{rsi:.1f}" if rsi is not None else "N/A"
                 print(f"⚠️ Near-miss LONG: {passed_count}/9 passed. Failed: {', '.join(failed)}")
-                print(f"   Bar: close={current_bar['close']:.2f}, open={current_bar['open']:.2f}, vol={current_volume:.0f}")
-                print(f"   Flush: {flush_range_ticks:.1f}t (need {self.MIN_FLUSH_TICKS}+), vel={velocity:.2f} (need {self.MIN_VELOCITY_TICKS_PER_BAR}+)")
-                print(f"   RSI: {rsi_str} (need <{self.RSI_OVERSOLD_EXTREME})")
-                print(f"   Volume: {current_volume:.0f} vs avg={avg_volume_20:.0f} (need {current_volume}/{avg_volume_20:.0f} >= {self.VOLUME_SPIKE_THRESHOLD})")
-                print(f"   Distance from low: {distance_from_low:.1f}t (need <={self.NEAR_EXTREME_TICKS})")
-                print(f"   VWAP: close={current_bar['close']:.2f} vs {vwap:.2f} (need below)")
         
         return all_passed, details
     
@@ -406,15 +399,15 @@ class CapitulationDetector:
             if diagnostic_sample:
                 rsi_str = f"{rsi:.1f}" if rsi is not None else "N/A"
                 print(f"\n🔍 SHORT SIGNAL CHECK DIAGNOSTIC (Passed: {passed_count}/9)")
-                print(f"   1. Pump Size: {flush_range_ticks:.1f}t (need >={self.MIN_FLUSH_TICKS}) {'✅' if conditions.get('1_pump_happened') else '❌'}")
-                print(f"   2. Velocity: {velocity:.2f} t/bar (need >={self.MIN_VELOCITY_TICKS_PER_BAR}) {'✅' if conditions.get('2_pump_fast') else '❌'}")
-                print(f"   3. Near Extreme: {distance_from_high:.1f}t from high (need <={self.NEAR_EXTREME_TICKS}) {'✅' if conditions.get('3_near_top') else '❌'}")
-                print(f"   4. RSI: {rsi_str} (need >{self.RSI_OVERBOUGHT_EXTREME}) {'✅' if conditions.get('4_rsi_overbought') else '❌'}")
-                print(f"   5. Volume Spike: {current_volume:.0f} / {avg_volume_20:.0f} = {current_volume/avg_volume_20 if avg_volume_20 > 0 else 0:.2f}x (need >={self.VOLUME_SPIKE_THRESHOLD}x) {'✅' if conditions.get('5_volume_spike') else '❌'}")
-                print(f"   6. Stopped New Highs: cur_high={current_bar['high']:.2f} <= prev_high={prev_bar['high']:.2f} {'✅' if conditions.get('6_stopped_new_highs') else '❌'}")
-                print(f"   7. Reversal Candle: close={current_bar['close']:.2f} < open={current_bar['open']:.2f} {'✅' if conditions.get('7_reversal_candle') else '❌'}")
-                print(f"   8. Above VWAP: close={current_bar['close']:.2f} > vwap={vwap:.2f} {'✅' if conditions.get('8_above_vwap') else '❌'}")
-                print(f"   9. Regime: {regime} (allowed: HIGH_VOL*, NORMAL*) {'✅' if conditions.get('9_regime_allows') else '❌'}")
+                print(f"   1. Pump Size {'✅' if conditions.get('1_pump_happened') else '❌'}")
+                print(f"   2. Velocity {'✅' if conditions.get('2_pump_fast') else '❌'}")
+                print(f"   3. Near Extreme {'✅' if conditions.get('3_near_top') else '❌'}")
+                print(f"   4. RSI {'✅' if conditions.get('4_rsi_overbought') else '❌'}")
+                print(f"   5. Volume Spike {'✅' if conditions.get('5_volume_spike') else '❌'}")
+                print(f"   6. Stopped New Highs {'✅' if conditions.get('6_stopped_new_highs') else '❌'}")
+                print(f"   7. Reversal Candle {'✅' if conditions.get('7_reversal_candle') else '❌'}")
+                print(f"   8. Above VWAP {'✅' if conditions.get('8_above_vwap') else '❌'}")
+                print(f"   9. Regime {'✅' if conditions.get('9_regime_allows') else '❌'}")
                 if passed_count >= 7:
                     print(f"   ⚠️  VERY CLOSE! Only {9-passed_count} condition(s) away from signal!")
         
