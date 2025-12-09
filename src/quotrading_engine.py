@@ -5381,10 +5381,6 @@ def check_regime_change(symbol: str, current_price: float) -> None:
     logger.info("=" * 60)
     logger.info(f"📊 REGIME CHANGE DETECTED: {last_regime_name} → {current_regime.name}")
     logger.info("=" * 60)
-    logger.info(f"  Time: {get_current_time().strftime('%H:%M:%S')}")
-    logger.info(f"  Trade management UNCHANGED (fixed rules):")
-    logger.info(f"  - Breakeven: +12 ticks → Entry +3 ticks | Trailing: +15 ticks → 8 ticks trail")
-    logger.info("=" * 60)
 
 
 def check_exit_conditions(symbol: str) -> None:
