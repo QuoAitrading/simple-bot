@@ -246,7 +246,6 @@ class CapitulationDetector:
             
             diagnostic_sample = (random.random() < 0.1 or passed_count >= 7) and not skip_diagnostic  # 10% sample OR close to signal
             if diagnostic_sample:
-                rsi_str = f"{rsi:.1f}" if rsi is not None else "N/A"
                 print(f"\n🔍 SIGNAL CHECK DIAGNOSTIC (Passed: {passed_count}/9)")
                 print(f"   1. Flush Size {'✅' if conditions.get('1_flush_happened') else '❌'}")
                 print(f"   2. Velocity {'✅' if conditions.get('2_flush_fast') else '❌'}")
@@ -397,7 +396,6 @@ class CapitulationDetector:
             
             diagnostic_sample = (random.random() < 0.1 or passed_count >= 7) and not skip_diagnostic  # 10% sample OR close to signal
             if diagnostic_sample:
-                rsi_str = f"{rsi:.1f}" if rsi is not None else "N/A"
                 print(f"\n🔍 SHORT SIGNAL CHECK DIAGNOSTIC (Passed: {passed_count}/9)")
                 print(f"   1. Pump Size {'✅' if conditions.get('1_pump_happened') else '❌'}")
                 print(f"   2. Velocity {'✅' if conditions.get('2_pump_fast') else '❌'}")
