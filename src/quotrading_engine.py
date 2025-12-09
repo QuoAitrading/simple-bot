@@ -3766,13 +3766,6 @@ def check_for_signals(symbol: str) -> None:
         
         execute_entry(symbol, "long", current_bar["close"])
         return
-    elif should_log_diagnostic:
-        # Skip diagnostic logging if shutdown in progress
-        if not _shutdown_in_progress:
-            # Removed verbose "conditions not met" logging per user request
-            pass
-    
-    # Removed verbose near-signal logging per user request
     
     # Check for short signal
     short_passed = check_short_signal_conditions(symbol, prev_bar, current_bar)
@@ -3817,9 +3810,6 @@ def check_for_signals(symbol: str) -> None:
         
         execute_entry(symbol, "short", current_bar["close"])
         return
-    elif should_log_diagnostic:
-        # Removed verbose "conditions not met" logging per user request
-        pass
 
 
 # ============================================================================
