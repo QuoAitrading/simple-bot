@@ -3758,9 +3758,9 @@ def capture_market_state(symbol: str, current_price: float) -> Dict[str, Any]:
                         fvg_age_bars = int(age_delta.total_seconds() / 60)  # Minutes = bars
                     break
     
-    # Build the simplified 14-field experience record structure for BOS+FVG
+    # Build the simplified 15-field experience record structure for BOS+FVG
     market_state = {
-        # The 10 Pattern Matching Fields
+        # The 11 Pattern Matching Fields
         "bos_direction": bos_direction if bos_direction else "NONE",
         "fvg_size_ticks": round(fvg_size_ticks, 1),
         "fvg_age_bars": fvg_age_bars,
