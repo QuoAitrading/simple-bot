@@ -569,7 +569,7 @@ DEFAULT_FALLBACK_ATR = 5.0  # Default ATR when calculation not possible (ES futu
 
 # BOS + FVG Strategy Constants
 BOS_FVG_STOP_BUFFER_TICKS = 2  # Ticks beyond FVG zone for stop placement
-BOS_FVG_PROFIT_TARGET_MULTIPLIER = 1.5  # Risk-reward ratio (1:1.5)
+BOS_FVG_PROFIT_TARGET_MULTIPLIER = 1.12  # Risk-reward ratio (1:1.12) - balanced for 55%+ win rate + good profit
 
 # Global broker instance (replaces sdk_client)
 broker: Optional[BrokerInterface] = None

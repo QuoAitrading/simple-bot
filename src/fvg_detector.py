@@ -31,8 +31,8 @@ class FVGDetector:
     
     def __init__(self, 
                  tick_size: float = 0.25,
-                 min_fvg_size_ticks: int = 2,
-                 max_fvg_size_ticks: int = 25,
+                 min_fvg_size_ticks: int = 5,
+                 max_fvg_size_ticks: int = 13,
                  fvg_expiry_minutes: int = 75,
                  max_active_fvgs: int = 15):
         """
@@ -40,8 +40,8 @@ class FVGDetector:
         
         Args:
             tick_size: Instrument tick size (e.g., 0.25 for ES)
-            min_fvg_size_ticks: Minimum gap size in ticks (default: 2)
-            max_fvg_size_ticks: Maximum gap size in ticks (default: 25) - optimized
+            min_fvg_size_ticks: Minimum gap size in ticks (default: 5) - premium quality FVGs
+            max_fvg_size_ticks: Maximum gap size in ticks (default: 13) - balanced range for 55%+ win rate
             fvg_expiry_minutes: Minutes before FVG expires (default: 75) - optimized
             max_active_fvgs: Maximum number of active FVGs to track (default: 15) - optimized
         """
