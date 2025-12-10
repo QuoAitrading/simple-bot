@@ -2874,9 +2874,8 @@ def process_bos_fvg(symbol: str) -> None:
     # Need detectors initialized and at least 3 bars for FVG
     if bos_detector is None or fvg_detector is None:
         if len(bars) >= 3:
-            # Only log detailed warnings in backtest mode
-            if is_backtest_mode():
-                logger.warning(f"Pattern detectors not initialized for {symbol} - strategy may not work properly")
+            # Always show initialization warnings (critical for debugging)
+            logger.warning(f"Pattern detectors not initialized for {symbol} - trading may not work properly")
         return
     
     if len(bars) < 3:
