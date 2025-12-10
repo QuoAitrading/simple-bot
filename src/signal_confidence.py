@@ -124,24 +124,38 @@ class SignalConfidenceRL:
         Generate a unique key for duplicate detection based on PATTERN only.
         Excludes timestamp and pnl to detect the same pattern regardless of when/outcome.
         
+        Supports both Capitulation and BOS/FVG strategies by detecting which fields are present.
+        
         Args:
-            experience: The experience dictionary with 16 fields
+            experience: The experience dictionary
         
         Returns:
             Hash string for O(1) duplicate detection
         """
         import hashlib
         
-        # Pattern fields only - excludes timestamp and pnl (outcomes can vary)
-        # This ensures we detect duplicates based on market pattern, not timing
-        key_fields = [
-            # The 12 Pattern Matching Fields
-            'flush_size_ticks', 'flush_velocity', 'volume_climax_ratio', 'flush_direction',
-            'rsi', 'distance_from_flush_low', 'reversal_candle', 'no_new_extreme',
-            'vwap_distance_ticks', 'regime', 'session', 'hour',
-            # Metadata: symbol and took_trade only (exclude timestamp and pnl)
-            'symbol', 'took_trade'
-        ]
+        # Detect which strategy based on fields present
+        has_flush = 'flush_size_ticks' in experience
+        has_bos = 'bos_direction' in experience
+        
+        if has_bos:
+            # BOS/FVG Strategy Fields (10 pattern matching fields)
+            key_fields = [
+                'bos_direction', 'fvg_size_ticks', 'fvg_age_bars', 'price_in_fvg_pct',
+                'volume_ratio', 'session', 'hour', 'fvg_count_active',
+                'swing_high', 'swing_low',
+                # Metadata: symbol and took_trade only (exclude timestamp and pnl)
+                'symbol', 'took_trade'
+            ]
+        else:
+            # Capitulation Strategy Fields (12 pattern matching fields) - Legacy
+            key_fields = [
+                'flush_size_ticks', 'flush_velocity', 'volume_climax_ratio', 'flush_direction',
+                'rsi', 'distance_from_flush_low', 'reversal_candle', 'no_new_extreme',
+                'vwap_distance_ticks', 'regime', 'session', 'hour',
+                # Metadata: symbol and took_trade only (exclude timestamp and pnl)
+                'symbol', 'took_trade'
+            ]
         
         # Build key from all significant values
         values = []
@@ -332,123 +346,132 @@ class SignalConfidenceRL:
         """
         Find past experiences with similar market states.
         
-        UPDATED PATTERN MATCHING (11 features for live and backtesting):
-        ================================================================
+        Auto-detects strategy (Capitulation vs BOS/FVG) and applies appropriate pattern matching.
         
-        Primary Flush Signals (50% total):
-        - Flush Size (20%) - How big was the panic move in ticks
-        - Velocity (15%) - How fast was the flush in ticks per bar
-        - Volume Climax (10%) - How much volume spiked vs average
-        - Flush Direction (5%) - Binary: same direction or not
+        CAPITULATION STRATEGY (Legacy) - 11 features:
+        - Flush signals, RSI, VWAP distance, regime, session, hour
         
-        Entry Quality (25% total):
-        - RSI (8%) - How extreme was RSI at entry
-        - Distance From Flush Low (7%) - How close to the flush low/high
-        - Reversal Candle (5%) - Binary: both have reversal candle or not
-        - No New Extreme (5%) - Binary: both have no new extreme or not
-        
-        Market Context (15% total):
-        - VWAP Distance (8%) - Distance from VWAP in ticks
-        - Regime Match (7%) - Binary: same market regime or not
-        
-        Time Context (10% total):
-        - Session (6%) - Binary: both ETH or both RTH
-        - Hour of Day (4%) - Same time of day or not
-        
-        EXCLUDED (outcomes/metadata):
-          ❌ timestamp, symbol, price, pnl, duration, took_trade,
-          ❌ mfe, mae, exit_reason, bars_since_flush_start, 
-          ❌ stop_distance_ticks, target_distance_ticks, risk_reward_ratio, atr
+        BOS/FVG STRATEGY - 10 features:
+        - BOS direction, FVG size/age, volume ratio, session, hour, swing levels
         """
         if not self.experiences:
             return []
         
-        # DEBUG: Log current state for diagnosis
+        # Detect which strategy based on current state fields
+        has_bos = 'bos_direction' in current
         
         # Calculate similarity score for each past experience
         scored = []
         for exp in self.experiences:
-            # FLAT FORMAT: All fields are at top level
             past = exp
             
             # Calculate distance for each feature (normalized to 0-1 range)
             # Lower score = more similar
             
-            # === PRIMARY FLUSH SIGNALS (50% total) ===
-            
-            # Flush Size (20%) - Normalize by dividing difference by 50
-            flush_size_diff = abs(current.get('flush_size_ticks', 0) - past.get('flush_size_ticks', 0)) / 50.0
-            
-            # Velocity (15%) - Normalize by dividing difference by 10
-            flush_velocity_diff = abs(current.get('flush_velocity', 0) - past.get('flush_velocity', 0)) / 10.0
-            
-            # Volume Climax (10%) - Normalize by dividing difference by 3
-            volume_climax_diff = abs(current.get('volume_climax_ratio', 1) - past.get('volume_climax_ratio', 1)) / 3.0
-            
-            # Flush Direction (5%) - Score 0 if match, score 1 if different
-            flush_direction_match = 0.0 if current.get('flush_direction', 'NEUTRAL') == past.get('flush_direction', 'NEUTRAL') else 1.0
-            
-            # === ENTRY QUALITY (25% total) ===
-            
-            # RSI (8%) - Normalize by dividing difference by 100
-            rsi_diff = abs(current.get('rsi', 50) - past.get('rsi', 50)) / 100.0
-            
-            # Distance From Flush Low (7%) - Normalize by dividing difference by 20
-            distance_from_low_diff = abs(current.get('distance_from_flush_low', 0) - past.get('distance_from_flush_low', 0)) / 20.0
-            
-            # Reversal Candle (5%) - Score 0 if both match, score 1 if different
-            reversal_candle_match = 0.0 if current.get('reversal_candle', False) == past.get('reversal_candle', False) else 1.0
-            
-            # No New Extreme (5%) - Score 0 if both match, score 1 if different
-            no_new_extreme_match = 0.0 if current.get('no_new_extreme', False) == past.get('no_new_extreme', False) else 1.0
-            
-            # === MARKET CONTEXT (15% total) ===
-            
-            # VWAP Distance (8%) - Normalize by dividing absolute difference by 100
-            vwap_distance_diff = abs(current.get('vwap_distance_ticks', 0) - past.get('vwap_distance_ticks', 0)) / 100.0
-            
-            # Regime Match (7%) - Score 0 if regimes match, score 1 if different
-            regime_match = 0.0 if current.get('regime', 'NORMAL') == past.get('regime', 'NORMAL') else 1.0
-            
-            # === TIME CONTEXT (10% total) ===
-            
-            # Session (6%) - Score 0 if both ETH or both RTH, score 1 if different
-            session_match = 0.0 if current.get('session', 'RTH') == past.get('session', 'RTH') else 1.0
-            
-            # Hour (4%) - Normalize by dividing difference by 24
-            hour_diff = abs(current.get('hour', 12) - past.get('hour', 12)) / 24.0
-            
-            # Weighted similarity score (lower is more similar)
-            similarity = (
-                # Primary Flush Signals (50%)
-                flush_size_diff * 0.20 +           # 20%
-                flush_velocity_diff * 0.15 +       # 15%
-                volume_climax_diff * 0.10 +        # 10%
-                flush_direction_match * 0.05 +     # 5%
-                # Entry Quality (25%)
-                rsi_diff * 0.08 +                  # 8%
-                distance_from_low_diff * 0.07 +    # 7%
-                reversal_candle_match * 0.05 +     # 5%
-                no_new_extreme_match * 0.05 +      # 5%
-                # Market Context (15%)
-                vwap_distance_diff * 0.08 +        # 8%
-                regime_match * 0.07 +              # 7%
-                # Time Context (10%)
-                session_match * 0.06 +             # 6%
-                hour_diff * 0.04                   # 4%
-            )
+            if has_bos:
+                # === BOS/FVG STRATEGY ===
+                
+                # BOS Direction (15%) - Binary match
+                bos_match = 0.0 if current.get('bos_direction') == past.get('bos_direction') else 1.0
+                
+                # FVG Size (20%) - Normalize by 20 ticks
+                fvg_size_diff = abs(current.get('fvg_size_ticks', 0) - past.get('fvg_size_ticks', 0)) / 20.0
+                
+                # FVG Age (10%) - Normalize by 60 bars
+                fvg_age_diff = abs(current.get('fvg_age_bars', 0) - past.get('fvg_age_bars', 0)) / 60.0
+                
+                # Price in FVG (10%) - Normalize by 100%
+                price_in_fvg_diff = abs(current.get('price_in_fvg_pct', 0) - past.get('price_in_fvg_pct', 0)) / 100.0
+                
+                # Volume Ratio (10%) - Normalize by 3
+                volume_diff = abs(current.get('volume_ratio', 1) - past.get('volume_ratio', 1)) / 3.0
+                
+                # FVG Count (10%) - Normalize by 20
+                fvg_count_diff = abs(current.get('fvg_count_active', 0) - past.get('fvg_count_active', 0)) / 20.0
+                
+                # Swing Levels (10%) - Normalized price distance
+                swing_high_diff = abs(current.get('swing_high', 0) - past.get('swing_high', 0)) / 100.0
+                swing_low_diff = abs(current.get('swing_low', 0) - past.get('swing_low', 0)) / 100.0
+                swing_diff = (swing_high_diff + swing_low_diff) / 2.0
+                
+                # Session (8%) - Binary match
+                session_match = 0.0 if current.get('session') == past.get('session') else 1.0
+                
+                # Hour (7%) - Normalize by 24
+                hour_diff = abs(current.get('hour', 12) - past.get('hour', 12)) / 24.0
+                
+                # Weighted similarity score (lower is more similar)
+                similarity = (
+                    bos_match * 0.15 +
+                    fvg_size_diff * 0.20 +
+                    fvg_age_diff * 0.10 +
+                    price_in_fvg_diff * 0.10 +
+                    volume_diff * 0.10 +
+                    fvg_count_diff * 0.10 +
+                    swing_diff * 0.10 +
+                    session_match * 0.08 +
+                    hour_diff * 0.07
+                )
+                
+            else:
+                # === CAPITULATION STRATEGY (Legacy) ===
+                
+                # Flush Size (20%)
+                flush_size_diff = abs(current.get('flush_size_ticks', 0) - past.get('flush_size_ticks', 0)) / 50.0
+                
+                # Velocity (15%)
+                flush_velocity_diff = abs(current.get('flush_velocity', 0) - past.get('flush_velocity', 0)) / 10.0
+                
+                # Volume Climax (10%)
+                volume_climax_diff = abs(current.get('volume_climax_ratio', 1) - past.get('volume_climax_ratio', 1)) / 3.0
+                
+                # Flush Direction (5%)
+                flush_direction_match = 0.0 if current.get('flush_direction') == past.get('flush_direction') else 1.0
+                
+                # RSI (8%)
+                rsi_diff = abs(current.get('rsi', 50) - past.get('rsi', 50)) / 100.0
+                
+                # Distance From Flush Low (7%)
+                distance_from_low_diff = abs(current.get('distance_from_flush_low', 0) - past.get('distance_from_flush_low', 0)) / 20.0
+                
+                # Reversal Candle (5%)
+                reversal_candle_match = 0.0 if current.get('reversal_candle', False) == past.get('reversal_candle', False) else 1.0
+                
+                # No New Extreme (5%)
+                no_new_extreme_match = 0.0 if current.get('no_new_extreme', False) == past.get('no_new_extreme', False) else 1.0
+                
+                # VWAP Distance (8%)
+                vwap_distance_diff = abs(current.get('vwap_distance_ticks', 0) - past.get('vwap_distance_ticks', 0)) / 100.0
+                
+                # Regime Match (7%)
+                regime_match = 0.0 if current.get('regime') == past.get('regime') else 1.0
+                
+                # Session (6%)
+                session_match = 0.0 if current.get('session') == past.get('session') else 1.0
+                
+                # Hour (4%)
+                hour_diff = abs(current.get('hour', 12) - past.get('hour', 12)) / 24.0
+                
+                # Weighted similarity score
+                similarity = (
+                    flush_size_diff * 0.20 +
+                    flush_velocity_diff * 0.15 +
+                    volume_climax_diff * 0.10 +
+                    flush_direction_match * 0.05 +
+                    rsi_diff * 0.08 +
+                    distance_from_low_diff * 0.07 +
+                    reversal_candle_match * 0.05 +
+                    no_new_extreme_match * 0.05 +
+                    vwap_distance_diff * 0.08 +
+                    regime_match * 0.07 +
+                    session_match * 0.06 +
+                    hour_diff * 0.04
+                )
             
             scored.append((similarity, exp))
         
         # Sort by similarity (most similar first)
         scored.sort(key=lambda x: x[0])
-        
-        # DEBUG: Show similarity scores of top matches
-        if scored:
-            top_5 = scored[:min(5, len(scored))]
-            best_match = top_5[0][1]
-        else:
-            logger.warning(f"[RL Pattern Matching] No scored experiences - this should not happen!")
         
         # Return top N most similar (default 10)
         return [exp for _, exp in scored[:max_results]]
