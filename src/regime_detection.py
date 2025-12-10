@@ -3,11 +3,11 @@ Market Regime Detection System
 ================================
 Detects and classifies market regimes based on volatility and price action.
 
-CAPITULATION REVERSAL STRATEGY - ALL REGIMES ENABLED:
-Regime detection classifies market conditions but ALL regimes are tradeable.
-The RL signal confidence system provides sufficient filtering without regime blocking.
+BOS+FVG STRATEGY - REGIME DETECTION DISABLED:
+The BOS+FVG strategy does not use regime detection or filtering.
+This module is kept for legacy compatibility but is not actively used.
 
-ALL 7 REGIMES ARE TRADEABLE:
+LEGACY REGIMES (not used in BOS+FVG):
 - HIGH_VOL_CHOPPY: Big moves, fast rotations, liquidity grabs
 - NORMAL_CHOPPY: Clean, predictable swing reversals
 - NORMAL: Stable, balanced - clean and controlled reversals
@@ -41,15 +41,15 @@ class RegimeParameters:
     """
     Parameters for a specific market regime.
     
-    NOTE: In Capitulation Reversal Strategy, multipliers are NOT USED.
-    Trade management (breakeven, trailing, stop) uses fixed rules.
+    NOTE: In BOS+FVG Strategy, this class is not used.
+    Trade management uses fixed rules independent of market regime.
     This class is kept for backwards compatibility.
     """
     
     def __init__(self, name: str, stop_mult: float = 1.0, breakeven_mult: float = 1.0, 
                  trailing_mult: float = 1.0, sideways_timeout: int = 10, underwater_timeout: int = 20):
         self.name = name
-        # LEGACY: These multipliers are NOT used in Capitulation Reversal Strategy
+        # LEGACY: These multipliers are NOT used in BOS+FVG Strategy
         # Kept for backwards compatibility with older code
         self.stop_mult = stop_mult
         self.breakeven_mult = breakeven_mult
@@ -61,33 +61,26 @@ class RegimeParameters:
         return f"RegimeParameters({self.name})"
 
 
-# Tradeable regimes for Capitulation Reversal Strategy
-# MODIFIED: Allow ALL regimes - no blocking
-# Now trading in ALL market conditions including trending environments
+# Tradeable regimes for BOS+FVG Strategy
+# NOTE: Regime filtering is DISABLED in BOS+FVG strategy
+# This list is kept for legacy compatibility
 TRADEABLE_REGIMES = {"HIGH_VOL_CHOPPY", "NORMAL_CHOPPY", "NORMAL", "LOW_VOL_RANGING", 
                      "HIGH_VOL_TRENDING", "NORMAL_TRENDING", "LOW_VOL_TRENDING"}
 
 
 def is_regime_tradeable(regime: str) -> bool:
     """
-    Check if the current regime allows trading.
+    Check if a regime is tradeable for the BOS+FVG Strategy.
     
-    MODIFIED: ALL REGIMES ENABLED - No blocking.
-    
-    Previously filtered out trending regimes, but now trading in ALL market conditions:
-    - HIGH_VOL_CHOPPY: Best - big moves, fast rotations, liquidity grabs
-    - NORMAL_CHOPPY: Second best - clean, predictable swing reversals
-    - NORMAL: Stable - clean and controlled reversals
-    - LOW_VOL_RANGING: Slow but reliable micro-reversals
-    - HIGH_VOL_TRENDING: Now enabled
-    - NORMAL_TRENDING: Now enabled
-    - LOW_VOL_TRENDING: Now enabled
+    NOTE: Regime filtering is DISABLED - always returns True.
+    BOS+FVG strategy does not use regime detection.
+    This function is kept for backwards compatibility.
     
     Args:
         regime: Current market regime name
         
     Returns:
-        True if regime allows trading, False otherwise
+        True (always - regime filtering disabled)
     """
     return regime in TRADEABLE_REGIMES
 

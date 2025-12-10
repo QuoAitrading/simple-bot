@@ -136,7 +136,8 @@ def initialize_rl_brain(symbol: str, exploration_rate: float) -> Tuple[SignalCon
     )
     bot_module = importlib.util.module_from_spec(spec)
     sys.modules['quotrading_engine'] = bot_module
-    sys.modules['capitulation_reversal_bot'] = bot_module
+    # Also make it available as bos_fvg_bot for compatibility
+    sys.modules['bos_fvg_bot'] = bot_module
     
     # Load the module
     spec.loader.exec_module(bot_module)
@@ -157,10 +158,8 @@ def initialize_rl_brain(symbol: str, exploration_rate: float) -> Tuple[SignalCon
     # Also update SYMBOL_SPEC in bot module
     bot_module.SYMBOL_SPEC = symbol_spec
     
-    # CRITICAL: Reset capitulation detector to use new symbol's tick size/value
-    # The detector is a singleton and needs to be recreated for each symbol
-    import capitulation_detector
-    capitulation_detector._detector = None
+    # Note: BOS+FVG strategy uses bos_detector and fvg_detector
+    # These are initialized automatically in initialize_state() per symbol
     
     # Initialize RL brain with specified exploration rate
     signal_exp_file = os.path.join(PROJECT_ROOT, f"experiences/{symbol}/signal_experience.json")
@@ -308,7 +307,7 @@ def main():
     
     # Suppress ALL verbose loggers for clean saturation output
     for logger_name in ['quotrading_engine', 'backtesting', 'signal_confidence', 
-                        'regime_detection', 'capitulation_detector', 'root', '__main__',
+                        'bos_detector', 'fvg_detector', 'root', '__main__',
                         'asyncio', 'urllib3', 'requests', 'httpx']:
         logging.getLogger(logger_name).setLevel(logging.CRITICAL)
     

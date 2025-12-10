@@ -1,7 +1,7 @@
 """
-Signal Confidence - RL Layer for Capitulation Reversal Signals
+Signal Confidence - RL Layer for BOS+FVG Trading Signals
 ================================================================
-Learns which capitulation reversal signals to trust vs skip.
+Learns which BOS+FVG signals to trust vs skip.
 
 Keeps your hardcoded entry logic, but adds intelligence:
 - Should I take this signal? (confidence scoring)
@@ -24,7 +24,7 @@ logger = logging.getLogger(__name__)
 
 class SignalConfidenceRL:
     """
-    Reinforcement learning layer that decides whether to trust Capitulation Reversal signals.
+    Reinforcement learning layer that decides whether to trust BOS+FVG trading signals.
     
     NOTE: For production deployments, RL should be hosted in the cloud.
     Local RL experience files are only used for backtesting and development.
@@ -124,7 +124,7 @@ class SignalConfidenceRL:
         Generate a unique key for duplicate detection based on PATTERN only.
         Excludes timestamp and pnl to detect the same pattern regardless of when/outcome.
         
-        Supports both Capitulation and BOS/FVG strategies by detecting which fields are present.
+        Supports both BOS/FVG and legacy strategies by detecting which fields are present.
         
         Args:
             experience: The experience dictionary
@@ -147,7 +147,7 @@ class SignalConfidenceRL:
                 'symbol', 'took_trade'
             ]
         else:
-            # Capitulation Strategy Fields (12 pattern matching fields + 2 metadata = 14 total) - Legacy
+            # Legacy Strategy Fields (kept for backward compatibility)
             key_fields = [
                 'flush_size_ticks', 'flush_velocity', 'volume_climax_ratio', 'flush_direction',
                 'rsi', 'distance_from_flush_low', 'reversal_candle', 'no_new_extreme',
@@ -415,7 +415,7 @@ class SignalConfidenceRL:
                 )
                 
             else:
-                # === CAPITULATION STRATEGY (Legacy) ===
+                # === LEGACY STRATEGY ===
                 # Weights add to 100%: 20+15+10+5+8+7+5+5+8+7+6+4 = 100%
                 
                 # Flush Size (20%)

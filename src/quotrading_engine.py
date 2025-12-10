@@ -3219,22 +3219,19 @@ def validate_signal_requirements(symbol: str, bar_time: datetime) -> Tuple[bool,
     # - Long: Bullish BOS + bullish FVG fill
     # - Short: Bearish BOS + bearish FVG fill
     
-    # Check RSI is available (needed for capitulation signal detection)
-    # NOTE: RSI not needed for BOS+FVG strategy - disabled
-    # Note: RSI thresholds (25/75) are hardcoded in capitulation_detector.py
+    # NOTE: RSI not needed for BOS+FVG strategy - disabled for performance
     rsi = state[symbol]["rsi"]
     if rsi is None:
         pass
-        # Signal-specific functions will handle RSI check with 25/75 thresholds
+        # Legacy note: RSI was used in old strategies but not in BOS+FVG
     
-    # Volume check - handled by capitulation_detector.py (condition #5: 2x average)
+    # NOTE: Volume not needed for BOS+FVG strategy - disabled for performance
     avg_volume = state[symbol].get("avg_volume")
     if avg_volume is None:
         pass
-        # Signal-specific functions will handle volume check with 2x threshold
+        # Legacy note: Volume was used in old strategies but not in BOS+FVG
     
-    # VWAP direction filter - DISABLED for Capitulation Reversal strategy
-    # Price checks are done in capitulation_detector.py condition #8
+    # NOTE: VWAP not used in BOS+FVG strategy - disabled for performance
     
     # Check bid/ask spread and market condition (Phase: Bid/Ask Strategy)
     # ✓ BACKTEST MODE: Bid/ask validation SKIPPED - uses bar close prices only (no bid/ask in historical data)
@@ -3637,10 +3634,9 @@ def capture_market_state(symbol: str, current_price: float) -> Dict[str, Any]:
     13. pnl (added later by record_outcome)
     14. took_trade (added later by record_outcome)
     
-    REMOVED FROM CAPITULATION STRATEGY:
-    - flush_size_ticks, flush_velocity, flush_direction, distance_from_flush_low
-    - rsi, vwap_distance_ticks, regime
-    - reversal_candle, no_new_extreme
+    LEGACY FIELDS (not used in BOS+FVG):
+    - Old strategy fields like flush_size_ticks, flush_velocity, etc.
+    - RSI, VWAP distance, regime detection
     
     Args:
         symbol: Instrument symbol
@@ -4092,7 +4088,7 @@ def calculate_position_size(symbol: str, side: str, entry_price: float, rl_confi
             
             logger.info(f"[BOS+FVG] Using FVG-based stop: {ticks_at_risk:.0f} ticks (${fvg_risk_dollars:.2f}) - within max loss limit")
     else:
-        # Fallback to user's max loss setting (original capitulation strategy logic)
+        # Fallback to user's max loss setting
         if side == "long":
             stop_price = entry_price - stop_distance
         else:  # short
@@ -4919,7 +4915,7 @@ def check_breakeven_protection(symbol: str, current_price: float) -> None:
     # Use symbol-specific tick values for accurate P&L calculation across different instruments
     tick_size, tick_value = get_symbol_tick_specs(symbol)
     
-    # CAPITULATION REVERSAL: Fixed breakeven threshold at 12 ticks (no regime adjustment)
+    # BOS+FVG STRATEGY: Fixed breakeven threshold at 12 ticks
     breakeven_threshold_ticks = CONFIG.get("breakeven_trigger_ticks", 12)
     
     # Stop at entry + 3 ticks (locks in 3 tick profit to cover fees)
@@ -5019,7 +5015,7 @@ def check_trailing_stop(symbol: str, current_price: float) -> None:
     # Use symbol-specific tick values for accurate P&L calculation across different instruments
     tick_size, tick_value = get_symbol_tick_specs(symbol)
     
-    # CAPITULATION REVERSAL: Fixed trailing parameters (no regime adjustment)
+    # BOS+FVG STRATEGY: Fixed trailing parameters
     trailing_distance_ticks = CONFIG.get("trailing_distance_ticks", 8)
     min_profit_ticks = CONFIG.get("trailing_trigger_ticks", 15)
     

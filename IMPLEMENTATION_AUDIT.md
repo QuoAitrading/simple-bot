@@ -3,17 +3,17 @@
 ## Core Changes Made
 
 ### 1. Fixed Duplicate Detection (`src/signal_confidence.py`)
-- **Issue:** Hardcoded for Capitulation fields only
-- **Fix:** Auto-detects strategy (BOS/FVG vs Capitulation) based on fields present
+- **Issue:** Hardcoded for legacy strategy fields only
+- **Fix:** Auto-detects strategy (BOS/FVG vs legacy) based on fields present
 - **Implementation:** `_generate_experience_key()` checks for `'bos_direction'` field
-- **Result:** Duplicate detection works for both strategies
+- **Result:** Duplicate detection works for both BOS/FVG and legacy strategies
 - **Status:** ✅ Production-ready, fully implemented
 
 ### 2. Fixed Pattern Matching (`src/signal_confidence.py`)  
-- **Issue:** Similarity scoring only used Capitulation weights
+- **Issue:** Similarity scoring only used legacy strategy weights
 - **Fix:** Auto-detects strategy and applies appropriate weights
 - **BOS/FVG weights:** 15+20+10+10+10+10+10+8+7 = 100%
-- **Capitulation weights:** 20+15+10+5+8+7+5+5+8+7+6+4 = 100%
+- **Legacy weights:** 20+15+10+5+8+7+5+5+8+7+6+4 = 100%
 - **Status:** ✅ Production-ready, fully implemented
 
 ### 3. Added Missing Function (`src/quotrading_engine.py`)
@@ -29,7 +29,7 @@
 ### 5. ES Experience Data (`experiences/ES/signal_experience.json`)
 - **Count:** 25,449 unique BOS/FVG patterns (validated after cleanup)
 - **Quality:** Zero duplicates, zero nulls, zero invalid values
-- **Fields:** All 15 BOS/FVG fields correct, no capitulation fields
+- **Fields:** All 15 BOS/FVG fields correct, no legacy strategy fields
 - **Status:** ✅ Production-ready
 
 ### 6. Cleaned Non-ES Data
@@ -51,7 +51,7 @@ python3 dev/run_backtest.py --symbol ES --days 1
 ```
 - ✅ Backtest runs successfully
 - ✅ Saves BOS/FVG experiences correctly
-- ✅ No capitulation fields in new experiences
+- ✅ No legacy strategy fields in new experiences
 - ✅ Duplicate detection working
 
 **Data Validation:**

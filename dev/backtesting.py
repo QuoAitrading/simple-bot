@@ -1,5 +1,5 @@
 """
-Backtesting Framework for Capitulation Reversal Bot
+Backtesting Framework for BOS+FVG Trading Bot
 Supports historical data loading, order simulation, and performance analysis
 """
 
