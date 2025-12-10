@@ -25,6 +25,13 @@ PROJECT_ROOT = os.path.dirname(SCRIPT_DIR)
 # Experience file path for ES
 EXPERIENCE_FILE = os.path.join(PROJECT_ROOT, "experiences/ES/signal_experience.json")
 
+# Configuration constants
+INITIAL_BACKTEST_DAYS = 30  # Starting backtest period
+BACKTEST_INCREMENT_DAYS = 30  # Increase period by this each iteration
+MAX_BACKTEST_DAYS = 365  # Maximum backtest period
+MAX_STAGNANT_ITERATIONS = 3  # Stop after this many iterations with no new experiences
+MAX_ITERATIONS = 20  # Safety limit to prevent infinite loops
+
 
 def get_experience_count():
     """Get the current number of experiences in the ES experience file."""
@@ -37,7 +44,7 @@ def get_experience_count():
             experiences = data.get('experiences', [])
             return len(experiences)
     except Exception as e:
-        print(f"Error reading experience file: {e}")
+        print(f"Error reading experience file {EXPERIENCE_FILE}: {e}")
         return 0
 
 
@@ -70,7 +77,7 @@ def run_single_backtest(days=30):
         result = subprocess.run(cmd, cwd=PROJECT_ROOT, check=False)
         return result.returncode == 0
     except Exception as e:
-        print(f"Error running backtest: {e}")
+        print(f"Error running backtest command {' '.join(cmd)} in {PROJECT_ROOT}: {e}")
         return False
 
 
@@ -93,7 +100,6 @@ def main():
     iteration = 0
     previous_count = get_experience_count()
     stagnant_iterations = 0
-    max_stagnant = 3  # Stop after 3 iterations with no new experiences
     
     print(f"Initial experience count: {previous_count}")
     
@@ -104,8 +110,7 @@ def main():
         print(f"{'#'*80}\n")
         
         # Run backtest for increasingly longer periods to get more data
-        # Start with 30 days, then 60, 90, 120, etc.
-        days = min(30 + (iteration - 1) * 30, 365)  # Cap at 365 days
+        days = min(INITIAL_BACKTEST_DAYS + (iteration - 1) * BACKTEST_INCREMENT_DAYS, MAX_BACKTEST_DAYS)
         
         # Run the backtest
         success = run_single_backtest(days=days)
@@ -127,13 +132,13 @@ def main():
         # Check if we're still adding experiences
         if new_experiences == 0:
             stagnant_iterations += 1
-            print(f"⚠️  No new experiences added ({stagnant_iterations}/{max_stagnant})")
+            print(f"⚠️  No new experiences added ({stagnant_iterations}/{MAX_STAGNANT_ITERATIONS})")
             
-            if stagnant_iterations >= max_stagnant:
+            if stagnant_iterations >= MAX_STAGNANT_ITERATIONS:
                 print(f"\n{'='*80}")
                 print("✅ CONVERGENCE ACHIEVED!")
                 print(f"{'='*80}")
-                print(f"\nNo new unique experiences added for {max_stagnant} consecutive iterations.")
+                print(f"\nNo new unique experiences added for {MAX_STAGNANT_ITERATIONS} consecutive iterations.")
                 print(f"Final experience count: {current_count}")
                 print(f"\nRL brain has converged with all available unique patterns from ES data.")
                 print(f"Experience file: {EXPERIENCE_FILE}")
@@ -147,8 +152,8 @@ def main():
         previous_count = current_count
         
         # Safety check - don't run forever
-        if iteration >= 20:
-            print(f"\n⚠️  Reached maximum iteration limit ({iteration})")
+        if iteration >= MAX_ITERATIONS:
+            print(f"\n⚠️  Reached maximum iteration limit ({MAX_ITERATIONS})")
             print(f"Final experience count: {current_count}")
             break
     
