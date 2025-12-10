@@ -381,18 +381,6 @@ class TimerManager:
                         {"time": current_time}
                     )
                 
-                # Check shutdown time (only during maintenance window: 4:50 PM - 6:00 PM ET)
-                shutdown_time = self.config.get("shutdown_time")
-                entry_start = self.config.get("entry_start_time")  # 6 PM - when trading resumes
-                if shutdown_time and entry_start and self._should_check("shutdown", current_time, 60):
-                    # Only shutdown if we're in the maintenance window (shutdown_time <= now < entry_start)
-                    if shutdown_time <= current_time_only < entry_start:
-                        self.event_loop.post_event(
-                            EventType.SHUTDOWN,
-                            EventPriority.CRITICAL,
-                            {"time": current_time, "reason": "maintenance_window"}
-                        )
-                
                 # Post periodic time check event
                 if self._should_check("periodic", current_time, 1):
                     self.event_loop.post_event(

@@ -212,6 +212,10 @@ def run_backtest(args: argparse.Namespace) -> Dict[str, Any]:
     Returns:
         Dictionary with backtest performance metrics
     """
+    # Constants for progress reporting
+    MIN_PROGRESS_INTERVAL = 500  # Show progress at least every 500 bars
+    PROGRESS_UPDATES = 10  # Target number of progress updates during backtest
+    
     logger = logging.getLogger('backtest')
     
     # Get the clean reporter
@@ -368,16 +372,18 @@ def run_backtest(args: argparse.Namespace) -> Dict[str, Any]:
         nonlocal prev_position_active, bars_processed, total_bars, last_exit_reason
         total_bars = len(bars_1min)
         
+        # Calculate progress interval once (at least MIN_PROGRESS_INTERVAL, or every 10% if larger)
+        progress_interval = max(MIN_PROGRESS_INTERVAL, total_bars // PROGRESS_UPDATES)
+        
         for bar_idx, bar in enumerate(bars_1min):
             bars_processed = bar_idx + 1
             
-            # Update progress less frequently - every 10% or every 500 bars (whichever is larger)
-            progress_interval = max(500, total_bars // 10)  # Show 10 updates max
-            if bars_processed % progress_interval == 0 or bars_processed == total_bars:
-                reporter.update_progress(bars_processed, total_bars)
-            
             # Extract bar data
             timestamp = bar['timestamp']
+            
+            # Update progress less frequently
+            if bars_processed % progress_interval == 0 or bars_processed == total_bars:
+                reporter.update_progress(bars_processed, total_bars, timestamp)
             timestamp_eastern = timestamp.astimezone(eastern_tz)
             
             # Check for new trading day (resets daily counters following production rules)
@@ -544,17 +550,25 @@ def main():
         max_contracts=bot_config.max_contracts
     )
     
-    # Create a custom filter to suppress signal spam and only track them
+    # Create a custom filter to suppress signal spam and only track/show approved ones
     class BacktestMessageFilter(logging.Filter):
+        """Filter backtest messages to show only approved signals and warnings+
+        
+        Uses direct print for approved signals (bypassing logging system) to maintain
+        clean, formatted output that's separate from the logging infrastructure.
+        This allows approved signals to appear inline with progress updates.
+        """
         def filter(self, record):
-            # Track RL signals for the reporter but suppress output
+            # Track RL signals for the reporter
             msg = record.getMessage()
             if 'SIGNAL APPROVED' in msg:
                 reporter.record_signal(approved=True)
-                return False  # Suppress output
+                # Show approved signals in clean format (direct print for cleaner output)
+                print(f"  ✓ {msg}")
+                return False  # Suppress original output
             elif 'Signal Declined' in msg:
                 reporter.record_signal(approved=False)
-                return False  # Suppress output
+                return False  # Suppress output - don't show rejected signals
             elif 'Exploring' in msg:
                 return False  # Suppress exploration messages
             elif 'LONG SIGNAL' in msg or 'SHORT SIGNAL' in msg:
