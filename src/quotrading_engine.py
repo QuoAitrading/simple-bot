@@ -3646,6 +3646,9 @@ def capture_market_state(symbol: str, current_price: float) -> Dict[str, Any]:
     14. pnl (added later by record_outcome)
     15. took_trade (added later by record_outcome)
     
+    TOTAL: 15 fields for complete experience tracking.
+    All fields are used - 11 for pattern matching, 4 for metadata/outcomes.
+    
     LEGACY FIELDS (not used in BOS+FVG):
     - Old strategy fields like flush_size_ticks, flush_velocity, etc.
     - RSI, VWAP distance, regime detection
@@ -3655,7 +3658,7 @@ def capture_market_state(symbol: str, current_price: float) -> Dict[str, Any]:
         current_price: Current market price
     
     Returns:
-        Dictionary with 13 market state features (pnl and took_trade added later)
+        Dictionary with 11 pattern matching + 2 metadata fields (pnl and took_trade added later)
     """
     # Get current time and session
     current_time = get_current_time()
@@ -3759,6 +3762,7 @@ def capture_market_state(symbol: str, current_price: float) -> Dict[str, Any]:
                     break
     
     # Build the simplified 15-field experience record structure for BOS+FVG
+    # 11 pattern matching fields + 4 metadata fields (symbol, timestamp, pnl, took_trade)
     market_state = {
         # The 11 Pattern Matching Fields
         "bos_direction": bos_direction if bos_direction else "NONE",
@@ -3777,9 +3781,6 @@ def capture_market_state(symbol: str, current_price: float) -> Dict[str, Any]:
         "symbol": symbol,
         "timestamp": current_time.isoformat(),
         # pnl and took_trade will be added by record_outcome()
-        
-        # Additional field for display purposes (not used in pattern matching)
-        "price": current_price,
     }
     
     return market_state
