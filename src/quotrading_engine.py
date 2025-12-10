@@ -2067,13 +2067,13 @@ def initialize_bos_fvg_detectors(symbol: str) -> None:
     # Initialize BOS detector (5-bar swing lookback)
     state[symbol]["bos_detector"] = BOSDetector(swing_lookback=5)
     
-    # Initialize FVG detector with BOS+FVG strategy parameters
+    # Initialize FVG detector with optimized BOS+FVG strategy parameters
     state[symbol]["fvg_detector"] = FVGDetector(
         tick_size=tick_size,
-        min_fvg_size_ticks=2,    # Minimum 2 ticks
-        max_fvg_size_ticks=20,   # Maximum 20 ticks
-        fvg_expiry_minutes=60,   # 60 minute expiry
-        max_active_fvgs=10       # Track up to 10 FVGs
+        min_fvg_size_ticks=2,    # Minimum 2 ticks (catches more signals)
+        max_fvg_size_ticks=25,   # Maximum 25 ticks (increased from 20 - less restrictive)
+        fvg_expiry_minutes=75,   # 75 minute expiry (increased from 60 - gives FVGs more time)
+        max_active_fvgs=15       # Track up to 15 FVGs (increased from 10 - ES is very active)
     )
     
 
