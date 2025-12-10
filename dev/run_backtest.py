@@ -548,12 +548,18 @@ def main():
     
     # Create a custom filter to suppress signal spam and only track/show approved ones
     class BacktestMessageFilter(logging.Filter):
+        """Filter backtest messages to show only approved signals and warnings+
+        
+        Uses direct print for approved signals (bypassing logging system) to maintain
+        clean, formatted output that's separate from the logging infrastructure.
+        This allows approved signals to appear inline with progress updates.
+        """
         def filter(self, record):
             # Track RL signals for the reporter
             msg = record.getMessage()
             if 'SIGNAL APPROVED' in msg:
                 reporter.record_signal(approved=True)
-                # Show approved signals in clean format
+                # Show approved signals in clean format (direct print for cleaner output)
                 print(f"  ✓ {msg}")
                 return False  # Suppress original output
             elif 'Signal Declined' in msg:

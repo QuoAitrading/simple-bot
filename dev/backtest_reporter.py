@@ -128,7 +128,14 @@ class BacktestReporter:
               f"P&L: ${pnl:+8.2f} | {exit_reason:12} | {duration:3.0f}min | Conf: {confidence:3.0f}%{regime_str}")
         
     def update_progress(self, bars_processed: int, total_bars: int, current_timestamp=None):
-        """Update progress with bar date - only show every 10% to reduce spam"""
+        """Update progress with bar date - only show every 10% to reduce spam
+        
+        Args:
+            bars_processed: Number of bars processed so far
+            total_bars: Total number of bars to process
+            current_timestamp: Optional timestamp (datetime object or ISO string)
+                              Expected string format: "YYYY-MM-DD HH:MM:SS..." (min 16 chars)
+        """
         if total_bars > 0:
             pct = (bars_processed / total_bars) * 100
             # Only show progress every 10% or at completion
@@ -139,7 +146,7 @@ class BacktestReporter:
                     if hasattr(current_timestamp, 'strftime'):
                         date_str = f" | {current_timestamp.strftime('%Y-%m-%d %H:%M')}"
                     elif isinstance(current_timestamp, str) and len(current_timestamp) >= 16:
-                        # Use first 16 chars for date format: "2024-01-15 14:30"
+                        # Use first 16 chars for ISO date format: "2024-01-15 14:30"
                         date_str = f" | {current_timestamp[:16]}"
                 
                 # Clean progress format with date
