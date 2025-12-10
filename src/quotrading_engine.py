@@ -3750,6 +3750,20 @@ def capture_market_state(symbol: str, current_price: float) -> Dict[str, Any]:
 
 
 
+def is_regime_tradeable(regime: str) -> bool:
+    """
+    Check if the current regime allows trading.
+    Currently returns True for all regimes (RL handles filtering).
+    
+    Args:
+        regime: Current market regime
+        
+    Returns:
+        True if regime allows trading (currently always True)
+    """
+    # All regimes are tradeable - RL confidence system provides filtering
+    return True
+
 
 def check_for_signals(symbol: str) -> None:
     """
