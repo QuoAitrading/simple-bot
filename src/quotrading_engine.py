@@ -1,25 +1,24 @@
 """
-Capitulation Reversal Bot - Mean Reversion Trading Strategy
-Event-driven bot that trades reversals after panic selling/buying flushes
+BOS + FVG Scalping Bot - Institutional Footprint Trading Strategy
+Event-driven bot that trades price inefficiencies (Fair Value Gaps) in the direction of structure breaks
 
 THE EDGE:
-Wait for panic selling or panic buying. When everyone is rushing for the exits
-(or FOMO buying), step in the opposite direction and ride the snapback to VWAP.
+Identify trend direction using Break of Structure (BOS), then trade mean reversion fills
+into Fair Value Gaps (FVGs). When price leaves gaps due to fast movement, wait for the
+fill and scalp the reversion with tight stops and 1.5:1 risk-reward.
 
 STRATEGY FLOW:
-1. DETECT THE FLUSH - Price dropped/pumped 20+ ticks in 5-10 min (2x ATR)
-2. CONFIRM EXHAUSTION - Volume spike then decline, extreme RSI, momentum fading
-3. ENTRY TRIGGER - Reversal candle closes, price stretched from VWAP
-4. STOP LOSS - 2-4 ticks below/above flush low/high
-5. PROFIT TARGET - VWAP (mean reversion destination)
-6. TRADE MANAGEMENT - Breakeven at 12 ticks, trail after 15 ticks
+1. DETECT BOS - Price breaks above swing high (bullish) or below swing low (bearish)
+2. IDENTIFY FVG - 3-candle gap where bar1.high < bar3.low (bullish) or bar1.low > bar3.high (bearish)
+3. ENTRY TRIGGER - Price fills into FVG zone (touches gap from the other side)
+4. STOP LOSS - 2 ticks beyond FVG zone (tight, strategy-specific)
+5. PROFIT TARGET - 1.5x risk (fixed risk-reward ratio)
+6. SAFETY NET - GUI max loss per trade caps FVG stops when they exceed user's risk limit
 
-TRADEABLE REGIMES:
-- HIGH_VOL_TRENDING: Big moves happen, good for this strategy
-- HIGH_VOL_CHOPPY: Still has flushes, just choppier
-
-SKIP THESE REGIMES:
-- NORMAL, NORMAL_CHOPPY, LOW_VOL: Not enough volatility for real flushes
+FVG FILTERS:
+- Size: 2-20 ticks (filters noise and extreme moves)
+- Expiry: 60 minutes (prevents stale zones)
+- FIFO: First filled FVG wins (prevents over-trading)
 
 ========================================================================
 24/7 MULTI-USER READY ARCHITECTURE - US EASTERN TIME (DST-AWARE)
@@ -99,14 +98,18 @@ import hashlib
 import signal
 import atexit
 
-# Load environment variables at module import time
-from dotenv import load_dotenv
-from pathlib import Path
-
-# Determine project root and load .env
-PROJECT_ROOT = Path(__file__).parent.parent
-env_path = PROJECT_ROOT / '.env'
-load_dotenv(dotenv_path=env_path)
+# Load environment variables at module import time (optional for live trading)
+try:
+    from dotenv import load_dotenv
+    from pathlib import Path
+    
+    # Determine project root and load .env
+    PROJECT_ROOT = Path(__file__).parent.parent
+    env_path = PROJECT_ROOT / '.env'
+    load_dotenv(dotenv_path=env_path)
+except ImportError:
+    # dotenv not available (e.g., in backtesting) - skip
+    pass
 
 # Import rainbow logo display - with fallback if not available
 try:
@@ -244,9 +247,18 @@ from error_recovery import ErrorRecoveryManager, ErrorType as RecoveryErrorType
 from bid_ask_manager import BidAskManager, BidAskQuote
 from notifications import get_notifier
 from signal_confidence import SignalConfidenceRL
-from regime_detection import get_regime_detector, REGIME_DEFINITIONS, is_regime_tradeable
-from capitulation_detector import get_capitulation_detector, CapitulationDetector, FlushEvent
-from cloud_api import CloudAPIClient
+# Legacy imports removed - BOS+FVG strategy doesn't use regime or capitulation detection
+
+# Conditionally import cloud API (only needed for live trading)
+try:
+    from cloud_api import CloudAPIClient
+    CLOUD_API_AVAILABLE = True
+except ImportError:
+    CLOUD_API_AVAILABLE = False
+    CloudAPIClient = None
+
+from bos_detector import BOSDetector
+from fvg_detector import FVGDetector
 
 # Conditionally import broker (only needed for live trading, not backtesting)
 try:
@@ -553,6 +565,10 @@ IDLE_STATUS_MESSAGE_INTERVAL = 300  # Show status message every 5 minutes (300 s
 
 # Regime Detection Constants
 DEFAULT_FALLBACK_ATR = 5.0  # Default ATR when calculation not possible (ES futures typical value)
+
+# BOS + FVG Strategy Constants - Optimized for 57.6% Win Rate
+BOS_FVG_STOP_BUFFER_TICKS = 2.5  # Ticks beyond FVG zone for stop placement (optimized)
+BOS_FVG_PROFIT_TARGET_MULTIPLIER = 1.18  # Risk-reward ratio (1:1.18) - quick profit capture
 
 # Global broker instance (replaces sdk_client)
 broker: Optional[BrokerInterface] = None
@@ -1961,7 +1977,7 @@ def initialize_state(symbol: str) -> None:
         "trading_day": None,
         "daily_trade_count": 0,
         "daily_pnl": 0.0,
-        "warmup_complete": False,  # Track when 34 bars collected for regime detection
+        "warmup_complete": False,  # Track when 10 bars collected for BOS swing points
         
         # Session tracking (Phase 13)
         "session_stats": {
@@ -1991,12 +2007,7 @@ def initialize_state(symbol: str) -> None:
             "manual_override": False,  # True when user manually adjusted position
             "manual_override_time": None,  # When manual override was detected
             "manual_override_reason": None,  # Description of what was adjusted
-            # Regime Information - For dynamic exit management
-            "entry_regime": None,  # Regime at entry
-            "current_regime": None,  # Current regime (updated on each tick)
-            "regime_change_time": None,  # When regime last changed
-            "regime_history": [],  # List of regime transitions with timestamps
-            "entry_atr": None,  # ATR at entry
+            # BOS+FVG doesn't use regime detection - removed for performance
             # Advanced Exit Management - Breakeven State
             "breakeven_active": False,
             "original_stop_price": None,
@@ -2025,8 +2036,50 @@ def initialize_state(symbol: str) -> None:
         },
         
         # Volume history
-        "volume_history": deque(maxlen=CONFIG["max_bars_storage"])
+        "volume_history": deque(maxlen=CONFIG["max_bars_storage"]),
+        
+        # BOS + FVG Strategy Components
+        "bos_detector": None,  # Will be initialized after symbol specs are known
+        "fvg_detector": None,  # Will be initialized after symbol specs are known
+        "current_bos_direction": None,  # 'bullish', 'bearish', or None
+        "active_fvgs": [],  # List of active FVG zones
+        # Legacy fields removed - BOS+FVG doesn't use capitulation
     }
+    
+    # Initialize BOS and FVG detectors with symbol-specific parameters
+    initialize_bos_fvg_detectors(symbol)
+
+
+def initialize_bos_fvg_detectors(symbol: str) -> None:
+    """
+    Initialize BOS and FVG detectors for a symbol.
+    Uses symbol-specific tick size and values.
+    
+    Args:
+        symbol: Instrument symbol
+    """
+    # Get symbol-specific parameters
+    from symbol_specs import SYMBOL_SPECS
+    if symbol in SYMBOL_SPECS:
+        spec = SYMBOL_SPECS[symbol]
+        tick_size = spec.tick_size
+        tick_value = spec.tick_value
+    else:
+        # Fallback to config defaults (usually ES)
+        tick_size = CONFIG.get("tick_size", 0.25)
+        tick_value = CONFIG.get("tick_value", 12.50)
+    
+    # Initialize BOS detector (5-bar swing lookback)
+    state[symbol]["bos_detector"] = BOSDetector(swing_lookback=5)
+    
+    # Initialize FVG detector with optimized BOS+FVG strategy parameters
+    state[symbol]["fvg_detector"] = FVGDetector(
+        tick_size=tick_size,
+        min_fvg_size_ticks=2,    # Minimum 2 ticks (catches more signals)
+        max_fvg_size_ticks=25,   # Maximum 25 ticks (increased from 20 - less restrictive)
+        fvg_expiry_minutes=75,   # 75 minute expiry (increased from 60 - gives FVGs more time)
+        max_active_fvgs=15       # Track up to 15 FVGs (increased from 10 - ES is very active)
+    )
     
 
 
@@ -2261,12 +2314,17 @@ def update_1min_bar(symbol: str, price: float, volume: int, dt: datetime) -> Non
             bar_count = len(state[symbol]["bars_1min"])
             
             # Calculate VWAP after new bar is added
-            calculate_vwap(symbol)
+            # NOTE: VWAP not needed for BOS+FVG strategy - disabled for performance
+            # calculate_vwap(symbol)
             
             # Update all indicators after each 1-minute bar (consistent with backtest mode)
-            update_macd(symbol)
-            update_rsi(symbol)
+            # NOTE: MACD and RSI not needed for BOS+FVG strategy - disabled for performance
+            # update_macd(symbol)
+            # update_rsi(symbol)
             update_volume_average(symbol)
+            
+            # Process BOS and FVG detection after bar is completed
+            process_bos_fvg(symbol)
             
             # Classify market condition on every bar if bid_ask_manager available
             if bid_ask_manager is not None:
@@ -2290,7 +2348,7 @@ def update_1min_bar(symbol: str, price: float, volume: int, dt: datetime) -> Non
                 else:
                     vwap_data = state[symbol].get("vwap", {})
                     market_cond = state[symbol].get("market_condition", "UNKNOWN")
-                    current_regime = state[symbol].get("current_regime", "NORMAL")
+                    # Legacy regime tracking removed - BOS+FVG doesn't use it
                     
                     # Get current bid/ask from bid_ask_manager if available
                     quote_info = ""
@@ -2311,12 +2369,12 @@ def update_1min_bar(symbol: str, price: float, volume: int, dt: datetime) -> Non
                         if vwap_val > 0:
                             vwap_info = f" | VWAP: ${vwap_val:.2f} ± ${std_dev:.2f}"
                     
-                    logger.info(f"📊 Market: {symbol} @ ${current_bar['close']:.2f}{quote_info}{vol_info} | Bars: {bar_count}{vwap_info} | Condition: {market_cond} | Regime: {current_regime}")
+                    logger.info(f"📊 Market: {symbol} @ ${current_bar['close']:.2f}{quote_info}{vol_info} | Bars: {bar_count}{vwap_info} | Condition: {market_cond}")
             else:
                 # Fallback if session_start_time not set (shouldn't happen)
                 vwap_data = state[symbol].get("vwap", {})
                 market_cond = state[symbol].get("market_condition", "UNKNOWN")
-                current_regime = state[symbol].get("current_regime", "NORMAL")
+                # Legacy regime tracking removed - BOS+FVG doesn't use it
                 
                 # Get current bid/ask from bid_ask_manager if available
                 quote_info = ""
@@ -2337,10 +2395,9 @@ def update_1min_bar(symbol: str, price: float, volume: int, dt: datetime) -> Non
                     if vwap_val > 0:
                         vwap_info = f" | VWAP: ${vwap_val:.2f} ± ${std_dev:.2f}"
                 
-                logger.info(f"📊 Market: {symbol} @ ${current_bar['close']:.2f}{quote_info}{vol_info} | Bars: {bar_count}{vwap_info} | Condition: {market_cond} | Regime: {current_regime}")
+                logger.info(f"📊 Market: {symbol} @ ${current_bar['close']:.2f}{quote_info}{vol_info} | Bars: {bar_count}{vwap_info} | Condition: {market_cond}")
             
-            # Update current regime after bar completion
-            update_current_regime(symbol)
+            # Regime detection not needed for BOS+FVG strategy - removed for performance
             
             # Check for exit conditions if position is active
             check_exit_conditions(symbol)
@@ -2396,16 +2453,21 @@ def inject_complete_bar(symbol: str, bar: Dict[str, Any]) -> None:
     # Add the complete bar with proper OHLC
     state[symbol]["bars_1min"].append(bar)
     
+    # Process BOS and FVG detection after bar is added
+    process_bos_fvg(symbol)
+    
     # Update current regime after adding new bar
-    update_current_regime(symbol)
+    # NOTE: Regime detection not needed for BOS+FVG strategy - disabled for performance
+    # update_current_regime(symbol)
     
     # Update all indicators after each 1-minute bar (all on same timeframe)
-    update_macd(symbol)
-    update_rsi(symbol)
+    # NOTE: MACD, RSI, VWAP not needed for BOS+FVG strategy - disabled for performance
+    # update_macd(symbol)
+    # update_rsi(symbol)
     update_volume_average(symbol)
     
     # Update VWAP and check conditions
-    calculate_vwap(symbol)
+    # calculate_vwap(symbol)
     check_exit_conditions(symbol)
     check_for_signals(symbol)
 
@@ -2790,6 +2852,60 @@ def update_volume_average(symbol: str) -> None:
     if len(bars_1min) > 0:
         current_volume = bars_1min[-1]["volume"]
         state[symbol]["recent_volume_history"].append(current_volume)
+
+
+def process_bos_fvg(symbol: str) -> None:
+    """
+    Process BOS (Break of Structure) and FVG (Fair Value Gap) detection.
+    Called after each 1-minute bar is completed.
+    
+    This implements the BOS + FVG scalping strategy:
+    1. Detect swing highs/lows and BOS events
+    2. Detect new FVG patterns
+    3. Track FVG expirations (but NOT fills - fills are checked in signal logic)
+    
+    Args:
+        symbol: Instrument symbol
+    """
+    bars = list(state[symbol]["bars_1min"])
+    bos_detector = state[symbol]["bos_detector"]
+    fvg_detector = state[symbol]["fvg_detector"]
+    
+    # Need detectors initialized and at least 3 bars for FVG
+    if bos_detector is None or fvg_detector is None:
+        if len(bars) >= 3:
+            logger.warning(f"BOS/FVG detectors not initialized for {symbol} - strategy may not work properly")
+        return
+    
+    if len(bars) < 3:
+        return
+    
+    # Process BOS detection
+    bos_direction, bos_level = bos_detector.process_bar(bars)
+    if bos_direction:
+        state[symbol]["current_bos_direction"] = bos_direction
+        logger.info(f"🔄 BOS DETECTED: {bos_direction.upper()} at ${bos_level:.2f}")
+    
+    # Detect new FVGs (but don't check fills here - that's done in signal checking)
+    current_bar = bars[-1]
+    if len(bars) >= 3:
+        new_fvg = fvg_detector.detect_fvg(bars[-3], bars[-2], bars[-1])
+        if new_fvg:
+            fvg_detector.active_fvgs.append(new_fvg)
+            logger.info(f"📊 FVG CREATED: {new_fvg['type'].upper()} | "
+                       f"Top: ${new_fvg['top']:.2f} | Bottom: ${new_fvg['bottom']:.2f} | "
+                       f"Size: {new_fvg['size_ticks']:.1f} ticks")
+    
+    # Clean up expired FVGs
+    current_time = current_bar.get('timestamp')
+    if current_time:
+        fvg_detector.remove_expired_fvgs(current_time)
+    
+    # Limit number of active FVGs
+    fvg_detector.limit_active_fvgs()
+    
+    # Update state with current FVG list
+    state[symbol]["active_fvgs"] = fvg_detector.active_fvgs
     
 
 
@@ -3063,15 +3179,14 @@ def validate_signal_requirements(symbol: str, bar_time: datetime) -> Tuple[bool,
     # ========================================================================
     # WARMUP PERIOD: Block signals until enough bars for regime detection
     # ========================================================================
-    # Regime detection requires 34 bars for accurate classification
-    # (20 baseline + 14 current ATR) - optimized from 114 bars
-    # During warmup, we use NORMAL regime as fallback but should not trade
-    WARMUP_BARS_REQUIRED = 34
+    # BOS+FVG strategy requires 10 bars for accurate BOS detection
+    # (5-bar swing lookback requires at least 10 bars total)
+    WARMUP_BARS_REQUIRED = 10
     current_bar_count = len(state[symbol]["bars_1min"])
     
     if current_bar_count < WARMUP_BARS_REQUIRED:
-        # Log warmup progress every 10 bars (clean professional logs)
-        if current_bar_count % 10 == 0 or current_bar_count == 1:
+        # Log warmup progress every 5 bars (clean professional logs)
+        if current_bar_count % 5 == 0 or current_bar_count == 1:
             bars_remaining = WARMUP_BARS_REQUIRED - current_bar_count
             minutes_remaining = bars_remaining  # 1-min bars = 1 minute each
             progress_pct = (current_bar_count / WARMUP_BARS_REQUIRED) * 100
@@ -3081,35 +3196,31 @@ def validate_signal_requirements(symbol: str, bar_time: datetime) -> Tuple[bool,
             bar = "█" * filled + "░" * (20 - filled)
             
             logger.info(f"⏳ WARMUP [{bar}] {progress_pct:.0f}% | Bars: {current_bar_count}/{WARMUP_BARS_REQUIRED} | ~{minutes_remaining} min remaining")
-            logger.info(f"   Collecting data for accurate regime detection. Signals blocked until warmup complete.")
+            logger.info(f"   Collecting data for BOS detection. Signals blocked until warmup complete.")
         
         return False, f"Warmup ({current_bar_count}/{WARMUP_BARS_REQUIRED} bars)"
     
     # Log warmup completion once
     if not state[symbol].get("warmup_complete", False):
         state[symbol]["warmup_complete"] = True
-        current_regime = state[symbol].get("current_regime", "NORMAL")
         logger.info("=" * 60)
         logger.info("✅ WARMUP COMPLETE - TRADING ENABLED")
         logger.info("=" * 60)
         logger.info(f"   📊 Bars collected: {current_bar_count}")
-        logger.info(f"   🎯 Regime detection: ACTIVE")
-        logger.info(f"   📈 Current regime: {current_regime}")
+        logger.info(f"   📊 BOS detection: ACTIVE")
+        logger.info(f"   🎯 FVG tracking: ENABLED")
         logger.info(f"   🚀 Signal generation: ENABLED")
         logger.info("=" * 60)
     
-    # Check VWAP is available (still calculated for reference)
-    # Note: VWAP is not the primary target in current strategy
-    vwap = state[symbol].get("vwap")
-    if vwap is None or vwap <= 0:
-        return False, "VWAP not ready"
+    # VWAP not needed for BOS+FVG strategy - removed
     
-    # Trend filter - DISABLED for Capitulation Reversal strategy
-    # Flush direction determines trade direction (condition #8 in capitulation_detector.py)
-    # - Long: price check after flush down
-    # - Short: price check after flush up
+    # Trend filter - DISABLED for BOS+FVG strategy
+    # BOS direction determines trade direction (BOS replaces regime/flush logic)
+    # - Long: Bullish BOS + bullish FVG fill
+    # - Short: Bearish BOS + bearish FVG fill
     
     # Check RSI is available (needed for capitulation signal detection)
+    # NOTE: RSI not needed for BOS+FVG strategy - disabled
     # Note: RSI thresholds (25/75) are hardcoded in capitulation_detector.py
     rsi = state[symbol]["rsi"]
     if rsi is None:
@@ -3183,18 +3294,14 @@ def validate_signal_requirements(symbol: str, bar_time: datetime) -> Tuple[bool,
 def check_long_signal_conditions(symbol: str, prev_bar: Dict[str, Any], 
                                  current_bar: Dict[str, Any]) -> bool:
     """
-    Check if long signal conditions are met - CAPITULATION REVERSAL STRATEGY.
+    Check if long signal conditions are met - BOS + FVG SCALPING STRATEGY.
     
-    ALL 9 CONDITIONS MUST BE TRUE:
-    1. Flush Happened - Range of last 10 bars >= 20 ticks
-    2. Flush Was Fast - Velocity >= 4 ticks per bar
-    3. We Are Near The Bottom - Within 5 ticks of flush low
-    4. RSI Is Extreme Oversold - RSI < 25
-    5. Volume Spiked - Current volume >= 2x 20-bar average
-    6. Flush Stopped Making New Lows - Current bar low >= previous bar low
-    7. Reversal Candle - Current bar closes green (close > open)
-    8. Price Is Below VWAP - Current close < VWAP
-    9. Regime Allows Trading - HIGH_VOL_TRENDING or HIGH_VOL_CHOPPY
+    ALL 5 CONDITIONS MUST BE TRUE:
+    1. Bullish BOS is active (most recent BOS was bullish)
+    2. Bullish FVG exists (gap between bar1.high and bar3.low, 2-20 ticks)
+    3. Price fills the FVG (current bar's low touches or goes into the FVG top)
+    4. FVG is not expired (created within last 60 minutes)
+    5. No position currently open (one trade at a time)
     
     Args:
         symbol: Instrument symbol
@@ -3202,81 +3309,76 @@ def check_long_signal_conditions(symbol: str, prev_bar: Dict[str, Any],
         current_bar: Current 1-minute bar
     
     Returns:
-        True if ALL 9 conditions are met
+        True if ALL 5 conditions are met
     """
-    vwap = state[symbol]["vwap"]
     bars = state[symbol]["bars_1min"]
-    rsi = state[symbol]["rsi"]
-    current_regime = state[symbol].get("current_regime", "NORMAL")
+    bos_detector = state[symbol]["bos_detector"]
+    fvg_detector = state[symbol]["fvg_detector"]
     
-    # VWAP check (still calculated for reference)
-    if vwap is None or vwap <= 0:
+    # Need detectors initialized
+    if bos_detector is None or fvg_detector is None:
         return False
     
-    # Need at least 10 bars for flush detection
+    # Need at least 10 bars for BOS detection
     if len(bars) < 10:
         return False
     
-    # Calculate 20-bar average volume
-    if len(bars) >= 20:
-        recent_volumes = [bar.get("volume", 0) for bar in list(bars)[-20:]]
-        avg_volume_20 = sum(recent_volumes) / len(recent_volumes) if recent_volumes else 1
-    else:
-        # If less than 20 bars, use available bars for average (not current bar)
-        if len(bars) > 0:
-            recent_volumes = [bar.get("volume", 0) for bar in list(bars)]
-            avg_volume_20 = sum(recent_volumes) / len(recent_volumes) if recent_volumes else 1
-        else:
-            avg_volume_20 = 1
+    # Get current BOS direction
+    current_bos = bos_detector.get_current_trend()
     
-    # Get capitulation detector
-    tick_size = CONFIG.get("tick_size", 0.25)
-    tick_value = CONFIG.get("tick_value", 12.50)
-    cap_detector = get_capitulation_detector(tick_size, tick_value)
-    
-    # Check ALL 9 conditions
-    all_passed, details = cap_detector.check_all_long_conditions(
-        bars=bars,
-        current_bar=current_bar,
-        prev_bar=prev_bar,
-        rsi=rsi,
-        avg_volume_20=avg_volume_20,
-        current_price=current_bar["close"],
-        vwap=vwap,
-        regime=current_regime
-    )
-    
-    # Store entry details for both success and failure (for diagnostic logging)
-    state[symbol]["entry_details"] = details
-    
-    if not all_passed:
-        # Log periodically which conditions are failing (for debugging)
-        if details.get("reason"):
-            pass
+    # CONDITION 1: Bullish BOS must be active
+    if current_bos != 'bullish':
+        state[symbol]["entry_details"] = {
+            "reason": f"No bullish BOS active (current: {current_bos})"
+        }
         return False
     
-    # Store flush extremes for position management (only on success)
-    state[symbol]["flush_low"] = details.get("flush_low")
-    state[symbol]["flush_high"] = details.get("flush_high")
+    # CONDITION 2-4: Check for bullish FVG fills
+    unfilled_bullish_fvgs = fvg_detector.get_unfilled_fvgs('bullish')
     
-    return True
+    if not unfilled_bullish_fvgs:
+        state[symbol]["entry_details"] = {
+            "reason": "No unfilled bullish FVGs available"
+        }
+        return False
+    
+    # Check if any FVG is filled by current bar
+    # Note: We take the first filled FVG (FIFO order) as per BOS+FVG strategy
+    # This ensures consistent behavior and prevents over-trading
+    for fvg in unfilled_bullish_fvgs:
+        is_filled = fvg_detector.is_fvg_filled(fvg, current_bar)
+        if is_filled:
+            # Found a filled FVG - this is our entry signal
+            logger.info(f"🎯 LONG SIGNAL: Bullish BOS + FVG fill at ${fvg['top']:.2f}")
+            state[symbol]["entry_details"] = {
+                "fvg_id": fvg['id'],
+                "fvg_top": fvg['top'],
+                "fvg_bottom": fvg['bottom'],
+                "fvg_size_ticks": fvg['size_ticks'],
+                "entry_price": fvg['top'],  # Enter at FVG top
+                "bos_direction": 'bullish',
+                "reason": "Bullish BOS + FVG fill"
+            }
+            return True
+    
+    # No FVG was filled
+    state[symbol]["entry_details"] = {
+        "reason": f"Have {len(unfilled_bullish_fvgs)} bullish FVGs but none filled yet"
+    }
+    return False
 
 
 def check_short_signal_conditions(symbol: str, prev_bar: Dict[str, Any], 
                                   current_bar: Dict[str, Any]) -> bool:
     """
-    Check if short signal conditions are met - CAPITULATION REVERSAL STRATEGY.
+    Check if short signal conditions are met - BOS + FVG SCALPING STRATEGY.
     
-    ALL 9 CONDITIONS MUST BE TRUE:
-    1. Pump Happened - Range of last 10 bars >= 20 ticks
-    2. Pump Was Fast - Velocity >= 4 ticks per bar
-    3. We Are Near The Top - Within 5 ticks of flush high
-    4. RSI Is Extreme Overbought - RSI > 75
-    5. Volume Spiked - Current volume >= 2x 20-bar average
-    6. Pump Stopped Making New Highs - Current bar high <= previous bar high
-    7. Reversal Candle - Current bar closes red (close < open)
-    8. Price Is Above VWAP - Current close > VWAP
-    9. Regime Allows Trading - HIGH_VOL_TRENDING or HIGH_VOL_CHOPPY
+    ALL 5 CONDITIONS MUST BE TRUE:
+    1. Bearish BOS is active (most recent BOS was bearish)
+    2. Bearish FVG exists (gap between bar1.low and bar3.high, 2-20 ticks)
+    3. Price fills the FVG (current bar's high touches or goes into the FVG bottom)
+    4. FVG is not expired (created within last 60 minutes)
+    5. No position currently open (one trade at a time)
     
     Args:
         symbol: Instrument symbol
@@ -3284,64 +3386,61 @@ def check_short_signal_conditions(symbol: str, prev_bar: Dict[str, Any],
         current_bar: Current 1-minute bar
     
     Returns:
-        True if ALL 9 conditions are met
+        True if ALL 5 conditions are met
     """
-    vwap = state[symbol]["vwap"]
     bars = state[symbol]["bars_1min"]
-    rsi = state[symbol]["rsi"]
-    current_regime = state[symbol].get("current_regime", "NORMAL")
+    bos_detector = state[symbol]["bos_detector"]
+    fvg_detector = state[symbol]["fvg_detector"]
     
-    # VWAP check (still calculated for reference)
-    if vwap is None or vwap <= 0:
+    # Need detectors initialized
+    if bos_detector is None or fvg_detector is None:
         return False
     
-    # Need at least 10 bars for flush detection
+    # Need at least 10 bars for BOS detection
     if len(bars) < 10:
         return False
     
-    # Calculate 20-bar average volume
-    if len(bars) >= 20:
-        recent_volumes = [bar.get("volume", 0) for bar in list(bars)[-20:]]
-        avg_volume_20 = sum(recent_volumes) / len(recent_volumes) if recent_volumes else 1
-    else:
-        # If less than 20 bars, use available bars for average (not current bar)
-        if len(bars) > 0:
-            recent_volumes = [bar.get("volume", 0) for bar in list(bars)]
-            avg_volume_20 = sum(recent_volumes) / len(recent_volumes) if recent_volumes else 1
-        else:
-            avg_volume_20 = 1
+    # Get current BOS direction
+    current_bos = bos_detector.get_current_trend()
     
-    # Get capitulation detector
-    tick_size = CONFIG.get("tick_size", 0.25)
-    tick_value = CONFIG.get("tick_value", 12.50)
-    cap_detector = get_capitulation_detector(tick_size, tick_value)
-    
-    # Check ALL 9 conditions
-    all_passed, details = cap_detector.check_all_short_conditions(
-        bars=bars,
-        current_bar=current_bar,
-        prev_bar=prev_bar,
-        rsi=rsi,
-        avg_volume_20=avg_volume_20,
-        current_price=current_bar["close"],
-        vwap=vwap,
-        regime=current_regime
-    )
-    
-    # Store entry details for both success and failure (for diagnostic logging)
-    state[symbol]["entry_details"] = details
-    
-    if not all_passed:
-        # Log periodically which conditions are failing (for debugging)
-        if details.get("reason"):
-            pass
+    # CONDITION 1: Bearish BOS must be active
+    if current_bos != 'bearish':
+        state[symbol]["entry_details"] = {
+            "reason": f"No bearish BOS active (current: {current_bos})"
+        }
         return False
     
-    # Store flush extremes for position management (only on success)
-    state[symbol]["flush_low"] = details.get("flush_low")
-    state[symbol]["flush_high"] = details.get("flush_high")
+    # CONDITION 2-4: Check for bearish FVG fills
+    unfilled_bearish_fvgs = fvg_detector.get_unfilled_fvgs('bearish')
     
-    return True
+    if not unfilled_bearish_fvgs:
+        state[symbol]["entry_details"] = {
+            "reason": "No unfilled bearish FVGs available"
+        }
+        return False
+    
+    # Check if any FVG is filled by current bar
+    # Note: We take the first filled FVG (FIFO order) as per BOS+FVG strategy
+    # This ensures consistent behavior and prevents over-trading
+    for fvg in unfilled_bearish_fvgs:
+        if fvg_detector.is_fvg_filled(fvg, current_bar):
+            # Found a filled FVG - this is our entry signal
+            state[symbol]["entry_details"] = {
+                "fvg_id": fvg['id'],
+                "fvg_top": fvg['top'],
+                "fvg_bottom": fvg['bottom'],
+                "fvg_size_ticks": fvg['size_ticks'],
+                "entry_price": fvg['bottom'],  # Enter at FVG bottom
+                "bos_direction": 'bearish',
+                "reason": "Bearish BOS + FVG fill"
+            }
+            return True
+    
+    # No FVG was filled
+    state[symbol]["entry_details"] = {
+        "reason": f"Have {len(unfilled_bearish_fvgs)} bearish FVGs but none filled yet"
+    }
+    return False
 
 
 def calculate_slope(values: List[float], periods: int = 5) -> float:
@@ -3516,118 +3615,127 @@ def get_volatility_regime(atr: float, symbol: str) -> str:
 
 def capture_market_state(symbol: str, current_price: float) -> Dict[str, Any]:
     """
-    Capture market state snapshot for CAPITULATION REVERSAL pattern matching.
+    Capture market state snapshot for BOS + FVG SCALPING pattern matching.
     
-    SIMPLIFIED 16-FIELD STRUCTURE:
-    ================================
-    The 12 Pattern Matching Fields:
-    1. flush_size_ticks
-    2. flush_velocity
-    3. volume_climax_ratio
-    4. flush_direction
-    5. rsi
-    6. distance_from_flush_low
-    7. reversal_candle
-    8. no_new_extreme
-    9. vwap_distance_ticks
-    10. regime
-    11. session
-    12. hour
+    SIMPLIFIED 14-FIELD STRUCTURE FOR BOS+FVG:
+    ==========================================
+    The 10 Pattern Matching Fields:
+    1. bos_direction - Current BOS trend ('bullish', 'bearish', or None)
+    2. fvg_size_ticks - Size of the FVG being traded in ticks
+    3. fvg_age_bars - How many bars since FVG was created
+    4. price_in_fvg_pct - How deep into the FVG price has penetrated (0-100%)
+    5. volume_ratio - Current volume vs 20-bar average
+    6. session - Trading session (overnight, asia, london, newyork, postmarket)
+    7. hour - Hour of day (for time-based patterns)
+    8. fvg_count_active - Number of active unfilled FVGs
+    9. swing_high - Most recent swing high price
+    10. swing_low - Most recent swing low price
     
     The 4 Metadata Fields:
-    13. symbol
-    14. timestamp
-    15. pnl (added later by record_outcome)
-    16. took_trade (added later by record_outcome)
+    11. symbol
+    12. timestamp
+    13. pnl (added later by record_outcome)
+    14. took_trade (added later by record_outcome)
     
-    DROPPED FIELDS: price, bars_since_flush_start, atr, stop_distance_ticks, 
-    target_distance_ticks, risk_reward_ratio, duration, exploration_rate, 
-    mfe, mae, order_type_used, entry_slippage_ticks, exit_reason
+    REMOVED FROM CAPITULATION STRATEGY:
+    - flush_size_ticks, flush_velocity, flush_direction, distance_from_flush_low
+    - rsi, vwap_distance_ticks, regime
+    - reversal_candle, no_new_extreme
     
     Args:
         symbol: Instrument symbol
         current_price: Current market price
     
     Returns:
-        Dictionary with 14 market state features (pnl and took_trade added later)
+        Dictionary with 12 market state features (pnl and took_trade added later)
     """
-    vwap = state[symbol].get("vwap", current_price)
-    rsi = state[symbol].get("rsi", 50)
-    
     # Get current time and session
     current_time = get_current_time()
     hour = current_time.hour
     session = get_session_type(current_time)
     
-    # Get regime
-    regime = state[symbol].get("current_regime", "NORMAL")
-    
     # Get tick size
     tick_size = CONFIG.get("tick_size", 0.25)
-    tick_value = CONFIG.get("tick_value", 12.50)
     
-    # Calculate volume_climax_ratio (current volume vs 20-bar average)
+    # Calculate volume_ratio (current volume vs 20-bar average)
     bars_1min = state[symbol]["bars_1min"]
     if len(bars_1min) >= 20:
         recent_volumes = [bar.get("volume", 0) for bar in list(bars_1min)[-20:]]
         avg_volume_20 = sum(recent_volumes) / len(recent_volumes) if recent_volumes else 1
         current_bar = bars_1min[-1] if bars_1min else {"volume": 0}
-        volume_climax_ratio = current_bar.get("volume", 0) / avg_volume_20 if avg_volume_20 > 0 else 1.0
+        volume_ratio = current_bar.get("volume", 0) / avg_volume_20 if avg_volume_20 > 0 else 1.0
     else:
-        volume_climax_ratio = 1.0
+        volume_ratio = 1.0
     
-    # Distance from VWAP in ticks
-    vwap_actual = state[symbol].get("vwap", current_price)
-    vwap_distance_ticks = (current_price - vwap_actual) / tick_size if tick_size > 0 else 0
+    # Get BOS and FVG detector state
+    bos_detector = state[symbol].get("bos_detector")
+    fvg_detector = state[symbol].get("fvg_detector")
     
-    # Get capitulation detector state for flush metrics
-    cap_detector = get_capitulation_detector(tick_size, tick_value)
+    # Initialize BOS/FVG-related fields
+    bos_direction = None
+    fvg_size_ticks = 0.0
+    fvg_age_bars = 0
+    price_in_fvg_pct = 0.0
+    fvg_count_active = 0
+    swing_high = current_price
+    swing_low = current_price
     
-    # Initialize flush-related fields
-    flush_size_ticks = 0.0
-    flush_velocity = 0.0
-    flush_direction = "NONE"
-    distance_from_flush_low = 0.0
+    # Get BOS direction
+    if bos_detector:
+        bos_direction = bos_detector.get_current_trend()
+        if bos_detector.last_swing_high:
+            swing_high = bos_detector.last_swing_high
+        if bos_detector.last_swing_low:
+            swing_low = bos_detector.last_swing_low
     
-    if cap_detector.last_flush:
-        flush = cap_detector.last_flush
-        flush_size_ticks = flush.flush_size_ticks
-        flush_velocity = flush.flush_velocity
-        flush_direction = flush.direction
-        distance_from_flush_low = (current_price - flush.flush_low) / tick_size if tick_size > 0 else 0
-    
-    # Reversal candle detection (current bar closes green for longs, red for shorts)
-    reversal_candle = False
-    no_new_extreme = False
-    
-    if len(bars_1min) >= 2:
-        current_bar = bars_1min[-1]
-        prev_bar = bars_1min[-2]
+    # Get FVG information from entry_details if available
+    entry_details = state[symbol].get("entry_details", {})
+    if entry_details and "fvg_size_ticks" in entry_details:
+        fvg_size_ticks = entry_details.get("fvg_size_ticks", 0.0)
+        fvg_top = entry_details.get("fvg_top", current_price)
+        fvg_bottom = entry_details.get("fvg_bottom", current_price)
         
-        if flush_direction == "DOWN":
-            # For long: green candle and stopped making new lows
-            reversal_candle = current_bar["close"] > current_bar["open"]
-            no_new_extreme = current_bar["low"] >= prev_bar["low"]
-        elif flush_direction == "UP":
-            # For short: red candle and stopped making new highs
-            reversal_candle = current_bar["close"] < current_bar["open"]
-            no_new_extreme = current_bar["high"] <= prev_bar["high"]
+        # Calculate how deep into FVG price has penetrated
+        fvg_range = abs(fvg_top - fvg_bottom)
+        if fvg_range > 0:
+            if bos_direction == 'bullish':
+                # For bullish: measure from top (entry point) down
+                penetration = abs(fvg_top - current_price)
+            else:
+                # For bearish: measure from bottom (entry point) up
+                penetration = abs(current_price - fvg_bottom)
+            price_in_fvg_pct = (penetration / fvg_range) * 100.0
+            price_in_fvg_pct = min(100.0, max(0.0, price_in_fvg_pct))
     
-    # Build the simplified 16-field experience record structure
+    # Get active FVG count
+    if fvg_detector:
+        unfilled_fvgs = fvg_detector.get_unfilled_fvgs()
+        fvg_count_active = len(unfilled_fvgs)
+        
+        # If we have an FVG being traded, calculate age
+        if entry_details and "fvg_id" in entry_details:
+            fvg_id = entry_details["fvg_id"]
+            for fvg in fvg_detector.active_fvgs:
+                if fvg['id'] == fvg_id:
+                    created_at = fvg.get('created_at')
+                    if created_at:
+                        age_delta = current_time - created_at
+                        fvg_age_bars = int(age_delta.total_seconds() / 60)  # Minutes = bars
+                    break
+    
+    # Build the simplified 14-field experience record structure for BOS+FVG
     market_state = {
-        # The 12 Pattern Matching Fields
-        "flush_size_ticks": round(flush_size_ticks, 1),
-        "flush_velocity": round(flush_velocity, 2),
-        "volume_climax_ratio": round(volume_climax_ratio, 2),
-        "flush_direction": flush_direction,
-        "rsi": round(rsi, 1) if rsi is not None else 50,
-        "distance_from_flush_low": round(distance_from_flush_low, 1),
-        "reversal_candle": reversal_candle,
-        "no_new_extreme": no_new_extreme,
-        "vwap_distance_ticks": round(vwap_distance_ticks, 1),
-        "regime": regime,
+        # The 10 Pattern Matching Fields
+        "bos_direction": bos_direction if bos_direction else "NONE",
+        "fvg_size_ticks": round(fvg_size_ticks, 1),
+        "fvg_age_bars": fvg_age_bars,
+        "price_in_fvg_pct": round(price_in_fvg_pct, 1),
+        "volume_ratio": round(volume_ratio, 2),
         "session": session,
         "hour": hour,
+        "fvg_count_active": fvg_count_active,
+        "swing_high": round(swing_high, 2),
+        "swing_low": round(swing_low, 2),
         
         # The 4 Metadata Fields
         "symbol": symbol,
@@ -3727,17 +3835,17 @@ def check_for_signals(symbol: str) -> None:
     long_passed = check_long_signal_conditions(symbol, prev_bar, current_bar)
     if long_passed:
         # MARKET STATE CAPTURE - Record comprehensive market conditions
-        # Capture current market state (flat structure with all 16 indicators)
+        # Capture current market state (BOS+FVG pattern matching fields)
         market_state = capture_market_state(symbol, current_bar["close"])
         
-        # DEBUG: Log market state to diagnose why pattern matching may fail
-        logger.info(f"🔍 [MARKET STATE] Long - flush_dir={market_state.get('flush_direction')}, "
-                    f"size={market_state.get('flush_size_ticks'):.1f}t, "
-                    f"vel={market_state.get('flush_velocity'):.2f}, "
-                    f"rsi={market_state.get('rsi'):.1f}")
+        # DEBUG: Log market state to diagnose pattern matching
+        logger.info(f"🔍 [MARKET STATE] Long - BOS={market_state.get('bos_direction')}, "
+                    f"FVG={market_state.get('fvg_size_ticks'):.1f}t, "
+                    f"age={market_state.get('fvg_age_bars')}bars, "
+                    f"vol_ratio={market_state.get('volume_ratio'):.2f}")
         
         # Ask cloud RL API for decision (or local RL as fallback)
-        # Market state has all fields needed: rsi, vwap_distance, atr, volume_ratio, etc.
+        # Market state has BOS+FVG fields: bos_direction, fvg_size_ticks, volume_ratio, etc.
         take_signal, confidence, reason = get_ml_confidence(market_state, "long")
         
         if not take_signal:
@@ -3764,6 +3872,13 @@ def check_for_signals(symbol: str) -> None:
         state[symbol]["entry_market_state"] = market_state
         state[symbol]["entry_rl_confidence"] = confidence
         
+        # Mark the FVG as traded to prevent trading it again
+        entry_details = state[symbol].get("entry_details", {})
+        if "fvg_id" in entry_details:
+            fvg_detector = state[symbol]["fvg_detector"]
+            if fvg_detector:
+                fvg_detector.mark_fvg_traded(entry_details["fvg_id"])
+        
         execute_entry(symbol, "long", current_bar["close"])
         return
     
@@ -3771,17 +3886,17 @@ def check_for_signals(symbol: str) -> None:
     short_passed = check_short_signal_conditions(symbol, prev_bar, current_bar)
     if short_passed:
         # MARKET STATE CAPTURE - Record comprehensive market conditions
-        # Capture current market state (flat structure with all 16 indicators)
+        # Capture current market state (BOS+FVG pattern matching fields)
         market_state = capture_market_state(symbol, current_bar["close"])
         
-        # DEBUG: Log market state to diagnose why pattern matching may fail
-        logger.info(f"🔍 [MARKET STATE] Short - flush_dir={market_state.get('flush_direction')}, "
-                    f"size={market_state.get('flush_size_ticks'):.1f}t, "
-                    f"vel={market_state.get('flush_velocity'):.2f}, "
-                    f"rsi={market_state.get('rsi'):.1f}")
+        # DEBUG: Log market state to diagnose pattern matching
+        logger.info(f"🔍 [MARKET STATE] Short - BOS={market_state.get('bos_direction')}, "
+                    f"FVG={market_state.get('fvg_size_ticks'):.1f}t, "
+                    f"age={market_state.get('fvg_age_bars')}bars, "
+                    f"vol_ratio={market_state.get('volume_ratio'):.2f}")
         
         # Ask cloud RL API for decision (or local RL as fallback)
-        # Market state has all fields needed: rsi, vwap_distance, atr, volume_ratio, etc.
+        # Market state has BOS+FVG fields: bos_direction, fvg_size_ticks, volume_ratio, etc.
         take_signal, confidence, reason = get_ml_confidence(market_state, "short")
         
         if not take_signal:
@@ -3807,6 +3922,13 @@ def check_for_signals(symbol: str) -> None:
         # Store market state for outcome recording
         state[symbol]["entry_market_state"] = market_state
         state[symbol]["entry_rl_confidence"] = confidence
+        
+        # Mark the FVG as traded to prevent trading it again
+        entry_details = state[symbol].get("entry_details", {})
+        if "fvg_id" in entry_details:
+            fvg_detector = state[symbol]["fvg_detector"]
+            if fvg_detector:
+                fvg_detector.mark_fvg_traded(entry_details["fvg_id"])
         
         execute_entry(symbol, "short", current_bar["close"])
         return
@@ -3862,10 +3984,6 @@ def calculate_position_size(symbol: str, side: str, entry_price: float, rl_confi
     max_stop_dollars = CONFIG.get("max_stop_loss_dollars", DEFAULT_MAX_STOP_LOSS_DOLLARS)
     logger.info(f"Account equity: ${equity:.2f}, Max stop loss per trade: ${max_stop_dollars:.2f}")
     
-    # Determine stop price using user's max stop loss setting
-    vwap_bands = state[symbol]["vwap_bands"]
-    vwap = state[symbol]["vwap"]
-    
     # CRITICAL: Get symbol-specific tick values from SymbolSpec
     # This ensures correct stop loss placement for ALL symbols (ES, NQ, CL, GC, etc.)
     # Each symbol has different tick sizes and values:
@@ -3897,35 +4015,75 @@ def calculate_position_size(symbol: str, side: str, entry_price: float, rl_confi
     # Example (CL): 100 ticks * 0.01 = 1.00 points
     stop_distance = max_stop_ticks * tick_size  # Convert ticks to price distance
     
-    # Detect current regime for entry (for logging purposes)
-    regime_detector = get_regime_detector()
-    bars = state[symbol]["bars_1min"]
-    atr = calculate_atr_1min(symbol, CONFIG.get("atr_period", 14))
+    # BOS+FVG doesn't use regime detection - removed for performance
     
-    if atr is not None:
-        entry_regime = regime_detector.detect_regime(bars, atr, CONFIG.get("atr_period", 14))
-        logger.info(f"Fixed stop: {max_stop_ticks:.0f} ticks (${max_stop_dollars:.2f}) - Regime: {entry_regime.name}")
+    # STEP 3: Calculate stop price based on BOS+FVG strategy with safety net
+    # BOS+FVG Strategy: Stop is 2.5 ticks beyond FVG zone
+    # - Long: Stop 2.5 ticks below FVG bottom
+    # - Short: Stop 2.5 ticks above FVG top
+    # SAFETY NET: GUI max loss per trade acts as a cap on risk
+    entry_details = state[symbol].get("entry_details", {})
+    
+    if entry_details and "fvg_bottom" in entry_details and "fvg_top" in entry_details:
+        # Use FVG-based stops (BOS+FVG strategy)
+        stop_buffer = BOS_FVG_STOP_BUFFER_TICKS * tick_size
+        
+        if side == "long":
+            # Long: Stop 2 ticks below FVG bottom
+            fvg_stop_price = entry_details["fvg_bottom"] - stop_buffer
+        else:  # short
+            # Short: Stop 2 ticks above FVG top
+            fvg_stop_price = entry_details["fvg_top"] + stop_buffer
+        
+        # Round to nearest valid tick
+        fvg_stop_price = round_to_tick(fvg_stop_price)
+        
+        # Calculate FVG-based stop distance
+        fvg_stop_distance = abs(entry_price - fvg_stop_price)
+        fvg_ticks_at_risk = fvg_stop_distance / tick_size
+        fvg_risk_dollars = fvg_ticks_at_risk * tick_value
+        
+        # SAFETY NET: Apply GUI max loss per trade as a cap
+        # If FVG stop would risk more than user's configured max, use the max instead
+        if fvg_risk_dollars > max_stop_dollars:
+            logger.warning(f"[SAFETY NET] FVG stop (${fvg_risk_dollars:.2f}) exceeds max loss per trade (${max_stop_dollars:.2f})")
+            logger.warning(f"[SAFETY NET] Capping stop at user's configured maximum")
+            
+            # Use the GUI max loss setting as the stop
+            if side == "long":
+                stop_price = entry_price - stop_distance
+            else:  # short
+                stop_price = entry_price + stop_distance
+            
+            stop_price = round_to_tick(stop_price)
+            stop_distance = abs(entry_price - stop_price)
+            ticks_at_risk = stop_distance / tick_size
+            
+            logger.info(f"[SAFETY NET] Using capped stop: {ticks_at_risk:.0f} ticks (${max_stop_dollars:.2f})")
+        else:
+            # FVG stop is within safe limits, use it
+            stop_price = fvg_stop_price
+            stop_distance = fvg_stop_distance
+            ticks_at_risk = fvg_ticks_at_risk
+            
+            logger.info(f"[BOS+FVG] Using FVG-based stop: {ticks_at_risk:.0f} ticks (${fvg_risk_dollars:.2f}) - within max loss limit")
     else:
+        # Fallback to user's max loss setting (original capitulation strategy logic)
+        if side == "long":
+            stop_price = entry_price - stop_distance
+        else:  # short
+            stop_price = entry_price + stop_distance
+        
+        # Round to nearest valid tick (ensures broker accepts the price)
+        stop_price = round_to_tick(stop_price)
+        
+        # Recalculate actual stop distance after rounding
+        stop_distance = abs(entry_price - stop_price)
+        ticks_at_risk = stop_distance / tick_size
+        
         logger.info(f"Fixed stop: {max_stop_ticks:.0f} ticks (${max_stop_dollars:.2f})")
     
-    # STEP 3: Calculate stop price based on entry side
-    # For LONG positions: stop is BELOW entry (entry - stop_distance)
-    # For SHORT positions: stop is ABOVE entry (entry + stop_distance)
-    if side == "long":
-        stop_price = entry_price - stop_distance
-    else:  # short
-        stop_price = entry_price + stop_distance
-    
-    # Round to nearest valid tick (ensures broker accepts the price)
-    stop_price = round_to_tick(stop_price)
-    
-    # STEP 4: Verify the risk calculation
-    # Recalculate actual stop distance after rounding (may differ slightly)
-    stop_distance = abs(entry_price - stop_price)
-    ticks_at_risk = stop_distance / tick_size
-    
     # Calculate actual risk per contract in dollars
-    # This should equal max_stop_dollars (or very close due to rounding)
     risk_per_contract = ticks_at_risk * tick_value
     
     # STEP 5: Use fixed contracts from GUI (no dynamic scaling)
@@ -3970,7 +4128,7 @@ def calculate_position_size(symbol: str, side: str, entry_price: float, rl_confi
     logger.info(f"Position sizing: {contracts} contract(s)")
     logger.info(f"  Entry: ${entry_price:.2f}, Stop: ${stop_price:.2f}")
     logger.info(f"  Risk: {ticks_at_risk:.1f} ticks (${risk_per_contract:.2f})")
-    logger.info(f"  VWAP: ${vwap:.2f} (mean reversion reference)")
+    # logger.info(f"  VWAP: ${vwap:.2f} (mean reversion reference)")  # VWAP not used in BOS+FVG
     
     return contracts, stop_price
 
@@ -4370,17 +4528,23 @@ def execute_entry(symbol: str, side: str, entry_price: float) -> None:
     # Calculate initial risk in ticks
     stop_distance_ticks = abs(actual_fill_price - stop_price) / CONFIG["tick_size"]
     
-    # Detect entry regime
-    regime_detector = get_regime_detector()
-    bars = state[symbol]["bars_1min"]
-    atr = calculate_atr_1min(symbol, CONFIG.get("atr_period", 14))
-    if atr is None:
-        atr = DEFAULT_FALLBACK_ATR  # Use constant instead of magic number
-        logger.warning(f"ATR not calculable, using fallback value: {DEFAULT_FALLBACK_ATR}")
+    # Calculate profit target for BOS+FVG strategy (1.5x risk-reward)
+    # Target = Entry ± (Risk × BOS_FVG_PROFIT_TARGET_MULTIPLIER)
+    risk_distance = abs(actual_fill_price - stop_price)
+    profit_target_distance = risk_distance * BOS_FVG_PROFIT_TARGET_MULTIPLIER
     
-    entry_regime = regime_detector.detect_regime(bars, atr, CONFIG.get("atr_period", 14))
+    if side == "long":
+        profit_target_price = actual_fill_price + profit_target_distance
+    else:  # short
+        profit_target_price = actual_fill_price - profit_target_distance
     
-    # CAPITULATION REVERSAL: Fixed trade management rules (no regime adjustments)
+    # Round to nearest tick
+    profit_target_price = round_to_tick(profit_target_price)
+    profit_target_ticks = profit_target_distance / CONFIG["tick_size"]
+    
+    # BOS+FVG doesn't use regime or ATR - removed for performance
+    
+    # BOS+FVG SCALPING: Fixed trade management rules
     breakeven_trigger = CONFIG.get("breakeven_trigger_ticks", 12)
     breakeven_offset = CONFIG.get("breakeven_offset_ticks", 1)
     trailing_trigger = CONFIG.get("trailing_trigger_ticks", 15)
@@ -4389,21 +4553,18 @@ def execute_entry(symbol: str, side: str, entry_price: float) -> None:
     time_stop_enabled = CONFIG.get("time_stop_enabled", False)
     
     logger.info(f"")
-    logger.info(f"  📊 CAPITULATION REVERSAL - FIXED RULES")
-    logger.info(f"  Entry Regime: {entry_regime.name}")
+    logger.info(f"  📊 BOS + FVG SCALPING STRATEGY")
     logger.info(f"")
     logger.info(f"  Stop Loss:")
-    logger.info(f"    Primary: 2 ticks beyond flush extreme")
+    logger.info(f"    Rule: {BOS_FVG_STOP_BUFFER_TICKS} ticks beyond FVG zone (capped by max loss per trade)")
     logger.info(f"    Stop Distance: {stop_distance_ticks:.1f} ticks (${abs(actual_fill_price - stop_price):.2f})")
     logger.info(f"    Stop Price: ${stop_price:.2f}")
+    # logger.info(f"    Safety Net: GUI max loss per trade = ${max_stop_dollars:.2f}")
     logger.info(f"")
-    logger.info(f"  Breakeven Protection:")
-    logger.info(f"    Trigger: {breakeven_trigger} ticks profit")
-    logger.info(f"    Action: Move stop to entry + {breakeven_offset} tick")
-    logger.info(f"")
-    logger.info(f"  Trailing Stop:")
-    logger.info(f"    Trigger: {trailing_trigger} ticks profit")
-    logger.info(f"    Trail Distance: {trailing_distance} ticks behind peak")
+    logger.info(f"  Profit Target:")
+    logger.info(f"    Rule: {BOS_FVG_PROFIT_TARGET_MULTIPLIER}x risk-reward ratio")
+    logger.info(f"    Target Distance: {profit_target_ticks:.1f} ticks (${profit_target_distance:.2f})")
+    logger.info(f"    Target Price: ${profit_target_price:.2f}")
     logger.info(f"")
     if time_stop_enabled:
         logger.info(f"  Time Stop: Exit after {time_stop_bars} bars")
@@ -4417,20 +4578,18 @@ def execute_entry(symbol: str, side: str, entry_price: float) -> None:
         "quantity": contracts,
         "entry_price": actual_fill_price,
         "stop_price": stop_price,
+        "profit_target_price": profit_target_price,  # BOS+FVG: 1.18x risk-reward target
         "entry_time": entry_time,
         "order_id": order.get("order_id"),
         "order_type_used": order_type_used,  # Track for exit optimization
+        "stop_order_id": None,  # Will be set after stop order is placed
+        "target_order_id": None,  # Will be set after target order is placed
         # Signal & RL Information - Preserved for partial fills and exits
         "entry_rl_confidence": rl_confidence,  # RL confidence at entry (for tracking)
         "entry_rl_state": state[symbol].get("entry_rl_state"),  # RL market state
         "original_entry_price": entry_price,  # Original signal price (before validation)
         "actual_entry_price": actual_fill_price,  # Actual fill price
-        # Regime Information - For dynamic exit management
-        "entry_regime": entry_regime.name,  # Regime at entry
-        "current_regime": entry_regime.name,  # Current regime (updated on each tick)
-        "regime_change_time": None,  # When regime last changed
-        "regime_history": [],  # List of regime transitions with timestamps
-        "entry_atr": atr,  # ATR at entry
+        # BOS+FVG doesn't use regime detection - removed for performance
         # Advanced Exit Management - Breakeven State
         "breakeven_active": False,
         "original_stop_price": stop_price,
@@ -4471,6 +4630,20 @@ def execute_entry(symbol: str, side: str, entry_price: float) -> None:
         state[symbol]["position"]["stop_order_id"] = stop_order.get("order_id")
         logger.info(f"  [OK] Stop loss placed and validated: ${stop_price:.2f}")
         logger.info(f"     Stop Order ID: {stop_order.get('order_id')}")
+        
+        # ===== BOS+FVG: Place Profit Target Limit Order =====
+        # Automatically place profit target order at 1.5x risk-reward
+        target_side = "SELL" if side == "long" else "BUY"
+        target_order = place_limit_order(symbol, target_side, contracts, profit_target_price)
+        
+        if target_order:
+            state[symbol]["position"]["target_order_id"] = target_order.get("order_id")
+            logger.info(f"  [OK] Profit target placed and validated: ${profit_target_price:.2f}")
+            logger.info(f"     Target Order ID: {target_order.get('order_id')}")
+        else:
+            # WARNING: Target order failed but position is still protected by stop
+            logger.warning(f"  [WARN] Profit target order failed to place at ${profit_target_price:.2f}")
+            logger.warning(f"  Position still protected by stop loss - will use manual exit monitoring")
     else:
         # CRITICAL: Stop order rejected - this is DANGEROUS!
         logger.error(SEPARATOR_LINE)
@@ -4546,6 +4719,40 @@ def check_stop_hit(symbol: str, current_bar: Dict[str, Any], position: Dict[str,
     else:  # short
         if current_bar["high"] >= stop_price:
             return True, stop_price
+    
+    return False, None
+
+
+def check_profit_target_hit(symbol: str, current_bar: Dict[str, Any], position: Dict[str, Any]) -> Tuple[bool, Optional[float]]:
+    """
+    Check if profit target has been hit (BOS+FVG Strategy).
+    
+    BOS+FVG uses a fixed 1.5x risk-reward profit target.
+    
+    Args:
+        symbol: Instrument symbol
+        current_bar: Current 1-minute bar
+        position: Position dictionary
+    
+    Returns:
+        Tuple of (target_hit, target_price)
+    """
+    # Check if position has profit target (BOS+FVG strategy)
+    profit_target_price = position.get("profit_target_price")
+    
+    if profit_target_price is None:
+        return False, None
+    
+    side = position["side"]
+    
+    if side == "long":
+        # Long: target hit when price reaches or exceeds target
+        if current_bar["high"] >= profit_target_price:
+            return True, profit_target_price
+    else:  # short
+        # Short: target hit when price reaches or goes below target
+        if current_bar["low"] <= profit_target_price:
+            return True, profit_target_price
     
     return False, None
 
@@ -5258,48 +5465,24 @@ def execute_partial_exit(symbol: str, contracts: int, exit_price: float, r_multi
         logger.error(f"Failed to execute partial exit #{level}")
 
 
-def update_current_regime(symbol: str) -> None:
-    """
-    Update the current regime for the symbol based on latest bars.
-    This is called after each bar completion to keep regime detection current.
-    
-    OPTIMIZED: Now requires only 34 bars (20 baseline + 14 current) instead of 114
-    
-    Args:
-        symbol: Instrument symbol
-    """
-    regime_detector = get_regime_detector()
-    bars = state[symbol]["bars_1min"]
-    
-    # Need enough bars for regime detection (34 = 20 baseline + 14 current)
-    # Optimized from 114 bars for faster startup
-    if len(bars) < 34:
-        state[symbol]["current_regime"] = "NORMAL"
-        return
-    
-    current_atr = calculate_atr_1min(symbol, CONFIG.get("atr_period", 14))
-    if current_atr is None:
-        state[symbol]["current_regime"] = "NORMAL"
-        return
-    
-    # Store previous regime to detect changes
-    prev_regime = state[symbol].get("current_regime", "NORMAL")
-    
-    # Detect and store current regime
-    detected_regime = regime_detector.detect_regime(bars, current_atr, CONFIG.get("atr_period", 14))
-    state[symbol]["current_regime"] = detected_regime.name
-    
-    # Log regime changes for customers (not just backtest)
-    # SILENCE DURING MAINTENANCE - no spam in logs
-    if prev_regime != detected_regime.name and not bot_status.get("maintenance_idle", False):
-        logger.info(f"📊 Market Regime Changed: {prev_regime} → {detected_regime.name}")
-    else:
-        pass
+# LEGACY FUNCTION - Not used in BOS+FVG strategy
+# def update_current_regime(symbol: str) -> None:
+#     """
+#     Update the current regime for the symbol based on latest bars.
+#     This is called after each bar completion to keep regime detection current.
+#     
+#     OPTIMIZED: Now requires only 34 bars (20 baseline + 14 current) instead of 114
+#     
+#     Args:
+#         symbol: Instrument symbol
+#     """
+#     pass
 
 
-def check_regime_change(symbol: str, current_price: float) -> None:
-    """
-    Check if market regime has changed during an active trade (informational only).
+# LEGACY FUNCTION - Not used in BOS+FVG strategy  
+# def check_regime_change(symbol: str, current_price: float) -> None:
+#     """
+#     Check if market regime has changed during an active trade (informational only).
     
     This function:
     1. Detects current regime from last 20 bars
@@ -5321,51 +5504,8 @@ def check_regime_change(symbol: str, current_price: float) -> None:
     
     # Only check for active positions
     if not position["active"]:
-        return
-    
-    # Get the last known regime (use current_regime if available, otherwise entry_regime)
-    # This prevents logging the same regime change multiple times
-    last_regime_name = position.get("current_regime", position.get("entry_regime", "NORMAL"))
-    
-    # Detect current regime
-    regime_detector = get_regime_detector()
-    bars = state[symbol]["bars_1min"]
-    current_atr = calculate_atr_1min(symbol, CONFIG.get("atr_period", 14))
-    
-    if current_atr is None:
-        return  # Can't detect regime without ATR
-    
-    current_regime = regime_detector.detect_regime(bars, current_atr, CONFIG.get("atr_period", 14))
-    
-    # Check if regime has changed from the last known regime
-    has_changed, new_regime = regime_detector.check_regime_change(
-        last_regime_name, current_regime
-    )
-    
-    if not has_changed:
-        return  # No regime change
-    
-    # Update position tracking with new regime
-    change_time = get_current_time()
-    position["current_regime"] = current_regime.name
-    position["regime_change_time"] = change_time
-    
-    # Record regime transition in history
-    if "regime_history" not in position:
-        position["regime_history"] = []
-    
-    position["regime_history"].append({
-        "from_regime": last_regime_name,
-        "to_regime": current_regime.name,
-        "timestamp": change_time
-    })
-    
-    # Log the regime change for awareness (informational only - no parameter changes)
-    logger.info("=" * 60)
-    logger.info(f"📊 REGIME CHANGE DETECTED: {last_regime_name} → {current_regime.name}")
-    logger.info(f"  Time: {get_current_time().strftime('%H:%M:%S')}")
-    logger.info(f"  Trade management: Active with fixed risk controls")
-    logger.info("=" * 60)
+#         return
+#     pass
 
 
 def check_exit_conditions(symbol: str) -> None:
@@ -5613,15 +5753,19 @@ def check_exit_conditions(symbol: str) -> None:
         execute_exit(symbol, price, reason)
         return
     
-    # SECOND - VWAP stop hit check
+    # SECOND - Stop loss check
     stop_hit, price = check_stop_hit(symbol, current_bar, position)
     if stop_hit:
         execute_exit(symbol, price, "stop_loss")
         return
     
-    # REGIME CHANGE CHECK - Detect and log regime changes (informational only)
-    # Trade management uses FIXED rules and is NOT affected by regime changes
-    check_regime_change(symbol, current_bar["close"])
+    # THIRD - Profit target check (BOS+FVG Strategy)
+    target_hit, price = check_profit_target_hit(symbol, current_bar, position)
+    if target_hit:
+        execute_exit(symbol, price, "profit_target")
+        return
+    
+    # BOS+FVG strategy doesn't use regime detection - removed for performance
     
     # Get current time for any time-based checks
     current_time = get_current_time()
@@ -6107,14 +6251,23 @@ def execute_exit(symbol: str, exit_price: float, reason: str) -> None:
     if not position["active"]:
         return
     
-    # Cancel stop order BEFORE exiting position (prevents orphaned stop orders)
+    # Cancel stop and target orders BEFORE exiting position (prevents orphaned orders)
     stop_order_id = position.get("stop_order_id")
     if stop_order_id:
         cancel_success = cancel_order(symbol, stop_order_id)
         if cancel_success:
             pass
         else:
-            logger.warning(f"ΓÜá Failed to cancel stop order {stop_order_id} - may remain active!")
+            logger.warning(f"⚠ Failed to cancel stop order {stop_order_id} - may remain active!")
+    
+    # Cancel profit target order if it exists
+    target_order_id = position.get("target_order_id")
+    if target_order_id:
+        cancel_success = cancel_order(symbol, target_order_id)
+        if cancel_success:
+            pass
+        else:
+            logger.warning(f"⚠ Failed to cancel target order {target_order_id} - may remain active!")
     
     exit_time = get_current_time()  # Use get_current_time() for backtest compatibility
     

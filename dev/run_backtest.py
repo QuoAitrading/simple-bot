@@ -175,14 +175,17 @@ def initialize_rl_brains_for_backtest(bot_config) -> Tuple[Any, ModuleType]:
     capitulation_detector._detector = None
     
     # Initialize RL brain with symbol-specific experience file
-    # Using 30% exploration and 70% confidence threshold
+    # Get RL parameters from config or use defaults
+    exploration_rate = bot_config.rl_exploration_rate if hasattr(bot_config, 'rl_exploration_rate') else 1.0
+    confidence_threshold = bot_config.rl_confidence_threshold if hasattr(bot_config, 'rl_confidence_threshold') else 0.0
+    
     signal_exp_file = os.path.join(PROJECT_ROOT, f"experiences/{symbol}/signal_experience.json")
     rl_brain = SignalConfidenceRL(
         experience_file=signal_exp_file,
         backtest_mode=True,
-        confidence_threshold=0.70,  # 70% confidence threshold
-        exploration_rate=0.30,  # 30% exploration
-        min_exploration=0.30,   # Keep at 30%
+        confidence_threshold=confidence_threshold,
+        exploration_rate=exploration_rate,
+        min_exploration=exploration_rate,   # Keep at same rate
         exploration_decay=1.0  # No decay - maintain exploration rate
     )
     
