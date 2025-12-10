@@ -2874,7 +2874,9 @@ def process_bos_fvg(symbol: str) -> None:
     # Need detectors initialized and at least 3 bars for FVG
     if bos_detector is None or fvg_detector is None:
         if len(bars) >= 3:
-            logger.warning(f"BOS/FVG detectors not initialized for {symbol} - strategy may not work properly")
+            # Only log detailed warnings in backtest mode
+            if is_backtest_mode():
+                logger.warning(f"Pattern detectors not initialized for {symbol} - strategy may not work properly")
         return
     
     if len(bars) < 3:
@@ -2884,7 +2886,9 @@ def process_bos_fvg(symbol: str) -> None:
     bos_direction, bos_level = bos_detector.process_bar(bars)
     if bos_direction:
         state[symbol]["current_bos_direction"] = bos_direction
-        logger.info(f"🔄 BOS DETECTED: {bos_direction.upper()} at ${bos_level:.2f}")
+        # Only log BOS detection in backtest mode to avoid exposing strategy
+        if is_backtest_mode():
+            logger.info(f"🔄 BOS DETECTED: {bos_direction.upper()} at ${bos_level:.2f}")
     
     # Detect new FVGs (but don't check fills here - that's done in signal checking)
     current_bar = bars[-1]
@@ -2892,9 +2896,11 @@ def process_bos_fvg(symbol: str) -> None:
         new_fvg = fvg_detector.detect_fvg(bars[-3], bars[-2], bars[-1])
         if new_fvg:
             fvg_detector.active_fvgs.append(new_fvg)
-            logger.info(f"📊 FVG CREATED: {new_fvg['type'].upper()} | "
-                       f"Top: ${new_fvg['top']:.2f} | Bottom: ${new_fvg['bottom']:.2f} | "
-                       f"Size: {new_fvg['size_ticks']:.1f} ticks")
+            # Only log FVG details in backtest mode to avoid exposing strategy
+            if is_backtest_mode():
+                logger.info(f"📊 FVG CREATED: {new_fvg['type'].upper()} | "
+                           f"Top: ${new_fvg['top']:.2f} | Bottom: ${new_fvg['bottom']:.2f} | "
+                           f"Size: {new_fvg['size_ticks']:.1f} ticks")
     
     # Clean up expired FVGs
     current_time = current_bar.get('timestamp')
@@ -3196,7 +3202,9 @@ def validate_signal_requirements(symbol: str, bar_time: datetime) -> Tuple[bool,
             bar = "█" * filled + "░" * (20 - filled)
             
             logger.info(f"⏳ WARMUP [{bar}] {progress_pct:.0f}% | Bars: {current_bar_count}/{WARMUP_BARS_REQUIRED} | ~{minutes_remaining} min remaining")
-            logger.info(f"   Collecting data for BOS detection. Signals blocked until warmup complete.")
+            # Only log strategy details in backtest mode
+            if is_backtest_mode():
+                logger.info(f"   Collecting data for pattern detection. Signals blocked until warmup complete.")
         
         return False, f"Warmup ({current_bar_count}/{WARMUP_BARS_REQUIRED} bars)"
     
@@ -3207,8 +3215,10 @@ def validate_signal_requirements(symbol: str, bar_time: datetime) -> Tuple[bool,
         logger.info("✅ WARMUP COMPLETE - TRADING ENABLED")
         logger.info("=" * 60)
         logger.info(f"   📊 Bars collected: {current_bar_count}")
-        logger.info(f"   📊 BOS detection: ACTIVE")
-        logger.info(f"   🎯 FVG tracking: ENABLED")
+        # Only log strategy-specific details in backtest mode
+        if is_backtest_mode():
+            logger.info(f"   📊 Pattern detection: ACTIVE")
+            logger.info(f"   🎯 Signal tracking: ENABLED")
         logger.info(f"   🚀 Signal generation: ENABLED")
         logger.info("=" * 60)
     
@@ -3346,7 +3356,9 @@ def check_long_signal_conditions(symbol: str, prev_bar: Dict[str, Any],
         is_filled = fvg_detector.is_fvg_filled(fvg, current_bar)
         if is_filled:
             # Found a filled FVG - this is our entry signal
-            logger.info(f"🎯 LONG SIGNAL: Bullish BOS + FVG fill at ${fvg['top']:.2f}")
+            # Only log strategy details in backtest mode
+            if is_backtest_mode():
+                logger.info(f"🎯 LONG SIGNAL: Bullish pattern detected at ${fvg['top']:.2f}")
             state[symbol]["entry_details"] = {
                 "fvg_id": fvg['id'],
                 "fvg_top": fvg['top'],
@@ -3354,7 +3366,7 @@ def check_long_signal_conditions(symbol: str, prev_bar: Dict[str, Any],
                 "fvg_size_ticks": fvg['size_ticks'],
                 "entry_price": fvg['top'],  # Enter at FVG top
                 "bos_direction": 'bullish',
-                "reason": "Bullish BOS + FVG fill"
+                "reason": "Bullish pattern"
             }
             return True
     
@@ -3855,23 +3867,19 @@ def check_for_signals(symbol: str) -> None:
     long_passed = check_long_signal_conditions(symbol, prev_bar, current_bar)
     if long_passed:
         # MARKET STATE CAPTURE - Record comprehensive market conditions
-        # Capture current market state (BOS+FVG pattern matching fields)
+        # Capture current market state (pattern matching fields)
         market_state = capture_market_state(symbol, current_bar["close"])
         
-        # DEBUG: Log market state to diagnose pattern matching
-        logger.info(f"🔍 [MARKET STATE] Long - BOS={market_state.get('bos_direction')}, "
-                    f"FVG={market_state.get('fvg_size_ticks'):.1f}t, "
-                    f"age={market_state.get('fvg_age_bars')}bars, "
-                    f"vol_ratio={market_state.get('volume_ratio'):.2f}")
+        # Only log detailed market state in backtest mode
+        if is_backtest_mode():
+            logger.info(f"🔍 [MARKET STATE] Long - Pattern analysis complete")
         
         # Ask cloud RL API for decision (or local RL as fallback)
-        # Market state has BOS+FVG fields: bos_direction, fvg_size_ticks, volume_ratio, etc.
         take_signal, confidence, reason = get_ml_confidence(market_state, "long")
         
         if not take_signal:
-            # Show rejected signals in both live mode and shadow mode
-            # Users need to see all AI decisions to understand the system's behavior
-            logger.info(f"⚠️  Signal Declined: LONG at ${market_state.get('price', 0):.2f} - {reason} (confidence: {confidence:.0%})")
+            # Show rejected signals without exposing strategy details
+            logger.info(f"⚠️  Signal Declined: LONG at ${market_state.get('price', 0):.2f} - Low confidence ({confidence:.0%})")
             # Store the rejected signal state for potential future learning
             state[symbol]["last_rejected_signal"] = {
                 "time": get_current_time(),
@@ -3885,8 +3893,11 @@ def check_for_signals(symbol: str) -> None:
         # RL approved - adjust position size based on confidence
         regime = market_state.get('regime', 'NORMAL')
         
-        # Show approved signal with confidence
-        logger.info(f"✅ LONG SIGNAL APPROVED | Price: ${market_state.get('price', 0):.2f} | AI Confidence: {confidence:.0%} | Regime: {regime}")
+        # Show approved signal - generic message in live mode, detailed in backtest
+        if is_backtest_mode():
+            logger.info(f"✅ LONG SIGNAL APPROVED | Price: ${market_state.get('price', 0):.2f} | AI Confidence: {confidence:.0%}")
+        else:
+            logger.info(f"✅ LONG SIGNAL | Price: ${market_state.get('price', 0):.2f} | Confidence: {confidence:.0%}")
         
         # Store market state for outcome recording
         state[symbol]["entry_market_state"] = market_state
@@ -3906,23 +3917,19 @@ def check_for_signals(symbol: str) -> None:
     short_passed = check_short_signal_conditions(symbol, prev_bar, current_bar)
     if short_passed:
         # MARKET STATE CAPTURE - Record comprehensive market conditions
-        # Capture current market state (BOS+FVG pattern matching fields)
+        # Capture current market state (pattern matching fields)
         market_state = capture_market_state(symbol, current_bar["close"])
         
-        # DEBUG: Log market state to diagnose pattern matching
-        logger.info(f"🔍 [MARKET STATE] Short - BOS={market_state.get('bos_direction')}, "
-                    f"FVG={market_state.get('fvg_size_ticks'):.1f}t, "
-                    f"age={market_state.get('fvg_age_bars')}bars, "
-                    f"vol_ratio={market_state.get('volume_ratio'):.2f}")
+        # Only log detailed market state in backtest mode
+        if is_backtest_mode():
+            logger.info(f"🔍 [MARKET STATE] Short - Pattern analysis complete")
         
         # Ask cloud RL API for decision (or local RL as fallback)
-        # Market state has BOS+FVG fields: bos_direction, fvg_size_ticks, volume_ratio, etc.
         take_signal, confidence, reason = get_ml_confidence(market_state, "short")
         
         if not take_signal:
-            # Show rejected signals in both live mode and shadow mode
-            # Users need to see all AI decisions to understand the system's behavior
-            logger.info(f"⚠️  Signal Declined: SHORT at ${market_state.get('price', 0):.2f} - {reason} (confidence: {confidence:.0%})")
+            # Show rejected signals without exposing strategy details
+            logger.info(f"⚠️  Signal Declined: SHORT at ${market_state.get('price', 0):.2f} - Low confidence ({confidence:.0%})")
             # Store the rejected signal state for potential future learning
             state[symbol]["last_rejected_signal"] = {
                 "time": get_current_time(),
@@ -3936,8 +3943,11 @@ def check_for_signals(symbol: str) -> None:
         # RL approved - adjust position size based on confidence
         regime = market_state.get('regime', 'NORMAL')
         
-        # Show approved signal with confidence
-        logger.info(f"✅ SHORT SIGNAL APPROVED | Price: ${market_state.get('price', 0):.2f} | AI Confidence: {confidence:.0%} | Regime: {regime}")
+        # Show approved signal - generic message in live mode, detailed in backtest
+        if is_backtest_mode():
+            logger.info(f"✅ SHORT SIGNAL APPROVED | Price: ${market_state.get('price', 0):.2f} | AI Confidence: {confidence:.0%}")
+        else:
+            logger.info(f"✅ SHORT SIGNAL | Price: ${market_state.get('price', 0):.2f} | Confidence: {confidence:.0%}")
         
         # Store market state for outcome recording
         state[symbol]["entry_market_state"] = market_state
@@ -4079,14 +4089,18 @@ def calculate_position_size(symbol: str, side: str, entry_price: float, rl_confi
             stop_distance = abs(entry_price - stop_price)
             ticks_at_risk = stop_distance / tick_size
             
-            logger.info(f"[SAFETY NET] Using capped stop: {ticks_at_risk:.0f} ticks (${max_stop_dollars:.2f})")
+            # Only log strategy-specific details in backtest mode
+            if is_backtest_mode():
+                logger.info(f"[SAFETY NET] Using strategy-based stop: {ticks_at_risk:.0f} ticks (${max_stop_dollars:.2f})")
         else:
             # FVG stop is within safe limits, use it
             stop_price = fvg_stop_price
             stop_distance = fvg_stop_distance
             ticks_at_risk = fvg_ticks_at_risk
             
-            logger.info(f"[BOS+FVG] Using FVG-based stop: {ticks_at_risk:.0f} ticks (${fvg_risk_dollars:.2f}) - within max loss limit")
+            # Only log strategy-specific details in backtest mode
+            if is_backtest_mode():
+                logger.info(f"[Strategy] Using calculated stop: {ticks_at_risk:.0f} ticks (${fvg_risk_dollars:.2f}) - within max loss limit")
     else:
         # Fallback to user's max loss setting
         if side == "long":
