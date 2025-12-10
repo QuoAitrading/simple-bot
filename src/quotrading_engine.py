@@ -98,14 +98,18 @@ import hashlib
 import signal
 import atexit
 
-# Load environment variables at module import time
-from dotenv import load_dotenv
-from pathlib import Path
-
-# Determine project root and load .env
-PROJECT_ROOT = Path(__file__).parent.parent
-env_path = PROJECT_ROOT / '.env'
-load_dotenv(dotenv_path=env_path)
+# Load environment variables at module import time (optional for live trading)
+try:
+    from dotenv import load_dotenv
+    from pathlib import Path
+    
+    # Determine project root and load .env
+    PROJECT_ROOT = Path(__file__).parent.parent
+    env_path = PROJECT_ROOT / '.env'
+    load_dotenv(dotenv_path=env_path)
+except ImportError:
+    # dotenv not available (e.g., in backtesting) - skip
+    pass
 
 # Import rainbow logo display - with fallback if not available
 try:
@@ -245,7 +249,15 @@ from notifications import get_notifier
 from signal_confidence import SignalConfidenceRL
 from regime_detection import get_regime_detector, REGIME_DEFINITIONS, is_regime_tradeable
 from capitulation_detector import get_capitulation_detector, CapitulationDetector, FlushEvent
-from cloud_api import CloudAPIClient
+
+# Conditionally import cloud API (only needed for live trading)
+try:
+    from cloud_api import CloudAPIClient
+    CLOUD_API_AVAILABLE = True
+except ImportError:
+    CLOUD_API_AVAILABLE = False
+    CloudAPIClient = None
+
 from bos_detector import BOSDetector
 from fvg_detector import FVGDetector
 
