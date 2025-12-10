@@ -372,7 +372,7 @@ def run_backtest(args: argparse.Namespace) -> Dict[str, Any]:
         nonlocal prev_position_active, bars_processed, total_bars, last_exit_reason
         total_bars = len(bars_1min)
         
-        # Calculate progress interval once (MIN_PROGRESS_INTERVAL or every 10%, whichever is larger)
+        # Calculate progress interval once (at least MIN_PROGRESS_INTERVAL, or every 10% if larger)
         progress_interval = max(MIN_PROGRESS_INTERVAL, total_bars // PROGRESS_UPDATES)
         
         for bar_idx, bar in enumerate(bars_1min):
