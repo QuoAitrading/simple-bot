@@ -284,7 +284,7 @@ class SignalConfidenceRL:
         
         CONFIDENCE FORMULA (80/20 Rule):
         ==================
-        Step 1: Find 10 most similar past trades
+        Step 1: Find 20 most similar past trades
         Step 2: Calculate from those similar trades:
           - Win Rate = Winners / Total
           - Average Profit = Sum of profits / Count
@@ -292,19 +292,19 @@ class SignalConfidenceRL:
           - Final Confidence = (Win Rate × 80%) + (Profit Score × 20%)
         Step 3: If average profit is negative → Auto reject (0% confidence)
         
-        Example: 8 wins out of 10 = 80% WR, $120 avg profit
+        Example: 16 wins out of 20 = 80% WR, $120 avg profit
           Profit Score = 120/300 = 0.40
           Confidence = (0.80 × 0.80) + (0.40 × 0.20) = 0.64 + 0.08 = 72%
         
         Returns:
             (confidence, reason)
         """
-        # Need at least 10 experiences before using them for decisions
-        if len(self.experiences) < 10:
+        # Need at least 20 experiences before using them for decisions
+        if len(self.experiences) < 20:
             return 0.35, f"Limited experience ({len(self.experiences)} trades) - safety default"
         
-        # Step 1: Find 10 most similar past trades
-        similar = self.find_similar_states(current_state, max_results=10)
+        # Step 1: Find 20 most similar past trades
+        similar = self.find_similar_states(current_state, max_results=20)
         
         if not similar:
             logger.warning(f"[RL] No similar trades found despite {len(self.experiences)} experiences - pattern matching may be too strict")
@@ -341,7 +341,7 @@ class SignalConfidenceRL:
         
         return confidence, reason
     
-    def find_similar_states(self, current: Dict, max_results: int = 10) -> list:
+    def find_similar_states(self, current: Dict, max_results: int = 20) -> list:
         """
         Find past experiences with similar market states.
         
@@ -482,7 +482,7 @@ class SignalConfidenceRL:
         # Sort by similarity (most similar first)
         scored.sort(key=lambda x: x[0])
         
-        # Return top N most similar (default 10)
+        # Return top N most similar (default 20)
         return [exp for _, exp in scored[:max_results]]
     
     def _calculate_optimal_threshold(self) -> float:
