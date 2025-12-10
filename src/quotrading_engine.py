@@ -3869,6 +3869,13 @@ def check_for_signals(symbol: str) -> None:
         # Capture current market state (pattern matching fields)
         market_state = capture_market_state(symbol, current_bar["close"])
         
+        # Show signal diagnostic in live mode (without exposing strategy details)
+        if not is_backtest_mode() and should_log_diagnostic:
+            logger.info("📊 Signal Diagnostic:")
+            logger.info(f"  ✓ Market conditions aligned")
+            logger.info(f"  ✓ Pattern detected")
+            logger.info(f"  → Evaluating entry opportunity...")
+        
         # Only log detailed market state in backtest mode
         if is_backtest_mode():
             logger.info(f"🔍 [MARKET STATE] Long - Pattern analysis complete")
@@ -3878,7 +3885,10 @@ def check_for_signals(symbol: str) -> None:
         
         if not take_signal:
             # Show rejected signals without exposing strategy details
-            logger.info(f"⚠️  Signal Declined: LONG at ${market_state.get('price', 0):.2f} - Low confidence ({confidence:.0%})")
+            if not is_backtest_mode():
+                logger.info(f"  ✗ Signal Declined: LONG | Confidence: {confidence:.0%}")
+            else:
+                logger.info(f"⚠️  Signal Declined: LONG at ${market_state.get('price', 0):.2f} - Low confidence ({confidence:.0%})")
             # Store the rejected signal state for potential future learning
             state[symbol]["last_rejected_signal"] = {
                 "time": get_current_time(),
@@ -3896,7 +3906,7 @@ def check_for_signals(symbol: str) -> None:
         if is_backtest_mode():
             logger.info(f"✅ LONG SIGNAL APPROVED | Price: ${market_state.get('price', 0):.2f} | AI Confidence: {confidence:.0%}")
         else:
-            logger.info(f"✅ LONG SIGNAL | Price: ${market_state.get('price', 0):.2f} | Confidence: {confidence:.0%}")
+            logger.info(f"  ✓ Signal Approved: LONG | Price: ${market_state.get('price', 0):.2f} | Confidence: {confidence:.0%}")
         
         # Store market state for outcome recording
         state[symbol]["entry_market_state"] = market_state
@@ -3919,6 +3929,13 @@ def check_for_signals(symbol: str) -> None:
         # Capture current market state (pattern matching fields)
         market_state = capture_market_state(symbol, current_bar["close"])
         
+        # Show signal diagnostic in live mode (without exposing strategy details)
+        if not is_backtest_mode() and should_log_diagnostic:
+            logger.info("📊 Signal Diagnostic:")
+            logger.info(f"  ✓ Market conditions aligned")
+            logger.info(f"  ✓ Pattern detected")
+            logger.info(f"  → Evaluating entry opportunity...")
+        
         # Only log detailed market state in backtest mode
         if is_backtest_mode():
             logger.info(f"🔍 [MARKET STATE] Short - Pattern analysis complete")
@@ -3928,7 +3945,10 @@ def check_for_signals(symbol: str) -> None:
         
         if not take_signal:
             # Show rejected signals without exposing strategy details
-            logger.info(f"⚠️  Signal Declined: SHORT at ${market_state.get('price', 0):.2f} - Low confidence ({confidence:.0%})")
+            if not is_backtest_mode():
+                logger.info(f"  ✗ Signal Declined: SHORT | Confidence: {confidence:.0%}")
+            else:
+                logger.info(f"⚠️  Signal Declined: SHORT at ${market_state.get('price', 0):.2f} - Low confidence ({confidence:.0%})")
             # Store the rejected signal state for potential future learning
             state[symbol]["last_rejected_signal"] = {
                 "time": get_current_time(),
@@ -3946,7 +3966,7 @@ def check_for_signals(symbol: str) -> None:
         if is_backtest_mode():
             logger.info(f"✅ SHORT SIGNAL APPROVED | Price: ${market_state.get('price', 0):.2f} | AI Confidence: {confidence:.0%}")
         else:
-            logger.info(f"✅ SHORT SIGNAL | Price: ${market_state.get('price', 0):.2f} | Confidence: {confidence:.0%}")
+            logger.info(f"  ✓ Signal Approved: SHORT | Price: ${market_state.get('price', 0):.2f} | Confidence: {confidence:.0%}")
         
         # Store market state for outcome recording
         state[symbol]["entry_market_state"] = market_state
