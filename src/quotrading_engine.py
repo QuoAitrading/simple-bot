@@ -2856,7 +2856,7 @@ def process_bos_fvg(symbol: str) -> None:
     This implements the BOS + FVG scalping strategy:
     1. Detect swing highs/lows and BOS events
     2. Detect new FVG patterns
-    3. Track FVG fills and expirations
+    3. Track FVG expirations (but NOT fills - fills are checked in signal logic)
     
     Args:
         symbol: Instrument symbol
@@ -2880,17 +2880,23 @@ def process_bos_fvg(symbol: str) -> None:
         state[symbol]["current_bos_direction"] = bos_direction
         logger.info(f"🔄 BOS DETECTED: {bos_direction.upper()} at ${bos_level:.2f}")
     
-    # Process FVG detection and fills
-    new_fvg, filled_fvgs = fvg_detector.process_bar(bars)
+    # Detect new FVGs (but don't check fills here - that's done in signal checking)
+    current_bar = bars[-1]
+    if len(bars) >= 3:
+        new_fvg = fvg_detector.detect_fvg(bars[-3], bars[-2], bars[-1])
+        if new_fvg:
+            fvg_detector.active_fvgs.append(new_fvg)
+            logger.info(f"📊 FVG CREATED: {new_fvg['type'].upper()} | "
+                       f"Top: ${new_fvg['top']:.2f} | Bottom: ${new_fvg['bottom']:.2f} | "
+                       f"Size: {new_fvg['size_ticks']:.1f} ticks")
     
-    if new_fvg:
-        logger.info(f"📊 FVG CREATED: {new_fvg['type'].upper()} | "
-                   f"Top: ${new_fvg['top']:.2f} | Bottom: ${new_fvg['bottom']:.2f} | "
-                   f"Size: {new_fvg['size_ticks']:.1f} ticks")
+    # Clean up expired FVGs
+    current_time = current_bar.get('timestamp')
+    if current_time:
+        fvg_detector.remove_expired_fvgs(current_time)
     
-    for fvg in filled_fvgs:
-        logger.info(f"✅ FVG FILLED: {fvg['type'].upper()} | "
-                   f"Price touched ${fvg['top'] if fvg['type'] == 'bullish' else fvg['bottom']:.2f}")
+    # Limit number of active FVGs
+    fvg_detector.limit_active_fvgs()
     
     # Update state with current FVG list
     state[symbol]["active_fvgs"] = fvg_detector.active_fvgs

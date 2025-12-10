@@ -211,12 +211,8 @@ class FVGDetector:
         if len(bars) < 3:
             return None, []
         
-        # Detect new FVG from last 3 bars
-        new_fvg = self.detect_fvg(bars[-3], bars[-2], bars[-1])
-        if new_fvg:
-            self.active_fvgs.append(new_fvg)
-        
-        # Check for FVG fills
+        # Check for FVG fills FIRST (before creating new FVG)
+        # This ensures we don't check if the bar that creates the FVG also fills it
         current_bar = bars[-1]
         current_time = current_bar.get('timestamp')
         filled_fvgs = []
@@ -226,6 +222,12 @@ class FVGDetector:
                 if self.is_fvg_filled(fvg, current_bar):
                     fvg['filled'] = True
                     filled_fvgs.append(fvg)
+        
+        # Detect new FVG from last 3 bars
+        # This happens AFTER checking fills, so a new FVG won't be checked against the same bar
+        new_fvg = self.detect_fvg(bars[-3], bars[-2], bars[-1])
+        if new_fvg:
+            self.active_fvgs.append(new_fvg)
         
         # Clean up expired FVGs
         if current_time:
