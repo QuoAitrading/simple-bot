@@ -568,8 +568,8 @@ IDLE_STATUS_MESSAGE_INTERVAL = 300  # Show status message every 5 minutes (300 s
 DEFAULT_FALLBACK_ATR = 5.0  # Default ATR when calculation not possible (ES futures typical value)
 
 # BOS + FVG Strategy Constants
-BOS_FVG_STOP_BUFFER_TICKS = 2  # Ticks beyond FVG zone for stop placement
-BOS_FVG_PROFIT_TARGET_MULTIPLIER = 1.12  # Risk-reward ratio (1:1.12) - balanced for 55%+ win rate + good profit
+BOS_FVG_STOP_BUFFER_TICKS = 3.0  # Ticks beyond FVG zone for stop placement - wider breathing room improves win rate
+BOS_FVG_PROFIT_TARGET_MULTIPLIER = 1.15  # Risk-reward ratio (1:1.15) - quick profit capture with wider stops
 
 # Global broker instance (replaces sdk_client)
 broker: Optional[BrokerInterface] = None
