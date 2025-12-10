@@ -1977,7 +1977,7 @@ def initialize_state(symbol: str) -> None:
         "trading_day": None,
         "daily_trade_count": 0,
         "daily_pnl": 0.0,
-        "warmup_complete": False,  # Track when 10 bars collected for BOS swing points
+        "warmup_complete": False,  # Track when 21 bars collected for ATR calculation
         
         # Session tracking (Phase 13)
         "session_stats": {
@@ -3182,11 +3182,11 @@ def validate_signal_requirements(symbol: str, bar_time: datetime) -> Tuple[bool,
         return False, "Insufficient bars"
     
     # ========================================================================
-    # WARMUP PERIOD: Block signals until enough bars for regime detection
+    # WARMUP PERIOD: Block signals until enough bars for ATR calculation
     # ========================================================================
-    # BOS+FVG strategy requires 10 bars for accurate BOS detection
-    # (5-bar swing lookback requires at least 10 bars total)
-    WARMUP_BARS_REQUIRED = 10
+    # ATR calculation requires 21 bars (1 for prev close + 20 for calculation)
+    # BOS+FVG strategy also needs minimum bars for swing point detection
+    WARMUP_BARS_REQUIRED = 21
     current_bar_count = len(state[symbol]["bars_1min"])
     
     if current_bar_count < WARMUP_BARS_REQUIRED:
@@ -3325,8 +3325,8 @@ def check_long_signal_conditions(symbol: str, prev_bar: Dict[str, Any],
     if bos_detector is None or fvg_detector is None:
         return False
     
-    # Need at least 10 bars for BOS detection
-    if len(bars) < 10:
+    # Need at least 21 bars for ATR calculation and BOS detection
+    if len(bars) < 21:
         return False
     
     # Get current BOS direction
@@ -3404,8 +3404,8 @@ def check_short_signal_conditions(symbol: str, prev_bar: Dict[str, Any],
     if bos_detector is None or fvg_detector is None:
         return False
     
-    # Need at least 10 bars for BOS detection
-    if len(bars) < 10:
+    # Need at least 21 bars for ATR calculation and BOS detection
+    if len(bars) < 21:
         return False
     
     # Get current BOS direction
@@ -3625,25 +3625,29 @@ def capture_market_state(symbol: str, current_price: float) -> Dict[str, Any]:
     """
     Capture market state snapshot for BOS + FVG SCALPING pattern matching.
     
-    SIMPLIFIED 14-FIELD STRUCTURE FOR BOS+FVG:
+    SIMPLIFIED 15-FIELD STRUCTURE FOR BOS+FVG:
     ==========================================
-    The 10 Pattern Matching Fields:
+    The 11 Pattern Matching Fields:
     1. bos_direction - Current BOS trend ('bullish', 'bearish', or None)
     2. fvg_size_ticks - Size of the FVG being traded in ticks
     3. fvg_age_bars - How many bars since FVG was created
     4. price_in_fvg_pct - How deep into the FVG price has penetrated (0-100%)
     5. volume_ratio - Current volume vs 20-bar average
-    6. session - Trading session (overnight, asia, london, newyork, postmarket)
-    7. hour - Hour of day (for time-based patterns)
-    8. fvg_count_active - Number of active unfilled FVGs
-    9. swing_high - Most recent swing high price
-    10. swing_low - Most recent swing low price
+    6. atr_ratio - Current volatility vs 20-bar average ATR
+    7. session - Trading session (overnight, asia, london, newyork, postmarket)
+    8. hour - Hour of day (for time-based patterns)
+    9. fvg_count_active - Number of active unfilled FVGs
+    10. swing_high - Most recent swing high price
+    11. swing_low - Most recent swing low price
     
     The 4 Metadata Fields:
-    11. symbol
-    12. timestamp
-    13. pnl (added later by record_outcome)
-    14. took_trade (added later by record_outcome)
+    12. symbol
+    13. timestamp
+    14. pnl (added later by record_outcome)
+    15. took_trade (added later by record_outcome)
+    
+    TOTAL: 15 fields for complete experience tracking.
+    All fields are used - 11 for pattern matching, 4 for metadata/outcomes.
     
     LEGACY FIELDS (not used in BOS+FVG):
     - Old strategy fields like flush_size_ticks, flush_velocity, etc.
@@ -3654,7 +3658,7 @@ def capture_market_state(symbol: str, current_price: float) -> Dict[str, Any]:
         current_price: Current market price
     
     Returns:
-        Dictionary with 12 market state features (pnl and took_trade added later)
+        Dictionary with 11 pattern matching + 2 metadata fields (pnl and took_trade added later)
     """
     # Get current time and session
     current_time = get_current_time()
@@ -3673,6 +3677,33 @@ def capture_market_state(symbol: str, current_price: float) -> Dict[str, Any]:
         volume_ratio = current_bar.get("volume", 0) / avg_volume_20 if avg_volume_20 > 0 else 1.0
     else:
         volume_ratio = 1.0
+    
+    # Calculate ATR ratio (current volatility vs 20-bar average)
+    atr_ratio = 1.0
+    if len(bars_1min) >= 21:  # Need 21 bars (1 for prev close + 20 for calculation)
+        bars_list = list(bars_1min)[-21:]
+        true_ranges = []
+        
+        for i in range(1, len(bars_list)):
+            high = bars_list[i].get("high", 0)
+            low = bars_list[i].get("low", 0)
+            prev_close = bars_list[i-1].get("close", 0)
+            
+            # True Range is max of: high-low, |high-prev_close|, |low-prev_close|
+            tr = max(
+                high - low,
+                abs(high - prev_close),
+                abs(low - prev_close)
+            )
+            true_ranges.append(tr)
+        
+        if true_ranges:
+            # Average True Range over 20 bars
+            avg_atr_20 = sum(true_ranges) / len(true_ranges)
+            # Current bar true range (most recent)
+            current_tr = true_ranges[-1] if true_ranges else 0
+            # ATR ratio: current volatility / average volatility
+            atr_ratio = current_tr / avg_atr_20 if avg_atr_20 > 0 else 1.0
     
     # Get BOS and FVG detector state
     bos_detector = state[symbol].get("bos_detector")
@@ -3730,14 +3761,16 @@ def capture_market_state(symbol: str, current_price: float) -> Dict[str, Any]:
                         fvg_age_bars = int(age_delta.total_seconds() / 60)  # Minutes = bars
                     break
     
-    # Build the simplified 14-field experience record structure for BOS+FVG
+    # Build the simplified 15-field experience record structure for BOS+FVG
+    # 11 pattern matching fields + 4 metadata fields (symbol, timestamp, pnl, took_trade)
     market_state = {
-        # The 10 Pattern Matching Fields
+        # The 11 Pattern Matching Fields
         "bos_direction": bos_direction if bos_direction else "NONE",
         "fvg_size_ticks": round(fvg_size_ticks, 1),
         "fvg_age_bars": fvg_age_bars,
         "price_in_fvg_pct": round(price_in_fvg_pct, 1),
         "volume_ratio": round(volume_ratio, 2),
+        "atr_ratio": round(atr_ratio, 2),
         "session": session,
         "hour": hour,
         "fvg_count_active": fvg_count_active,
@@ -3748,9 +3781,6 @@ def capture_market_state(symbol: str, current_price: float) -> Dict[str, Any]:
         "symbol": symbol,
         "timestamp": current_time.isoformat(),
         # pnl and took_trade will be added by record_outcome()
-        
-        # Additional field for display purposes (not used in pattern matching)
-        "price": current_price,
     }
     
     return market_state

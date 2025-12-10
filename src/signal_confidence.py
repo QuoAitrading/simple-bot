@@ -138,10 +138,10 @@ class SignalConfidenceRL:
         has_bos = 'bos_direction' in experience
         
         if has_bos:
-            # BOS/FVG Strategy Fields (10 pattern matching fields + 2 metadata = 12 total)
+            # BOS/FVG Strategy Fields (11 pattern matching fields + 2 metadata = 13 total)
             key_fields = [
                 'bos_direction', 'fvg_size_ticks', 'fvg_age_bars', 'price_in_fvg_pct',
-                'volume_ratio', 'session', 'hour', 'fvg_count_active',
+                'volume_ratio', 'atr_ratio', 'session', 'hour', 'fvg_count_active',
                 'swing_high', 'swing_low',
                 # Metadata: symbol and took_trade only (exclude timestamp and pnl)
                 'symbol', 'took_trade'
@@ -369,29 +369,34 @@ class SignalConfidenceRL:
             
             if has_bos:
                 # === BOS/FVG STRATEGY ===
-                # Weights add to 100%: 15+20+10+10+10+10+10+8+7 = 100%
+                # Weights add to 100%: 18+14+12+10+12+8+5+6+8+7 = 100%
                 
-                # BOS Direction (15%) - Binary match
+                # BOS Direction (18%) - Binary match
                 bos_match = 0.0 if current.get('bos_direction') == past.get('bos_direction') else 1.0
                 
-                # FVG Size (20%) - Normalize by 20 ticks
+                # FVG Size (14%) - Normalize by 20 ticks
                 fvg_size_diff = abs(current.get('fvg_size_ticks', 0) - past.get('fvg_size_ticks', 0)) / 20.0
                 
-                # FVG Age (10%) - Normalize by 60 bars
+                # FVG Age (12%) - Normalize by 60 bars
                 fvg_age_diff = abs(current.get('fvg_age_bars', 0) - past.get('fvg_age_bars', 0)) / 60.0
                 
                 # Price in FVG (10%) - Normalize by 100%
                 price_in_fvg_diff = abs(current.get('price_in_fvg_pct', 0) - past.get('price_in_fvg_pct', 0)) / 100.0
                 
-                # Volume Ratio (10%) - Normalize by 3
+                # Volume Ratio (12%) - Normalize by 3
                 volume_diff = abs(current.get('volume_ratio', 1) - past.get('volume_ratio', 1)) / 3.0
                 
-                # FVG Count (10%) - Normalize by 20
+                # ATR Ratio (8%) - Normalize by 2
+                atr_diff = abs(current.get('atr_ratio', 1) - past.get('atr_ratio', 1)) / 2.0
+                
+                # FVG Count (5%) - Normalize by 20
                 fvg_count_diff = abs(current.get('fvg_count_active', 0) - past.get('fvg_count_active', 0)) / 20.0
                 
-                # Swing Levels (10%) - Normalized price distance
-                swing_high_diff = abs(current.get('swing_high', 0) - past.get('swing_high', 0)) / 100.0
-                swing_low_diff = abs(current.get('swing_low', 0) - past.get('swing_low', 0)) / 100.0
+                # Swing Levels (6%) - Normalized by actual price levels
+                current_swing_high = current.get('swing_high', 1)
+                current_swing_low = current.get('swing_low', 1)
+                swing_high_diff = abs(current.get('swing_high', 0) - past.get('swing_high', 0)) / current_swing_high * 10 if current_swing_high > 0 else 0.0
+                swing_low_diff = abs(current.get('swing_low', 0) - past.get('swing_low', 0)) / current_swing_low * 10 if current_swing_low > 0 else 0.0
                 swing_diff = (swing_high_diff + swing_low_diff) / 2.0
                 
                 # Session (8%) - Binary match
@@ -401,15 +406,16 @@ class SignalConfidenceRL:
                 hour_diff = abs(current.get('hour', 12) - past.get('hour', 12)) / 24.0
                 
                 # Weighted similarity score (lower is more similar)
-                # Total weights: 15+20+10+10+10+10+10+8+7 = 100%
+                # Total weights: 18+14+12+10+12+8+5+6+8+7 = 100%
                 similarity = (
-                    bos_match * 0.15 +
-                    fvg_size_diff * 0.20 +
-                    fvg_age_diff * 0.10 +
+                    bos_match * 0.18 +
+                    fvg_size_diff * 0.14 +
+                    fvg_age_diff * 0.12 +
                     price_in_fvg_diff * 0.10 +
-                    volume_diff * 0.10 +
-                    fvg_count_diff * 0.10 +
-                    swing_diff * 0.10 +
+                    volume_diff * 0.12 +
+                    atr_diff * 0.08 +
+                    fvg_count_diff * 0.05 +
+                    swing_diff * 0.06 +
                     session_match * 0.08 +
                     hour_diff * 0.07
                 )
