@@ -32,7 +32,7 @@ class FVGDetector:
     def __init__(self, 
                  tick_size: float = 0.25,
                  min_fvg_size_ticks: int = 5,
-                 max_fvg_size_ticks: int = 12,
+                 max_fvg_size_ticks: int = 13,
                  fvg_expiry_minutes: int = 75,
                  max_active_fvgs: int = 15):
         """
