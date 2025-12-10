@@ -4576,7 +4576,7 @@ def execute_entry(symbol: str, side: str, entry_price: float) -> None:
     logger.info(f"    Rule: {BOS_FVG_STOP_BUFFER_TICKS} ticks beyond FVG zone (capped by max loss per trade)")
     logger.info(f"    Stop Distance: {stop_distance_ticks:.1f} ticks (${abs(actual_fill_price - stop_price):.2f})")
     logger.info(f"    Stop Price: ${stop_price:.2f}")
-    logger.info(f"    Safety Net: GUI max loss per trade = ${max_stop_dollars:.2f}")
+    # logger.info(f"    Safety Net: GUI max loss per trade = ${max_stop_dollars:.2f}")
     logger.info(f"")
     logger.info(f"  Profit Target:")
     logger.info(f"    Rule: {BOS_FVG_PROFIT_TARGET_MULTIPLIER}x risk-reward ratio")
