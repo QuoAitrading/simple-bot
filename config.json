@@ -32,7 +32,7 @@
     "ES",
     "MES"
   ],
-  "instrument": "MES",
+  "instrument": "ES",
   "daily_loss_limit": 1000.0,
   "max_loss_per_trade": 200.0,
   "max_contracts": 1,
