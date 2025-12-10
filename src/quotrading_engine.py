@@ -3756,10 +3756,20 @@ def is_regime_tradeable(regime: str) -> bool:
     Currently returns True for all regimes (RL handles filtering).
     
     Args:
-        regime: Current market regime
+        regime: Current market regime. Expected values:
+            - 'NORMAL': Normal market conditions
+            - 'NORMAL_TRENDING': Normal trending market
+            - 'HIGH_VOL_CHOPPY': High volatility, choppy conditions
+            - 'HIGH_VOL_TRENDING': High volatility, trending
+            - 'LOW_VOL_RANGING': Low volatility, ranging
+            - 'LOW_VOL_TRENDING': Low volatility, trending
         
     Returns:
         True if regime allows trading (currently always True)
+        
+    Note:
+        All regimes are currently tradeable. The RL confidence system
+        provides pattern-based filtering instead of regime-based blocking.
     """
     # All regimes are tradeable - RL confidence system provides filtering
     return True

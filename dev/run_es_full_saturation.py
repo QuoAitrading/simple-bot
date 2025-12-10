@@ -33,6 +33,16 @@ import pytz
 os.environ['BOT_BACKTEST_MODE'] = 'true'
 os.environ['USE_CLOUD_SIGNALS'] = 'false'
 
+# Phase Configuration Constants
+PHASE1_CONFIDENCE_THRESHOLD = 0.0  # Take every signal (0% threshold)
+PHASE1_EXPLORATION_RATE = 1.0      # 100% exploration
+
+PHASE2_CONFIDENCE_THRESHOLD = 0.70  # 70% confidence threshold
+PHASE2_EXPLORATION_RATE = 0.30      # 30% exploration
+
+MAX_SATURATION_ITERATIONS = 100
+CONSECUTIVE_ZERO_STOP = 3
+
 # Add parent directory to path
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 PROJECT_ROOT = os.path.dirname(SCRIPT_DIR)
@@ -93,9 +103,9 @@ def run_phase_1_initial_learning():
     rl_brain = SignalConfidenceRL(
         experience_file=signal_exp_file,
         backtest_mode=True,
-        confidence_threshold=0.0,  # Take every signal (0% threshold)
-        exploration_rate=1.0,      # 100% exploration
-        min_exploration=1.0,
+        confidence_threshold=PHASE1_CONFIDENCE_THRESHOLD,
+        exploration_rate=PHASE1_EXPLORATION_RATE,
+        min_exploration=PHASE1_EXPLORATION_RATE,
         exploration_decay=1.0
     )
     
@@ -240,10 +250,8 @@ def run_phase_2_saturation(initial_experiences):
     
     iteration = 0
     consecutive_zero = 0
-    max_iterations = 100
-    max_consecutive_zero = 3
     
-    while iteration < max_iterations:
+    while iteration < MAX_SATURATION_ITERATIONS:
         iteration += 1
         
         # Import bot module fresh for each iteration
@@ -277,9 +285,9 @@ def run_phase_2_saturation(initial_experiences):
         rl_brain = SignalConfidenceRL(
             experience_file=signal_exp_file,
             backtest_mode=True,
-            confidence_threshold=0.70,  # 70% confidence threshold
-            exploration_rate=0.30,      # 30% exploration
-            min_exploration=0.30,
+            confidence_threshold=PHASE2_CONFIDENCE_THRESHOLD,
+            exploration_rate=PHASE2_EXPLORATION_RATE,
+            min_exploration=PHASE2_EXPLORATION_RATE,
             exploration_decay=1.0
         )
         
@@ -402,7 +410,7 @@ def run_phase_2_saturation(initial_experiences):
         # Check for saturation
         if new_experiences == 0:
             consecutive_zero += 1
-            if consecutive_zero >= max_consecutive_zero:
+            if consecutive_zero >= CONSECUTIVE_ZERO_STOP:
                 print()
                 print(f"  ✓ SATURATION REACHED after {consecutive_zero} consecutive iterations with 0 new patterns")
                 break
