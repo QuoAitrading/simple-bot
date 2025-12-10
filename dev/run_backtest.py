@@ -371,13 +371,13 @@ def run_backtest(args: argparse.Namespace) -> Dict[str, Any]:
         for bar_idx, bar in enumerate(bars_1min):
             bars_processed = bar_idx + 1
             
+            # Extract bar data
+            timestamp = bar['timestamp']
+            
             # Update progress less frequently - every 10% or every 500 bars (whichever is larger)
             progress_interval = max(500, total_bars // 10)  # Show 10 updates max
             if bars_processed % progress_interval == 0 or bars_processed == total_bars:
-                reporter.update_progress(bars_processed, total_bars)
-            
-            # Extract bar data
-            timestamp = bar['timestamp']
+                reporter.update_progress(bars_processed, total_bars, timestamp)
             timestamp_eastern = timestamp.astimezone(eastern_tz)
             
             # Check for new trading day (resets daily counters following production rules)
@@ -544,17 +544,19 @@ def main():
         max_contracts=bot_config.max_contracts
     )
     
-    # Create a custom filter to suppress signal spam and only track them
+    # Create a custom filter to suppress signal spam and only track/show approved ones
     class BacktestMessageFilter(logging.Filter):
         def filter(self, record):
-            # Track RL signals for the reporter but suppress output
+            # Track RL signals for the reporter
             msg = record.getMessage()
             if 'SIGNAL APPROVED' in msg:
                 reporter.record_signal(approved=True)
-                return False  # Suppress output
+                # Show approved signals in clean format
+                print(f"  ✓ {msg}")
+                return False  # Suppress original output
             elif 'Signal Declined' in msg:
                 reporter.record_signal(approved=False)
-                return False  # Suppress output
+                return False  # Suppress output - don't show rejected signals
             elif 'Exploring' in msg:
                 return False  # Suppress exploration messages
             elif 'LONG SIGNAL' in msg or 'SHORT SIGNAL' in msg:

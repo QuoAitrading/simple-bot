@@ -127,14 +127,22 @@ class BacktestReporter:
         print(f"{status}: {side:5} {qty}x | Entry: {entry_str} @ ${entry_price:.2f} -> Exit: {exit_str} @ ${exit_price:.2f} | "
               f"P&L: ${pnl:+8.2f} | {exit_reason:12} | {duration:3.0f}min | Conf: {confidence:3.0f}%{regime_str}")
         
-    def update_progress(self, bars_processed: int, total_bars: int):
-        """Update progress - only show every 10% to reduce spam"""
+    def update_progress(self, bars_processed: int, total_bars: int, current_timestamp=None):
+        """Update progress with bar date - only show every 10% to reduce spam"""
         if total_bars > 0:
             pct = (bars_processed / total_bars) * 100
             # Only show progress every 10% or at completion
             if bars_processed == total_bars or bars_processed % max(1, total_bars // 10) == 0:
-                # Clean progress format
-                print(f"Progress: [{pct:5.1f}%] {bars_processed:,}/{total_bars:,} bars processed", end='\r')
+                # Format timestamp if provided
+                date_str = ""
+                if current_timestamp:
+                    if hasattr(current_timestamp, 'strftime'):
+                        date_str = f" | {current_timestamp.strftime('%Y-%m-%d %H:%M')}"
+                    elif isinstance(current_timestamp, str):
+                        date_str = f" | {current_timestamp[:16]}"
+                
+                # Clean progress format with date
+                print(f"Progress: [{pct:5.1f}%] {bars_processed:,}/{total_bars:,} bars{date_str}", end='\r')
                 if bars_processed == total_bars:
                     print()  # New line when complete
             
