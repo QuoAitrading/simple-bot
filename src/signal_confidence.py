@@ -135,11 +135,10 @@ class SignalConfidenceRL:
         import hashlib
         
         # Detect which strategy based on fields present
-        has_flush = 'flush_size_ticks' in experience
         has_bos = 'bos_direction' in experience
         
         if has_bos:
-            # BOS/FVG Strategy Fields (10 pattern matching fields)
+            # BOS/FVG Strategy Fields (10 pattern matching fields + 2 metadata = 12 total)
             key_fields = [
                 'bos_direction', 'fvg_size_ticks', 'fvg_age_bars', 'price_in_fvg_pct',
                 'volume_ratio', 'session', 'hour', 'fvg_count_active',
@@ -148,7 +147,7 @@ class SignalConfidenceRL:
                 'symbol', 'took_trade'
             ]
         else:
-            # Capitulation Strategy Fields (12 pattern matching fields) - Legacy
+            # Capitulation Strategy Fields (12 pattern matching fields + 2 metadata = 14 total) - Legacy
             key_fields = [
                 'flush_size_ticks', 'flush_velocity', 'volume_climax_ratio', 'flush_direction',
                 'rsi', 'distance_from_flush_low', 'reversal_candle', 'no_new_extreme',
@@ -370,6 +369,7 @@ class SignalConfidenceRL:
             
             if has_bos:
                 # === BOS/FVG STRATEGY ===
+                # Weights add to 100%: 15+20+10+10+10+10+10+8+7 = 100%
                 
                 # BOS Direction (15%) - Binary match
                 bos_match = 0.0 if current.get('bos_direction') == past.get('bos_direction') else 1.0
@@ -401,6 +401,7 @@ class SignalConfidenceRL:
                 hour_diff = abs(current.get('hour', 12) - past.get('hour', 12)) / 24.0
                 
                 # Weighted similarity score (lower is more similar)
+                # Total weights: 15+20+10+10+10+10+10+8+7 = 100%
                 similarity = (
                     bos_match * 0.15 +
                     fvg_size_diff * 0.20 +
@@ -415,6 +416,7 @@ class SignalConfidenceRL:
                 
             else:
                 # === CAPITULATION STRATEGY (Legacy) ===
+                # Weights add to 100%: 20+15+10+5+8+7+5+5+8+7+6+4 = 100%
                 
                 # Flush Size (20%)
                 flush_size_diff = abs(current.get('flush_size_ticks', 0) - past.get('flush_size_ticks', 0)) / 50.0
@@ -453,6 +455,7 @@ class SignalConfidenceRL:
                 hour_diff = abs(current.get('hour', 12) - past.get('hour', 12)) / 24.0
                 
                 # Weighted similarity score
+                # Total weights: 20+15+10+5+8+7+5+5+8+7+6+4 = 100%
                 similarity = (
                     flush_size_diff * 0.20 +
                     flush_velocity_diff * 0.15 +
