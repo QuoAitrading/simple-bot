@@ -3750,6 +3750,30 @@ def capture_market_state(symbol: str, current_price: float) -> Dict[str, Any]:
 
 
 
+def is_regime_tradeable(regime: str) -> bool:
+    """
+    Check if the current regime allows trading.
+    Currently returns True for all regimes (RL handles filtering).
+    
+    Args:
+        regime: Current market regime. Expected values:
+            - 'NORMAL': Normal market conditions
+            - 'NORMAL_TRENDING': Normal trending market
+            - 'HIGH_VOL_CHOPPY': High volatility, choppy conditions
+            - 'HIGH_VOL_TRENDING': High volatility, trending
+            - 'LOW_VOL_RANGING': Low volatility, ranging
+            - 'LOW_VOL_TRENDING': Low volatility, trending
+        
+    Returns:
+        True if regime allows trading (currently always True)
+        
+    Note:
+        All regimes are currently tradeable. The RL confidence system
+        provides pattern-based filtering instead of regime-based blocking.
+    """
+    # All regimes are tradeable - RL confidence system provides filtering
+    return True
+
 
 def check_for_signals(symbol: str) -> None:
     """
@@ -5483,27 +5507,27 @@ def execute_partial_exit(symbol: str, contracts: int, exit_price: float, r_multi
 # def check_regime_change(symbol: str, current_price: float) -> None:
 #     """
 #     Check if market regime has changed during an active trade (informational only).
-    
-    This function:
-    1. Detects current regime from last 20 bars
-    2. Compares to entry regime
-    3. Logs regime change for awareness (DOES NOT adjust trade parameters)
-    
-    IMPORTANT: Trade management uses FIXED rules - regime changes do NOT affect:
-    - Stop loss (set at entry, only moved by trailing)
-    - Breakeven threshold (fixed at 12 ticks)
-    - Trailing distance (fixed at 8 ticks)
-    
-    Regime only affects trade ENTRY decisions, never trade MANAGEMENT.
-    
-    Args:
-        symbol: Instrument symbol
-        current_price: Current market price
-    """
-    position = state[symbol]["position"]
-    
-    # Only check for active positions
-    if not position["active"]:
+#     
+#     This function:
+#     1. Detects current regime from last 20 bars
+#     2. Compares to entry regime
+#     3. Logs regime change for awareness (DOES NOT adjust trade parameters)
+#     
+#     IMPORTANT: Trade management uses FIXED rules - regime changes do NOT affect:
+#     - Stop loss (set at entry, only moved by trailing)
+#     - Breakeven threshold (fixed at 12 ticks)
+#     - Trailing distance (fixed at 8 ticks)
+#     
+#     Regime only affects trade ENTRY decisions, never trade MANAGEMENT.
+#     
+#     Args:
+#         symbol: Instrument symbol
+#         current_price: Current market price
+#     """
+#     position = state[symbol]["position"]
+#     
+#     # Only check for active positions
+#     if not position["active"]:
 #         return
 #     pass
 
