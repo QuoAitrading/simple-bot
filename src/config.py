@@ -277,6 +277,13 @@ class BotConfiguration:
     # This is the "Max Loss Per Trade" setting from the GUI
     # Position closes automatically if trade loses this amount
     
+    # FIXED TICK SCALPING MODE (overrides FVG-based stops when enabled)
+    # Set both values > 0 to enable fixed tick mode
+    # This uses a simple fixed stop loss and profit target in ticks
+    fixed_stop_ticks: int = 12  # Fixed stop loss in ticks (12 ticks = 3 points on ES = $150)
+    fixed_target_ticks: int = 12  # Fixed profit target in ticks (12 ticks = 3 points on ES = $150)
+    use_fixed_ticks: bool = True  # When True, use fixed ticks instead of FVG-based stops
+    
     # Instrument Specifications
     tick_size: float = 0.25
     tick_value: float = 12.50  # ES full contract: $12.50 per tick

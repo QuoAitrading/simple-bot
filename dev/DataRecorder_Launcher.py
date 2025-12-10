@@ -361,6 +361,21 @@ class DataRecorderLauncher:
         self.stop_button.bind("<Enter>", on_stop_enter)
         self.stop_button.bind("<Leave>", on_stop_leave)
         
+        # Per-symbol control panel (hidden until recording starts)
+        self.symbol_control_frame = tk.LabelFrame(
+            main,
+            text="Symbol Recording Controls",
+            font=("Segoe UI", 10, "bold"),
+            bg=self.colors['card'],
+            fg=self.colors['text'],
+            padx=15,
+            pady=10
+        )
+        # Don't pack yet - will be shown when recording starts
+        
+        # Will be populated with pause/resume buttons per symbol
+        self.symbol_buttons = {}  # symbol -> {'button': btn, 'recording': True}
+        
         # Status section - MOVED DOWN
         status_frame = tk.LabelFrame(
             main,
@@ -410,6 +425,88 @@ class DataRecorderLauncher:
         
         # Schedule update on main thread
         self.root.after(0, update_log)
+    
+    def show_symbol_controls(self, symbols: List[str]):
+        """Show per-symbol pause/resume controls."""
+        # Clear existing buttons
+        for widget in self.symbol_control_frame.winfo_children():
+            widget.destroy()
+        self.symbol_buttons.clear()
+        
+        # Create a button for each symbol
+        for i, symbol in enumerate(symbols):
+            frame = tk.Frame(self.symbol_control_frame, bg=self.colors['card'])
+            frame.pack(fill=tk.X, pady=2)
+            
+            # Symbol label
+            label = tk.Label(
+                frame,
+                text=f"{symbol}:",
+                font=("Segoe UI", 9, "bold"),
+                bg=self.colors['card'],
+                fg=self.colors['text'],
+                width=6
+            )
+            label.pack(side=tk.LEFT)
+            
+            # Status label
+            status_label = tk.Label(
+                frame,
+                text="🟢 Recording",
+                font=("Segoe UI", 9),
+                bg=self.colors['card'],
+                fg=self.colors['success'],
+                width=12
+            )
+            status_label.pack(side=tk.LEFT, padx=5)
+            
+            # Toggle button
+            btn = tk.Button(
+                frame,
+                text="⏸ Pause",
+                font=("Segoe UI", 9),
+                bg=self.colors['warning'],
+                fg='white',
+                relief=tk.FLAT,
+                cursor="hand2",
+                command=lambda s=symbol: self.toggle_symbol_recording(s)
+            )
+            btn.pack(side=tk.LEFT, padx=5)
+            
+            self.symbol_buttons[symbol] = {
+                'button': btn,
+                'status_label': status_label,
+                'recording': True
+            }
+        
+        # Show the frame
+        self.symbol_control_frame.pack(fill=tk.X, pady=(0, 15))
+    
+    def hide_symbol_controls(self):
+        """Hide per-symbol controls."""
+        self.symbol_control_frame.pack_forget()
+    
+    def toggle_symbol_recording(self, symbol: str):
+        """Toggle recording for a specific symbol."""
+        if not hasattr(self, 'recorder') or self.recorder is None:
+            return
+        
+        info = self.symbol_buttons.get(symbol)
+        if not info:
+            return
+        
+        if info['recording']:
+            # Pause this symbol
+            self.recorder.pause_symbol(symbol)
+            info['recording'] = False
+            info['button'].config(text="▶ Resume", bg=self.colors['success'])
+            info['status_label'].config(text="⏸️ Paused", fg=self.colors['warning'])
+        else:
+            # Resume this symbol
+            self.recorder.resume_symbol(symbol)
+            info['recording'] = True
+            info['button'].config(text="⏸ Pause", bg=self.colors['warning'])
+            info['status_label'].config(text="🟢 Recording", fg=self.colors['success'])
     
     def start_recording(self):
         """Start recording market data."""
@@ -473,6 +570,9 @@ class DataRecorderLauncher:
             daemon=True
         )
         self.recorder_thread.start()
+        
+        # Show per-symbol controls
+        self.show_symbol_controls(selected_symbols)
     
     def run_recorder(self, broker: str, username: str, token: str, 
                      symbols: List[str], output_dir: str):
@@ -522,6 +622,9 @@ class DataRecorderLauncher:
         
         self.log_message("Recording stopped.")
         self.log_message("➤ Ready to start new recording session.")
+        
+        # Hide per-symbol controls
+        self.hide_symbol_controls()
     
     def load_config(self) -> Dict:
         """Load configuration from file."""

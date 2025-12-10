@@ -1,27 +1,27 @@
 {
   "license_type": "STANDARD",
   "license_expiration": "2026-01-05T06:42:39.468219",
-  "days_until_expiration": 27,
-  "hours_until_expiration": 655.0069785466666,
+  "days_until_expiration": 26,
+  "hours_until_expiration": 634.3291276886112,
   "topstep_starting_balances": {
     "14797846": 18.64,
     "14955666": 49980.26
   },
   "broker_type": "Prop Firm",
   "broker": "TopStep",
-  "account_size": 49627.0,
+  "account_size": 49595.0,
   "broker_validated": true,
   "accounts": [
     {
       "id": "50KTC-V2-430672-29952795",
       "name": "50KTC-V2-430672-29952795",
-      "balance": 49627.63,
-      "equity": 49627.63,
+      "balance": 49595.41,
+      "equity": 49595.41,
       "starting_balance": 49980.26,
       "type": "prop_firm"
     }
   ],
-  "fetched_account_balance": 49627.63,
+  "fetched_account_balance": 49595.41,
   "fetched_account_type": "prop_firm",
   "broker_token": "gDlcLHz0lphM1adwf2Pkpwrhybe9OlSBQIJN33a8C6I=",
   "broker_username": "febkev25@gmail.com",
@@ -30,19 +30,17 @@
   "theme": "dark",
   "symbols": [
     "ES",
-    "MES"
+    "MNQ"
   ],
-  "instrument": "ES",
+  "instrument": "MES",
   "daily_loss_limit": 1000.0,
   "max_loss_per_trade": 200.0,
   "max_contracts": 1,
   "max_trades": 10,
   "confidence_threshold": 70.0,
   "shadow_mode": false,
-  "selected_account": "50KTC-V2-430672-29952795 - $49,627.63",
+  "selected_account": "50KTC-V2-430672-29952795 - $49,595.41",
   "selected_account_id": "50KTC-V2-430672-29952795",
   "alerts_enabled": false,
-  "time_exit_enabled": false,
-  "rl_exploration_rate": 0.3,
-  "rl_confidence_threshold": 0.7
+  "time_exit_enabled": false
 }

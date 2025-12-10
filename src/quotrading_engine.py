@@ -1414,6 +1414,11 @@ def check_broker_connection() -> None:
                 logger.warning("[HEALTH] Connection verification failed - marking as disconnected")
                 broker.connected = False
                 return
+            
+            # CRITICAL: Keep HTTP/2 POST connection warm for order placement
+            # This prevents stale connection errors when placing orders after idle periods
+            if hasattr(broker, 'warm_connection_for_trading'):
+                broker.warm_connection_for_trading()
         else:
             # Fallback to equity check for brokers without verify_connection
             equity = broker.get_account_equity()

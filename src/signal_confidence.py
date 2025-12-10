@@ -304,7 +304,7 @@ class SignalConfidenceRL:
             return 0.35, f"Limited experience ({len(self.experiences)} trades) - safety default"
         
         # Step 1: Find 20 most similar past trades
-        similar = self.find_similar_states(current_state, max_results=20)
+        similar = self.find_similar_states(current_state, max_results=10)
         
         if not similar:
             logger.warning(f"[RL] No similar trades found despite {len(self.experiences)} experiences - pattern matching may be too strict")

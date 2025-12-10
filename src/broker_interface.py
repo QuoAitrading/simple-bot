@@ -770,6 +770,58 @@ class BrokerSDKImplementation(BrokerInterface):
             self.connected = False
             return False
     
+    def warm_connection_for_trading(self) -> bool:
+        """
+        Keep the HTTP/2 connection pool warm for order placement.
+        
+        HTTP/2 connections can go stale if not used for 60-300 seconds.
+        The verify_connection() method only exercises GET requests.
+        Order placement uses POST requests through a different connection.
+        
+        This method exercises the POST path by refreshing the auth token,
+        which uses the same httpx client and connection pool as order placement.
+        
+        Should be called every 60 seconds to keep POST connections alive.
+        
+        Returns:
+            bool: True if connection is warm, False if it failed
+        """
+        if not self.connected or not self.sdk_client or not self.trading_suite:
+            return False
+        
+        try:
+            import asyncio
+            
+            # Refresh token - this exercises the POST code path
+            # The token refresh uses the same httpx connection pool as orders
+            async def warm_connection_async():
+                try:
+                    await self.sdk_client._refresh_authentication()
+                    return True
+                except Exception as e:
+                    # Token might not need refresh, try a search instead
+                    # This also exercises the connection
+                    try:
+                        await self.sdk_client.search_open_positions()
+                        return True
+                    except Exception:
+                        return False
+            
+            try:
+                loop = asyncio.get_running_loop()
+                # Already in async context - skip to avoid nested loops
+                return True
+            except RuntimeError:
+                # No running loop - safe to use asyncio.run
+                result = asyncio.run(warm_connection_async())
+                return result
+                
+        except Exception as e:
+            # Don't mark as disconnected for warm-up failures
+            # The retry mechanism will handle actual order failures
+            logger.debug(f"[KEEPALIVE] Connection warm-up check: {e}")
+            return False
+    
     async def _ensure_token_fresh(self) -> bool:
         """
         Ensure JWT token is fresh and refresh if needed.
@@ -1065,6 +1117,67 @@ class BrokerSDKImplementation(BrokerInterface):
             return None
                 
         except Exception as e:
+            error_str = str(e)
+            
+            # Handle HTTP/2 connection drop - the connection died mid-request
+            # This is recoverable by reconnecting and retrying once
+            if "'NoneType' object has no attribute 'send'" in error_str:
+                logger.warning("[ORDER] HTTP/2 connection dropped during order - attempting reconnect and retry")
+                
+                # Force disconnect and reconnect
+                self.disconnect()
+                if self.connect():
+                    logger.info("[ORDER] Reconnected successfully - retrying order")
+                    try:
+                        # Retry the order once
+                        contract_id = self._get_contract_id_sync(symbol)
+                        if contract_id:
+                            from project_x_py import OrderSide
+                            order_side = OrderSide.BUY if side.upper() == "BUY" else OrderSide.SELL
+                            
+                            async def retry_order_async():
+                                await self._ensure_token_fresh()
+                                return await self.trading_suite.orders.place_market_order(
+                                    contract_id=contract_id,
+                                    side=order_side,
+                                    size=quantity
+                                )
+                            
+                            order_response = asyncio.run(retry_order_async())
+                            
+                            if order_response:
+                                if hasattr(order_response, 'success') and order_response.success:
+                                    result = {
+                                        "order_id": getattr(order_response, 'orderId', 'unknown'),
+                                        "symbol": symbol,
+                                        "side": side,
+                                        "quantity": quantity,
+                                        "type": "MARKET",
+                                        "status": "SUBMITTED",
+                                        "filled_quantity": 0
+                                    }
+                                    logger.info("[ORDER] ✅ Retry successful - order placed")
+                                    self._record_success()
+                                    return result
+                                elif hasattr(order_response, 'order') and order_response.order:
+                                    order = order_response.order
+                                    result = {
+                                        "order_id": getattr(order, 'order_id', 'unknown'),
+                                        "symbol": symbol,
+                                        "side": side,
+                                        "quantity": quantity,
+                                        "type": "MARKET",
+                                        "status": getattr(order.status, 'value', 'SUBMITTED') if hasattr(order, 'status') else 'SUBMITTED',
+                                        "filled_quantity": 0
+                                    }
+                                    logger.info("[ORDER] ✅ Retry successful - order placed")
+                                    self._record_success()
+                                    return result
+                    except Exception as retry_err:
+                        logger.error(f"[ORDER] Retry also failed: {retry_err}")
+                else:
+                    logger.error("[ORDER] Reconnect failed - cannot retry order")
+            
             logger.error(f"Error placing market order: {e}")
             import traceback
             traceback.print_exc()
@@ -1332,10 +1445,65 @@ class BrokerSDKImplementation(BrokerInterface):
             return None
         
         except AttributeError as e:
-            # Handle 'NoneType' object has no attribute 'send' - asyncio shutdown issue
-            if "'NoneType' object has no attribute 'send'" in str(e):
-                logger.warning("Stop order skipped - asyncio shutdown in progress")
-                return None  # Don't record failure for shutdown issues
+            error_str = str(e)
+            # Handle 'NoneType' object has no attribute 'send' - HTTP/2 connection drop
+            if "'NoneType' object has no attribute 'send'" in error_str:
+                logger.warning("[STOP ORDER] HTTP/2 connection dropped - attempting reconnect and retry")
+                
+                # Force disconnect and reconnect
+                self.disconnect()
+                if self.connect():
+                    logger.info("[STOP ORDER] Reconnected successfully - retrying stop order")
+                    try:
+                        contract_id = self._get_contract_id_sync(symbol)
+                        if contract_id:
+                            from project_x_py import OrderSide
+                            order_side = OrderSide.BUY if side.upper() == "BUY" else OrderSide.SELL
+                            
+                            async def retry_stop_async():
+                                await self._ensure_token_fresh()
+                                return await self.trading_suite.orders.place_stop_order(
+                                    contract_id=contract_id,
+                                    side=order_side,
+                                    size=quantity,
+                                    stop_price=stop_price
+                                )
+                            
+                            order_response = asyncio.run(retry_stop_async())
+                            
+                            if order_response:
+                                if hasattr(order_response, 'order') and order_response.order:
+                                    order = order_response.order
+                                    result = {
+                                        "order_id": order.order_id,
+                                        "symbol": symbol,
+                                        "side": side,
+                                        "quantity": quantity,
+                                        "type": "STOP",
+                                        "stop_price": stop_price,
+                                        "status": getattr(order.status, 'value', 'SUBMITTED')
+                                    }
+                                    logger.info("[STOP ORDER] ✅ Retry successful - stop order placed")
+                                    self._record_success()
+                                    return result
+                                elif hasattr(order_response, 'success') and order_response.success:
+                                    result = {
+                                        "order_id": getattr(order_response, 'orderId', 'unknown'),
+                                        "symbol": symbol,
+                                        "side": side,
+                                        "quantity": quantity,
+                                        "type": "STOP",
+                                        "stop_price": stop_price,
+                                        "status": "SUBMITTED"
+                                    }
+                                    logger.info("[STOP ORDER] ✅ Retry successful - stop order placed")
+                                    self._record_success()
+                                    return result
+                    except Exception as retry_err:
+                        logger.error(f"[STOP ORDER] Retry also failed: {retry_err}")
+                else:
+                    logger.error("[STOP ORDER] Reconnect failed - cannot retry stop order")
+            
             logger.error(f"Error placing stop order: {e}")
             self._record_failure()
             return None
@@ -1516,58 +1684,82 @@ class BrokerSDKImplementation(BrokerInterface):
         # This shouldn't happen often if connection caching works properly
         logger.warning(f"Contract ID for {symbol} not in cache - performing lookup")
         
+        # Build list of search terms to try
+        # Some symbols (especially micros) need alternative search strings
+        search_terms = [clean_symbol]
+        
+        # Add alternative search terms for micro contracts
+        MICRO_ALTERNATIVES = {
+            'MES': ['Micro E-mini S&P', 'Micro S&P', 'MES', 'MESEP'],
+            'MNQ': ['Micro E-mini Nasdaq', 'Micro Nasdaq', 'MNQ', 'MNQEP'],
+            'M2K': ['Micro E-mini Russell', 'Micro Russell', 'M2K'],
+            'MYM': ['Micro E-mini Dow', 'Micro Dow', 'MYM'],
+        }
+        
+        if clean_symbol.upper() in MICRO_ALTERNATIVES:
+            search_terms.extend(MICRO_ALTERNATIVES[clean_symbol.upper()])
+        
         try:
-            # Use the SDK's synchronous method if available, otherwise async
-            if hasattr(self.sdk_client, 'search_instruments_sync'):
-                instruments = self.sdk_client.search_instruments_sync(query=clean_symbol)
-            else:
-                # Run async method in a new thread with its own event loop
-                import asyncio
-                from concurrent.futures import ThreadPoolExecutor
-                
-                def run_async_search():
-                    loop = asyncio.new_event_loop()
-                    asyncio.set_event_loop(loop)
-                    try:
-                        # CRITICAL FIX: Handle potential crash in project_x_py client reuse
-                        try:
-                            return loop.run_until_complete(
-                                self.sdk_client.search_instruments(query=clean_symbol)
-                            )
-                        except Exception as e:
-                            # Catch "NoneType object has no attribute send" crash (including wrapped errors)
-                            # Check for the specific error string robustly (ProjectXError wraps the AttributeError)
-                            error_str = str(e)
-                            if "NoneType" in error_str and "send" in error_str:
-                                # Silently skip - this is a known Windows proactor issue
-                                logger.debug(f"Async client crash resolving {clean_symbol} - skipping (Error: {error_str})")
-                                return None
-                            logger.error(f"Async search failed for {clean_symbol}: {e}")
-                            raise e
-                    finally:
-                        # Gentler cleanup to avoid Windows proactor errors
-                        pass
-
-                with ThreadPoolExecutor(max_workers=1) as executor:
-                    future = executor.submit(run_async_search)
-                    instruments = future.result(timeout=10)
+            instruments = None
             
-            if instruments and len(instruments) > 0:
-                # Find exact match or closest match
-                for instr in instruments:
-                    # Use helper method to get instrument symbol
-                    instr_symbol = self._get_instrument_symbol(instr)
-                    if instr_symbol == clean_symbol or instr_symbol.startswith(clean_symbol):
-                        contract_id = self._get_instrument_contract_id(instr)
+            for search_term in search_terms:
+                # Use the SDK's synchronous method if available, otherwise async
+                if hasattr(self.sdk_client, 'search_instruments_sync'):
+                    instruments = self.sdk_client.search_instruments_sync(query=search_term)
+                else:
+                    # Run async method in a new thread with its own event loop
+                    import asyncio
+                    from concurrent.futures import ThreadPoolExecutor
+                    
+                    def run_async_search(query):
+                        loop = asyncio.new_event_loop()
+                        asyncio.set_event_loop(loop)
+                        try:
+                            # CRITICAL FIX: Handle potential crash in project_x_py client reuse
+                            try:
+                                return loop.run_until_complete(
+                                    self.sdk_client.search_instruments(query=query)
+                                )
+                            except Exception as e:
+                                # Catch "NoneType object has no attribute send" crash (including wrapped errors)
+                                # Check for the specific error string robustly (ProjectXError wraps the AttributeError)
+                                error_str = str(e)
+                                if "NoneType" in error_str and "send" in error_str:
+                                    # Silently skip - this is a known Windows proactor issue
+                                    logger.debug(f"Async client crash resolving {query} - skipping (Error: {error_str})")
+                                    return None
+                                logger.error(f"Async search failed for {query}: {e}")
+                                raise e
+                        finally:
+                            # Gentler cleanup to avoid Windows proactor errors
+                            pass
+
+                    with ThreadPoolExecutor(max_workers=1) as executor:
+                        future = executor.submit(run_async_search, search_term)
+                        instruments = future.result(timeout=10)
+                
+                if instruments and len(instruments) > 0:
+                    # Find exact match or closest match
+                    for instr in instruments:
+                        # Use helper method to get instrument symbol
+                        instr_symbol = self._get_instrument_symbol(instr)
+                        # Check for exact match or partial match
+                        if instr_symbol and (instr_symbol.upper() == clean_symbol.upper() or 
+                                            clean_symbol.upper() in instr_symbol.upper() or
+                                            instr_symbol.upper().startswith(clean_symbol.upper())):
+                            contract_id = self._get_instrument_contract_id(instr)
+                            if contract_id:
+                                self._contract_id_cache[symbol] = contract_id
+                                logger.info(f"Found contract ID for {symbol} -> {contract_id} (search term: {search_term})")
+                                return contract_id
+                    
+                    # No exact match - for first search term, use first result
+                    if search_term == clean_symbol:
+                        contract_id = self._get_instrument_contract_id(instruments[0])
                         if contract_id:
                             self._contract_id_cache[symbol] = contract_id
+                            logger.info(f"Using first result for {symbol} -> {contract_id}")
                             return contract_id
-                
-                # No exact match - use first result
-                contract_id = self._get_instrument_contract_id(instruments[0])
-                if contract_id:
-                    self._contract_id_cache[symbol] = contract_id
-                    return contract_id
             
             logger.error(f"No contracts found for symbol: {symbol}")
             return None

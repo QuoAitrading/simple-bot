@@ -29,7 +29,11 @@ class BrokerWebSocketStreamer:
         self.connection = None
         self.is_connected = False
         
-        # Callbacks
+        # Callbacks - per-symbol dicts to support multi-symbol subscriptions
+        self.quote_callbacks: Dict[str, Callable] = {}  # contract_id -> callback
+        self.trade_callbacks: Dict[str, Callable] = {}  # contract_id -> callback
+        self.depth_callbacks: Dict[str, Callable] = {}  # contract_id -> callback
+        # Legacy single callbacks for backward compatibility
         self.on_quote_callback: Optional[Callable] = None
         self.on_trade_callback: Optional[Callable] = None
         self.on_depth_callback: Optional[Callable] = None
@@ -262,10 +266,23 @@ class BrokerWebSocketStreamer:
                 logger.error(f"Error in quote callback: {e}")
     
     def _on_trade(self, data):
-        """Handle incoming trade data"""
+        """Handle incoming trade data - routes to per-symbol callback"""
         self.trades_received += 1
         self.last_message_time = time.time()
-        if self.on_trade_callback:
+        
+        # Extract contract ID from data to route to correct callback
+        contract_id = None
+        if isinstance(data, list) and len(data) >= 1:
+            contract_id = data[0] if isinstance(data[0], str) else None
+        
+        # Try per-symbol callback first
+        if contract_id and contract_id in self.trade_callbacks:
+            try:
+                self.trade_callbacks[contract_id](data)
+            except Exception as e:
+                logger.error(f"Error in trade callback for {contract_id}: {e}")
+        elif self.on_trade_callback:
+            # Fallback to legacy single callback
             try:
                 self.on_trade_callback(data)
             except Exception as e:
@@ -306,6 +323,9 @@ class BrokerWebSocketStreamer:
     
     def subscribe_trades(self, symbol: str, callback: Callable):
         """Subscribe to real-time trades using contract ID"""
+        # Store callback per-symbol to support multiple subscriptions
+        self.trade_callbacks[symbol] = callback
+        # Also set legacy callback for backward compatibility (last one wins)
         self.on_trade_callback = callback
         
         try:

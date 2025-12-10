@@ -122,6 +122,46 @@ class MarketDataRecorder:
         if self.log_callback:
             self.log_callback(message)
     
+    def pause_symbol(self, symbol: str) -> bool:
+        """
+        Pause recording for a specific symbol.
+        
+        Args:
+            symbol: Symbol to pause
+            
+        Returns:
+            True if successfully paused, False if symbol not found
+        """
+        if symbol in self.symbol_recording_state:
+            self.symbol_recording_state[symbol] = False
+            self.log(f"⏸️  {symbol} recording PAUSED")
+            return True
+        return False
+    
+    def resume_symbol(self, symbol: str) -> bool:
+        """
+        Resume recording for a specific symbol.
+        
+        Args:
+            symbol: Symbol to resume
+            
+        Returns:
+            True if successfully resumed, False if symbol not found
+        """
+        if symbol in self.symbol_recording_state:
+            self.symbol_recording_state[symbol] = True
+            self.log(f"▶️  {symbol} recording RESUMED")
+            return True
+        return False
+    
+    def get_symbol_states(self) -> Dict[str, bool]:
+        """Get recording state for all symbols."""
+        return self.symbol_recording_state.copy()
+    
+    def is_symbol_recording(self, symbol: str) -> bool:
+        """Check if a specific symbol is currently recording."""
+        return self.symbol_recording_state.get(symbol, False)
+    
     def start(self):
         """Start recording market data."""
         # Check if broker modules are available
@@ -348,9 +388,8 @@ class MarketDataRecorder:
                 # Update last bar timestamp
                 self.last_bar_timestamps[symbol] = bar_timestamp
                 
-                # Flush periodically to ensure data is written
-                if self.stats[symbol]['bars_written'] % CSV_FLUSH_FREQUENCY == 0:
-                    self.csv_files[symbol].flush()
+                # Flush immediately after every bar for real-time updates
+                self.csv_files[symbol].flush()
     
     def _update_or_complete_bar(self, symbol: str, price: float, volume: int, timestamp: datetime):
         """
