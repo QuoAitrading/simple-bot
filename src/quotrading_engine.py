@@ -2450,6 +2450,9 @@ def inject_complete_bar(symbol: str, bar: Dict[str, Any]) -> None:
     # Add the complete bar with proper OHLC
     state[symbol]["bars_1min"].append(bar)
     
+    # Process BOS and FVG detection after bar is added
+    process_bos_fvg(symbol)
+    
     # Update current regime after adding new bar
     # NOTE: Regime detection not needed for BOS+FVG strategy - disabled for performance
     # update_current_regime(symbol)
@@ -2865,6 +2868,8 @@ def process_bos_fvg(symbol: str) -> None:
     bos_detector = state[symbol]["bos_detector"]
     fvg_detector = state[symbol]["fvg_detector"]
     
+    print(f"[DEBUG] process_bos_fvg called, bars={len(bars)}, bos={bos_detector is not None}, fvg={fvg_detector is not None}")
+    
     # Need detectors initialized and at least 3 bars for FVG
     if bos_detector is None or fvg_detector is None:
         if len(bars) >= 3:
@@ -2879,6 +2884,7 @@ def process_bos_fvg(symbol: str) -> None:
     if bos_direction:
         state[symbol]["current_bos_direction"] = bos_direction
         logger.info(f"🔄 BOS DETECTED: {bos_direction.upper()} at ${bos_level:.2f}")
+        print(f"[DEBUG] BOS DETECTED: {bos_direction} at {bos_level}")
     
     # Detect new FVGs (but don't check fills here - that's done in signal checking)
     current_bar = bars[-1]
@@ -2889,6 +2895,7 @@ def process_bos_fvg(symbol: str) -> None:
             logger.info(f"📊 FVG CREATED: {new_fvg['type'].upper()} | "
                        f"Top: ${new_fvg['top']:.2f} | Bottom: ${new_fvg['bottom']:.2f} | "
                        f"Size: {new_fvg['size_ticks']:.1f} ticks")
+            print(f"[DEBUG] FVG CREATED: {new_fvg['type']} top={new_fvg['top']:.2f} bottom={new_fvg['bottom']:.2f} size={new_fvg['size_ticks']:.1f}t")
     
     # Clean up expired FVGs
     current_time = current_bar.get('timestamp')
@@ -2900,6 +2907,7 @@ def process_bos_fvg(symbol: str) -> None:
     
     # Update state with current FVG list
     state[symbol]["active_fvgs"] = fvg_detector.active_fvgs
+    print(f"[DEBUG] Active FVGs: {len(fvg_detector.active_fvgs)}, BOS direction: {bos_detector.get_current_trend()}")
     
 
 
@@ -3173,15 +3181,15 @@ def validate_signal_requirements(symbol: str, bar_time: datetime) -> Tuple[bool,
     # ========================================================================
     # WARMUP PERIOD: Block signals until enough bars for regime detection
     # ========================================================================
-    # Regime detection requires 34 bars for accurate classification
-    # (20 baseline + 14 current ATR) - optimized from 114 bars
-    # During warmup, we use NORMAL regime as fallback but should not trade
-    WARMUP_BARS_REQUIRED = 34
+    # BOS+FVG strategy requires 10 bars for accurate BOS detection
+    # (5-bar swing lookback requires at least 10 bars total)
+    # Old capitulation strategy needed 34 bars for regime detection
+    WARMUP_BARS_REQUIRED = 10
     current_bar_count = len(state[symbol]["bars_1min"])
     
     if current_bar_count < WARMUP_BARS_REQUIRED:
-        # Log warmup progress every 10 bars (clean professional logs)
-        if current_bar_count % 10 == 0 or current_bar_count == 1:
+        # Log warmup progress every 5 bars (clean professional logs)
+        if current_bar_count % 5 == 0 or current_bar_count == 1:
             bars_remaining = WARMUP_BARS_REQUIRED - current_bar_count
             minutes_remaining = bars_remaining  # 1-min bars = 1 minute each
             progress_pct = (current_bar_count / WARMUP_BARS_REQUIRED) * 100
@@ -3191,7 +3199,7 @@ def validate_signal_requirements(symbol: str, bar_time: datetime) -> Tuple[bool,
             bar = "█" * filled + "░" * (20 - filled)
             
             logger.info(f"⏳ WARMUP [{bar}] {progress_pct:.0f}% | Bars: {current_bar_count}/{WARMUP_BARS_REQUIRED} | ~{minutes_remaining} min remaining")
-            logger.info(f"   Collecting data for accurate regime detection. Signals blocked until warmup complete.")
+            logger.info(f"   Collecting data for BOS detection. Signals blocked until warmup complete.")
         
         return False, f"Warmup ({current_bar_count}/{WARMUP_BARS_REQUIRED} bars)"
     
@@ -3316,10 +3324,12 @@ def check_long_signal_conditions(symbol: str, prev_bar: Dict[str, Any],
     
     # Need detectors initialized
     if bos_detector is None or fvg_detector is None:
+        logger.debug(f"[LONG CHECK] Detectors not initialized")
         return False
     
     # Need at least 10 bars for BOS detection
     if len(bars) < 10:
+        logger.debug(f"[LONG CHECK] Not enough bars: {len(bars)}")
         return False
     
     # Get current BOS direction
@@ -3327,6 +3337,7 @@ def check_long_signal_conditions(symbol: str, prev_bar: Dict[str, Any],
     
     # CONDITION 1: Bullish BOS must be active
     if current_bos != 'bullish':
+        logger.debug(f"[LONG CHECK] No bullish BOS (current: {current_bos})")
         state[symbol]["entry_details"] = {
             "reason": f"No bullish BOS active (current: {current_bos})"
         }
@@ -3336,17 +3347,23 @@ def check_long_signal_conditions(symbol: str, prev_bar: Dict[str, Any],
     unfilled_bullish_fvgs = fvg_detector.get_unfilled_fvgs('bullish')
     
     if not unfilled_bullish_fvgs:
+        logger.debug(f"[LONG CHECK] No unfilled bullish FVGs")
         state[symbol]["entry_details"] = {
             "reason": "No unfilled bullish FVGs available"
         }
         return False
     
+    logger.debug(f"[LONG CHECK] Have {len(unfilled_bullish_fvgs)} unfilled bullish FVGs, checking if current bar fills any...")
+    
     # Check if any FVG is filled by current bar
     # Note: We take the first filled FVG (FIFO order) as per BOS+FVG strategy
     # This ensures consistent behavior and prevents over-trading
     for fvg in unfilled_bullish_fvgs:
-        if fvg_detector.is_fvg_filled(fvg, current_bar):
+        is_filled = fvg_detector.is_fvg_filled(fvg, current_bar)
+        logger.debug(f"[LONG CHECK] FVG {fvg['id']}: top={fvg['top']:.2f}, current_bar_low={current_bar['low']:.2f}, filled={is_filled}")
+        if is_filled:
             # Found a filled FVG - this is our entry signal
+            logger.info(f"🎯 LONG SIGNAL: Bullish BOS + FVG fill at ${fvg['top']:.2f}")
             state[symbol]["entry_details"] = {
                 "fvg_id": fvg['id'],
                 "fvg_top": fvg['top'],
@@ -3359,6 +3376,7 @@ def check_long_signal_conditions(symbol: str, prev_bar: Dict[str, Any],
             return True
     
     # No FVG was filled
+    logger.debug(f"[LONG CHECK] Have {len(unfilled_bullish_fvgs)} bullish FVGs but none filled by current bar")
     state[symbol]["entry_details"] = {
         "reason": f"Have {len(unfilled_bullish_fvgs)} bullish FVGs but none filled yet"
     }
@@ -3756,6 +3774,7 @@ def check_for_signals(symbol: str) -> None:
     Args:
         symbol: Instrument symbol
     """
+    print(f"[DEBUG] check_for_signals called for {symbol}")
 
     
     # Check safety conditions first
@@ -3764,19 +3783,24 @@ def check_for_signals(symbol: str) -> None:
         # SILENCE DURING MAINTENANCE - no spam in logs
         if not bot_status.get("maintenance_idle", False):
             logger.info(f"[SIGNAL CHECK] Safety check failed: {reason}")
+        print(f"[DEBUG] Safety check failed: {reason}")
         return
     
     # Get the latest bar
     if len(state[symbol]["bars_1min"]) == 0:
         logger.info(f"[SIGNAL CHECK] No 1-min bars yet")
+        print(f"[DEBUG] No bars yet")
         return
     
     latest_bar = state[symbol]["bars_1min"][-1]
     bar_time = latest_bar["timestamp"]
     
+    print(f"[DEBUG] About to validate signal requirements")
+    
     # Validate signal requirements
     is_valid, reason = validate_signal_requirements(symbol, bar_time)
     if not is_valid:
+        print(f"[DEBUG] Validation failed: {reason}")
         # PERIODIC STATUS: Log validation failures periodically so users know why signals aren't generating
         # This helps users understand the bot is running but conditions aren't met
         validation_fail_counter = state[symbol].get("validation_fail_counter", 0) + 1
@@ -3786,6 +3810,8 @@ def check_for_signals(symbol: str) -> None:
         if validation_fail_counter % 15 == 0:
             logger.info(f"📋 Signal check: {reason} - bot is monitoring and will trade when conditions allow")
         return
+    
+    print(f"[DEBUG] Validation passed, will check signals")
     
     # Reset validation fail counter when validation passes
     state[symbol]["validation_fail_counter"] = 0
