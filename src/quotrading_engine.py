@@ -5483,27 +5483,27 @@ def execute_partial_exit(symbol: str, contracts: int, exit_price: float, r_multi
 # def check_regime_change(symbol: str, current_price: float) -> None:
 #     """
 #     Check if market regime has changed during an active trade (informational only).
-    
-    This function:
-    1. Detects current regime from last 20 bars
-    2. Compares to entry regime
-    3. Logs regime change for awareness (DOES NOT adjust trade parameters)
-    
-    IMPORTANT: Trade management uses FIXED rules - regime changes do NOT affect:
-    - Stop loss (set at entry, only moved by trailing)
-    - Breakeven threshold (fixed at 12 ticks)
-    - Trailing distance (fixed at 8 ticks)
-    
-    Regime only affects trade ENTRY decisions, never trade MANAGEMENT.
-    
-    Args:
-        symbol: Instrument symbol
-        current_price: Current market price
-    """
-    position = state[symbol]["position"]
-    
-    # Only check for active positions
-    if not position["active"]:
+#     
+#     This function:
+#     1. Detects current regime from last 20 bars
+#     2. Compares to entry regime
+#     3. Logs regime change for awareness (DOES NOT adjust trade parameters)
+#     
+#     IMPORTANT: Trade management uses FIXED rules - regime changes do NOT affect:
+#     - Stop loss (set at entry, only moved by trailing)
+#     - Breakeven threshold (fixed at 12 ticks)
+#     - Trailing distance (fixed at 8 ticks)
+#     
+#     Regime only affects trade ENTRY decisions, never trade MANAGEMENT.
+#     
+#     Args:
+#         symbol: Instrument symbol
+#         current_price: Current market price
+#     """
+#     position = state[symbol]["position"]
+#     
+#     # Only check for active positions
+#     if not position["active"]:
 #         return
 #     pass
 
