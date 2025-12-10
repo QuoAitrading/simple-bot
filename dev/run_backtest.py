@@ -368,14 +368,16 @@ def run_backtest(args: argparse.Namespace) -> Dict[str, Any]:
         nonlocal prev_position_active, bars_processed, total_bars, last_exit_reason
         total_bars = len(bars_1min)
         
+        # Calculate progress interval once (every 10% or every 500 bars, whichever is larger)
+        progress_interval = max(500, total_bars // 10)  # Show 10 updates max
+        
         for bar_idx, bar in enumerate(bars_1min):
             bars_processed = bar_idx + 1
             
             # Extract bar data
             timestamp = bar['timestamp']
             
-            # Update progress less frequently - every 10% or every 500 bars (whichever is larger)
-            progress_interval = max(500, total_bars // 10)  # Show 10 updates max
+            # Update progress less frequently
             if bars_processed % progress_interval == 0 or bars_processed == total_bars:
                 reporter.update_progress(bars_processed, total_bars, timestamp)
             timestamp_eastern = timestamp.astimezone(eastern_tz)

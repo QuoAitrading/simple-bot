@@ -139,6 +139,7 @@ class BacktestReporter:
                     if hasattr(current_timestamp, 'strftime'):
                         date_str = f" | {current_timestamp.strftime('%Y-%m-%d %H:%M')}"
                     elif isinstance(current_timestamp, str) and len(current_timestamp) >= 16:
+                        # Use first 16 chars for date format: "2024-01-15 14:30"
                         date_str = f" | {current_timestamp[:16]}"
                 
                 # Clean progress format with date
