@@ -36,7 +36,7 @@
   "max_contracts": 1,
   "max_trades": 4,
   "confidence_threshold": 70.0,
-  "rl_exploration_rate": 0.3,
+  "rl_exploration_rate": 0.0,
   "shadow_mode": true,
   "selected_account": "50KTC-V2-430672-29952795 - $49,887.16",
   "selected_account_id": "50KTC-V2-430672-29952795",
