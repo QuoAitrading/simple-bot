@@ -4781,7 +4781,7 @@ def check_reversal_signal(symbol: str, current_bar: Dict[str, Any], position: Di
     """
     Check if price has reached reversal level before trailing stop activates.
     
-    CAPITULATION REVERSAL EXIT STRATEGY:
+    BOS+FVG EXIT STRATEGY:
     - Trailing stop handles all profit-taking (activates at 15+ ticks profit)
     - Early exit check: If price reverses before trailing activates, exit early
     - Once trailing is active (15+ ticks), let trailing ride
@@ -4894,7 +4894,7 @@ def check_breakeven_protection(symbol: str, current_price: float) -> None:
     """
     Check if breakeven protection should be activated and move stop to breakeven.
     
-    CAPITULATION REVERSAL STRATEGY - FIXED RULES (no regime adjustments):
+    BOS+FVG STRATEGY - FIXED RULES:
     - Trigger: After 12 ticks profit
     - Action: Move stop to entry + 3 ticks (covers fees)
     - Same rule every time, no exceptions
@@ -4991,7 +4991,7 @@ def check_trailing_stop(symbol: str, current_price: float) -> None:
     """
     Check and update trailing stop based on price movement.
     
-    CAPITULATION REVERSAL STRATEGY - FIXED RULES (no regime adjustments):
+    BOS+FVG STRATEGY - FIXED RULES:
     - Trigger: After 15 ticks profit
     - Trail: 8 ticks behind the peak profit
     - Same rule every time, no exceptions

@@ -313,18 +313,10 @@ class RegimeDetector:
 
 def is_regime_tradeable(regime_name: str) -> bool:
     """
-    Check if a regime is tradeable for the Capitulation Reversal Strategy.
+    Check if a regime is tradeable for the trading strategy.
     
-    MODIFIED: ALL REGIMES ENABLED - No blocking.
-    
-    Previously filtered out trending regimes, but now trading in ALL market conditions:
-    - HIGH_VOL_CHOPPY: Best - big moves, fast rotations, liquidity grabs
-    - NORMAL_CHOPPY: Second best - clean, predictable swing reversals
-    - NORMAL: Stable - clean and controlled reversals
-    - LOW_VOL_RANGING: Slow but reliable micro-reversals
-    - HIGH_VOL_TRENDING: Now enabled
-    - NORMAL_TRENDING: Now enabled
-    - LOW_VOL_TRENDING: Now enabled
+    NOTE: Regime filtering is DISABLED in BOS+FVG strategy.
+    All regimes return True for backwards compatibility.
     
     Args:
         regime_name: Name of the regime to check

@@ -345,9 +345,9 @@ class SignalConfidenceRL:
         """
         Find past experiences with similar market states.
         
-        Auto-detects strategy (Capitulation vs BOS/FVG) and applies appropriate pattern matching.
+        Auto-detects strategy (legacy vs BOS/FVG) and applies appropriate pattern matching.
         
-        CAPITULATION STRATEGY (Legacy) - 11 features:
+        LEGACY STRATEGY - 11 features:
         - Flush signals, RSI, VWAP distance, regime, session, hour
         
         BOS/FVG STRATEGY - 10 features:

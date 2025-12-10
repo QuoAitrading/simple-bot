@@ -456,12 +456,12 @@ class BotConfiguration:
             "slippage_ticks": self.slippage_ticks,
             "commission_per_contract": self.commission_per_contract,
             
-            # Filter Settings (Capitulation Reversal uses hardcoded logic)
-            "use_trend_filter": self.use_trend_filter,  # OFF - flush direction determines trade
-            "use_rsi_filter": self.use_rsi_filter,  # ON - RSI 25/75 extreme thresholds
+            # Filter Settings (legacy - not used in BOS+FVG)
+            "use_trend_filter": self.use_trend_filter,  # OFF - BOS determines trade direction
+            "use_rsi_filter": self.use_rsi_filter,  # OFF - not used in BOS+FVG
             "use_macd_filter": self.use_macd_filter,  # OFF - not used
             "use_vwap_direction_filter": self.use_vwap_direction_filter,  # OFF - not used
-            "use_volume_filter": self.use_volume_filter,  # ON - 2x volume climax
+            "use_volume_filter": self.use_volume_filter,  # OFF - not used in BOS+FVG
             "rsi_period": self.rsi_period,
             "volume_lookback": self.volume_lookback,
             

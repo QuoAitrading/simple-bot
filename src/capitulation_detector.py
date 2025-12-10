@@ -1,51 +1,19 @@
 """
-Daily Reversal Detection System
+LEGACY MODULE - NO LONGER USED
 ========================================
-Detects big moves and reversal exhaustion signals for daily trading.
+This module was part of the old "Capitulation Reversal" strategy.
+The current trading bot uses the BOS+FVG (Break of Structure + Fair Value Gap) strategy.
 
-THE EDGE:
-Catch daily reversals when price makes a significant move and shows signs
-of exhaustion. You wait for proof that the move is losing momentum, then 
-enter in the opposite direction to ride the snapback.
+This file is kept for backwards compatibility but is NOT imported or used in the current system.
 
-LONG SIGNAL CONDITIONS (AFTER FLUSH DOWN) - ALL 9 MUST BE TRUE:
-1. Flush Happened - Range of last 7 bars >= 8 ticks (2.0 points)
-2. Flush Was Fast - Velocity >= 1.5 ticks per bar minimum speed
-3. We Are Near The Bottom - Within 12 ticks (3 points) of flush low
-4. RSI Is Oversold - RSI < 45
-5. Volume Spiked - Current volume >= 1.2x 20-bar average
-6. Flush Stopped Making New Lows - Current bar low >= previous bar low
-7. Reversal Candle - Current bar closes green (close > open) AND close in upper 50% of bar range
-8. Price Is Below VWAP - Current close < VWAP
-9. Regime Allows Trading - ALL regimes enabled (no blocking)
+For the current strategy implementation, see:
+- bos_detector.py - Break of Structure detection
+- fvg_detector.py - Fair Value Gap detection
+- quotrading_engine.py - Main trading logic
 
-SHORT SIGNAL CONDITIONS (AFTER FLUSH UP) - ALL 9 MUST BE TRUE:
-1. Pump Happened - Range of last 7 bars >= 8 ticks (2.0 points)
-2. Pump Was Fast - Velocity >= 1.5 ticks per bar minimum speed
-3. We Are Near The Top - Within 12 ticks (3 points) of flush high
-4. RSI Is Overbought - RSI > 55
-5. Volume Spiked - Current volume >= 1.2x 20-bar average
-6. Pump Stopped Making New Highs - Current bar high <= previous bar high
-7. Reversal Candle - Current bar closes red (close < open) AND close in lower 50% of bar range
-8. Price Is Above VWAP - Current close > VWAP
-9. Regime Allows Trading - ALL regimes enabled (no blocking)
-
-STOP LOSS:
-- Long: 2 ticks below flush low
-- Short: 2 ticks above flush high
-- Emergency max: User's max loss setting (GUI configurable)
-- Use tighter stop: whichever is tighter wins (flush-based or GUI max)
-
-EXIT STRATEGY (TRAILING STOP MANAGES ALL EXITS):
-- NO fixed VWAP target - trailing stop handles all profit-taking
-- VWAP is SAFETY NET: Only used if price reaches VWAP before trailing activates
-- Once trailing is active (15+ ticks), ignore VWAP and let it ride
-- Trailing stop eventually exits you, either at VWAP or beyond
-
-TRADE MANAGEMENT:
-- Breakeven: Move stop to entry + 1 tick after 12 ticks profit
-- Trailing: Trail 8 ticks behind peak after 15 ticks profit
-- Time Stop (Optional): Exit after 20 bars if not at target/stop
+ORIGINAL DESCRIPTION (for reference only):
+Daily Reversal Detection System - Detects big moves and reversal exhaustion signals for daily trading.
+The edge was to catch daily reversals when price makes a significant move and shows signs of exhaustion.
 """
 
 import logging
