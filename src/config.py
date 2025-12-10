@@ -323,7 +323,7 @@ class BotConfiguration:
     # - Breakeven: Move stop to entry + 1 tick after 12 ticks profit
     # - Trailing: Start trailing after 15 ticks profit (8 ticks behind peak)
     #
-    # HARDCODED VALUES (in capitulation_detector.py):
+    # HARDCODED VALUES (in quotrading_engine.py):
     # - breakeven_trigger_ticks: 12 (move stop to entry + 1 tick)
     # - breakeven_buffer_ticks: 1 (entry + 1 tick offset)
     # - trailing_trigger_ticks: 15 (start trailing after 15 ticks profit)
