@@ -3190,8 +3190,8 @@ def validate_signal_requirements(symbol: str, bar_time: datetime) -> Tuple[bool,
     current_bar_count = len(state[symbol]["bars_1min"])
     
     if current_bar_count < WARMUP_BARS_REQUIRED:
-        # Log warmup progress every 10 bars (clean professional logs)
-        if current_bar_count % 10 == 0 or current_bar_count == 1:
+        # Log warmup progress every 5 bars (clean professional logs)
+        if current_bar_count % 5 == 0 or current_bar_count == 1:
             bars_remaining = WARMUP_BARS_REQUIRED - current_bar_count
             minutes_remaining = bars_remaining  # 1-min bars = 1 minute each
             progress_pct = (current_bar_count / WARMUP_BARS_REQUIRED) * 100
