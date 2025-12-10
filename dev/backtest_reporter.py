@@ -9,6 +9,9 @@ from typing import Optional, Dict, Any
 class BacktestReporter:
     """Reports backtest progress and results in real-time"""
     
+    # Constants for timestamp formatting
+    TIMESTAMP_DATE_LENGTH = 16  # Length for "YYYY-MM-DD HH:MM" format
+    
     def __init__(self, starting_balance: float = 50000.0, max_contracts: int = 1):
         self.starting_balance = starting_balance
         self.current_balance = starting_balance
@@ -134,7 +137,8 @@ class BacktestReporter:
             bars_processed: Number of bars processed so far
             total_bars: Total number of bars to process
             current_timestamp: Optional timestamp (datetime object or ISO string)
-                              Expected string format: "YYYY-MM-DD HH:MM:SS..." (min 16 chars)
+                              Expected string format: "YYYY-MM-DD HH:MM:SS..." 
+                              (min TIMESTAMP_DATE_LENGTH chars)
         """
         if total_bars > 0:
             pct = (bars_processed / total_bars) * 100
@@ -145,9 +149,9 @@ class BacktestReporter:
                 if current_timestamp:
                     if hasattr(current_timestamp, 'strftime'):
                         date_str = f" | {current_timestamp.strftime('%Y-%m-%d %H:%M')}"
-                    elif isinstance(current_timestamp, str) and len(current_timestamp) >= 16:
-                        # Use first 16 chars for ISO date format: "2024-01-15 14:30"
-                        date_str = f" | {current_timestamp[:16]}"
+                    elif isinstance(current_timestamp, str) and len(current_timestamp) >= self.TIMESTAMP_DATE_LENGTH:
+                        # Use first TIMESTAMP_DATE_LENGTH chars for ISO date format
+                        date_str = f" | {current_timestamp[:self.TIMESTAMP_DATE_LENGTH]}"
                 
                 # Clean progress format with date
                 print(f"Progress: [{pct:5.1f}%] {bars_processed:,}/{total_bars:,} bars{date_str}", end='\r')

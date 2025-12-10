@@ -212,6 +212,10 @@ def run_backtest(args: argparse.Namespace) -> Dict[str, Any]:
     Returns:
         Dictionary with backtest performance metrics
     """
+    # Constants for progress reporting
+    MIN_PROGRESS_INTERVAL = 500  # Show progress at least every 500 bars
+    PROGRESS_UPDATES = 10  # Target number of progress updates during backtest
+    
     logger = logging.getLogger('backtest')
     
     # Get the clean reporter
@@ -368,8 +372,8 @@ def run_backtest(args: argparse.Namespace) -> Dict[str, Any]:
         nonlocal prev_position_active, bars_processed, total_bars, last_exit_reason
         total_bars = len(bars_1min)
         
-        # Calculate progress interval once (every 10% or every 500 bars, whichever is larger)
-        progress_interval = max(500, total_bars // 10)  # Show 10 updates max
+        # Calculate progress interval once (MIN_PROGRESS_INTERVAL or every 10%, whichever is larger)
+        progress_interval = max(MIN_PROGRESS_INTERVAL, total_bars // PROGRESS_UPDATES)
         
         for bar_idx, bar in enumerate(bars_1min):
             bars_processed = bar_idx + 1
