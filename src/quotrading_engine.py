@@ -1977,7 +1977,7 @@ def initialize_state(symbol: str) -> None:
         "trading_day": None,
         "daily_trade_count": 0,
         "daily_pnl": 0.0,
-        "warmup_complete": False,  # Track when 10 bars collected for BOS swing points
+        "warmup_complete": False,  # Track when 21 bars collected for ATR calculation
         
         # Session tracking (Phase 13)
         "session_stats": {
@@ -3182,16 +3182,16 @@ def validate_signal_requirements(symbol: str, bar_time: datetime) -> Tuple[bool,
         return False, "Insufficient bars"
     
     # ========================================================================
-    # WARMUP PERIOD: Block signals until enough bars for regime detection
+    # WARMUP PERIOD: Block signals until enough bars for ATR calculation
     # ========================================================================
-    # BOS+FVG strategy requires 10 bars for accurate BOS detection
-    # (5-bar swing lookback requires at least 10 bars total)
-    WARMUP_BARS_REQUIRED = 10
+    # ATR calculation requires 21 bars (1 for prev close + 20 for calculation)
+    # BOS+FVG strategy also needs minimum bars for swing point detection
+    WARMUP_BARS_REQUIRED = 21
     current_bar_count = len(state[symbol]["bars_1min"])
     
     if current_bar_count < WARMUP_BARS_REQUIRED:
-        # Log warmup progress every 5 bars (clean professional logs)
-        if current_bar_count % 5 == 0 or current_bar_count == 1:
+        # Log warmup progress every 10 bars (clean professional logs)
+        if current_bar_count % 10 == 0 or current_bar_count == 1:
             bars_remaining = WARMUP_BARS_REQUIRED - current_bar_count
             minutes_remaining = bars_remaining  # 1-min bars = 1 minute each
             progress_pct = (current_bar_count / WARMUP_BARS_REQUIRED) * 100
@@ -3325,8 +3325,8 @@ def check_long_signal_conditions(symbol: str, prev_bar: Dict[str, Any],
     if bos_detector is None or fvg_detector is None:
         return False
     
-    # Need at least 10 bars for BOS detection
-    if len(bars) < 10:
+    # Need at least 21 bars for ATR calculation and BOS detection
+    if len(bars) < 21:
         return False
     
     # Get current BOS direction
@@ -3404,8 +3404,8 @@ def check_short_signal_conditions(symbol: str, prev_bar: Dict[str, Any],
     if bos_detector is None or fvg_detector is None:
         return False
     
-    # Need at least 10 bars for BOS detection
-    if len(bars) < 10:
+    # Need at least 21 bars for ATR calculation and BOS detection
+    if len(bars) < 21:
         return False
     
     # Get current BOS direction
