@@ -247,8 +247,7 @@ from error_recovery import ErrorRecoveryManager, ErrorType as RecoveryErrorType
 from bid_ask_manager import BidAskManager, BidAskQuote
 from notifications import get_notifier
 from signal_confidence import SignalConfidenceRL
-from regime_detection import get_regime_detector, REGIME_DEFINITIONS, is_regime_tradeable
-from capitulation_detector import get_capitulation_detector, CapitulationDetector, FlushEvent
+# Legacy imports removed - BOS+FVG strategy doesn't use regime or capitulation detection
 
 # Conditionally import cloud API (only needed for live trading)
 try:
@@ -567,9 +566,9 @@ IDLE_STATUS_MESSAGE_INTERVAL = 300  # Show status message every 5 minutes (300 s
 # Regime Detection Constants
 DEFAULT_FALLBACK_ATR = 5.0  # Default ATR when calculation not possible (ES futures typical value)
 
-# BOS + FVG Strategy Constants
-BOS_FVG_STOP_BUFFER_TICKS = 2  # Ticks beyond FVG zone for stop placement
-BOS_FVG_PROFIT_TARGET_MULTIPLIER = 1.12  # Risk-reward ratio (1:1.12) - balanced for 55%+ win rate + good profit
+# BOS + FVG Strategy Constants - Optimized for 57.6% Win Rate
+BOS_FVG_STOP_BUFFER_TICKS = 2.5  # Ticks beyond FVG zone for stop placement (optimized)
+BOS_FVG_PROFIT_TARGET_MULTIPLIER = 1.18  # Risk-reward ratio (1:1.18) - quick profit capture
 
 # Global broker instance (replaces sdk_client)
 broker: Optional[BrokerInterface] = None
@@ -1978,7 +1977,7 @@ def initialize_state(symbol: str) -> None:
         "trading_day": None,
         "daily_trade_count": 0,
         "daily_pnl": 0.0,
-        "warmup_complete": False,  # Track when 34 bars collected for regime detection
+        "warmup_complete": False,  # Track when 10 bars collected for BOS swing points
         
         # Session tracking (Phase 13)
         "session_stats": {
@@ -2008,12 +2007,7 @@ def initialize_state(symbol: str) -> None:
             "manual_override": False,  # True when user manually adjusted position
             "manual_override_time": None,  # When manual override was detected
             "manual_override_reason": None,  # Description of what was adjusted
-            # Regime Information - For dynamic exit management
-            "entry_regime": None,  # Regime at entry
-            "current_regime": None,  # Current regime (updated on each tick)
-            "regime_change_time": None,  # When regime last changed
-            "regime_history": [],  # List of regime transitions with timestamps
-            "entry_atr": None,  # ATR at entry
+            # BOS+FVG doesn't use regime detection - removed for performance
             # Advanced Exit Management - Breakeven State
             "breakeven_active": False,
             "original_stop_price": None,
@@ -2049,8 +2043,7 @@ def initialize_state(symbol: str) -> None:
         "fvg_detector": None,  # Will be initialized after symbol specs are known
         "current_bos_direction": None,  # 'bullish', 'bearish', or None
         "active_fvgs": [],  # List of active FVG zones
-        "flush_low": None,  # Store for compatibility (not used in BOS+FVG)
-        "flush_high": None,  # Store for compatibility (not used in BOS+FVG)
+        # Legacy fields removed - BOS+FVG doesn't use capitulation
     }
     
     # Initialize BOS and FVG detectors with symbol-specific parameters
@@ -2355,7 +2348,7 @@ def update_1min_bar(symbol: str, price: float, volume: int, dt: datetime) -> Non
                 else:
                     vwap_data = state[symbol].get("vwap", {})
                     market_cond = state[symbol].get("market_condition", "UNKNOWN")
-                    current_regime = state[symbol].get("current_regime", "NORMAL")
+                    # Legacy regime tracking removed - BOS+FVG doesn't use it
                     
                     # Get current bid/ask from bid_ask_manager if available
                     quote_info = ""
@@ -2376,12 +2369,12 @@ def update_1min_bar(symbol: str, price: float, volume: int, dt: datetime) -> Non
                         if vwap_val > 0:
                             vwap_info = f" | VWAP: ${vwap_val:.2f} ± ${std_dev:.2f}"
                     
-                    logger.info(f"📊 Market: {symbol} @ ${current_bar['close']:.2f}{quote_info}{vol_info} | Bars: {bar_count}{vwap_info} | Condition: {market_cond} | Regime: {current_regime}")
+                    logger.info(f"📊 Market: {symbol} @ ${current_bar['close']:.2f}{quote_info}{vol_info} | Bars: {bar_count}{vwap_info} | Condition: {market_cond}")
             else:
                 # Fallback if session_start_time not set (shouldn't happen)
                 vwap_data = state[symbol].get("vwap", {})
                 market_cond = state[symbol].get("market_condition", "UNKNOWN")
-                current_regime = state[symbol].get("current_regime", "NORMAL")
+                # Legacy regime tracking removed - BOS+FVG doesn't use it
                 
                 # Get current bid/ask from bid_ask_manager if available
                 quote_info = ""
@@ -2402,11 +2395,9 @@ def update_1min_bar(symbol: str, price: float, volume: int, dt: datetime) -> Non
                     if vwap_val > 0:
                         vwap_info = f" | VWAP: ${vwap_val:.2f} ± ${std_dev:.2f}"
                 
-                logger.info(f"📊 Market: {symbol} @ ${current_bar['close']:.2f}{quote_info}{vol_info} | Bars: {bar_count}{vwap_info} | Condition: {market_cond} | Regime: {current_regime}")
+                logger.info(f"📊 Market: {symbol} @ ${current_bar['close']:.2f}{quote_info}{vol_info} | Bars: {bar_count}{vwap_info} | Condition: {market_cond}")
             
-            # Update current regime after bar completion
-            # NOTE: Regime detection not needed for BOS+FVG strategy - disabled for performance
-            # update_current_regime(symbol)
+            # Regime detection not needed for BOS+FVG strategy - removed for performance
             
             # Check for exit conditions if position is active
             check_exit_conditions(symbol)
@@ -3190,7 +3181,6 @@ def validate_signal_requirements(symbol: str, bar_time: datetime) -> Tuple[bool,
     # ========================================================================
     # BOS+FVG strategy requires 10 bars for accurate BOS detection
     # (5-bar swing lookback requires at least 10 bars total)
-    # Old capitulation strategy needed 34 bars for regime detection
     WARMUP_BARS_REQUIRED = 10
     current_bar_count = len(state[symbol]["bars_1min"])
     
@@ -3213,21 +3203,16 @@ def validate_signal_requirements(symbol: str, bar_time: datetime) -> Tuple[bool,
     # Log warmup completion once
     if not state[symbol].get("warmup_complete", False):
         state[symbol]["warmup_complete"] = True
-        current_regime = state[symbol].get("current_regime", "NORMAL")
         logger.info("=" * 60)
         logger.info("✅ WARMUP COMPLETE - TRADING ENABLED")
         logger.info("=" * 60)
         logger.info(f"   📊 Bars collected: {current_bar_count}")
-        logger.info(f"   🎯 Regime detection: ACTIVE")
-        logger.info(f"   📈 Current regime: {current_regime}")
+        logger.info(f"   📊 BOS detection: ACTIVE")
+        logger.info(f"   🎯 FVG tracking: ENABLED")
         logger.info(f"   🚀 Signal generation: ENABLED")
         logger.info("=" * 60)
     
-    # Check VWAP is available (still calculated for reference)
-    # NOTE: VWAP not needed for BOS+FVG strategy - disabled
-    # vwap = state[symbol].get("vwap")
-    # if vwap is None or vwap <= 0:
-    #     return False, "VWAP not ready"
+    # VWAP not needed for BOS+FVG strategy - removed
     
     # Trend filter - DISABLED for BOS+FVG strategy
     # BOS direction determines trade direction (BOS replaces regime/flush logic)
@@ -4030,17 +4015,12 @@ def calculate_position_size(symbol: str, side: str, entry_price: float, rl_confi
     # Example (CL): 100 ticks * 0.01 = 1.00 points
     stop_distance = max_stop_ticks * tick_size  # Convert ticks to price distance
     
-    # Detect current regime for entry (for logging purposes)
-    regime_detector = get_regime_detector()
-    bars = state[symbol]["bars_1min"]
-    atr = calculate_atr_1min(symbol, CONFIG.get("atr_period", 14))
+    # BOS+FVG doesn't use regime detection - removed for performance
     
-    if atr is not None:
-        entry_regime = regime_detector.detect_regime(bars, atr, CONFIG.get("atr_period", 14))
     # STEP 3: Calculate stop price based on BOS+FVG strategy with safety net
-    # BOS+FVG Strategy: Stop is 2 ticks beyond FVG zone
-    # - Long: Stop 2 ticks below FVG bottom
-    # - Short: Stop 2 ticks above FVG top
+    # BOS+FVG Strategy: Stop is 2.5 ticks beyond FVG zone
+    # - Long: Stop 2.5 ticks below FVG bottom
+    # - Short: Stop 2.5 ticks above FVG top
     # SAFETY NET: GUI max loss per trade acts as a cap on risk
     entry_details = state[symbol].get("entry_details", {})
     
@@ -4562,17 +4542,9 @@ def execute_entry(symbol: str, side: str, entry_price: float) -> None:
     profit_target_price = round_to_tick(profit_target_price)
     profit_target_ticks = profit_target_distance / CONFIG["tick_size"]
     
-    # Detect entry regime
-    regime_detector = get_regime_detector()
-    bars = state[symbol]["bars_1min"]
-    atr = calculate_atr_1min(symbol, CONFIG.get("atr_period", 14))
-    if atr is None:
-        atr = DEFAULT_FALLBACK_ATR  # Use constant instead of magic number
-        logger.warning(f"ATR not calculable, using fallback value: {DEFAULT_FALLBACK_ATR}")
+    # BOS+FVG doesn't use regime or ATR - removed for performance
     
-    entry_regime = regime_detector.detect_regime(bars, atr, CONFIG.get("atr_period", 14))
-    
-    # CAPITULATION REVERSAL: Fixed trade management rules (no regime adjustments)
+    # BOS+FVG SCALPING: Fixed trade management rules
     breakeven_trigger = CONFIG.get("breakeven_trigger_ticks", 12)
     breakeven_offset = CONFIG.get("breakeven_offset_ticks", 1)
     trailing_trigger = CONFIG.get("trailing_trigger_ticks", 15)
@@ -4582,7 +4554,6 @@ def execute_entry(symbol: str, side: str, entry_price: float) -> None:
     
     logger.info(f"")
     logger.info(f"  📊 BOS + FVG SCALPING STRATEGY")
-    logger.info(f"  Entry Regime: {entry_regime.name}")
     logger.info(f"")
     logger.info(f"  Stop Loss:")
     logger.info(f"    Rule: {BOS_FVG_STOP_BUFFER_TICKS} ticks beyond FVG zone (capped by max loss per trade)")
@@ -4607,7 +4578,7 @@ def execute_entry(symbol: str, side: str, entry_price: float) -> None:
         "quantity": contracts,
         "entry_price": actual_fill_price,
         "stop_price": stop_price,
-        "profit_target_price": profit_target_price,  # BOS+FVG: 1.5x risk-reward target
+        "profit_target_price": profit_target_price,  # BOS+FVG: 1.18x risk-reward target
         "entry_time": entry_time,
         "order_id": order.get("order_id"),
         "order_type_used": order_type_used,  # Track for exit optimization
@@ -4618,12 +4589,7 @@ def execute_entry(symbol: str, side: str, entry_price: float) -> None:
         "entry_rl_state": state[symbol].get("entry_rl_state"),  # RL market state
         "original_entry_price": entry_price,  # Original signal price (before validation)
         "actual_entry_price": actual_fill_price,  # Actual fill price
-        # Regime Information - For dynamic exit management
-        "entry_regime": entry_regime.name,  # Regime at entry
-        "current_regime": entry_regime.name,  # Current regime (updated on each tick)
-        "regime_change_time": None,  # When regime last changed
-        "regime_history": [],  # List of regime transitions with timestamps
-        "entry_atr": atr,  # ATR at entry
+        # BOS+FVG doesn't use regime detection - removed for performance
         # Advanced Exit Management - Breakeven State
         "breakeven_active": False,
         "original_stop_price": stop_price,
@@ -5499,48 +5465,24 @@ def execute_partial_exit(symbol: str, contracts: int, exit_price: float, r_multi
         logger.error(f"Failed to execute partial exit #{level}")
 
 
-def update_current_regime(symbol: str) -> None:
-    """
-    Update the current regime for the symbol based on latest bars.
-    This is called after each bar completion to keep regime detection current.
-    
-    OPTIMIZED: Now requires only 34 bars (20 baseline + 14 current) instead of 114
-    
-    Args:
-        symbol: Instrument symbol
-    """
-    regime_detector = get_regime_detector()
-    bars = state[symbol]["bars_1min"]
-    
-    # Need enough bars for regime detection (34 = 20 baseline + 14 current)
-    # Optimized from 114 bars for faster startup
-    if len(bars) < 34:
-        state[symbol]["current_regime"] = "NORMAL"
-        return
-    
-    current_atr = calculate_atr_1min(symbol, CONFIG.get("atr_period", 14))
-    if current_atr is None:
-        state[symbol]["current_regime"] = "NORMAL"
-        return
-    
-    # Store previous regime to detect changes
-    prev_regime = state[symbol].get("current_regime", "NORMAL")
-    
-    # Detect and store current regime
-    detected_regime = regime_detector.detect_regime(bars, current_atr, CONFIG.get("atr_period", 14))
-    state[symbol]["current_regime"] = detected_regime.name
-    
-    # Log regime changes for customers (not just backtest)
-    # SILENCE DURING MAINTENANCE - no spam in logs
-    if prev_regime != detected_regime.name and not bot_status.get("maintenance_idle", False):
-        logger.info(f"📊 Market Regime Changed: {prev_regime} → {detected_regime.name}")
-    else:
-        pass
+# LEGACY FUNCTION - Not used in BOS+FVG strategy
+# def update_current_regime(symbol: str) -> None:
+#     """
+#     Update the current regime for the symbol based on latest bars.
+#     This is called after each bar completion to keep regime detection current.
+#     
+#     OPTIMIZED: Now requires only 34 bars (20 baseline + 14 current) instead of 114
+#     
+#     Args:
+#         symbol: Instrument symbol
+#     """
+#     pass
 
 
-def check_regime_change(symbol: str, current_price: float) -> None:
-    """
-    Check if market regime has changed during an active trade (informational only).
+# LEGACY FUNCTION - Not used in BOS+FVG strategy  
+# def check_regime_change(symbol: str, current_price: float) -> None:
+#     """
+#     Check if market regime has changed during an active trade (informational only).
     
     This function:
     1. Detects current regime from last 20 bars
@@ -5562,51 +5504,8 @@ def check_regime_change(symbol: str, current_price: float) -> None:
     
     # Only check for active positions
     if not position["active"]:
-        return
-    
-    # Get the last known regime (use current_regime if available, otherwise entry_regime)
-    # This prevents logging the same regime change multiple times
-    last_regime_name = position.get("current_regime", position.get("entry_regime", "NORMAL"))
-    
-    # Detect current regime
-    regime_detector = get_regime_detector()
-    bars = state[symbol]["bars_1min"]
-    current_atr = calculate_atr_1min(symbol, CONFIG.get("atr_period", 14))
-    
-    if current_atr is None:
-        return  # Can't detect regime without ATR
-    
-    current_regime = regime_detector.detect_regime(bars, current_atr, CONFIG.get("atr_period", 14))
-    
-    # Check if regime has changed from the last known regime
-    has_changed, new_regime = regime_detector.check_regime_change(
-        last_regime_name, current_regime
-    )
-    
-    if not has_changed:
-        return  # No regime change
-    
-    # Update position tracking with new regime
-    change_time = get_current_time()
-    position["current_regime"] = current_regime.name
-    position["regime_change_time"] = change_time
-    
-    # Record regime transition in history
-    if "regime_history" not in position:
-        position["regime_history"] = []
-    
-    position["regime_history"].append({
-        "from_regime": last_regime_name,
-        "to_regime": current_regime.name,
-        "timestamp": change_time
-    })
-    
-    # Log the regime change for awareness (informational only - no parameter changes)
-    logger.info("=" * 60)
-    logger.info(f"📊 REGIME CHANGE DETECTED: {last_regime_name} → {current_regime.name}")
-    logger.info(f"  Time: {get_current_time().strftime('%H:%M:%S')}")
-    logger.info(f"  Trade management: Active with fixed risk controls")
-    logger.info("=" * 60)
+#         return
+#     pass
 
 
 def check_exit_conditions(symbol: str) -> None:
@@ -5866,9 +5765,7 @@ def check_exit_conditions(symbol: str) -> None:
         execute_exit(symbol, price, "profit_target")
         return
     
-    # REGIME CHANGE CHECK - Detect and log regime changes (informational only)
-    # Trade management uses FIXED rules and is NOT affected by regime changes
-    check_regime_change(symbol, current_bar["close"])
+    # BOS+FVG strategy doesn't use regime detection - removed for performance
     
     # Get current time for any time-based checks
     current_time = get_current_time()
