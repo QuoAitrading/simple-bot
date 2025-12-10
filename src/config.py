@@ -1,14 +1,15 @@
 """
-Configuration Management for Capitulation Reversal Bot
+Configuration Management for BOS+FVG Trading Bot
 Supports multiple environments with validation and environment variable overrides.
 
-STRATEGY: Capitulation Reversal
-- Wait for panic selling/buying (flush)
-- Enter on exhaustion confirmation
-- Use trailing stops to manage exits
+STRATEGY: BOS+FVG (Break of Structure + Fair Value Gap)
+- Detect trend direction using Break of Structure (BOS)
+- Identify Fair Value Gaps (FVG) in price action
+- Enter when price fills into FVG zones
+- Use tight stops with 1.5:1 risk-reward ratio
 
-STOP LOSS: User configurable via GUI
-- Primary stop: 2 ticks below flush low (long) or above flush high (short)
+STOP LOSS: Strategy-specific with GUI override
+- Primary stop: 2 ticks beyond FVG zone
 - Emergency max: max_stop_loss_dollars setting (user configurable via GUI)
 """
 
@@ -28,7 +29,7 @@ DEFAULT_MAX_STOP_LOSS_DOLLARS = 400.0  # Default emergency max loss per trade (u
 
 @dataclass
 class BotConfiguration:
-    """Type-safe configuration for the Capitulation Reversal Bot."""
+    """Type-safe configuration for the BOS+FVG Trading Bot."""
     
     # Default account size constant
     DEFAULT_ACCOUNT_SIZE: float = 50000.0
@@ -58,25 +59,19 @@ class BotConfiguration:
         # Total cost per round-trip: ~3 ticks slippage + $2.50 commission = ~$42.50/contract
     
     # ==========================================================================
-    # CAPITULATION REVERSAL STRATEGY - HARDCODED PARAMETERS
+    # BOS+FVG STRATEGY - HARDCODED PARAMETERS
     # ==========================================================================
-    # These parameters are HARDCODED in capitulation_detector.py
+    # These parameters are HARDCODED in bos_detector.py and fvg_detector.py
     # They are NOT configurable - the strategy uses fixed rules for all trades.
     # 
-    # HARDCODED VALUES (see capitulation_detector.py for implementation):
-    # - flush_min_ticks: 20 (minimum 5 dollars on ES)
-    # - flush_lookback_bars: 7 (last 7 one-minute bars)
-    # - flush_min_velocity: 3.0 (at least 3 ticks per bar)
-    # - flush_near_extreme_ticks: 5 (within 5 ticks of flush extreme)
-    # - rsi_extreme_long: 25 (RSI < 25 for long entry)
-    # - rsi_extreme_short: 75 (RSI > 75 for short entry)
-    # - volume_climax_mult: 2.0 (2x 20-bar average volume)
-    # - stop_buffer_ticks: 2 (2 ticks below/above flush extreme)
-    # - breakeven_trigger_ticks: 12 (move stop to entry after 12 ticks profit)
-    # - breakeven_offset_ticks: 1 (entry + 1 tick)
-    # - trailing_trigger_ticks: 15 (start trailing after 15 ticks profit)
-    # - trailing_distance_ticks: 8 (trail 8 ticks behind peak)
-    # - max_hold_bars: 20 (time stop after 20 bars)
+    # HARDCODED VALUES (see bos_detector.py and fvg_detector.py for implementation):
+    # - swing_lookback: 5 bars (for BOS detection)
+    # - fvg_min_size_ticks: 2 (minimum FVG size)
+    # - fvg_max_size_ticks: 20 (maximum FVG size)
+    # - fvg_expiry_minutes: 75 (FVG lifetime)
+    # - max_active_fvgs: 15 (max tracked FVGs)
+    # - stop_buffer_ticks: 2.5 (beyond FVG zone)
+    # - profit_target_multiplier: 1.18 (1:1.18 risk-reward)
     #
     # USER CONFIGURABLE via GUI:
     # - max_stop_loss_dollars: Emergency max stop (caps stop loss in dollars)
@@ -84,7 +79,6 @@ class BotConfiguration:
     # - max_trades_per_day: Trade count limit
     # - daily_loss_limit: Daily loss cap
     # - confidence_threshold: AI signal confidence filter
-    # - time_exit_enabled: Time-based exit after 20 bars (optional)
     # ==========================================================================
     
     # RSI calculation period (standard)
@@ -95,21 +89,19 @@ class BotConfiguration:
     # LEGACY PARAMETERS - NO LONGER USED
     # ==========================================================================
     # The following were used in old strategies but are NO LONGER USED:
-    # - VWAP std dev bands (entry zones) - Replaced by flush detection
-    # - Trend filter - Replaced by flush direction + regime filter
-    # - VWAP direction filter - Replaced by price check for entry
-    # - MACD filter - Removed entirely
+    # - VWAP std dev bands (entry zones) - Not used in BOS+FVG
+    # - Trend filter - Replaced by BOS detection
+    # - VWAP direction filter - Not used in BOS+FVG
+    # - MACD filter - Not used in BOS+FVG
+    # - RSI filter - Not used in BOS+FVG
     # - Trend EMA settings - Not used
     #
-    # RETAINED FOR CALCULATIONS (still needed):
-    # - ATR calculation is ON (needed for regime detection)
-    #
-    # Filter flags (kept for compatibility, but strategy ignores them):
-    use_trend_filter: bool = False  # OFF - flush direction determines trade direction
+    # Filter flags (kept for compatibility, but BOS+FVG strategy doesn't use them):
+    use_trend_filter: bool = False  # OFF - BOS determines trade direction
     use_vwap_direction_filter: bool = False  # OFF - not used
-    use_rsi_filter: bool = True  # ON - RSI 25/75 extreme thresholds
-    use_volume_filter: bool = True  # ON - 2x 20-bar average for climax
-    use_macd_filter: bool = False  # OFF - not used in capitulation strategy
+    use_rsi_filter: bool = False  # OFF - not used in BOS+FVG
+    use_volume_filter: bool = False  # OFF - not used in BOS+FVG
+    use_macd_filter: bool = False  # OFF - not used in BOS+FVG
     
     # Time Windows (US Eastern - CME Futures Wall-Clock Schedule)
     # Note: Bot can trade anytime when market is open. These are for maintenance only.
@@ -331,7 +323,7 @@ class BotConfiguration:
     # - Breakeven: Move stop to entry + 1 tick after 12 ticks profit
     # - Trailing: Start trailing after 15 ticks profit (8 ticks behind peak)
     #
-    # HARDCODED VALUES (in capitulation_detector.py):
+    # HARDCODED VALUES (in quotrading_engine.py):
     # - breakeven_trigger_ticks: 12 (move stop to entry + 1 tick)
     # - breakeven_buffer_ticks: 1 (entry + 1 tick offset)
     # - trailing_trigger_ticks: 15 (start trailing after 15 ticks profit)
@@ -464,12 +456,12 @@ class BotConfiguration:
             "slippage_ticks": self.slippage_ticks,
             "commission_per_contract": self.commission_per_contract,
             
-            # Filter Settings (Capitulation Reversal uses hardcoded logic)
-            "use_trend_filter": self.use_trend_filter,  # OFF - flush direction determines trade
-            "use_rsi_filter": self.use_rsi_filter,  # ON - RSI 25/75 extreme thresholds
+            # Filter Settings (legacy - not used in BOS+FVG)
+            "use_trend_filter": self.use_trend_filter,  # OFF - BOS determines trade direction
+            "use_rsi_filter": self.use_rsi_filter,  # OFF - not used in BOS+FVG
             "use_macd_filter": self.use_macd_filter,  # OFF - not used
             "use_vwap_direction_filter": self.use_vwap_direction_filter,  # OFF - not used
-            "use_volume_filter": self.use_volume_filter,  # ON - 2x volume climax
+            "use_volume_filter": self.use_volume_filter,  # OFF - not used in BOS+FVG
             "rsi_period": self.rsi_period,
             "volume_lookback": self.volume_lookback,
             

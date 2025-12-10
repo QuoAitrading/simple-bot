@@ -1,12 +1,11 @@
 #!/usr/bin/env python3
 """
-Development Backtesting Environment for Capitulation Reversal Bot
+Development Backtesting Environment for BOS+FVG Trading Bot
 
 This is the development/testing environment that:
 - Runs backtests to test bot performance
 - Loads signal RL locally from data/signal_experience.json
 - Includes pattern matching and all trading logic
-- Handles all regimes (HIGH_VOL_TRENDING, HIGH_VOL_CHOPPY, etc.)
 - Follows same UTC maintenance and flatten rules as production
 - Does everything the live bot does with all trade management
 
@@ -46,7 +45,7 @@ from signal_confidence import SignalConfidenceRL
 def parse_arguments():
     """Parse command-line arguments for backtest"""
     parser = argparse.ArgumentParser(
-        description='Capitulation Reversal Bot - Development Backtesting Environment',
+        description='BOS+FVG Trading Bot - Development Backtesting Environment',
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
@@ -144,8 +143,8 @@ def initialize_rl_brains_for_backtest(bot_config) -> Tuple[Any, ModuleType]:
     bot_module = importlib.util.module_from_spec(spec)
     sys.modules['quotrading_engine'] = bot_module
     
-    # Also make it available as capitulation_reversal_bot for compatibility
-    sys.modules['capitulation_reversal_bot'] = bot_module
+    # Also make it available as bos_fvg_bot for compatibility
+    sys.modules['bos_fvg_bot'] = bot_module
     
     # Load the module
     spec.loader.exec_module(bot_module)
@@ -169,10 +168,8 @@ def initialize_rl_brains_for_backtest(bot_config) -> Tuple[Any, ModuleType]:
     # Also update SYMBOL_SPEC in bot module
     bot_module.SYMBOL_SPEC = symbol_spec
     
-    # CRITICAL: Reset capitulation detector to use new symbol's tick size/value
-    # The detector is a singleton and needs to be recreated for each symbol
-    import capitulation_detector
-    capitulation_detector._detector = None
+    # Note: BOS+FVG strategy uses bos_detector and fvg_detector
+    # These are initialized automatically in initialize_state() per symbol
     
     # Initialize RL brain with symbol-specific experience file
     # Get RL parameters from config or use defaults
@@ -356,15 +353,15 @@ def run_backtest(args: argparse.Namespace) -> Dict[str, Any]:
     last_exit_reason = 'bot_exit'  # Track last exit reason
     prev_position_active = False
     
-    def capitulation_strategy_backtest(bars_1min: List[Dict[str, Any]], bars_15min: List[Dict[str, Any]]) -> None:
+    def bos_fvg_strategy_backtest(bars_1min: List[Dict[str, Any]], bars_15min: List[Dict[str, Any]]) -> None:
         """
-        Capitulation Reversal strategy integrated with backtest engine.
+        BOS+FVG strategy integrated with backtest engine.
         Processes historical data through the real bot logic.
         
         This executes:
         - Signal RL for confidence scoring
-        - Capitulation/flush pattern detection
-        - Regime detection for market adaptation
+        - BOS (Break of Structure) detection
+        - FVG (Fair Value Gap) detection and tracking
         - All trade management (stops, targets, breakeven, trailing)
         - UTC maintenance and flatten rules
         """
@@ -446,7 +443,7 @@ def run_backtest(args: argparse.Namespace) -> Dict[str, Any]:
         print()  # New line after progress
         
     # Run backtest with integrated strategy
-    results = engine.run_with_strategy(capitulation_strategy_backtest)
+    results = engine.run_with_strategy(bos_fvg_strategy_backtest)
     
     # Get trades from engine metrics and add to reporter
     if hasattr(engine, 'metrics') and hasattr(engine.metrics, 'trades'):
@@ -536,7 +533,7 @@ def main():
     # Suppress verbose logging from most loggers during backtest
     logging.getLogger('quotrading_engine').setLevel(logging.INFO)  # Need INFO level for RL messages
     logging.getLogger('backtesting').setLevel(logging.WARNING)
-    logging.getLogger('capitulation_bot').setLevel(logging.ERROR)
+    logging.getLogger('bos_fvg_bot').setLevel(logging.ERROR)
     logging.getLogger('backtest').setLevel(logging.WARNING)
     logging.getLogger('regime_detection').setLevel(logging.WARNING)  # Suppress regime change spam
     logging.getLogger('signal_confidence').setLevel(logging.WARNING)  # Only show warnings and errors
