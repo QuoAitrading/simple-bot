@@ -712,23 +712,72 @@ class BrokerSDKImplementation(BrokerInterface):
     def disconnect(self) -> None:
         """Disconnect from TopStep SDK and WebSocket."""
         try:
-            # Disconnect WebSocket streamer first
-            if self.websocket_streamer:
-                try:
-                    self.websocket_streamer.disconnect()
-                    self.websocket_streamer = None
-                except Exception as e:
-                    pass
-            
-            # Close SDK connections
-            if self.trading_suite:
-                # Close any active connections
-                self.trading_suite = None
-            if self.sdk_client:
-                self.sdk_client = None
-            self.connected = False
+            # Use async disconnect if possible to properly close httpx connections
+            try:
+                loop = asyncio.get_running_loop()
+                # Already in async context - can't use asyncio.run
+                # Just do sync cleanup
+                self._disconnect_sync()
+            except RuntimeError:
+                # No running loop - use asyncio.run for proper cleanup
+                asyncio.run(self._disconnect_async())
         except Exception as e:
             logger.error(f"Error disconnecting from TopStep SDK: {e}")
+    
+    def _disconnect_sync(self) -> None:
+        """Synchronous disconnect fallback (doesn't close httpx connections properly)."""
+        # Disconnect WebSocket streamer first
+        if self.websocket_streamer:
+            try:
+                self.websocket_streamer.disconnect()
+                self.websocket_streamer = None
+            except Exception as e:
+                pass
+        
+        # Close SDK connections
+        if self.trading_suite:
+            self.trading_suite = None
+        if self.sdk_client:
+            self.sdk_client = None
+        self.connected = False
+    
+    async def _disconnect_async(self) -> None:
+        """Asynchronously disconnect and properly close httpx connections."""
+        # Disconnect WebSocket streamer first
+        if self.websocket_streamer:
+            try:
+                self.websocket_streamer.disconnect()
+                self.websocket_streamer = None
+            except Exception as e:
+                pass
+        
+        # Properly close httpx clients in SDK before releasing references
+        # This prevents the 'NoneType' send error on reconnection
+        if self.sdk_client:
+            try:
+                # Close the httpx client inside the SDK (if it has an aclose method)
+                if hasattr(self.sdk_client, '_client') and hasattr(self.sdk_client._client, 'aclose'):
+                    await self.sdk_client._client.aclose()
+                # Also try direct aclose on sdk_client
+                elif hasattr(self.sdk_client, 'aclose'):
+                    await self.sdk_client.aclose()
+            except Exception as e:
+                logger.debug(f"Error closing SDK httpx client: {e}")
+        
+        # Close trading suite connections
+        if self.trading_suite:
+            try:
+                # Close the project_x client inside trading suite
+                if hasattr(self.trading_suite, 'project_x') and hasattr(self.trading_suite.project_x, '_client'):
+                    if hasattr(self.trading_suite.project_x._client, 'aclose'):
+                        await self.trading_suite.project_x._client.aclose()
+            except Exception as e:
+                logger.debug(f"Error closing TradingSuite httpx client: {e}")
+        
+        # Clear references
+        self.trading_suite = None
+        self.sdk_client = None
+        self.connected = False
     
     def verify_connection(self) -> bool:
         """
@@ -1137,9 +1186,10 @@ class BrokerSDKImplementation(BrokerInterface):
                 # Force disconnect with delay to let resources clean up
                 self.disconnect()
                 
-                # Wait for connections to fully close
+                # Wait longer for connections to fully close and event loops to clean up
+                # This is critical to avoid the same error on reconnect
                 import time
-                time.sleep(2)
+                time.sleep(3)
                 
                 # Try reconnecting up to 3 times
                 reconnected = False
@@ -1495,6 +1545,11 @@ class BrokerSDKImplementation(BrokerInterface):
                 
                 # Force disconnect and reconnect
                 self.disconnect()
+                
+                # Wait longer for connections to fully close and event loops to clean up
+                import time
+                time.sleep(3)
+                
                 if self.connect():
                     logger.info("[STOP ORDER] Reconnected successfully - retrying stop order")
                     try:
