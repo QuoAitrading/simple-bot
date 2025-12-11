@@ -1041,6 +1041,16 @@ class BrokerSDKImplementation(BrokerInterface):
                 return None
             logger.info("[ORDER] Reconnected successfully - proceeding with order")
         
+        # CRITICAL FIX #2: Warm the POST connection (separate from GET connection)
+        # HTTP/2 POST connections can die silently during idle periods
+        if not self.warm_connection_for_trading():
+            logger.warning("[ORDER] POST connection cold/dead - forcing full reconnect")
+            self.disconnect()
+            if not self.connect():
+                logger.error("[ORDER] Full reconnect failed - cannot place order")
+                return None
+            logger.info("[ORDER] Full reconnect successful - proceeding with order")
+        
         try:
             import asyncio
             # Import order enums here to avoid module-level import issues
@@ -1198,6 +1208,15 @@ class BrokerSDKImplementation(BrokerInterface):
                 logger.error("[ORDER] Reconnect failed - cannot place order")
                 return None
             logger.info("[ORDER] Reconnected successfully - proceeding with order")
+        
+        # CRITICAL FIX #2: Warm the POST connection
+        if not self.warm_connection_for_trading():
+            logger.warning("[ORDER] POST connection cold/dead - forcing full reconnect")
+            self.disconnect()
+            if not self.connect():
+                logger.error("[ORDER] Full reconnect failed - cannot place order")
+                return None
+            logger.info("[ORDER] Full reconnect successful - proceeding with order")
         
         try:
             import asyncio
@@ -1360,6 +1379,15 @@ class BrokerSDKImplementation(BrokerInterface):
                 logger.error("[ORDER] Reconnect failed - cannot place order")
                 return None
             logger.info("[ORDER] Reconnected successfully - proceeding with order")
+        
+        # CRITICAL FIX #2: Warm the POST connection
+        if not self.warm_connection_for_trading():
+            logger.warning("[ORDER] POST connection cold/dead - forcing full reconnect")
+            self.disconnect()
+            if not self.connect():
+                logger.error("[ORDER] Full reconnect failed - cannot place order")
+                return None
+            logger.info("[ORDER] Full reconnect successful - proceeding with order")
         
         try:
             import asyncio

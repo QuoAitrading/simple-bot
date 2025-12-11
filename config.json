@@ -1,8 +1,8 @@
 {
   "license_type": "STANDARD",
   "license_expiration": "2026-01-05T06:42:39.468219",
-  "days_until_expiration": 25,
-  "hours_until_expiration": 601.6062511972223,
+  "days_until_expiration": 24,
+  "hours_until_expiration": 598.7319136836111,
   "topstep_starting_balances": {
     "14797846": 18.64,
     "14955666": 49980.26,
@@ -10,19 +10,19 @@
   },
   "broker_type": "Prop Firm",
   "broker": "TopStep",
-  "account_size": 150671.0,
+  "account_size": 150693.0,
   "broker_validated": true,
   "accounts": [
     {
       "id": "150KTC-V2-439793-24199277",
       "name": "150KTC-V2-439793-24199277",
-      "balance": 150671.7,
-      "equity": 150671.7,
+      "balance": 150693.9,
+      "equity": 150693.9,
       "starting_balance": 150671.7,
       "type": "prop_firm"
     }
   ],
-  "fetched_account_balance": 150671.7,
+  "fetched_account_balance": 150693.9,
   "fetched_account_type": "prop_firm",
   "broker_token": "51g0wn1GjicXbwg/oh4DDKWSqRraRLGXWtfgc5MVMNM=",
   "broker_username": "dominicankevin@gmail.com",
@@ -36,10 +36,10 @@
   "daily_loss_limit": 1000.0,
   "max_loss_per_trade": 200.0,
   "max_contracts": 1,
-  "max_trades": 10,
-  "confidence_threshold": 40.0,
+  "max_trades": 20,
+  "confidence_threshold": 55.0,
   "shadow_mode": false,
-  "selected_account": "150KTC-V2-439793-24199277 - $150,671.70",
+  "selected_account": "150KTC-V2-439793-24199277 - $150,693.90",
   "selected_account_id": "150KTC-V2-439793-24199277",
   "alerts_enabled": false,
   "time_exit_enabled": false
