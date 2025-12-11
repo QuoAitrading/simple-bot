@@ -234,6 +234,11 @@ class BrokerSDKImplementation(BrokerInterface):
         self.circuit_breaker_reset_time = None  # Track when to auto-reset
         self.circuit_breaker_cooldown_seconds = 30  # Auto-reset after 30 seconds
         
+        # PROFESSIONAL SAFEGUARD: Order deduplication tracking
+        # Prevents duplicate orders from being sent to broker within short timeframe
+        self._recent_orders: Dict[str, float] = {}  # order_hash -> timestamp
+        self._order_dedup_window_seconds = 2.0  # Prevent duplicate orders within 2 seconds
+        
         # TopStep SDK client (Project-X)
         self.sdk_client: Optional[ProjectX] = None
         self.trading_suite: Optional[TradingSuite] = None
@@ -870,6 +875,50 @@ class BrokerSDKImplementation(BrokerInterface):
         
         return True
     
+    def _is_duplicate_order(self, symbol: str, side: str, quantity: int, order_type: str) -> bool:
+        """
+        PROFESSIONAL SAFEGUARD: Check if this order is a duplicate of a recent order.
+        
+        Prevents accidental duplicate orders from bugs, network issues, or race conditions.
+        Orders are considered duplicates if they have the same parameters within 2 seconds.
+        
+        Args:
+            symbol: Instrument symbol
+            side: BUY or SELL
+            quantity: Number of contracts
+            order_type: MARKET, LIMIT, or STOP
+        
+        Returns:
+            bool: True if this is a duplicate order (should be blocked)
+        """
+        import hashlib
+        
+        # Create order hash from parameters
+        order_key = f"{symbol}|{side}|{quantity}|{order_type}"
+        order_hash = hashlib.md5(order_key.encode()).hexdigest()
+        
+        current_time = time.time()
+        
+        # Clean up old entries (older than dedup window)
+        expired_hashes = [
+            h for h, t in self._recent_orders.items() 
+            if current_time - t > self._order_dedup_window_seconds
+        ]
+        for h in expired_hashes:
+            del self._recent_orders[h]
+        
+        # Check if this order was recently placed
+        if order_hash in self._recent_orders:
+            last_time = self._recent_orders[order_hash]
+            elapsed = current_time - last_time
+            logger.warning(f"[DUPLICATE BLOCKED] Order rejected - identical order placed {elapsed:.2f}s ago")
+            logger.warning(f"  Order: {side} {quantity} {symbol} ({order_type})")
+            return True
+        
+        # Record this order
+        self._recent_orders[order_hash] = current_time
+        return False
+    
     def warm_connection_for_trading(self) -> bool:
         """
         Keep the HTTP/2 connection pool warm for order placement.
@@ -1204,10 +1253,16 @@ class BrokerSDKImplementation(BrokerInterface):
         - Validates SDK client state before attempting order
         - Verifies connection health
         - Warms POST connection
+        - Checks for duplicate orders
         - Handles all error cases with reconnection
         """
         if not self.connected or self.trading_suite is None:
             logger.error("Cannot place order: not connected")
+            return None
+        
+        # PROFESSIONAL SAFEGUARD: Check for duplicate order
+        if self._is_duplicate_order(symbol, side, quantity, "MARKET"):
+            logger.error("[ORDER REJECTED] Duplicate market order blocked for safety")
             return None
         
         # PREVENTIVE: Ensure broker is ready for order placement (multi-layer validation)
@@ -1380,10 +1435,16 @@ class BrokerSDKImplementation(BrokerInterface):
         - Validates SDK client state before attempting order
         - Verifies connection health
         - Warms POST connection
+        - Checks for duplicate orders
         - Handles all error cases with reconnection
         """
         if not self.connected or self.trading_suite is None:
             logger.error("Cannot place order: not connected")
+            return None
+        
+        # PROFESSIONAL SAFEGUARD: Check for duplicate order
+        if self._is_duplicate_order(symbol, side, quantity, "LIMIT"):
+            logger.error("[ORDER REJECTED] Duplicate limit order blocked for safety")
             return None
         
         # PREVENTIVE: Ensure broker is ready for order placement (multi-layer validation)
@@ -1545,10 +1606,16 @@ class BrokerSDKImplementation(BrokerInterface):
         - Validates SDK client state before attempting order
         - Verifies connection health
         - Warms POST connection
+        - Checks for duplicate orders
         - Handles all error cases with reconnection
         """
         if not self.connected or self.trading_suite is None:
             logger.error("Cannot place order: not connected")
+            return None
+        
+        # PROFESSIONAL SAFEGUARD: Check for duplicate order
+        if self._is_duplicate_order(symbol, side, quantity, "STOP"):
+            logger.error("[ORDER REJECTED] Duplicate stop order blocked for safety")
             return None
         
         # PREVENTIVE: Ensure broker is ready for order placement (multi-layer validation)
