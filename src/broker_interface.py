@@ -1066,7 +1066,25 @@ class BrokerSDKImplementation(BrokerInterface):
                     # Clear the reference
                     self.trading_suite = None
                 
-                # Get fresh JWT token and account info
+                # CRITICAL FIX: Also recreate SDK client to get fresh httpx connection
+                # The old sdk_client has a corrupted httpx client tied to a dead event loop
+                from project_x_py import ProjectX
+                
+                logger.info("[ORDER] Recreating SDK client with fresh httpx connection...")
+                
+                # Create fresh SDK client
+                fresh_sdk_client = ProjectX(
+                    username=self.username, 
+                    api_key=self.api_token
+                )
+                
+                # Authenticate the fresh SDK client
+                await fresh_sdk_client.authenticate()
+                
+                # Update our reference
+                self.sdk_client = fresh_sdk_client
+                
+                # Now get fresh JWT token and account info from new client
                 jwt_token = self.sdk_client.get_session_token()
                 account_info = self.sdk_client.get_account_info()
                 account_id = str(getattr(account_info, 'id', getattr(account_info, 'account_id', '')))
@@ -1081,7 +1099,7 @@ class BrokerSDKImplementation(BrokerInterface):
                     account_id=account_id
                 )
                 
-                # Recreate trading_suite bound to current loop
+                # Recreate trading_suite with fresh SDK client
                 self.trading_suite = TradingSuite(
                     client=self.sdk_client,
                     realtime_client=realtime_client,
