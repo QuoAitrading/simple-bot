@@ -82,13 +82,13 @@
    ├─ Long: Enter when price comes down into bullish FVG
    └─ Short: Enter when price comes up into bearish FVG
 
-5. Set stop loss 2 ticks beyond FVG
-   ├─ Long: Stop 2 ticks below FVG bottom
-   └─ Short: Stop 2 ticks above FVG top
+5. Set stop loss 12 ticks from entry
+   ├─ Long: Stop 12 ticks below entry price
+   └─ Short: Stop 12 ticks above entry price
 
-6. Set profit target at 1.5x risk
-   ├─ If risk is 4 ticks, target is 6 ticks
-   └─ If risk is 3 ticks, target is 4.5 ticks
+6. Set profit target 12 ticks from entry (1:1 risk-reward)
+   ├─ Fixed 12-tick stop and target for all symbols
+   └─ Provides consistent risk management across all instruments
 ```
 
 ### Why This Works
@@ -283,9 +283,10 @@ Bar 25: Low = 6845.00 (touches FVG top at 6845.25)
 
 LONG ENTRY TRIGGERED:
 - Entry: 6845.25 (FVG top)
-- Stop: 6843.75 (2 ticks below FVG bottom 6844.00)
-- Risk: 6 ticks (1.5 points)
-- Target: 6847.50 (1.5x risk = 9 ticks = 2.25 points)
+- Stop: 6842.25 (12 ticks below entry = 3.00 points)
+- Risk: 12 ticks (3.00 points)
+- Target: 6848.25 (12 ticks above entry = 3.00 points)
+- Risk-Reward: 1:1 ratio
 ```
 
 ---
@@ -294,49 +295,56 @@ LONG ENTRY TRIGGERED:
 
 ### Stop Loss Placement
 
+**All Trades (Long & Short):**
+- Stop Loss = Entry price ± 12 ticks
+- Fixed 12-tick stop for all symbols
+- Provides consistent risk management
+
 **Long Trades:**
-- Stop Loss = FVG bottom - 2 ticks
-- Example: FVG bottom at 6844.00 → Stop at 6843.50 (6844.00 - 0.50)
+- Stop Loss = Entry price - 12 ticks
+- Example: Entry at 6845.25 → Stop at 6842.25 (6845.25 - 3.00)
 
 **Short Trades:**
-- Stop Loss = FVG top + 2 ticks
-- Example: FVG top at 6852.00 → Stop at 6852.50 (6852.00 + 0.50)
+- Stop Loss = Entry price + 12 ticks
+- Example: Entry at 6852.00 → Stop at 6855.00 (6852.00 + 3.00)
 
-**Rationale**: 2 ticks provides buffer for noise while keeping risk tight. If price breaks through the entire FVG + 2 ticks, the zone failed and we exit.
+**Rationale**: Fixed 12-tick stop provides consistent risk across all symbols. The AI knows exactly 12 ticks up and 12 ticks down from entry for every trade. GUI "Max Loss Per Trade" acts as a safety net.
 
 ### Profit Target Calculation
 
-**Formula**: Target = Entry ± (Risk × 1.5)
+**Formula**: Target = Entry ± 12 ticks (1:1 risk-reward)
 
 **Long Trades:**
 ```
-Risk = Entry - Stop
-Target = Entry + (Risk × 1.5)
+Fixed Stop and Target = 12 ticks
 
 Example:
 Entry: 6845.25
-Stop:  6843.75
-Risk:  6845.25 - 6843.75 = 1.50 (6 ticks)
-Target: 6845.25 + (1.50 × 1.5) = 6845.25 + 2.25 = 6847.50 (9 ticks profit)
+Stop:  6842.25 (12 ticks below = 3.00 points)
+Risk:  12 ticks (3.00 points) = $150 per contract
+Target: 6848.25 (12 ticks above = 3.00 points)
+Reward: 12 ticks (3.00 points) = $150 per contract
+Risk-Reward: 1:1 ratio
 ```
 
 **Short Trades:**
 ```
-Risk = Stop - Entry  
-Target = Entry - (Risk × 1.5)
+Fixed Stop and Target = 12 ticks
 
 Example:
 Entry: 6852.00
-Stop:  6852.50
-Risk:  6852.50 - 6852.00 = 0.50 (2 ticks)
-Target: 6852.00 - (0.50 × 1.5) = 6852.00 - 0.75 = 6851.25 (3 ticks profit)
+Stop:  6855.00 (12 ticks above = 3.00 points)
+Risk:  12 ticks (3.00 points) = $150 per contract
+Target: 6849.00 (12 ticks below = 3.00 points)
+Reward: 12 ticks (3.00 points) = $150 per contract
+Risk-Reward: 1:1 ratio
 ```
 
 ### Exit Execution
 
 **Trade exits when:**
-1. ✅ **Profit target hit** (price reaches target level) → Winner
-2. ✅ **Stop loss hit** (price reaches stop level) → Loser
+1. ✅ **Profit target hit** (price reaches 12-tick target) → Winner
+2. ✅ **Stop loss hit** (price reaches 12-tick stop) → Loser
 3. ✅ **Market closes** (end of trading session) → Close at market
 
 **Exit Priority**: Stop and target orders are placed immediately upon entry. Whichever is hit first closes the trade.
@@ -349,9 +357,11 @@ Target: 6852.00 - (0.50 × 1.5) = 6852.00 - 0.75 = 6851.25 (3 ticks profit)
 
 **Default**: 1 contract per trade
 
-**Risk per trade**: Varies based on FVG size
-- Small FVG (2-4 ticks): 0.5-1.0 points risk ($25-$50)
-- Medium FVG (5-10 ticks): 1.25-2.5 points risk ($62.50-$125)
+**Risk per trade**: Fixed 12 ticks
+- ES: 12 ticks = $150 per contract
+- NQ: 12 ticks = $60 per contract
+- MES: 12 ticks = $15 per contract
+- MNQ: 12 ticks = $6 per contract
 - Large FVG (11-20 ticks): 2.75-5.0 points risk ($137.50-$250)
 
 **Average risk per trade**: ~2 ticks = $25
