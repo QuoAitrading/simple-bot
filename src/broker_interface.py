@@ -242,6 +242,7 @@ class BrokerSDKImplementation(BrokerInterface):
         # TopStep SDK client (Project-X)
         self.sdk_client: Optional[ProjectX] = None
         self.trading_suite: Optional[TradingSuite] = None
+        self._trading_suite_loop_id: Optional[int] = None  # Track which event loop trading_suite is bound to
         
         # WebSocket streamer for live data
         self.websocket_streamer: Optional[BrokerWebSocketStreamer] = None
@@ -632,6 +633,13 @@ class BrokerSDKImplementation(BrokerInterface):
                             config=TradingSuiteConfig(instrument=self.instrument)
                         )
                         
+                        # Track which event loop this trading_suite is bound to
+                        try:
+                            current_loop = asyncio.get_running_loop()
+                            self._trading_suite_loop_id = id(current_loop)
+                        except RuntimeError:
+                            self._trading_suite_loop_id = None
+                        
                         # Suppress logs FINAL time after TradingSuite init (which creates the noisy managers)
                         _suppress_spam_loggers()
                         
@@ -742,6 +750,7 @@ class BrokerSDKImplementation(BrokerInterface):
         # Close SDK connections
         if self.trading_suite:
             self.trading_suite = None
+            self._trading_suite_loop_id = None
         if self.sdk_client:
             self.sdk_client = None
         self.connected = False
@@ -797,6 +806,7 @@ class BrokerSDKImplementation(BrokerInterface):
         
         # Clear references
         self.trading_suite = None
+        self._trading_suite_loop_id = None
         self.sdk_client = None
         self.connected = False
     
@@ -998,7 +1008,7 @@ class BrokerSDKImplementation(BrokerInterface):
         it creates new event loops. The httpx clients in trading_suite become stale because they're
         tied to closed event loops, causing 'NoneType' object has no attribute 'send' errors.
         
-        This method recreates the trading_suite to bind it to the current event loop.
+        This method recreates the trading_suite if it's bound to a different event loop.
         
         Returns:
             bool: True if trading_suite is ready, False on error
@@ -1015,36 +1025,44 @@ class BrokerSDKImplementation(BrokerInterface):
             # Get current event loop to check if we need to reinitialize
             try:
                 current_loop = asyncio.get_running_loop()
+                current_loop_id = id(current_loop)
             except RuntimeError:
                 logger.error("[ORDER] No running event loop - cannot initialize trading_suite")
                 return False
             
-            # Simple approach: Always reinitialize trading_suite for the current event loop
-            # This is lightweight and avoids relying on httpx internal implementation details
-            logger.debug("[ORDER] Reinitializing trading_suite for current event loop")
+            # Check if trading_suite needs reinitialization
+            # Only reinitialize if it's bound to a different event loop (or doesn't exist)
+            if self.trading_suite is None or self._trading_suite_loop_id != current_loop_id:
+                logger.debug(f"[ORDER] Reinitializing trading_suite for current event loop (old_id={self._trading_suite_loop_id}, new_id={current_loop_id})")
+                
+                # Get fresh JWT token and account info
+                jwt_token = self.sdk_client.get_session_token()
+                account_info = self.sdk_client.get_account_info()
+                account_id = str(getattr(account_info, 'id', getattr(account_info, 'account_id', '')))
+                
+                if not jwt_token or not account_id:
+                    logger.error(f"[ORDER] Cannot reinitialize trading_suite - missing JWT token ({bool(jwt_token)}) or account ID ({bool(account_id)})")
+                    return False
+                
+                # Create new realtime client bound to current loop
+                realtime_client = ProjectXRealtimeClient(
+                    jwt_token=jwt_token,
+                    account_id=account_id
+                )
+                
+                # Recreate trading_suite bound to current loop
+                self.trading_suite = TradingSuite(
+                    client=self.sdk_client,
+                    realtime_client=realtime_client,
+                    config=TradingSuiteConfig(instrument=self.instrument)
+                )
+                
+                # Track the event loop this trading_suite is bound to
+                self._trading_suite_loop_id = current_loop_id
+                logger.debug("[ORDER] Trading suite reinitialized successfully")
+            else:
+                logger.debug("[ORDER] Trading suite already bound to current event loop - reusing")
             
-            # Get fresh JWT token and account info
-            jwt_token = self.sdk_client.get_session_token()
-            account_info = self.sdk_client.get_account_info()
-            account_id = str(getattr(account_info, 'id', getattr(account_info, 'account_id', '')))
-            
-            if not jwt_token or not account_id:
-                logger.error("[ORDER] Cannot reinitialize trading_suite - missing JWT token or account ID")
-                return False
-            
-            # Create new realtime client bound to current loop
-            realtime_client = ProjectXRealtimeClient(
-                jwt_token=jwt_token,
-                account_id=account_id
-            )
-            
-            # Recreate trading_suite bound to current loop
-            self.trading_suite = TradingSuite(
-                client=self.sdk_client,
-                realtime_client=realtime_client,
-                config=TradingSuiteConfig(instrument=self.instrument)
-            )
-            logger.debug("[ORDER] Trading suite reinitialized successfully")
             return True
             
         except Exception as e:
