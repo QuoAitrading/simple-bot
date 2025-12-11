@@ -1045,21 +1045,21 @@ class BrokerSDKImplementation(BrokerInterface):
                             if hasattr(realtime, 'close'):
                                 try:
                                     await realtime.close()
-                                except Exception:
-                                    pass
+                                except Exception as e:
+                                    logger.debug(f"[ORDER] Could not close realtime client: {e}")
                             elif hasattr(realtime, 'disconnect'):
                                 try:
                                     await realtime.disconnect()
-                                except Exception:
-                                    pass
+                                except Exception as e:
+                                    logger.debug(f"[ORDER] Could not disconnect realtime client: {e}")
                         
                         # Close httpx client in trading_suite to free resources
                         if hasattr(self.trading_suite, 'project_x') and hasattr(self.trading_suite.project_x, '_client'):
                             if hasattr(self.trading_suite.project_x._client, 'aclose'):
                                 try:
                                     await self.trading_suite.project_x._client.aclose()
-                                except Exception:
-                                    pass
+                                except Exception as e:
+                                    logger.debug(f"[ORDER] Could not close httpx client: {e}")
                     except Exception as cleanup_err:
                         logger.debug(f"[ORDER] Error cleaning up old trading_suite: {cleanup_err}")
                     
