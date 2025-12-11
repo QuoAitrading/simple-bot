@@ -990,6 +990,83 @@ class BrokerSDKImplementation(BrokerInterface):
             logger.error(f"Token refresh failed: {e}")
             return False
     
+    async def _ensure_trading_suite_ready(self) -> bool:
+        """
+        Ensure trading_suite is bound to the current event loop.
+        
+        CRITICAL FIX: When asyncio.run() is called repeatedly (e.g., in connect() and place_order()),
+        it creates new event loops. The httpx clients in trading_suite become stale because they're
+        tied to closed event loops, causing 'NoneType' object has no attribute 'send' errors.
+        
+        This method recreates the trading_suite if needed to bind it to the current event loop.
+        
+        Returns:
+            bool: True if trading_suite is ready, False on error
+        """
+        if not self.sdk_client or not self.connected:
+            return False
+        
+        try:
+            # Import SDK classes
+            from project_x_py import TradingSuite, TradingSuiteConfig
+            from project_x_py.realtime.core import ProjectXRealtimeClient
+            
+            # Get current event loop
+            current_loop = asyncio.get_running_loop()
+            
+            # Check if trading_suite exists and if its httpx client is bound to a different/closed loop
+            needs_reinit = False
+            
+            if self.trading_suite is None:
+                needs_reinit = True
+            elif hasattr(self.trading_suite, 'project_x') and hasattr(self.trading_suite.project_x, '_client'):
+                # Check if the httpx client has a valid transport bound to current loop
+                httpx_client = self.trading_suite.project_x._client
+                if httpx_client is None:
+                    needs_reinit = True
+                elif hasattr(httpx_client, '_transport'):
+                    transport = httpx_client._transport
+                    if transport is None:
+                        needs_reinit = True
+                    # Check if transport's loop matches current loop (if accessible)
+                    elif hasattr(transport, '_pool'):
+                        pool = transport._pool
+                        if hasattr(pool, '_loop') and pool._loop != current_loop:
+                            needs_reinit = True
+            
+            # Reinitialize trading_suite if needed
+            if needs_reinit:
+                logger.debug("[ORDER] Reinitializing trading_suite for current event loop")
+                
+                # Get fresh JWT token and account info
+                jwt_token = self.sdk_client.get_session_token()
+                account_info = self.sdk_client.get_account_info()
+                account_id = str(getattr(account_info, 'id', getattr(account_info, 'account_id', '')))
+                
+                if jwt_token and account_id:
+                    # Create new realtime client bound to current loop
+                    realtime_client = ProjectXRealtimeClient(
+                        jwt_token=jwt_token,
+                        account_id=account_id
+                    )
+                    
+                    # Recreate trading_suite bound to current loop
+                    self.trading_suite = TradingSuite(
+                        client=self.sdk_client,
+                        realtime_client=realtime_client,
+                        config=TradingSuiteConfig(instrument=self.instrument)
+                    )
+                    logger.debug("[ORDER] Trading suite reinitialized successfully")
+                else:
+                    logger.error("[ORDER] Cannot reinitialize trading_suite - missing JWT or account ID")
+                    return False
+            
+            return True
+            
+        except Exception as e:
+            logger.error(f"[ORDER] Error ensuring trading_suite ready: {e}")
+            return False
+    
     def get_account_equity(self) -> float:
         """
         Get account equity from TopStep.
@@ -1289,6 +1366,10 @@ class BrokerSDKImplementation(BrokerInterface):
                 # Refresh token if needed (for long-running bots)
                 await self._ensure_token_fresh()
                 
+                # CRITICAL: Ensure trading_suite is bound to current event loop
+                if not await self._ensure_trading_suite_ready():
+                    raise Exception("Trading suite not ready for order placement")
+                
                 return await self.trading_suite.orders.place_market_order(
                     contract_id=contract_id,
                     side=order_side,
@@ -1379,6 +1460,9 @@ class BrokerSDKImplementation(BrokerInterface):
                             
                             async def retry_order_async():
                                 await self._ensure_token_fresh()
+                                # CRITICAL: Ensure trading_suite is bound to current event loop
+                                if not await self._ensure_trading_suite_ready():
+                                    raise Exception("Trading suite not ready for order placement")
                                 return await self.trading_suite.orders.place_market_order(
                                     contract_id=contract_id,
                                     side=order_side,
@@ -1471,6 +1555,10 @@ class BrokerSDKImplementation(BrokerInterface):
                 # Refresh token if needed (for long-running bots)
                 await self._ensure_token_fresh()
                 
+                # CRITICAL: Ensure trading_suite is bound to current event loop
+                if not await self._ensure_trading_suite_ready():
+                    raise Exception("Trading suite not ready for order placement")
+                
                 return await self.trading_suite.orders.place_limit_order(
                     contract_id=contract_id,
                     side=order_side,
@@ -1549,6 +1637,9 @@ class BrokerSDKImplementation(BrokerInterface):
             async def cancel_order_async():
                 # Refresh token if needed
                 await self._ensure_token_fresh()
+                # CRITICAL: Ensure trading_suite is bound to current event loop
+                if not await self._ensure_trading_suite_ready():
+                    raise Exception("Trading suite not ready for order cancellation")
                 return await self.trading_suite.orders.cancel_order(order_id=order_id)
             
             # Run async order cancellation - check for existing event loop
@@ -1641,6 +1732,10 @@ class BrokerSDKImplementation(BrokerInterface):
                 # Refresh token if needed (for long-running bots)
                 await self._ensure_token_fresh()
                 
+                # CRITICAL: Ensure trading_suite is bound to current event loop
+                if not await self._ensure_trading_suite_ready():
+                    raise Exception("Trading suite not ready for order placement")
+                
                 return await self.trading_suite.orders.place_stop_order(
                     contract_id=contract_id,
                     side=order_side,
@@ -1727,6 +1822,9 @@ class BrokerSDKImplementation(BrokerInterface):
                             
                             async def retry_stop_async():
                                 await self._ensure_token_fresh()
+                                # CRITICAL: Ensure trading_suite is bound to current event loop
+                                if not await self._ensure_trading_suite_ready():
+                                    raise Exception("Trading suite not ready for order placement")
                                 return await self.trading_suite.orders.place_stop_order(
                                     contract_id=contract_id,
                                     side=order_side,
