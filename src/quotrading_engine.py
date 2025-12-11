@@ -8421,6 +8421,18 @@ def handle_position_reconciliation_event(data: Dict[str, Any]) -> None:
                 position = state[symbol].get("position", {})
                 entry_time = position.get("entry_time")
                 
+                # ALSO check if we have active stop/target orders - if so, position definitely exists!
+                stop_order_id = position.get("stop_order_id")
+                target_order_id = position.get("target_order_id")
+                has_active_orders = bool(stop_order_id or target_order_id)
+                
+                if has_active_orders:
+                    # We have stop/target orders, position MUST exist - broker API is wrong/delayed
+                    logger.warning(f"  [WAIT] Active orders exist (stop={stop_order_id}, target={target_order_id})")
+                    logger.warning(f"  [WAIT] Broker API is likely delayed - NOT clearing position")
+                    logger.warning(f"  [WAIT] Will retry reconciliation on next tick")
+                    return  # Don't clear - position exists!
+                
                 if entry_time:
                     # Check how long ago we entered
                     if isinstance(entry_time, datetime):
@@ -8428,9 +8440,9 @@ def handle_position_reconciliation_event(data: Dict[str, Any]) -> None:
                     else:
                         time_since_entry = 999  # Unknown, don't skip
                     
-                    # If we entered less than 10 seconds ago, don't clear - wait for broker to catch up
-                    # Note: This grace period could be made configurable via CONFIG if needed
-                    reconciliation_grace_period = 10  # seconds
+                    # If we entered less than 60 seconds ago, don't clear - wait for broker to catch up
+                    # Increased from 10s to 60s to handle slow broker API responses
+                    reconciliation_grace_period = 60  # seconds
                     if time_since_entry < reconciliation_grace_period:
                         logger.warning(f"  [WAIT] Position entered {time_since_entry:.1f}s ago - waiting for broker confirmation")
                         logger.warning(f"  [WAIT] Not clearing state yet - broker may not have reported fill")
