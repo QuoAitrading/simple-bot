@@ -1041,7 +1041,7 @@ class BrokerSDKImplementation(BrokerInterface):
                 account_id = str(getattr(account_info, 'id', getattr(account_info, 'account_id', '')))
                 
                 if not jwt_token or not account_id:
-                    logger.error(f"[ORDER] Cannot reinitialize trading_suite - missing JWT token ({bool(jwt_token)}) or account ID ({bool(account_id)})")
+                    logger.error("[ORDER] Cannot reinitialize trading_suite - missing authentication credentials or account ID")
                     return False
                 
                 # Create new realtime client bound to current loop
