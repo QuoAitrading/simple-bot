@@ -5,15 +5,23 @@ Event-driven bot that trades price inefficiencies (Fair Value Gaps) in the direc
 THE EDGE:
 Identify trend direction using Break of Structure (BOS), then trade mean reversion fills
 into Fair Value Gaps (FVGs). When price leaves gaps due to fast movement, wait for the
-fill and scalp the reversion with tight stops and 1.5:1 risk-reward.
+fill and scalp the reversion with tight stops and 1:1 risk-reward.
 
 STRATEGY FLOW:
 1. DETECT BOS - Price breaks above swing high (bullish) or below swing low (bearish)
 2. IDENTIFY FVG - 3-candle gap where bar1.high < bar3.low (bullish) or bar1.low > bar3.high (bearish)
 3. ENTRY TRIGGER - Price fills into FVG zone (touches gap from the other side)
-4. STOP LOSS - 2 ticks beyond FVG zone (tight, strategy-specific)
-5. PROFIT TARGET - 1.5x risk (fixed risk-reward ratio)
-6. SAFETY NET - GUI max loss per trade caps FVG stops when they exceed user's risk limit
+4. STOP LOSS - Fixed 12 ticks from entry (automatic placement with market order)
+5. PROFIT TARGET - Fixed 12 ticks from entry (1:1 risk-reward ratio)
+6. SAFETY NET - GUI max loss per trade acts as a safety cap (must be >= 12 tick risk)
+
+FIXED STOP LOSS & PROFIT TARGET:
+- Stop Loss: Always 12 ticks from entry price
+- Profit Target: Always 12 ticks from entry price
+- Risk-Reward: 1:1 ratio (12 ticks up, 12 ticks down)
+- Order Placement: Immediate market order entry with stop & target orders placed instantly
+- Symbol Agnostic: Works with all symbols (ES, NQ, MES, MNQ, CL, GC, etc.)
+- Safety Net: GUI "Max Loss Per Trade" setting must be >= 12 ticks * tick_value
 
 FVG FILTERS:
 - Size: 2-20 ticks (filters noise and extreme moves)
@@ -569,6 +577,10 @@ DEFAULT_FALLBACK_ATR = 5.0  # Default ATR when calculation not possible (ES futu
 # BOS + FVG Strategy Constants - Optimized for 57.6% Win Rate
 BOS_FVG_STOP_BUFFER_TICKS = 2.5  # Ticks beyond FVG zone for stop placement (optimized)
 BOS_FVG_PROFIT_TARGET_MULTIPLIER = 1.18  # Risk-reward ratio (1:1.18) - quick profit capture
+
+# Fixed Stop Loss and Profit Target Configuration
+FIXED_STOP_LOSS_TICKS = 12  # Fixed stop loss at 12 ticks for all symbols
+FIXED_PROFIT_TARGET_TICKS = 12  # Fixed profit target at 12 ticks for all symbols
 
 # Global broker instance (replaces sdk_client)
 broker: Optional[BrokerInterface] = None
@@ -4085,96 +4097,51 @@ def calculate_position_size(symbol: str, side: str, entry_price: float, rl_confi
         tick_size = CONFIG.get("tick_size", 0.25)
         tick_value = CONFIG.get("tick_value", 12.50)
     
-    # STEP 1: Convert user's max loss (dollars) to ticks
-    # Formula: max_loss_dollars / tick_value = number of ticks
-    # Example (ES): $700 / $12.50 = 56 ticks
-    # Example (NQ): $700 / $5.00 = 140 ticks
-    # Example (CL): $1000 / $10.00 = 100 ticks
-    max_stop_ticks = max_stop_dollars / tick_value  # Convert dollars to ticks
+    # STEP 1: Calculate fixed 12-tick stop loss
+    # All trades use the same 12-tick stop loss regardless of symbol
+    # This provides consistent risk across all instruments
+    fixed_stop_ticks = FIXED_STOP_LOSS_TICKS  # Always 12 ticks
     
-    # STEP 2: Convert ticks to price distance
+    # STEP 2: Convert ticks to price distance for this symbol
     # Formula: ticks * tick_size = price distance
-    # Example (ES): 56 ticks * 0.25 = 14 points
-    # Example (NQ): 140 ticks * 0.25 = 35 points
-    # Example (CL): 100 ticks * 0.01 = 1.00 points
-    stop_distance = max_stop_ticks * tick_size  # Convert ticks to price distance
+    # Example (ES): 12 ticks * 0.25 = 3.00 points
+    # Example (NQ): 12 ticks * 0.25 = 3.00 points
+    # Example (CL): 12 ticks * 0.01 = 0.12 points
+    stop_distance = fixed_stop_ticks * tick_size  # Convert ticks to price distance
     
-    # BOS+FVG doesn't use regime detection - removed for performance
+    # STEP 3: Calculate stop price from entry price
+    # - Long: Stop 12 ticks below entry
+    # - Short: Stop 12 ticks above entry
+    if side == "long":
+        stop_price = entry_price - stop_distance
+    else:  # short
+        stop_price = entry_price + stop_distance
     
-    # STEP 3: Calculate stop price based on BOS+FVG strategy with safety net
-    # BOS+FVG Strategy: Stop is 2.5 ticks beyond FVG zone
-    # - Long: Stop 2.5 ticks below FVG bottom
-    # - Short: Stop 2.5 ticks above FVG top
-    # SAFETY NET: GUI max loss per trade acts as a cap on risk
-    entry_details = state[symbol].get("entry_details", {})
+    # Round to nearest valid tick (ensures broker accepts the price)
+    stop_price = round_to_tick(stop_price)
     
-    if entry_details and "fvg_bottom" in entry_details and "fvg_top" in entry_details:
-        # Use FVG-based stops (BOS+FVG strategy)
-        stop_buffer = BOS_FVG_STOP_BUFFER_TICKS * tick_size
-        
-        if side == "long":
-            # Long: Stop 2 ticks below FVG bottom
-            fvg_stop_price = entry_details["fvg_bottom"] - stop_buffer
-        else:  # short
-            # Short: Stop 2 ticks above FVG top
-            fvg_stop_price = entry_details["fvg_top"] + stop_buffer
-        
-        # Round to nearest valid tick
-        fvg_stop_price = round_to_tick(fvg_stop_price)
-        
-        # Calculate FVG-based stop distance
-        fvg_stop_distance = abs(entry_price - fvg_stop_price)
-        fvg_ticks_at_risk = fvg_stop_distance / tick_size
-        fvg_risk_dollars = fvg_ticks_at_risk * tick_value
-        
-        # SAFETY NET: Apply GUI max loss per trade as a cap
-        # If FVG stop would risk more than user's configured max, use the max instead
-        if fvg_risk_dollars > max_stop_dollars:
-            logger.warning(f"[SAFETY NET] FVG stop (${fvg_risk_dollars:.2f}) exceeds max loss per trade (${max_stop_dollars:.2f})")
-            logger.warning(f"[SAFETY NET] Capping stop at user's configured maximum")
-            
-            # Use the GUI max loss setting as the stop
-            if side == "long":
-                stop_price = entry_price - stop_distance
-            else:  # short
-                stop_price = entry_price + stop_distance
-            
-            stop_price = round_to_tick(stop_price)
-            stop_distance = abs(entry_price - stop_price)
-            ticks_at_risk = stop_distance / tick_size
-            
-            # Only log strategy-specific details in backtest mode
-            if is_backtest_mode():
-                logger.info(f"[SAFETY NET] Using strategy-based stop: {ticks_at_risk:.0f} ticks (${max_stop_dollars:.2f})")
-        else:
-            # FVG stop is within safe limits, use it
-            stop_price = fvg_stop_price
-            stop_distance = fvg_stop_distance
-            ticks_at_risk = fvg_ticks_at_risk
-            
-            # Only log strategy-specific details in backtest mode
-            if is_backtest_mode():
-                logger.info(f"[Strategy] Using calculated stop: {ticks_at_risk:.0f} ticks (${fvg_risk_dollars:.2f}) - within max loss limit")
-    else:
-        # Fallback to user's max loss setting
-        if side == "long":
-            stop_price = entry_price - stop_distance
-        else:  # short
-            stop_price = entry_price + stop_distance
-        
-        # Round to nearest valid tick (ensures broker accepts the price)
-        stop_price = round_to_tick(stop_price)
-        
-        # Recalculate actual stop distance after rounding
-        stop_distance = abs(entry_price - stop_price)
-        ticks_at_risk = stop_distance / tick_size
-        
-        logger.info(f"Fixed stop: {max_stop_ticks:.0f} ticks (${max_stop_dollars:.2f})")
+    # Recalculate actual stop distance after rounding
+    stop_distance = abs(entry_price - stop_price)
+    ticks_at_risk = stop_distance / tick_size
     
-    # Calculate actual risk per contract in dollars
+    # Calculate risk in dollars for this 12-tick stop
+    risk_dollars_12_tick = fixed_stop_ticks * tick_value
+    
+    # SAFETY NET: Check if 12-tick stop exceeds GUI max loss per trade
+    # If it does, the user needs to adjust their max_loss_per_trade setting
+    if risk_dollars_12_tick > max_stop_dollars:
+        logger.warning(f"[SAFETY NET] 12-tick stop (${risk_dollars_12_tick:.2f}) exceeds max loss per trade (${max_stop_dollars:.2f})")
+        logger.warning(f"[SAFETY NET] Cannot place trade - increase 'Max Loss Per Trade' in GUI to at least ${risk_dollars_12_tick:.2f}")
+        logger.warning(f"[SAFETY NET] Or reduce contract size to 0 contracts will be calculated")
+        # Return 0 contracts - trade will be skipped
+        return 0, stop_price
+    
+    logger.info(f"Fixed 12-tick stop: {fixed_stop_ticks:.0f} ticks (${risk_dollars_12_tick:.2f})")
+    
+    # Calculate actual risk per contract in dollars (based on 12 ticks)
     risk_per_contract = ticks_at_risk * tick_value
     
-    # STEP 5: Use fixed contracts from GUI (no dynamic scaling)
+    # STEP 4: Use fixed contracts from GUI (no dynamic scaling)
     # User explicitly sets the contract count in the launcher
     # The bot respects this setting regardless of account size or risk
     user_max_contracts = CONFIG["max_contracts"]
@@ -4351,17 +4318,21 @@ def execute_entry(symbol: str, side: str, entry_price: float) -> None:
         logger.info(f"  Time: {get_current_time().strftime('%Y-%m-%d %H:%M:%S %Z')}")
         logger.info(f"  VWAP: ${state[symbol]['vwap']:.2f}")
         
-        # Show suggested stop and target
-        vwap_bands = state[symbol]["vwap_bands"]
+        # Show suggested stop and target (using fixed 12-tick strategy)
         tick_size = CONFIG["tick_size"]
-        max_stop_ticks = 11
+        fixed_stop_ticks = FIXED_STOP_LOSS_TICKS  # 12 ticks
+        fixed_target_ticks = FIXED_PROFIT_TARGET_TICKS  # 12 ticks
         
         if side == "long":
-            suggested_stop = entry_price - (max_stop_ticks * tick_size)
-            logger.info(f"  Suggested Stop: ${suggested_stop:.2f} ({max_stop_ticks} ticks)")
+            suggested_stop = entry_price - (fixed_stop_ticks * tick_size)
+            suggested_target = entry_price + (fixed_target_ticks * tick_size)
+            logger.info(f"  Suggested Stop: ${suggested_stop:.2f} ({fixed_stop_ticks} ticks)")
+            logger.info(f"  Suggested Target: ${suggested_target:.2f} ({fixed_target_ticks} ticks)")
         else:
-            suggested_stop = entry_price + (max_stop_ticks * tick_size)
-            logger.info(f"  Suggested Stop: ${suggested_stop:.2f} ({max_stop_ticks} ticks)")
+            suggested_stop = entry_price + (fixed_stop_ticks * tick_size)
+            suggested_target = entry_price - (fixed_target_ticks * tick_size)
+            logger.info(f"  Suggested Stop: ${suggested_stop:.2f} ({fixed_stop_ticks} ticks)")
+            logger.info(f"  Suggested Target: ${suggested_target:.2f} ({fixed_target_ticks} ticks)")
         
         logger.info(f"")
         logger.info(f"  ≡ƒÄ» SHADOW MODE: Signal shown - No automatic execution")
@@ -4613,13 +4584,14 @@ def execute_entry(symbol: str, side: str, entry_price: float) -> None:
         except Exception as e:
             logger.warning(f"  Could not record trade execution: {e}")
     
-    # Calculate initial risk in ticks
+    # Calculate initial risk in ticks (should be 12 ticks)
     stop_distance_ticks = abs(actual_fill_price - stop_price) / CONFIG["tick_size"]
     
-    # Calculate profit target for BOS+FVG strategy (1.5x risk-reward)
-    # Target = Entry ± (Risk × BOS_FVG_PROFIT_TARGET_MULTIPLIER)
-    risk_distance = abs(actual_fill_price - stop_price)
-    profit_target_distance = risk_distance * BOS_FVG_PROFIT_TARGET_MULTIPLIER
+    # Calculate profit target using fixed 12-tick target
+    # Target is always 12 ticks away from entry price (same as stop loss distance)
+    # This creates a 1:1 risk-reward ratio
+    fixed_target_ticks = FIXED_PROFIT_TARGET_TICKS  # Always 12 ticks
+    profit_target_distance = fixed_target_ticks * CONFIG["tick_size"]
     
     if side == "long":
         profit_target_price = actual_fill_price + profit_target_distance
@@ -4641,16 +4613,15 @@ def execute_entry(symbol: str, side: str, entry_price: float) -> None:
     time_stop_enabled = CONFIG.get("time_stop_enabled", False)
     
     logger.info(f"")
-    logger.info(f"  📊 BOS + FVG SCALPING STRATEGY")
+    logger.info(f"  📊 FIXED 12-TICK STOP & TARGET STRATEGY")
     logger.info(f"")
     logger.info(f"  Stop Loss:")
-    logger.info(f"    Rule: {BOS_FVG_STOP_BUFFER_TICKS} ticks beyond FVG zone (capped by max loss per trade)")
+    logger.info(f"    Rule: Fixed 12 ticks from entry (for all symbols)")
     logger.info(f"    Stop Distance: {stop_distance_ticks:.1f} ticks (${abs(actual_fill_price - stop_price):.2f})")
     logger.info(f"    Stop Price: ${stop_price:.2f}")
-    # logger.info(f"    Safety Net: GUI max loss per trade = ${max_stop_dollars:.2f}")
     logger.info(f"")
     logger.info(f"  Profit Target:")
-    logger.info(f"    Rule: {BOS_FVG_PROFIT_TARGET_MULTIPLIER}x risk-reward ratio")
+    logger.info(f"    Rule: Fixed 12 ticks from entry (1:1 risk-reward ratio)")
     logger.info(f"    Target Distance: {profit_target_ticks:.1f} ticks (${profit_target_distance:.2f})")
     logger.info(f"    Target Price: ${profit_target_price:.2f}")
     logger.info(f"")
@@ -4666,7 +4637,7 @@ def execute_entry(symbol: str, side: str, entry_price: float) -> None:
         "quantity": contracts,
         "entry_price": actual_fill_price,
         "stop_price": stop_price,
-        "profit_target_price": profit_target_price,  # BOS+FVG: 1.18x risk-reward target
+        "profit_target_price": profit_target_price,  # Fixed 12-tick target
         "entry_time": entry_time,
         "order_id": order.get("order_id"),
         "order_type_used": order_type_used,  # Track for exit optimization
