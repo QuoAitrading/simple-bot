@@ -8447,8 +8447,52 @@ def handle_position_reconciliation_event(data: Dict[str, Any]) -> None:
                         logger.warning(f"  [WAIT] Position entered {time_since_entry:.1f}s ago - waiting for broker confirmation")
                         logger.warning(f"  [WAIT] Not clearing state yet - broker may not have reported fill")
                         return
+                # ================================================================================
+                # BULLETPROOF PROTECTION: NEVER abandon a position we actually entered
+                # ================================================================================
                 
-                logger.error("  Cause: Position was closed manually by user")
+                # SAFETY CHECK 1: Count consecutive mismatches before taking action
+                mismatch_key = f"{symbol}_position_mismatch_count"
+                mismatch_count = state.get(mismatch_key, 0) + 1
+                state[mismatch_key] = mismatch_count
+                
+                # Require 5 CONSECUTIVE mismatches (5 ticks = ~5 seconds) before even considering manual override
+                required_consecutive_mismatches = 5
+                if mismatch_count < required_consecutive_mismatches:
+                    logger.warning(f"  [SAFETY] Mismatch {mismatch_count}/{required_consecutive_mismatches} - NOT clearing yet")
+                    logger.warning(f"  [SAFETY] Will only consider manual override after {required_consecutive_mismatches} consecutive mismatches")
+                    return
+                
+                # SAFETY CHECK 2: Query broker for open orders
+                # If we have pending orders (stop/target), position MUST exist
+                try:
+                    if broker is not None and hasattr(broker, 'get_open_orders'):
+                        open_orders = broker.get_open_orders()
+                        if open_orders:
+                            logger.warning(f"  [SAFETY] {len(open_orders)} open orders found on broker")
+                            logger.warning(f"  [SAFETY] Position MUST exist - NOT clearing state")
+                            logger.warning(f"  [SAFETY] Broker position query may be delayed")
+                            state[mismatch_key] = 0  # Reset counter
+                            return
+                except Exception as e:
+                    logger.warning(f"  [SAFETY] Could not query open orders: {e}")
+                    # If we can't confirm, assume position exists and wait
+                    return
+                
+                # SAFETY CHECK 3: If we're within 2 minutes of entry, NEVER clear
+                if entry_time and isinstance(entry_time, datetime):
+                    time_since_entry = (get_current_time() - entry_time).total_seconds()
+                    absolute_minimum_wait = 120  # 2 minutes - NEVER clear before this
+                    if time_since_entry < absolute_minimum_wait:
+                        logger.warning(f"  [SAFETY] Only {time_since_entry:.0f}s since entry (min: {absolute_minimum_wait}s)")
+                        logger.warning(f"  [SAFETY] Waiting for broker to stabilize - NOT clearing")
+                        return
+                
+                # If we got here, we've had 5+ consecutive mismatches, no open orders, and 2+ minutes have passed
+                # This is likely a genuine manual close
+                logger.error("  CONFIRMED: Position appears to have been closed after extensive verification")
+                state[mismatch_key] = 0  # Reset counter
+                
                 logger.warning("=" * 60)
                 logger.warning("⚠️  MANUAL OVERRIDE DETECTED - Position closed externally")
                 logger.warning("  Bot will STOP managing this position")
@@ -8458,7 +8502,7 @@ def handle_position_reconciliation_event(data: Dict[str, Any]) -> None:
                 # Set manual override flag - bot stops managing but knows position exists
                 state[symbol]["position"]["manual_override"] = True
                 state[symbol]["position"]["manual_override_time"] = get_current_time()
-                state[symbol]["position"]["manual_override_reason"] = "Position closed manually by user"
+                state[symbol]["position"]["manual_override_reason"] = "Position closed after verification"
                 
                 # Clear bot's position state
                 state[symbol]["position"]["active"] = False
@@ -8540,7 +8584,12 @@ def handle_position_reconciliation_event(data: Dict[str, Any]) -> None:
             # send_telegram_alert(f"Position mismatch: Broker={broker_position}, Bot={bot_position}")
             
         else:
-            # Positions match - check if we need to update manual override tracking
+            # Positions match - reset mismatch counter
+            mismatch_key = f"{symbol}_position_mismatch_count"
+            if state.get(mismatch_key, 0) > 0:
+                state[mismatch_key] = 0  # Reset counter since positions now match
+            
+            # Check if we need to update manual override tracking
             if manual_override and broker_position != 0:
                 # Manual override is active and position is still open
                 # Ensure we're tracking the correct position size
