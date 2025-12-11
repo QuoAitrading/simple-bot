@@ -434,7 +434,7 @@ def run_backtest(args: argparse.Namespace) -> Dict[str, Any]:
                         'entry_price': pos['entry_price'],
                         'entry_time': pos.get('entry_time', timestamp),
                         'stop_price': pos.get('stop_price'),
-                        'target_price': pos.get('target_price')
+                        'target_price': pos.get('profit_target_price')  # Bot uses profit_target_price
                     }
                     
                 # If bot closed position (active=False), close it in backtest engine too
@@ -442,7 +442,24 @@ def run_backtest(args: argparse.Namespace) -> Dict[str, Any]:
                     # Use actual exit price from bot state (not bar close!)
                     # This ensures P&L matches the fixed 12-tick target/stop
                     exit_price = state[symbol].get('last_exit_price', bar['close'])
+                    exit_reason = state[symbol].get('last_exit_reason', 'unknown')
                     exit_time = timestamp
+                    
+                    # FIX: Enforce correct exit price for profit_target and stop_loss
+                    # The bot's check_profit_target_hit SHOULD return target_price, but
+                    # sometimes there's timing issues. Use engine's recorded target_price
+                    target_price = engine.current_position.get('target_price')
+                    stop_price = engine.current_position.get('stop_price')
+                    entry_price = engine.current_position.get('entry_price', 0)
+                    side = engine.current_position.get('side', '')
+                    
+                    if exit_reason == 'profit_target' and target_price:
+                        # Use the correct target price, not whatever was recorded
+                        exit_price = target_price
+                    elif exit_reason == 'stop_loss' and stop_price:
+                        # Use the correct stop price, not whatever was recorded
+                        exit_price = stop_price
+                    
                     # Use the last captured exit reason
                     engine._close_position(exit_time, exit_price, last_exit_reason)
                     last_exit_reason = 'bot_exit'  # Reset for next trade
