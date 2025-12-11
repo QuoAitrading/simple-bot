@@ -998,7 +998,7 @@ class BrokerSDKImplementation(BrokerInterface):
         Get position quantity from TopStep.
         
         PREVENTIVE MEASURES:
-        - Validates connection health before querying
+        - Validates SDK client state before querying
         - Uses proper event loop cleanup
         - Handles all error cases gracefully
         """
@@ -1007,10 +1007,10 @@ class BrokerSDKImplementation(BrokerInterface):
             # Position reconciliation is already suppressed during these times
             return 0
         
-        # PREVENTIVE: Verify SDK client is still valid before position query
+        # PREVENTIVE: Validate SDK client state before position query
         # This prevents stale client references from causing position tracking issues
-        if not self.trading_suite or not hasattr(self.sdk_client, 'search_open_positions'):
-            logger.warning("[POSITION] SDK client invalid - reconnecting to prevent position tracking issues")
+        if not self._validate_sdk_client_state():
+            logger.warning("[POSITION] SDK client validation failed - reconnecting to prevent position tracking issues")
             if self.connect():
                 logger.info("[POSITION] Reconnected successfully")
             else:
@@ -1069,7 +1069,7 @@ class BrokerSDKImplementation(BrokerInterface):
         of symbol, to manage stops and exits.
         
         PREVENTIVE MEASURES:
-        - Validates SDK client before querying
+        - Validates SDK client state before querying
         - Uses proper event loop cleanup
         - Thread-safe execution in async contexts
         
@@ -1080,10 +1080,10 @@ class BrokerSDKImplementation(BrokerInterface):
         if not self.connected or not self.sdk_client:
             return []
         
-        # PREVENTIVE: Verify SDK client is still valid before position query
+        # PREVENTIVE: Validate SDK client state before position query
         # This prevents stale client references from causing position tracking issues
-        if not self.trading_suite or not hasattr(self.sdk_client, 'search_open_positions'):
-            logger.warning("[POSITION] SDK client invalid - reconnecting to prevent position tracking issues")
+        if not self._validate_sdk_client_state():
+            logger.warning("[POSITION] SDK client validation failed - reconnecting to prevent position tracking issues")
             if self.connect():
                 logger.info("[POSITION] Reconnected successfully")
             else:
@@ -1158,6 +1158,44 @@ class BrokerSDKImplementation(BrokerInterface):
                 pass
             return []
     
+    def _ensure_order_ready(self) -> bool:
+        """
+        PREVENTIVE: Ensure broker is ready for order placement.
+        
+        This helper method performs all validation and reconnection logic
+        to prepare for order placement. Used by all order methods to reduce duplication.
+        
+        Returns:
+            bool: True if ready for order placement, False otherwise
+        """
+        # Step 1: Validate SDK client state
+        if not self._validate_sdk_client_state():
+            logger.warning("[ORDER] SDK client validation failed - reconnecting to prevent order issues")
+            self.disconnect()
+            if not self.connect():
+                logger.error("[ORDER] Reconnect after validation failure failed - cannot place order")
+                return False
+            logger.info("[ORDER] Reconnected successfully after validation check")
+        
+        # Step 2: Verify connection is still alive
+        if not self.verify_connection():
+            logger.warning("[ORDER] Connection dead - attempting reconnect before order")
+            if not self.connect():
+                logger.error("[ORDER] Reconnect failed - cannot place order")
+                return False
+            logger.info("[ORDER] Reconnected successfully - proceeding with order")
+        
+        # Step 3: Warm the POST connection
+        if not self.warm_connection_for_trading():
+            logger.warning("[ORDER] POST connection cold/dead - forcing full reconnect")
+            self.disconnect()
+            if not self.connect():
+                logger.error("[ORDER] Full reconnect failed - cannot place order")
+                return False
+            logger.info("[ORDER] Full reconnect successful - proceeding with order")
+        
+        return True
+    
     def place_market_order(self, symbol: str, side: str, quantity: int) -> Optional[Dict[str, Any]]:
         """
         Place market order using TopStep SDK.
@@ -1172,34 +1210,9 @@ class BrokerSDKImplementation(BrokerInterface):
             logger.error("Cannot place order: not connected")
             return None
         
-        # PREVENTIVE #1: Validate SDK client state before order placement
-        # This catches stale clients and prevents order placement failures
-        if not self._validate_sdk_client_state():
-            logger.warning("[ORDER] SDK client validation failed - reconnecting to prevent order issues")
-            self.disconnect()
-            if not self.connect():
-                logger.error("[ORDER] Reconnect after validation failure failed - cannot place order")
-                return None
-            logger.info("[ORDER] Reconnected successfully after validation check")
-        
-        # CRITICAL FIX: Verify connection is still alive before placing order
-        # This prevents errors when websocket has silently disconnected
-        if not self.verify_connection():
-            logger.warning("[ORDER] Connection dead - attempting reconnect before order")
-            if not self.connect():
-                logger.error("[ORDER] Reconnect failed - cannot place order")
-                return None
-            logger.info("[ORDER] Reconnected successfully - proceeding with order")
-        
-        # CRITICAL FIX #2: Warm the POST connection (separate from GET connection)
-        # HTTP/2 POST connections can die silently during idle periods
-        if not self.warm_connection_for_trading():
-            logger.warning("[ORDER] POST connection cold/dead - forcing full reconnect")
-            self.disconnect()
-            if not self.connect():
-                logger.error("[ORDER] Full reconnect failed - cannot place order")
-                return None
-            logger.info("[ORDER] Full reconnect successful - proceeding with order")
+        # PREVENTIVE: Ensure broker is ready for order placement (multi-layer validation)
+        if not self._ensure_order_ready():
+            return None
         
         try:
             import asyncio
@@ -1373,33 +1386,9 @@ class BrokerSDKImplementation(BrokerInterface):
             logger.error("Cannot place order: not connected")
             return None
         
-        # PREVENTIVE #1: Validate SDK client state before order placement
-        # This catches stale clients and prevents order placement failures
-        if not self._validate_sdk_client_state():
-            logger.warning("[ORDER] SDK client validation failed - reconnecting to prevent order issues")
-            self.disconnect()
-            if not self.connect():
-                logger.error("[ORDER] Reconnect after validation failure failed - cannot place order")
-                return None
-            logger.info("[ORDER] Reconnected successfully after validation check")
-        
-        # CRITICAL FIX: Verify connection is still alive before placing order
-        # This prevents errors when websocket has silently disconnected
-        if not self.verify_connection():
-            logger.warning("[ORDER] Connection dead - attempting reconnect before order")
-            if not self.connect():
-                logger.error("[ORDER] Reconnect failed - cannot place order")
-                return None
-            logger.info("[ORDER] Reconnected successfully - proceeding with order")
-        
-        # CRITICAL FIX #2: Warm the POST connection
-        if not self.warm_connection_for_trading():
-            logger.warning("[ORDER] POST connection cold/dead - forcing full reconnect")
-            self.disconnect()
-            if not self.connect():
-                logger.error("[ORDER] Full reconnect failed - cannot place order")
-                return None
-            logger.info("[ORDER] Full reconnect successful - proceeding with order")
+        # PREVENTIVE: Ensure broker is ready for order placement (multi-layer validation)
+        if not self._ensure_order_ready():
+            return None
         
         try:
             import asyncio
@@ -1562,33 +1551,9 @@ class BrokerSDKImplementation(BrokerInterface):
             logger.error("Cannot place order: not connected")
             return None
         
-        # PREVENTIVE #1: Validate SDK client state before order placement
-        # This catches stale clients and prevents order placement failures
-        if not self._validate_sdk_client_state():
-            logger.warning("[ORDER] SDK client validation failed - reconnecting to prevent order issues")
-            self.disconnect()
-            if not self.connect():
-                logger.error("[ORDER] Reconnect after validation failure failed - cannot place order")
-                return None
-            logger.info("[ORDER] Reconnected successfully after validation check")
-        
-        # CRITICAL FIX: Verify connection is still alive before placing order
-        # This prevents errors when websocket has silently disconnected
-        if not self.verify_connection():
-            logger.warning("[ORDER] Connection dead - attempting reconnect before order")
-            if not self.connect():
-                logger.error("[ORDER] Reconnect failed - cannot place order")
-                return None
-            logger.info("[ORDER] Reconnected successfully - proceeding with order")
-        
-        # CRITICAL FIX #2: Warm the POST connection
-        if not self.warm_connection_for_trading():
-            logger.warning("[ORDER] POST connection cold/dead - forcing full reconnect")
-            self.disconnect()
-            if not self.connect():
-                logger.error("[ORDER] Full reconnect failed - cannot place order")
-                return None
-            logger.info("[ORDER] Full reconnect successful - proceeding with order")
+        # PREVENTIVE: Ensure broker is ready for order placement (multi-layer validation)
+        if not self._ensure_order_ready():
+            return None
         
         try:
             import asyncio
