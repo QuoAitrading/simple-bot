@@ -835,6 +835,41 @@ class BrokerSDKImplementation(BrokerInterface):
             self.connected = False
             return False
     
+    def _validate_sdk_client_state(self) -> bool:
+        """
+        PREVENTIVE: Validate SDK client is in a healthy state for operations.
+        
+        This proactively checks for common issues that could cause failures:
+        - SDK client exists and has required methods
+        - Trading suite is initialized
+        - httpx client connections are valid (not stale)
+        
+        Returns:
+            bool: True if SDK client is healthy, False if issues detected
+        """
+        if not self.connected or not self.sdk_client or not self.trading_suite:
+            return False
+        
+        # Check SDK client has required methods
+        required_methods = ['search_open_positions', 'get_account_info', '_refresh_authentication']
+        for method in required_methods:
+            if not hasattr(self.sdk_client, method):
+                logger.warning(f"[SDK VALIDATION] SDK client missing method: {method}")
+                return False
+        
+        # Check trading suite has required components
+        if not hasattr(self.trading_suite, 'orders'):
+            logger.warning("[SDK VALIDATION] Trading suite missing orders component")
+            return False
+        
+        # Check httpx client is not stale (has _client attribute and it's not None)
+        if hasattr(self.sdk_client, '_client'):
+            if self.sdk_client._client is None:
+                logger.warning("[SDK VALIDATION] httpx client is None - connection is stale")
+                return False
+        
+        return True
+    
     def warm_connection_for_trading(self) -> bool:
         """
         Keep the HTTP/2 connection pool warm for order placement.
@@ -959,11 +994,28 @@ class BrokerSDKImplementation(BrokerInterface):
             return 0.0
     
     def get_position_quantity(self, symbol: str) -> int:
-        """Get position quantity from TopStep."""
+        """
+        Get position quantity from TopStep.
+        
+        PREVENTIVE MEASURES:
+        - Validates connection health before querying
+        - Uses proper event loop cleanup
+        - Handles all error cases gracefully
+        """
         if not self.connected or not self.sdk_client:
             # Silent return during expected disconnection (maintenance, shutdown, etc.)
             # Position reconciliation is already suppressed during these times
             return 0
+        
+        # PREVENTIVE: Verify SDK client is still valid before position query
+        # This prevents stale client references from causing position tracking issues
+        if not self.trading_suite or not hasattr(self.sdk_client, 'search_open_positions'):
+            logger.warning("[POSITION] SDK client invalid - reconnecting to prevent position tracking issues")
+            if self.connect():
+                logger.info("[POSITION] Reconnected successfully")
+            else:
+                logger.error("[POSITION] Reconnect failed - cannot query positions")
+                return 0
         
         try:
             # Use search_open_positions() instead of deprecated get_positions()
@@ -1016,12 +1068,27 @@ class BrokerSDKImplementation(BrokerInterface):
         AI Mode needs to detect any position the user has opened, regardless
         of symbol, to manage stops and exits.
         
+        PREVENTIVE MEASURES:
+        - Validates SDK client before querying
+        - Uses proper event loop cleanup
+        - Thread-safe execution in async contexts
+        
         Returns:
             List of position dicts with keys: symbol, quantity, side
             Empty list if no positions
         """
         if not self.connected or not self.sdk_client:
             return []
+        
+        # PREVENTIVE: Verify SDK client is still valid before position query
+        # This prevents stale client references from causing position tracking issues
+        if not self.trading_suite or not hasattr(self.sdk_client, 'search_open_positions'):
+            logger.warning("[POSITION] SDK client invalid - reconnecting to prevent position tracking issues")
+            if self.connect():
+                logger.info("[POSITION] Reconnected successfully")
+            else:
+                logger.error("[POSITION] Reconnect failed - cannot query positions")
+                return []
         
         try:
             import asyncio
@@ -1092,10 +1159,28 @@ class BrokerSDKImplementation(BrokerInterface):
             return []
     
     def place_market_order(self, symbol: str, side: str, quantity: int) -> Optional[Dict[str, Any]]:
-        """Place market order using TopStep SDK."""
+        """
+        Place market order using TopStep SDK.
+        
+        PREVENTIVE MEASURES:
+        - Validates SDK client state before attempting order
+        - Verifies connection health
+        - Warms POST connection
+        - Handles all error cases with reconnection
+        """
         if not self.connected or self.trading_suite is None:
             logger.error("Cannot place order: not connected")
             return None
+        
+        # PREVENTIVE #1: Validate SDK client state before order placement
+        # This catches stale clients and prevents order placement failures
+        if not self._validate_sdk_client_state():
+            logger.warning("[ORDER] SDK client validation failed - reconnecting to prevent order issues")
+            self.disconnect()
+            if not self.connect():
+                logger.error("[ORDER] Reconnect after validation failure failed - cannot place order")
+                return None
+            logger.info("[ORDER] Reconnected successfully after validation check")
         
         # CRITICAL FIX: Verify connection is still alive before placing order
         # This prevents errors when websocket has silently disconnected
@@ -1275,10 +1360,28 @@ class BrokerSDKImplementation(BrokerInterface):
             return None
     
     def place_limit_order(self, symbol: str, side: str, quantity: int, limit_price: float) -> Optional[Dict[str, Any]]:
-        """Place limit order using TopStep SDK."""
+        """
+        Place limit order using TopStep SDK.
+        
+        PREVENTIVE MEASURES:
+        - Validates SDK client state before attempting order
+        - Verifies connection health
+        - Warms POST connection
+        - Handles all error cases with reconnection
+        """
         if not self.connected or self.trading_suite is None:
             logger.error("Cannot place order: not connected")
             return None
+        
+        # PREVENTIVE #1: Validate SDK client state before order placement
+        # This catches stale clients and prevents order placement failures
+        if not self._validate_sdk_client_state():
+            logger.warning("[ORDER] SDK client validation failed - reconnecting to prevent order issues")
+            self.disconnect()
+            if not self.connect():
+                logger.error("[ORDER] Reconnect after validation failure failed - cannot place order")
+                return None
+            logger.info("[ORDER] Reconnected successfully after validation check")
         
         # CRITICAL FIX: Verify connection is still alive before placing order
         # This prevents errors when websocket has silently disconnected
@@ -1446,10 +1549,28 @@ class BrokerSDKImplementation(BrokerInterface):
             return False
     
     def place_stop_order(self, symbol: str, side: str, quantity: int, stop_price: float) -> Optional[Dict[str, Any]]:
-        """Place stop order using TopStep SDK."""
+        """
+        Place stop order using TopStep SDK.
+        
+        PREVENTIVE MEASURES:
+        - Validates SDK client state before attempting order
+        - Verifies connection health
+        - Warms POST connection
+        - Handles all error cases with reconnection
+        """
         if not self.connected or self.trading_suite is None:
             logger.error("Cannot place order: not connected")
             return None
+        
+        # PREVENTIVE #1: Validate SDK client state before order placement
+        # This catches stale clients and prevents order placement failures
+        if not self._validate_sdk_client_state():
+            logger.warning("[ORDER] SDK client validation failed - reconnecting to prevent order issues")
+            self.disconnect()
+            if not self.connect():
+                logger.error("[ORDER] Reconnect after validation failure failed - cannot place order")
+                return None
+            logger.info("[ORDER] Reconnected successfully after validation check")
         
         # CRITICAL FIX: Verify connection is still alive before placing order
         # This prevents errors when websocket has silently disconnected
