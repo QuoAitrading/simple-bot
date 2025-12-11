@@ -439,7 +439,9 @@ def run_backtest(args: argparse.Namespace) -> Dict[str, Any]:
                     
                 # If bot closed position (active=False), close it in backtest engine too
                 elif not pos.get('active') and engine.current_position is not None:
-                    exit_price = bar['close']  # Use bar close price for exit
+                    # Use actual exit price from bot state (not bar close!)
+                    # This ensures P&L matches the fixed 12-tick target/stop
+                    exit_price = state[symbol].get('last_exit_price', bar['close'])
                     exit_time = timestamp
                     # Use the last captured exit reason
                     engine._close_position(exit_time, exit_price, last_exit_reason)

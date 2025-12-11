@@ -6560,8 +6560,9 @@ def execute_exit(symbol: str, exit_price: float, reason: str) -> None:
     except Exception as e:
         pass
     
-    # Store exit reason in state for backtest tracking (position gets reset)
+    # Store exit reason and price in state for backtest tracking (position gets reset)
     state[symbol]["last_exit_reason"] = reason
+    state[symbol]["last_exit_price"] = exit_price  # Actual exit price for accurate P&L
     position["exit_reason"] = reason
     
     # Log time-based exits with detailed audit trail
