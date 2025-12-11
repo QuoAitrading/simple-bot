@@ -5,32 +5,34 @@ Event-driven bot that trades price inefficiencies (Fair Value Gaps) in the direc
 THE EDGE:
 Identify trend direction using Break of Structure (BOS), then trade mean reversion fills
 into Fair Value Gaps (FVGs). When price leaves gaps due to fast movement, wait for the
-fill and scalp the reversion with FIXED 12-tick stops and targets.
+fill and scalp the reversion with adaptive risk management and quick profit locks.
 
 STRATEGY FLOW:
 1. DETECT BOS - Price breaks above swing high (bullish) or below swing low (bearish)
 2. IDENTIFY FVG - 3-candle gap where bar1.high < bar3.low (bullish) or bar1.low > bar3.high (bearish)
 3. ENTRY TRIGGER - Price fills into FVG zone (touches gap from the other side)
 4. MARKET ORDER - Immediate entry at market price
-5. STOP LOSS - ALWAYS 12 ticks from entry (fixed, never changes)
-6. PROFIT TARGET - ALWAYS 12 ticks from entry (fixed, never changes)
+5. STOP LOSS - Default 12 ticks OR GUI max loss per trade (whichever is smaller)
+6. PROFIT TARGET - ALWAYS 12 ticks from entry
 7. PROFIT LOCK - After 8 ticks profit, move stop to entry +3 ticks (locks in profit)
 
-ORDER EXECUTION (3 ORDERS TOTAL):
+ORDER EXECUTION (3 ACTIVE ORDERS MAX):
 1. Market Order Entry - Executed immediately
-2. Initial Stop Loss - 12 ticks from entry (placed immediately)
-3. Profit Target - 12 ticks from entry (placed immediately)
+2. Initial Stop Loss - 12 ticks OR GUI max loss (whichever is smaller)
+3. Profit Target - 12 ticks from entry (always)
 4. Profit Lock Stop - Entry +3 ticks (replaces initial stop after 8 ticks profit)
 
-FIXED 12-TICK STOP LOSS & PROFIT TARGET:
-- Stop Loss: ALWAYS 12 ticks from entry (NEVER changes based on GUI setting)
-- Profit Target: ALWAYS 12 ticks from entry
+ADAPTIVE STOP LOSS & FIXED PROFIT TARGET:
+- Stop Loss: 12 ticks OR GUI "Max Loss Per Trade" (uses smaller value)
+  * RESPECTS GUI max loss if less than 12 ticks for the symbol
+  * Adapts to user's risk tolerance automatically
+- Profit Target: ALWAYS 12 ticks from entry (fixed)
 - Profit Lock: After 8 ticks profit → Stop moves to entry +3 ticks
   * Locks in 3 tick profit to protect against reversals
   * Quick scalping strategy - lock profits and get out fast
 - Order Placement: Immediate market order entry with stop & target orders placed instantly
 - Symbol Agnostic: AI knows tick values for all symbols (ES, NQ, MES, MNQ, CL, GC, etc.)
-- Safety: GUI "Max Loss Per Trade" is a warning only, doesn't override 12-tick rule
+- Per Contract Risk: Same stop/target distance regardless of contract count
 
 ONE TRADE AT A TIME:
 - Bot only enters when flat (no existing position)
@@ -4111,26 +4113,36 @@ def calculate_position_size(symbol: str, side: str, entry_price: float, rl_confi
         tick_size = CONFIG.get("tick_size", 0.25)
         tick_value = CONFIG.get("tick_value", 12.50)
     
-    # STEP 1: Calculate FIXED 12-tick stop loss (ALWAYS)
-    # Stop is ALWAYS 12 ticks from entry - this never changes
-    # GUI max loss per trade is a safety cap only (checked later)
-    fixed_stop_ticks = FIXED_STOP_LOSS_TICKS  # Always 12 ticks
+    # STEP 1: Calculate stop loss - respect GUI max loss if less than 12 ticks
+    # Start with 12 ticks as the default
+    default_stop_ticks = FIXED_STOP_LOSS_TICKS  # Default: 12 ticks
     
     # Calculate risk in dollars for 12-tick stop
-    risk_dollars_12_tick = fixed_stop_ticks * tick_value
+    risk_dollars_12_tick = default_stop_ticks * tick_value
     
-    logger.info(f"Fixed 12-tick stop: {fixed_stop_ticks:.0f} ticks (${risk_dollars_12_tick:.2f})")
+    # Calculate how many ticks the GUI setting allows
+    max_stop_ticks = max_stop_dollars / tick_value
+    
+    # RESPECT GUI MAX LOSS: Use the smaller of the two
+    # If GUI max loss < 12 ticks, use GUI setting (that's still a feature!)
+    if max_stop_ticks < default_stop_ticks:
+        actual_stop_ticks = max_stop_ticks
+        logger.info(f"[GUI OVERRIDE] Using max loss per trade: {actual_stop_ticks:.1f} ticks (${max_stop_dollars:.2f})")
+        logger.info(f"[GUI OVERRIDE] Default 12-tick stop would be ${risk_dollars_12_tick:.2f}")
+    else:
+        actual_stop_ticks = default_stop_ticks
+        logger.info(f"Fixed 12-tick stop: {actual_stop_ticks:.0f} ticks (${risk_dollars_12_tick:.2f})")
     
     # STEP 2: Convert ticks to price distance for this symbol
     # Formula: ticks * tick_size = price distance
     # Example (ES): 12 ticks * 0.25 = 3.00 points
     # Example (NQ): 12 ticks * 0.25 = 3.00 points
     # Example (CL): 12 ticks * 0.01 = 0.12 points
-    stop_distance = fixed_stop_ticks * tick_size  # Convert ticks to price distance
+    stop_distance = actual_stop_ticks * tick_size  # Convert ticks to price distance
     
     # STEP 3: Calculate stop price from entry price
-    # - Long: Stop 12 ticks below entry
-    # - Short: Stop 12 ticks above entry
+    # - Long: Stop X ticks below entry
+    # - Short: Stop X ticks above entry
     if side == "long":
         stop_price = entry_price - stop_distance
     else:  # short
@@ -4143,13 +4155,7 @@ def calculate_position_size(symbol: str, side: str, entry_price: float, rl_confi
     stop_distance = abs(entry_price - stop_price)
     ticks_at_risk = stop_distance / tick_size
     
-    # STEP 4: SAFETY CHECK - Verify 12-tick risk doesn't exceed GUI max loss
-    # If it does, warn user but DON'T skip trade (GUI setting might be wrong)
-    if risk_dollars_12_tick > max_stop_dollars:
-        logger.warning(f"⚠️ WARNING: 12-tick stop (${risk_dollars_12_tick:.2f}) exceeds GUI max loss (${max_stop_dollars:.2f})")
-        logger.warning(f"⚠️ Trade will proceed with 12-tick stop - update GUI setting to at least ${risk_dollars_12_tick:.2f}")
-    
-    # Calculate actual risk per contract in dollars (based on 12 ticks)
+    # Calculate actual risk per contract in dollars
     risk_per_contract = ticks_at_risk * tick_value
     
     # STEP 4: Use fixed contracts from GUI (no dynamic scaling)
