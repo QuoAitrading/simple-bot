@@ -742,7 +742,20 @@ class BrokerSDKImplementation(BrokerInterface):
         self.connected = False
     
     async def _disconnect_async(self) -> None:
-        """Asynchronously disconnect and properly close httpx connections."""
+        """
+        Asynchronously disconnect and properly close httpx connections.
+        
+        CRITICAL FIX: This method explicitly closes httpx HTTP/2 connection pools
+        to prevent the 'NoneType' object has no attribute 'send' error.
+        
+        The project_x_py SDK uses httpx clients with connection pools tied to the
+        event loop. When asyncio.run() closes the event loop, these connections
+        become invalid but still referenced. This method properly closes them.
+        
+        NOTE: This relies on internal SDK structure (_client attribute). If the
+        SDK changes its internal implementation, this may need updates. The code
+        uses hasattr() checks to be defensive against such changes.
+        """
         # Disconnect WebSocket streamer first
         if self.websocket_streamer:
             try:
@@ -756,6 +769,8 @@ class BrokerSDKImplementation(BrokerInterface):
         if self.sdk_client:
             try:
                 # Close the httpx client inside the SDK (if it has an aclose method)
+                # Uses private attribute _client - this is necessary as SDK doesn't
+                # provide a public cleanup method
                 if hasattr(self.sdk_client, '_client') and hasattr(self.sdk_client._client, 'aclose'):
                     await self.sdk_client._client.aclose()
                 # Also try direct aclose on sdk_client
@@ -768,6 +783,7 @@ class BrokerSDKImplementation(BrokerInterface):
         if self.trading_suite:
             try:
                 # Close the project_x client inside trading suite
+                # Uses private attributes - necessary as SDK doesn't provide public cleanup
                 if hasattr(self.trading_suite, 'project_x') and hasattr(self.trading_suite.project_x, '_client'):
                     if hasattr(self.trading_suite.project_x._client, 'aclose'):
                         await self.trading_suite.project_x._client.aclose()
@@ -1188,7 +1204,6 @@ class BrokerSDKImplementation(BrokerInterface):
                 
                 # Wait longer for connections to fully close and event loops to clean up
                 # This is critical to avoid the same error on reconnect
-                import time
                 time.sleep(3)
                 
                 # Try reconnecting up to 3 times
@@ -1547,7 +1562,6 @@ class BrokerSDKImplementation(BrokerInterface):
                 self.disconnect()
                 
                 # Wait longer for connections to fully close and event loops to clean up
-                import time
                 time.sleep(3)
                 
                 if self.connect():
