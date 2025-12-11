@@ -1132,12 +1132,26 @@ class BrokerSDKImplementation(BrokerInterface):
             # Handle HTTP/2 connection drop - the connection died mid-request
             # This is recoverable by reconnecting and retrying once
             if "'NoneType' object has no attribute 'send'" in error_str:
-                logger.warning("[ORDER] HTTP/2 connection dropped during order - attempting reconnect and retry")
+                logger.warning("[ORDER] HTTP/2 connection dropped during order - attempting full reconnect")
                 
-                # Force disconnect and reconnect
+                # Force disconnect with delay to let resources clean up
                 self.disconnect()
-                if self.connect():
-                    logger.info("[ORDER] Reconnected successfully - retrying order")
+                
+                # Wait for connections to fully close
+                import time
+                time.sleep(2)
+                
+                # Try reconnecting up to 3 times
+                reconnected = False
+                for attempt in range(3):
+                    logger.info(f"[ORDER] Reconnect attempt {attempt+1}/3...")
+                    if self.connect():
+                        reconnected = True
+                        logger.info("[ORDER] Reconnected successfully - retrying order")
+                        break
+                    time.sleep(1)
+                
+                if reconnected:
                     try:
                         # Retry the order once
                         contract_id = self._get_contract_id_sync(symbol)
@@ -1186,7 +1200,8 @@ class BrokerSDKImplementation(BrokerInterface):
                     except Exception as retry_err:
                         logger.error(f"[ORDER] Retry also failed: {retry_err}")
                 else:
-                    logger.error("[ORDER] Reconnect failed - cannot retry order")
+                    logger.error("[ORDER] All 3 reconnect attempts failed - cannot place order")
+                    logger.error("[ORDER] Please restart the bot to reset broker connection")
             
             logger.error(f"Error placing market order: {e}")
             import traceback
