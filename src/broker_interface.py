@@ -998,12 +998,13 @@ class BrokerSDKImplementation(BrokerInterface):
         it creates new event loops. The httpx clients in trading_suite become stale because they're
         tied to closed event loops, causing 'NoneType' object has no attribute 'send' errors.
         
-        This method recreates the trading_suite if needed to bind it to the current event loop.
+        This method recreates the trading_suite to bind it to the current event loop.
         
         Returns:
             bool: True if trading_suite is ready, False on error
         """
         if not self.sdk_client or not self.connected:
+            logger.debug("[ORDER] Cannot ensure trading_suite ready - not connected")
             return False
         
         try:
@@ -1011,60 +1012,43 @@ class BrokerSDKImplementation(BrokerInterface):
             from project_x_py import TradingSuite, TradingSuiteConfig
             from project_x_py.realtime.core import ProjectXRealtimeClient
             
-            # Get current event loop
-            current_loop = asyncio.get_running_loop()
+            # Get current event loop to check if we need to reinitialize
+            try:
+                current_loop = asyncio.get_running_loop()
+            except RuntimeError:
+                logger.error("[ORDER] No running event loop - cannot initialize trading_suite")
+                return False
             
-            # Check if trading_suite exists and if its httpx client is bound to a different/closed loop
-            needs_reinit = False
+            # Simple approach: Always reinitialize trading_suite for the current event loop
+            # This is lightweight and avoids relying on httpx internal implementation details
+            logger.debug("[ORDER] Reinitializing trading_suite for current event loop")
             
-            if self.trading_suite is None:
-                needs_reinit = True
-            elif hasattr(self.trading_suite, 'project_x') and hasattr(self.trading_suite.project_x, '_client'):
-                # Check if the httpx client has a valid transport bound to current loop
-                httpx_client = self.trading_suite.project_x._client
-                if httpx_client is None:
-                    needs_reinit = True
-                elif hasattr(httpx_client, '_transport'):
-                    transport = httpx_client._transport
-                    if transport is None:
-                        needs_reinit = True
-                    # Check if transport's loop matches current loop (if accessible)
-                    elif hasattr(transport, '_pool'):
-                        pool = transport._pool
-                        if hasattr(pool, '_loop') and pool._loop != current_loop:
-                            needs_reinit = True
+            # Get fresh JWT token and account info
+            jwt_token = self.sdk_client.get_session_token()
+            account_info = self.sdk_client.get_account_info()
+            account_id = str(getattr(account_info, 'id', getattr(account_info, 'account_id', '')))
             
-            # Reinitialize trading_suite if needed
-            if needs_reinit:
-                logger.debug("[ORDER] Reinitializing trading_suite for current event loop")
-                
-                # Get fresh JWT token and account info
-                jwt_token = self.sdk_client.get_session_token()
-                account_info = self.sdk_client.get_account_info()
-                account_id = str(getattr(account_info, 'id', getattr(account_info, 'account_id', '')))
-                
-                if jwt_token and account_id:
-                    # Create new realtime client bound to current loop
-                    realtime_client = ProjectXRealtimeClient(
-                        jwt_token=jwt_token,
-                        account_id=account_id
-                    )
-                    
-                    # Recreate trading_suite bound to current loop
-                    self.trading_suite = TradingSuite(
-                        client=self.sdk_client,
-                        realtime_client=realtime_client,
-                        config=TradingSuiteConfig(instrument=self.instrument)
-                    )
-                    logger.debug("[ORDER] Trading suite reinitialized successfully")
-                else:
-                    logger.error("[ORDER] Cannot reinitialize trading_suite - missing JWT or account ID")
-                    return False
+            if not jwt_token or not account_id:
+                logger.error("[ORDER] Cannot reinitialize trading_suite - missing JWT token or account ID")
+                return False
             
+            # Create new realtime client bound to current loop
+            realtime_client = ProjectXRealtimeClient(
+                jwt_token=jwt_token,
+                account_id=account_id
+            )
+            
+            # Recreate trading_suite bound to current loop
+            self.trading_suite = TradingSuite(
+                client=self.sdk_client,
+                realtime_client=realtime_client,
+                config=TradingSuiteConfig(instrument=self.instrument)
+            )
+            logger.debug("[ORDER] Trading suite reinitialized successfully")
             return True
             
         except Exception as e:
-            logger.error(f"[ORDER] Error ensuring trading_suite ready: {e}")
+            logger.error(f"[ORDER] Failed to reinitialize trading_suite: {e}")
             return False
     
     def get_account_equity(self) -> float:
