@@ -4335,21 +4335,31 @@ def execute_entry(symbol: str, side: str, entry_price: float) -> None:
         logger.info(f"  Time: {get_current_time().strftime('%Y-%m-%d %H:%M:%S %Z')}")
         logger.info(f"  VWAP: ${state[symbol]['vwap']:.2f}")
         
-        # Show suggested stop and target (using fixed 12-tick strategy)
+        # Show suggested stop and target (adaptive: 12 ticks OR GUI max loss, whichever is smaller)
         tick_size = CONFIG["tick_size"]
-        fixed_stop_ticks = FIXED_STOP_LOSS_TICKS  # 12 ticks
-        fixed_target_ticks = FIXED_PROFIT_TARGET_TICKS  # 12 ticks
+        tick_value = CONFIG.get("tick_value", 12.50)
+        max_stop_dollars = CONFIG.get("max_stop_loss_dollars", DEFAULT_MAX_STOP_LOSS_DOLLARS)
+        
+        # Calculate stop using same logic as live trading
+        default_stop_ticks = FIXED_STOP_LOSS_TICKS  # 12 ticks
+        max_stop_ticks = max_stop_dollars / tick_value
+        actual_stop_ticks = min(max_stop_ticks, default_stop_ticks)
+        
+        fixed_target_ticks = FIXED_PROFIT_TARGET_TICKS  # Always 12 ticks
         
         if side == "long":
-            suggested_stop = entry_price - (fixed_stop_ticks * tick_size)
+            suggested_stop = entry_price - (actual_stop_ticks * tick_size)
             suggested_target = entry_price + (fixed_target_ticks * tick_size)
-            logger.info(f"  Suggested Stop: ${suggested_stop:.2f} ({fixed_stop_ticks} ticks)")
+            logger.info(f"  Suggested Stop: ${suggested_stop:.2f} ({actual_stop_ticks:.1f} ticks)")
             logger.info(f"  Suggested Target: ${suggested_target:.2f} ({fixed_target_ticks} ticks)")
         else:
-            suggested_stop = entry_price + (fixed_stop_ticks * tick_size)
+            suggested_stop = entry_price + (actual_stop_ticks * tick_size)
             suggested_target = entry_price - (fixed_target_ticks * tick_size)
-            logger.info(f"  Suggested Stop: ${suggested_stop:.2f} ({fixed_stop_ticks} ticks)")
+            logger.info(f"  Suggested Stop: ${suggested_stop:.2f} ({actual_stop_ticks:.1f} ticks)")
             logger.info(f"  Suggested Target: ${suggested_target:.2f} ({fixed_target_ticks} ticks)")
+        
+        if actual_stop_ticks < default_stop_ticks:
+            logger.info(f"  Note: Using GUI max loss (${max_stop_dollars:.2f}) instead of 12-tick default")
         
         logger.info(f"")
         logger.info(f"  ≡ƒÄ» SHADOW MODE: Signal shown - No automatic execution")
@@ -4630,15 +4640,18 @@ def execute_entry(symbol: str, side: str, entry_price: float) -> None:
     time_stop_enabled = CONFIG.get("time_stop_enabled", False)
     
     logger.info(f"")
-    logger.info(f"  📊 FIXED 12-TICK STOP & TARGET STRATEGY")
+    logger.info(f"  📊 ADAPTIVE SCALPING STRATEGY")
     logger.info(f"")
     logger.info(f"  Stop Loss:")
-    logger.info(f"    Rule: Fixed 12 ticks from entry (for all symbols)")
+    if stop_distance_ticks < 12:
+        logger.info(f"    Rule: GUI Max Loss Override (${abs(actual_fill_price - stop_price):.2f} < 12-tick default)")
+    else:
+        logger.info(f"    Rule: Fixed 12 ticks from entry (for all symbols)")
     logger.info(f"    Stop Distance: {stop_distance_ticks:.1f} ticks (${abs(actual_fill_price - stop_price):.2f})")
     logger.info(f"    Stop Price: ${stop_price:.2f}")
     logger.info(f"")
     logger.info(f"  Profit Target:")
-    logger.info(f"    Rule: Fixed 12 ticks from entry (1:1 risk-reward ratio)")
+    logger.info(f"    Rule: Fixed 12 ticks from entry (always)")
     logger.info(f"    Target Distance: {profit_target_ticks:.1f} ticks (${profit_target_distance:.2f})")
     logger.info(f"    Target Price: ${profit_target_price:.2f}")
     logger.info(f"")
