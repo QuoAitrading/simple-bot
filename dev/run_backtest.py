@@ -558,23 +558,55 @@ def main():
         clean, formatted output that's separate from the logging infrastructure.
         This allows approved signals to appear inline with progress updates.
         """
+        def __init__(self):
+            super().__init__()
+            self.last_date_shown = None
+            
         def filter(self, record):
             # Track RL signals for the reporter
             msg = record.getMessage()
+            
+            # FIRST: Suppress spam messages regardless of level
+            if 'APPROACHING DAILY LOSS LIMIT' in msg:
+                return False  # Suppress daily loss spam
+            elif 'SAFETY NET' in msg:
+                return False  # Suppress safety net messages
+            elif 'Order validation failed' in msg:
+                return False  # Suppress order validation spam
+            elif 'Daily loss at' in msg:
+                return False  # Suppress daily loss percentage messages
+            elif 'STOPPING TRADING' in msg:
+                return False  # Suppress stop trading messages
+            elif 'daily reset' in msg:
+                return False  # Suppress daily reset messages
+            elif '=' * 10 in msg:  # Separator lines
+                return False  # Suppress separator lines
+            
+            # SECOND: Handle signals
             if 'SIGNAL APPROVED' in msg:
                 reporter.record_signal(approved=True)
-                # Show approved signals in clean format (direct print for cleaner output)
-                print(f"  ✓ {msg}")
+                # Show approved signals (message already has [+] prefix)
+                print(f"\n  {msg}")
                 return False  # Suppress original output
-            elif 'Signal Declined' in msg:
+            elif 'Signal Declined' in msg or 'DECLINED' in msg:
                 reporter.record_signal(approved=False)
                 return False  # Suppress output - don't show rejected signals
             elif 'Exploring' in msg:
                 return False  # Suppress exploration messages
+            elif 'confidence' in msg.lower() and 'threshold' in msg.lower():
+                return False  # Suppress confidence threshold messages
             elif 'LONG SIGNAL' in msg or 'SHORT SIGNAL' in msg:
-                return False  # Suppress signal detection messages
-            # Allow WARNING and above
-            return record.levelno >= logging.WARNING
+                # Only show if it's an approved one
+                if 'APPROVED' in msg:
+                    print(f"\n  {msg}")
+                return False  # Suppress all raw signal detection messages
+            elif 'pattern' in msg.lower() or 'capitulation' in msg.lower():
+                return False  # Suppress pattern detection noise
+            elif '[MARKET STATE]' in msg:
+                return False  # Suppress market state logs
+            
+            # Allow ERROR level only (suppress all warnings too)
+            return record.levelno >= logging.ERROR
     
     # Add filter to quotrading_engine logger
     qte_logger = logging.getLogger('quotrading_engine')

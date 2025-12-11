@@ -148,15 +148,20 @@ class BacktestReporter:
                 date_str = ""
                 if current_timestamp:
                     if hasattr(current_timestamp, 'strftime'):
-                        date_str = f" | {current_timestamp.strftime('%Y-%m-%d %H:%M')}"
+                        date_str = current_timestamp.strftime('%Y-%m-%d %H:%M')
                     elif isinstance(current_timestamp, str) and len(current_timestamp) >= self.TIMESTAMP_DATE_LENGTH:
                         # Use first TIMESTAMP_DATE_LENGTH chars for ISO date format
-                        date_str = f" | {current_timestamp[:self.TIMESTAMP_DATE_LENGTH]}"
+                        date_str = current_timestamp[:self.TIMESTAMP_DATE_LENGTH]
                 
-                # Clean progress format with date
-                print(f"Progress: [{pct:5.1f}%] {bars_processed:,}/{total_bars:,} bars{date_str}", end='\r')
+                # Clean progress format with date prominently shown
+                progress_bar = "#" * int(pct // 5) + "-" * (20 - int(pct // 5))
+                if date_str:
+                    print(f"[{date_str}] [{progress_bar}] {pct:5.1f}% | {bars_processed:,}/{total_bars:,} bars")
+                else:
+                    print(f"[{progress_bar}] {pct:5.1f}% | {bars_processed:,}/{total_bars:,} bars")
+                    
                 if bars_processed == total_bars:
-                    print()  # New line when complete
+                    pass  # Already printed with newline
             
     def print_summary(self):
         """Print comprehensive backtest summary"""

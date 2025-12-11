@@ -4,7 +4,6 @@
   "broker_token": "51g0wn1GjicXbwg/oh4DDKWSqRraRLGXWtfgc5MVMNM=",
   "symbols": [
     "ES",
-    "MES",
     "NQ"
   ],
   "output_dir": "c:\\Users\\kevin\\Downloads\\simple-bot\\data\\historical_data"
