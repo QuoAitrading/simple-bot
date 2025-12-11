@@ -1035,6 +1035,37 @@ class BrokerSDKImplementation(BrokerInterface):
             if self.trading_suite is None or self._trading_suite_loop_id != current_loop_id:
                 logger.debug(f"[ORDER] Reinitializing trading_suite for current event loop (old_id={self._trading_suite_loop_id}, new_id={current_loop_id})")
                 
+                # CRITICAL: Clean up old trading_suite and realtime client before creating new one
+                # This prevents multiple active sessions that could cause "knocked out" issues
+                if self.trading_suite is not None:
+                    try:
+                        # Try to close the realtime client if it has a close/disconnect method
+                        if hasattr(self.trading_suite, 'realtime_client'):
+                            realtime = self.trading_suite.realtime_client
+                            if hasattr(realtime, 'close'):
+                                try:
+                                    await realtime.close()
+                                except Exception:
+                                    pass
+                            elif hasattr(realtime, 'disconnect'):
+                                try:
+                                    await realtime.disconnect()
+                                except Exception:
+                                    pass
+                        
+                        # Close httpx client in trading_suite to free resources
+                        if hasattr(self.trading_suite, 'project_x') and hasattr(self.trading_suite.project_x, '_client'):
+                            if hasattr(self.trading_suite.project_x._client, 'aclose'):
+                                try:
+                                    await self.trading_suite.project_x._client.aclose()
+                                except Exception:
+                                    pass
+                    except Exception as cleanup_err:
+                        logger.debug(f"[ORDER] Error cleaning up old trading_suite: {cleanup_err}")
+                    
+                    # Clear the reference
+                    self.trading_suite = None
+                
                 # Get fresh JWT token and account info
                 jwt_token = self.sdk_client.get_session_token()
                 account_info = self.sdk_client.get_account_info()
