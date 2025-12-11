@@ -5,23 +5,26 @@ Event-driven bot that trades price inefficiencies (Fair Value Gaps) in the direc
 THE EDGE:
 Identify trend direction using Break of Structure (BOS), then trade mean reversion fills
 into Fair Value Gaps (FVGs). When price leaves gaps due to fast movement, wait for the
-fill and scalp the reversion with tight stops and 1:1 risk-reward.
+fill and scalp the reversion with quick profit locks.
 
 STRATEGY FLOW:
 1. DETECT BOS - Price breaks above swing high (bullish) or below swing low (bearish)
 2. IDENTIFY FVG - 3-candle gap where bar1.high < bar3.low (bullish) or bar1.low > bar3.high (bearish)
 3. ENTRY TRIGGER - Price fills into FVG zone (touches gap from the other side)
-4. STOP LOSS - Fixed 12 ticks from entry (automatic placement with market order)
-5. PROFIT TARGET - Fixed 12 ticks from entry (1:1 risk-reward ratio)
-6. SAFETY NET - GUI max loss per trade acts as a safety cap (must be >= 12 tick risk)
+4. STOP LOSS - Default 12 ticks OR GUI max loss per trade (whichever is smaller)
+5. PROFIT TARGET - Fixed 12 ticks from entry
+6. PROFIT LOCK - After 8 ticks profit, move stop to entry +3 ticks (locks in profit)
 
-FIXED STOP LOSS & PROFIT TARGET:
-- Stop Loss: Always 12 ticks from entry price
+SCALPING STOP LOSS & PROFIT TARGET:
+- Stop Loss: 12 ticks OR GUI "Max Loss Per Trade" (uses smaller value)
+  * If GUI setting < 12 ticks in dollars, uses GUI setting instead
+  * Adapts to user's risk tolerance automatically
 - Profit Target: Always 12 ticks from entry price
-- Risk-Reward: 1:1 ratio (12 ticks up, 12 ticks down)
+- Profit Lock: After 8 ticks profit → Move stop to entry +3 ticks
+  * Locks in 3 tick profit to protect against reversals
+  * Quick scalping strategy - lock profits and get out fast
 - Order Placement: Immediate market order entry with stop & target orders placed instantly
 - Symbol Agnostic: Works with all symbols (ES, NQ, MES, MNQ, CL, GC, etc.)
-- Safety Net: GUI "Max Loss Per Trade" setting must be >= 12 ticks * tick_value
 
 FVG FILTERS:
 - Size: 2-20 ticks (filters noise and extreme moves)
@@ -4097,21 +4100,36 @@ def calculate_position_size(symbol: str, side: str, entry_price: float, rl_confi
         tick_size = CONFIG.get("tick_size", 0.25)
         tick_value = CONFIG.get("tick_value", 12.50)
     
-    # STEP 1: Calculate fixed 12-tick stop loss
-    # All trades use the same 12-tick stop loss regardless of symbol
-    # This provides consistent risk across all instruments
-    fixed_stop_ticks = FIXED_STOP_LOSS_TICKS  # Always 12 ticks
+    # STEP 1: Calculate stop loss - use smaller of 12 ticks or max_loss_per_trade
+    # Start with 12 ticks as the default
+    default_stop_ticks = FIXED_STOP_LOSS_TICKS  # Default: 12 ticks
+    
+    # Calculate risk in dollars for 12-tick stop
+    risk_dollars_12_tick = default_stop_ticks * tick_value
+    
+    # If GUI max loss per trade is less than 12 ticks, use that instead
+    # Calculate how many ticks the GUI setting allows
+    max_stop_ticks = max_stop_dollars / tick_value
+    
+    # Use the smaller of the two
+    if max_stop_ticks < default_stop_ticks:
+        actual_stop_ticks = max_stop_ticks
+        logger.info(f"[GUI OVERRIDE] Using max loss per trade: {actual_stop_ticks:.1f} ticks (${max_stop_dollars:.2f})")
+        logger.info(f"[GUI OVERRIDE] Default 12-tick stop would be ${risk_dollars_12_tick:.2f}")
+    else:
+        actual_stop_ticks = default_stop_ticks
+        logger.info(f"Fixed 12-tick stop: {actual_stop_ticks:.0f} ticks (${risk_dollars_12_tick:.2f})")
     
     # STEP 2: Convert ticks to price distance for this symbol
     # Formula: ticks * tick_size = price distance
     # Example (ES): 12 ticks * 0.25 = 3.00 points
     # Example (NQ): 12 ticks * 0.25 = 3.00 points
     # Example (CL): 12 ticks * 0.01 = 0.12 points
-    stop_distance = fixed_stop_ticks * tick_size  # Convert ticks to price distance
+    stop_distance = actual_stop_ticks * tick_size  # Convert ticks to price distance
     
     # STEP 3: Calculate stop price from entry price
-    # - Long: Stop 12 ticks below entry
-    # - Short: Stop 12 ticks above entry
+    # - Long: Stop X ticks below entry
+    # - Short: Stop X ticks above entry
     if side == "long":
         stop_price = entry_price - stop_distance
     else:  # short
@@ -4123,20 +4141,6 @@ def calculate_position_size(symbol: str, side: str, entry_price: float, rl_confi
     # Recalculate actual stop distance after rounding
     stop_distance = abs(entry_price - stop_price)
     ticks_at_risk = stop_distance / tick_size
-    
-    # Calculate risk in dollars for this 12-tick stop
-    risk_dollars_12_tick = fixed_stop_ticks * tick_value
-    
-    # SAFETY NET: Check if 12-tick stop exceeds GUI max loss per trade
-    # If it does, the user needs to adjust their max_loss_per_trade setting
-    if risk_dollars_12_tick > max_stop_dollars:
-        logger.warning(f"[SAFETY NET] 12-tick stop (${risk_dollars_12_tick:.2f}) exceeds max loss per trade (${max_stop_dollars:.2f})")
-        logger.warning(f"[SAFETY NET] Cannot place trade - increase 'Max Loss Per Trade' in GUI to at least ${risk_dollars_12_tick:.2f}")
-        logger.warning(f"[SAFETY NET] Or reduce contract size to 0 contracts will be calculated")
-        # Return 0 contracts - trade will be skipped
-        return 0, stop_price
-    
-    logger.info(f"Fixed 12-tick stop: {fixed_stop_ticks:.0f} ticks (${risk_dollars_12_tick:.2f})")
     
     # Calculate actual risk per contract in dollars (based on 12 ticks)
     risk_per_contract = ticks_at_risk * tick_value
@@ -4674,6 +4678,9 @@ def execute_entry(symbol: str, side: str, entry_price: float) -> None:
         "partial_exit_history": [],
         # Advanced Exit Management - General
         "initial_risk_ticks": stop_distance_ticks,
+        # Scalping Profit Protection
+        "scalping_profit_locked": False,
+        "scalping_profit_lock_time": None,
     }
     
     # CRITICAL: IMMEDIATELY save position state to disk - NEVER forget we're in a trade!
@@ -4923,6 +4930,104 @@ def check_time_based_exits(symbol: str, current_bar: Dict[str, Any], position: D
         return "emergency_forced_flatten", get_flatten_price(symbol, side, current_bar["close"])
     
     return None, None
+
+
+# ============================================================================
+# SCALPING PROFIT PROTECTION: Lock in profits after 8 ticks
+# ============================================================================
+
+def check_scalping_profit_protection(symbol: str, current_price: float) -> None:
+    """
+    SCALPING STRATEGY: Move stop to breakeven +3 ticks after 8 ticks profit.
+    This locks in profits early and protects against quick reversals.
+    
+    Rules:
+    - Trigger: After 8 ticks profit (not 12 like standard breakeven)
+    - Action: Move stop to entry + 3 ticks (locks in 3 tick profit)
+    - Purpose: Quick scalping - lock profits and get out fast
+    
+    Args:
+        symbol: Instrument symbol
+        current_price: Current market price
+    """
+    
+    position = state[symbol]["position"]
+    
+    # Only process active positions that haven't had scalping protection activated yet
+    if not position["active"]:
+        return
+    
+    # Check if we already moved stop to protect profits
+    if position.get("scalping_profit_locked", False):
+        return
+    
+    side = position["side"]
+    entry_price = position["entry_price"]
+    tick_size, tick_value = get_symbol_tick_specs(symbol)
+    
+    # SCALPING RULE: Activate after 8 ticks profit
+    profit_trigger_ticks = 8
+    
+    # Calculate current profit in ticks
+    if side == "long":
+        profit_ticks = (current_price - entry_price) / tick_size
+    else:  # short
+        profit_ticks = (entry_price - current_price) / tick_size
+    
+    # Check if we've hit the 8-tick profit threshold
+    if profit_ticks < profit_trigger_ticks:
+        return  # Not enough profit yet
+    
+    # Calculate new stop price: Entry + 3 ticks
+    profit_lock_offset_ticks = 3
+    
+    if side == "long":
+        new_stop_price = entry_price + (profit_lock_offset_ticks * tick_size)
+    else:  # short
+        new_stop_price = entry_price - (profit_lock_offset_ticks * tick_size)
+    
+    new_stop_price = round_to_tick(new_stop_price)
+    
+    # Place new stop order FIRST for continuous protection
+    stop_side = "SELL" if side == "long" else "BUY"
+    contracts = position["quantity"]
+    new_stop_order = place_stop_order(symbol, stop_side, contracts, new_stop_price)
+    
+    if new_stop_order:
+        # Cancel old stop order
+        old_stop_order_id = position.get("stop_order_id")
+        if old_stop_order_id:
+            cancel_success = cancel_order(symbol, old_stop_order_id)
+            if not cancel_success:
+                logger.warning(f"⚠️ New profit-lock stop active but failed to cancel old stop {old_stop_order_id}")
+        
+        # Update position tracking
+        position["scalping_profit_locked"] = True
+        position["scalping_profit_lock_time"] = get_current_time()
+        original_stop = position.get("original_stop_price", position["stop_price"])
+        position["stop_price"] = new_stop_price
+        if new_stop_order.get("order_id"):
+            position["stop_order_id"] = new_stop_order.get("order_id")
+        
+        # Calculate profit locked in
+        profit_locked_ticks = (new_stop_price - entry_price) / tick_size if side == "long" else (entry_price - new_stop_price) / tick_size
+        profit_locked_dollars = profit_locked_ticks * tick_value * contracts
+        
+        # Log activation
+        logger.info("=" * 60)
+        logger.info("💰 SCALPING PROFIT LOCK ACTIVATED")
+        logger.info("=" * 60)
+        logger.info(f"  Trigger: {profit_trigger_ticks} ticks profit reached")
+        logger.info(f"  Current Profit: {profit_ticks:.1f} ticks")
+        logger.info(f"  Original Stop: ${original_stop:.2f}")
+        logger.info(f"  New Stop: ${new_stop_price:.2f} (entry + {profit_lock_offset_ticks} ticks)")
+        logger.info(f"  Profit Locked: ${profit_locked_dollars:.2f}")
+        logger.info(f"  Strategy: Quick scalping - lock profits early")
+        logger.info("=" * 60)
+        
+        # Save state
+        if recovery_manager:
+            recovery_manager.save_state(state)
 
 
 # ============================================================================
@@ -5823,6 +5928,10 @@ def check_exit_conditions(symbol: str) -> None:
     if target_hit:
         execute_exit(symbol, price, "profit_target")
         return
+    
+    # SCALPING PROFIT PROTECTION: Move stop to breakeven +3 ticks after 8 ticks profit
+    # This locks in profits and protects against reversals
+    check_scalping_profit_protection(symbol, current_bar["close"])
     
     # BOS+FVG strategy doesn't use regime detection - removed for performance
     
