@@ -773,8 +773,8 @@ class BrokerSDKImplementation(BrokerInterface):
                 # provide a public cleanup method
                 if hasattr(self.sdk_client, '_client') and hasattr(self.sdk_client._client, 'aclose'):
                     await self.sdk_client._client.aclose()
-                # Also try direct aclose on sdk_client
-                elif hasattr(self.sdk_client, 'aclose'):
+                # Also try direct aclose on sdk_client (if _client doesn't exist or doesn't have aclose)
+                if hasattr(self.sdk_client, 'aclose'):
                     await self.sdk_client.aclose()
             except Exception as e:
                 logger.debug(f"Error closing SDK httpx client: {e}")
@@ -1740,7 +1740,6 @@ class BrokerSDKImplementation(BrokerInterface):
                         timestamp_str = quote.get('timestamp', '')
                         try:
                             from datetime import datetime
-                            import time
                             if timestamp_str:
                                 dt = datetime.fromisoformat(timestamp_str.replace('Z', '+00:00'))
                                 timestamp = int(dt.timestamp() * 1000)
@@ -1939,7 +1938,6 @@ class BrokerSDKImplementation(BrokerInterface):
     
     def _check_circuit_breaker_cooldown(self) -> None:
         """Check if circuit breaker should auto-reset after cooldown."""
-        import time
         if self.circuit_breaker_open and self.circuit_breaker_reset_time:
             current_time = time.time()
             if current_time >= self.circuit_breaker_reset_time:
@@ -1948,7 +1946,6 @@ class BrokerSDKImplementation(BrokerInterface):
     
     def _record_failure(self) -> None:
         """Record a failure and potentially open circuit breaker."""
-        import time
         self.failure_count += 1
         if self.failure_count >= self.circuit_breaker_threshold:
             if not self.circuit_breaker_open:
