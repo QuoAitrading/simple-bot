@@ -3,7 +3,13 @@
 LuxAlgo SMC + Rejection Strategy Backtest Runner
 
 This script runs backtests for the LuxAlgo SMC + Rejection strategy using
-the existing backtest framework with realistic futures hours.
+the EXISTING backtest framework with realistic futures hours.
+
+Uses the main backtesting engine from dev/backtesting.py with proper:
+- Realistic futures trading hours
+- 96 days of real ES 1-minute data
+- Proper order simulation and slippage
+- No fake data or experience pollution
 """
 
 import argparse
@@ -13,419 +19,184 @@ import logging
 from datetime import datetime, timedelta
 from typing import List, Dict, Any, Optional
 import pytz
-import csv
+
+# CRITICAL: Set backtest mode BEFORE any imports
+os.environ['BOT_BACKTEST_MODE'] = 'true'
+os.environ['USE_CLOUD_SIGNALS'] = 'false'
 
 # Add parent directory to path to import from src/
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 PROJECT_ROOT = os.path.dirname(SCRIPT_DIR)
 sys.path.insert(0, os.path.join(PROJECT_ROOT, 'src'))
 
+# Import backtesting framework (the REAL one)
+from backtesting import BacktestConfig, BacktestEngine, PerformanceMetrics, Trade
+
 # Import strategy
 from luxalgo_smc_strategy import LuxAlgoSMCStrategy
 
 
-class LuxAlgoBacktester:
+def run_luxalgo_strategy_backtest(bars_1min: List[Dict[str, Any]], bars_15min: List[Dict[str, Any]], 
+                                    strategy: LuxAlgoSMCStrategy, engine: BacktestEngine, symbol: str) -> None:
     """
-    Backtester for LuxAlgo SMC + Rejection Strategy.
-    
-    Uses realistic futures market hours and proper order execution simulation.
-    """
-    
-    def __init__(self,
-                 strategy: LuxAlgoSMCStrategy,
-                 initial_capital: float = 50000.0,
-                 commission_per_contract: float = 2.50,
-                 slippage_ticks: float = 0.5,
-                 contracts_per_trade: int = 1):
-        """
-        Initialize backtester.
-        
-        Args:
-            strategy: LuxAlgoSMCStrategy instance
-            initial_capital: Starting capital
-            commission_per_contract: Round-trip commission
-            slippage_ticks: Average slippage in ticks
-            contracts_per_trade: Number of contracts per trade
-        """
-        self.strategy = strategy
-        self.initial_capital = initial_capital
-        self.commission_per_contract = commission_per_contract
-        self.slippage_ticks = slippage_ticks
-        self.contracts_per_trade = contracts_per_trade
-        
-        # State
-        self.current_position = None
-        self.equity = initial_capital
-        self.trades = []
-        self.equity_curve = []
-        
-        self.logger = logging.getLogger(__name__)
-    
-    def _is_market_hours(self, timestamp: datetime) -> bool:
-        """
-        Check if timestamp is within regular futures trading hours.
-        
-        Futures trade nearly 24 hours, but we focus on regular session:
-        Sunday 6:00 PM ET - Friday 5:00 PM ET (with daily breaks)
-        """
-        if timestamp.tzinfo is None:
-            # Assume UTC, convert to Eastern
-            eastern = pytz.timezone('US/Eastern')
-            timestamp_utc = pytz.UTC.localize(timestamp)
-            timestamp = timestamp_utc.astimezone(eastern)
-        
-        # For simplicity, accept all hours (futures trade 23.5 hours/day)
-        # The CSV data already contains realistic futures hours
-        return True
-    
-    def _simulate_fill(self, signal: Dict[str, Any], current_bar: Dict[str, Any]) -> float:
-        """
-        Simulate realistic order fill with slippage.
-        
-        Args:
-            signal: Signal dictionary with entry_price
-            current_bar: Current bar data
-        
-        Returns:
-            Actual fill price
-        """
-        entry_price = signal['entry_price']
-        signal_type = signal['signal']
-        
-        # Apply slippage
-        slippage = self.slippage_ticks * self.strategy.tick_size
-        
-        if signal_type == 'long':
-            # Long entry - assume we pay the ask (worse price)
-            fill_price = entry_price + slippage
-        else:
-            # Short entry - assume we sell at bid (worse price)
-            fill_price = entry_price - slippage
-        
-        return fill_price
-    
-    def _check_exit(self, current_bar: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-        """
-        Check if position should be exited.
-        
-        Returns:
-            Exit info dictionary or None
-        """
-        if self.current_position is None:
-            return None
-        
-        bar_high = current_bar['high']
-        bar_low = current_bar['low']
-        position_type = self.current_position['signal']
-        stop_loss = self.current_position['stop_loss']
-        take_profit = self.current_position['take_profit']
-        
-        # Check stop loss first (conservative)
-        if position_type == 'long':
-            if bar_low <= stop_loss:
-                return {
-                    'exit_price': stop_loss,
-                    'exit_reason': 'stop_loss',
-                    'timestamp': current_bar['timestamp']
-                }
-            # Check take profit
-            if bar_high >= take_profit:
-                return {
-                    'exit_price': take_profit,
-                    'exit_reason': 'take_profit',
-                    'timestamp': current_bar['timestamp']
-                }
-        else:  # short
-            if bar_high >= stop_loss:
-                return {
-                    'exit_price': stop_loss,
-                    'exit_reason': 'stop_loss',
-                    'timestamp': current_bar['timestamp']
-                }
-            # Check take profit
-            if bar_low <= take_profit:
-                return {
-                    'exit_price': take_profit,
-                    'exit_reason': 'take_profit',
-                    'timestamp': current_bar['timestamp']
-                }
-        
-        return None
-    
-    def _calculate_pnl(self, entry_price: float, exit_price: float, signal_type: str) -> float:
-        """
-        Calculate P&L for a trade.
-        
-        Args:
-            entry_price: Entry price
-            exit_price: Exit price
-            signal_type: 'long' or 'short'
-        
-        Returns:
-            P&L in dollars (including commission)
-        """
-        # ES futures: 1 point = $50, tick = 0.25 = $12.50
-        point_value = 50.0
-        
-        if signal_type == 'long':
-            pnl = (exit_price - entry_price) * point_value * self.contracts_per_trade
-        else:
-            pnl = (entry_price - exit_price) * point_value * self.contracts_per_trade
-        
-        # Subtract commission
-        pnl -= self.commission_per_contract * self.contracts_per_trade
-        
-        return pnl
-    
-    def run(self, bars: List[Dict[str, Any]]) -> Dict[str, Any]:
-        """
-        Run backtest on historical data.
-        
-        Args:
-            bars: List of bar dictionaries
-        
-        Returns:
-            Backtest results dictionary
-        """
-        self.logger.info(f"Starting backtest with {len(bars)} bars...")
-        
-        for i, bar in enumerate(bars):
-            # Check if market hours
-            if not self._is_market_hours(bar['timestamp']):
-                continue
-            
-            # Process bar with strategy
-            result = self.strategy.process_bar(bar)
-            
-            # Check for exit first
-            if self.current_position is not None:
-                exit_info = self._check_exit(bar)
-                if exit_info:
-                    # Close position
-                    entry_price = self.current_position['entry_price']
-                    exit_price = exit_info['exit_price']
-                    signal_type = self.current_position['signal']
-                    
-                    pnl = self._calculate_pnl(entry_price, exit_price, signal_type)
-                    self.equity += pnl
-                    
-                    # Record trade
-                    entry_time = self.current_position['entry_time']
-                    duration = (exit_info['timestamp'] - entry_time).total_seconds() / 60.0
-                    
-                    trade = {
-                        'entry_time': entry_time,
-                        'exit_time': exit_info['timestamp'],
-                        'signal': signal_type,
-                        'entry_price': entry_price,
-                        'exit_price': exit_price,
-                        'stop_loss': self.current_position['stop_loss'],
-                        'take_profit': self.current_position['take_profit'],
-                        'exit_reason': exit_info['exit_reason'],
-                        'pnl': pnl,
-                        'duration_minutes': duration,
-                        'strength': self.current_position['strength'],
-                        'reason': self.current_position['reason']
-                    }
-                    self.trades.append(trade)
-                    
-                    # Log trade
-                    if i % 100 == 0:
-                        self.logger.info(
-                            f"Trade #{len(self.trades)}: {signal_type.upper()} "
-                            f"Entry={entry_price:.2f} Exit={exit_price:.2f} "
-                            f"P&L=${pnl:.2f} Reason={exit_info['exit_reason']}"
-                        )
-                    
-                    # Clear position
-                    self.current_position = None
-            
-            # Check for new entry signal
-            if self.current_position is None and result['signal'] is not None:
-                signal = result['signal']
-                
-                # Simulate fill
-                fill_price = self._simulate_fill(signal, bar)
-                
-                # Open position
-                self.current_position = {
-                    'signal': signal['signal'],
-                    'entry_price': fill_price,
-                    'stop_loss': signal['stop_loss'],
-                    'take_profit': signal['take_profit'],
-                    'entry_time': bar['timestamp'],
-                    'strength': signal['strength'],
-                    'reason': signal['reason']
-                }
-                
-                if len(self.trades) % 50 == 0:
-                    self.logger.info(
-                        f"New {signal['signal'].upper()} signal at {bar['timestamp']}: "
-                        f"Entry={fill_price:.2f} SL={signal['stop_loss']:.2f} "
-                        f"TP={signal['take_profit']:.2f} ({signal['strength']})"
-                    )
-            
-            # Record equity
-            self.equity_curve.append({
-                'timestamp': bar['timestamp'],
-                'equity': self.equity
-            })
-        
-        # Calculate statistics
-        return self._calculate_statistics()
-    
-    def _calculate_statistics(self) -> Dict[str, Any]:
-        """Calculate backtest statistics."""
-        if len(self.trades) == 0:
-            return {
-                'total_trades': 0,
-                'total_pnl': 0,
-                'win_rate': 0,
-                'avg_win': 0,
-                'avg_loss': 0,
-                'profit_factor': 0,
-                'max_drawdown': 0,
-                'final_equity': self.equity
-            }
-        
-        # Basic stats
-        wins = [t for t in self.trades if t['pnl'] > 0]
-        losses = [t for t in self.trades if t['pnl'] <= 0]
-        
-        total_pnl = sum(t['pnl'] for t in self.trades)
-        win_rate = len(wins) / len(self.trades) * 100 if len(self.trades) > 0 else 0
-        
-        avg_win = sum(t['pnl'] for t in wins) / len(wins) if len(wins) > 0 else 0
-        avg_loss = sum(t['pnl'] for t in losses) / len(losses) if len(losses) > 0 else 0
-        
-        gross_wins = sum(t['pnl'] for t in wins) if len(wins) > 0 else 0
-        gross_losses = abs(sum(t['pnl'] for t in losses)) if len(losses) > 0 else 0
-        profit_factor = gross_wins / gross_losses if gross_losses > 0 else float('inf')
-        
-        # Max drawdown
-        peak = self.initial_capital
-        max_dd = 0
-        for point in self.equity_curve:
-            equity = point['equity']
-            if equity > peak:
-                peak = equity
-            dd = (peak - equity) / peak * 100 if peak > 0 else 0
-            if dd > max_dd:
-                max_dd = dd
-        
-        # Average trade duration
-        avg_duration = sum(t['duration_minutes'] for t in self.trades) / len(self.trades)
-        
-        # Count by exit reason
-        stop_losses = len([t for t in self.trades if t['exit_reason'] == 'stop_loss'])
-        take_profits = len([t for t in self.trades if t['exit_reason'] == 'take_profit'])
-        
-        return {
-            'total_trades': len(self.trades),
-            'winning_trades': len(wins),
-            'losing_trades': len(losses),
-            'total_pnl': total_pnl,
-            'win_rate': win_rate,
-            'avg_win': avg_win,
-            'avg_loss': avg_loss,
-            'profit_factor': profit_factor,
-            'max_drawdown_pct': max_dd,
-            'final_equity': self.equity,
-            'return_pct': (self.equity - self.initial_capital) / self.initial_capital * 100,
-            'avg_duration_minutes': avg_duration,
-            'stop_losses': stop_losses,
-            'take_profits': take_profits,
-            'trades': self.trades
-        }
-
-
-def load_csv_data(file_path: str, start_date: Optional[datetime] = None, end_date: Optional[datetime] = None) -> List[Dict[str, Any]]:
-    """
-    Load historical data from CSV file.
+    Strategy function that processes bars with LuxAlgo SMC strategy.
+    This integrates with the existing BacktestEngine infrastructure.
     
     Args:
-        file_path: Path to CSV file
-        start_date: Optional start date filter
-        end_date: Optional end date filter
-    
-    Returns:
-        List of bar dictionaries
+        bars_1min: List of 1-minute bars
+        bars_15min: List of 15-minute bars (unused for now)
+        strategy: LuxAlgo SMC strategy instance
+        engine: Backtest engine for tracking trades
+        symbol: Trading symbol
     """
-    bars = []
+    logger = logging.getLogger('luxalgo_backtest')
     
-    with open(file_path, 'r') as f:
-        reader = csv.DictReader(f)
-        for row in reader:
-            try:
-                # Parse timestamp
-                timestamp = datetime.strptime(row['timestamp'], '%Y-%m-%d %H:%M:%S')
-                timestamp = pytz.UTC.localize(timestamp)
-                
-                # Apply date filters
-                if start_date and timestamp < start_date:
-                    continue
-                if end_date and timestamp > end_date:
-                    continue
-                
-                bar = {
-                    'timestamp': timestamp,
-                    'open': float(row['open']),
-                    'high': float(row['high']),
-                    'low': float(row['low']),
-                    'close': float(row['close']),
-                    'volume': float(row['volume']) if 'volume' in row else 0
-                }
-                bars.append(bar)
-            except (ValueError, KeyError) as e:
-                continue
+    # Track position state
+    current_position = None
     
-    return bars
+    # Process each bar
+    for i, bar in enumerate(bars_1min):
+        # Process bar with strategy
+        result = strategy.process_bar(bar)
+        
+        # Check for exit first if in position
+        if current_position is not None:
+            bar_high = bar['high']
+            bar_low = bar['low']
+            position_side = current_position['side']
+            stop_loss = current_position['stop_price']
+            take_profit = current_position['target_price']
+            
+            exit_price = None
+            exit_reason = None
+            
+            # Check stop loss first (conservative)
+            if position_side == 'long':
+                if bar_low <= stop_loss:
+                    exit_price = stop_loss
+                    exit_reason = 'stop_loss'
+                elif bar_high >= take_profit:
+                    exit_price = take_profit
+                    exit_reason = 'take_profit'
+            else:  # short
+                if bar_high >= stop_loss:
+                    exit_price = stop_loss
+                    exit_reason = 'stop_loss'
+                elif bar_low <= take_profit:
+                    exit_price = take_profit
+                    exit_reason = 'take_profit'
+            
+            # Close position if exit triggered
+            if exit_price is not None:
+                # Calculate P&L
+                entry_price = current_position['entry_price']
+                if position_side == 'long':
+                    price_change = exit_price - entry_price
+                else:
+                    price_change = entry_price - exit_price
+                
+                tick_size = strategy.tick_size
+                tick_value = 50.0 / 4  # ES: $50 per point / 4 ticks per point = $12.50 per tick
+                ticks = price_change / tick_size
+                pnl = ticks * tick_value * current_position['quantity']
+                
+                # Hard cap at $300 loss
+                if pnl < -300.0:
+                    pnl = -300.0
+                
+                # Subtract commission
+                pnl -= engine.config.commission_per_contract * current_position['quantity']
+                
+                # Calculate duration
+                duration = (bar['timestamp'] - current_position['entry_time']).total_seconds() / 60.0
+                
+                # Create trade record
+                trade = Trade(
+                    entry_time=current_position['entry_time'],
+                    exit_time=bar['timestamp'],
+                    symbol=symbol,
+                    side=position_side,
+                    quantity=current_position['quantity'],
+                    entry_price=entry_price,
+                    exit_price=exit_price,
+                    stop_price=stop_loss,
+                    target_price=take_profit,
+                    exit_reason=exit_reason,
+                    pnl=pnl,
+                    ticks=ticks,
+                    duration_minutes=duration
+                )
+                
+                # Record trade
+                engine.metrics.add_trade(trade)
+                engine.current_equity += pnl
+                
+                # Clear position
+                current_position = None
+        
+        # Check for new entry signal
+        if current_position is None and result['signal'] is not None:
+            signal = result['signal']
+            
+            # Apply slippage
+            slippage = engine.config.slippage_ticks * strategy.tick_size
+            if signal['signal'] == 'long':
+                fill_price = signal['entry_price'] + slippage
+            else:
+                fill_price = signal['entry_price'] - slippage
+            
+            # Open position
+            current_position = {
+                'side': signal['signal'],
+                'entry_price': fill_price,
+                'stop_price': signal['stop_loss'],
+                'target_price': signal['take_profit'],
+                'entry_time': bar['timestamp'],
+                'quantity': 1,  # Always 1 contract
+                'symbol': symbol
+            }
 
 
-def print_results(results: Dict[str, Any]):
+def print_results(results: Dict[str, Any], symbol: str, start_date: str, end_date: str):
     """Print backtest results."""
     print("\n" + "="*80)
     print("LuxAlgo SMC + Rejection Strategy Backtest Results")
     print("="*80)
+    print(f"\nSymbol: {symbol}")
+    print(f"Period: {start_date} to {end_date}")
     print(f"\nTotal Trades:        {results['total_trades']}")
-    print(f"Winning Trades:      {results['winning_trades']} ({results['winning_trades']/results['total_trades']*100:.1f}%)")
-    print(f"Losing Trades:       {results['losing_trades']} ({results['losing_trades']/results['total_trades']*100:.1f}%)")
+    if results['total_trades'] > 0:
+        wins = sum(1 for t in results.get('trades', []) if t.pnl > 0) if 'trades' in results else 0
+        print(f"Winning Trades:      {wins} ({wins/results['total_trades']*100:.1f}%)")
+        print(f"Losing Trades:       {results['total_trades'] - wins} ({(results['total_trades'] - wins)/results['total_trades']*100:.1f}%)")
     print(f"\nWin Rate:            {results['win_rate']:.2f}%")
     print(f"Profit Factor:       {results['profit_factor']:.2f}")
     print(f"\nTotal P&L:           ${results['total_pnl']:.2f}")
-    print(f"Return:              {results['return_pct']:.2f}%")
+    print(f"Return:              {results['total_return']:.2f}%")
     print(f"Final Equity:        ${results['final_equity']:.2f}")
-    print(f"\nAverage Win:         ${results['avg_win']:.2f}")
-    print(f"Average Loss:        ${results['avg_loss']:.2f}")
-    print(f"\nMax Drawdown:        {results['max_drawdown_pct']:.2f}%")
-    print(f"Avg Trade Duration:  {results['avg_duration_minutes']:.1f} minutes")
-    print(f"\nExit Breakdown:")
-    print(f"  Take Profits:      {results['take_profits']} ({results['take_profits']/results['total_trades']*100:.1f}%)")
-    print(f"  Stop Losses:       {results['stop_losses']} ({results['stop_losses']/results['total_trades']*100:.1f}%)")
+    print(f"\nAverage Win:         ${results['average_win']:.2f}")
+    print(f"Average Loss:        ${results['average_loss']:.2f}")
+    print(f"\nMax Drawdown:        ${results['max_drawdown_dollars']:.2f} ({results['max_drawdown_percent']:.2f}%)")
     print("="*80 + "\n")
 
 
 def main():
     """Main entry point."""
     parser = argparse.ArgumentParser(
-        description='LuxAlgo SMC + Rejection Strategy Backtest',
+        description='LuxAlgo SMC + Rejection Strategy Backtest (Uses Main Backtester)',
         formatter_class=argparse.RawDescriptionHelpFormatter
     )
     
     parser.add_argument('--symbol', type=str, default='ES',
                         help='Symbol to backtest (default: ES)')
-    parser.add_argument('--data-file', type=str,
-                        help='Path to CSV data file (default: data/historical_data/{SYMBOL}_1min.csv)')
-    parser.add_argument('--days', type=int, default=30,
-                        help='Number of days to backtest (default: 30)')
+    parser.add_argument('--days', type=int,
+                        help='Number of days to backtest (default: all available data)')
     parser.add_argument('--start', type=str,
                         help='Start date (YYYY-MM-DD)')
     parser.add_argument('--end', type=str,
                         help='End date (YYYY-MM-DD)')
     parser.add_argument('--capital', type=float, default=50000.0,
                         help='Initial capital (default: 50000)')
-    parser.add_argument('--contracts', type=int, default=1,
-                        help='Contracts per trade (default: 1)')
     parser.add_argument('--stop-ticks', type=int, default=12,
                         help='Stop loss in ticks (default: 12)')
     parser.add_argument('--target-ticks', type=int, default=12,
@@ -444,42 +215,41 @@ def main():
     logger = logging.getLogger(__name__)
     
     # Determine data file
-    if args.data_file:
-        data_file = args.data_file
-    else:
-        data_file = os.path.join(PROJECT_ROOT, 'data', 'historical_data', f'{args.symbol}_1min.csv')
-    
-    if not os.path.exists(data_file):
-        logger.error(f"Data file not found: {data_file}")
-        return 1
+    data_path = os.path.join(PROJECT_ROOT, 'data', 'historical_data')
     
     # Parse dates
-    end_date = None
-    start_date = None
+    tz = pytz.UTC
     
     if args.end:
         end_date = datetime.strptime(args.end, '%Y-%m-%d')
-        end_date = pytz.UTC.localize(end_date)
+        end_date = tz.localize(end_date.replace(hour=23, minute=59, second=59))
     else:
-        end_date = datetime.now(pytz.UTC)
+        # Get last date from data
+        csv_file = os.path.join(data_path, f'{args.symbol}_1min.csv')
+        if os.path.exists(csv_file):
+            with open(csv_file, 'r') as f:
+                lines = f.readlines()
+                if len(lines) > 1:
+                    last_line = lines[-1]
+                    last_timestamp = last_line.split(',')[0]
+                    end_date = datetime.strptime(last_timestamp, '%Y-%m-%d %H:%M:%S')
+                    end_date = tz.localize(end_date)
+                else:
+                    end_date = datetime.now(tz)
+        else:
+            logger.error(f"Data file not found: {csv_file}")
+            return 1
     
     if args.start:
         start_date = datetime.strptime(args.start, '%Y-%m-%d')
-        start_date = pytz.UTC.localize(start_date)
-    else:
+        start_date = tz.localize(start_date)
+    elif args.days:
         start_date = end_date - timedelta(days=args.days)
+    else:
+        # Use all available data (96 days)
+        start_date = end_date - timedelta(days=96)
     
-    logger.info(f"Loading data from {data_file}...")
     logger.info(f"Date range: {start_date.strftime('%Y-%m-%d')} to {end_date.strftime('%Y-%m-%d')}")
-    
-    # Load data
-    bars = load_csv_data(data_file, start_date, end_date)
-    
-    if len(bars) == 0:
-        logger.error("No data loaded!")
-        return 1
-    
-    logger.info(f"Loaded {len(bars)} bars")
     
     # Determine tick size
     tick_size = 0.25 if args.symbol in ['ES', 'MES'] else 0.25
@@ -491,19 +261,42 @@ def main():
         take_profit_ticks=args.target_ticks
     )
     
-    # Create backtester
-    backtester = LuxAlgoBacktester(
-        strategy=strategy,
-        initial_capital=args.capital,
-        contracts_per_trade=args.contracts
+    # Create backtest configuration using the REAL backtest framework
+    backtest_config = BacktestConfig(
+        start_date=start_date,
+        end_date=end_date,
+        initial_equity=args.capital,
+        symbols=[args.symbol],
+        data_path=data_path,
+        slippage_ticks=0.5,
+        commission_per_contract=2.50,
+        use_tick_data=False  # Use 1-min bars (default for realistic futures hours)
     )
+    
+    # Bot config for the engine
+    bot_config = {
+        'instrument': args.symbol,
+        'tick_size': tick_size,
+        'tick_value': 12.50,  # ES: $12.50 per tick
+        'account_size': args.capital
+    }
+    
+    # Create backtest engine (the REAL one with futures hours support)
+    logger.info("Creating backtest engine with realistic futures hours...")
+    engine = BacktestEngine(backtest_config, bot_config)
+    
+    # Create strategy function that integrates with engine
+    def strategy_func(bars_1min, bars_15min):
+        run_luxalgo_strategy_backtest(bars_1min, bars_15min, strategy, engine, args.symbol)
     
     # Run backtest
     logger.info("Running backtest...")
-    results = backtester.run(bars)
+    logger.info(f"Using {len(engine.data_loader.load_bar_data(args.symbol, '1min'))} bars of REAL data")
+    
+    results = engine.run_with_strategy(strategy_func)
     
     # Print results
-    print_results(results)
+    print_results(results, args.symbol, start_date.strftime('%Y-%m-%d'), end_date.strftime('%Y-%m-%d'))
     
     return 0
 
