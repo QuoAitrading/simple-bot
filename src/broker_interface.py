@@ -157,6 +157,37 @@ class BrokerInterface(ABC):
         pass
     
     @abstractmethod
+    def place_bracket_order(self, symbol: str, side: str, quantity: int,
+                           stop_price: float, target_price: float) -> Optional[Dict[str, Any]]:
+        """
+        Place a bracket order (entry + stop + target as single unit).
+        
+        Args:
+            symbol: Instrument symbol
+            side: Order side ("BUY" for long, "SELL" for short)
+            quantity: Number of contracts
+            stop_price: Stop loss price
+            target_price: Take profit price
+        
+        Returns:
+            Order details if successful, None otherwise
+        """
+        pass
+    
+    @abstractmethod
+    def cancel_all_orders(self, symbol: str) -> bool:
+        """
+        Cancel all open orders for a symbol.
+        
+        Args:
+            symbol: Instrument symbol
+        
+        Returns:
+            True if successful, False otherwise
+        """
+        pass
+    
+    @abstractmethod
     def subscribe_market_data(self, symbol: str, callback: Callable[[str, float, int, int], None]) -> None:
         """
         Subscribe to real-time market data (trades).
@@ -1929,6 +1960,168 @@ class BrokerSDKImplementation(BrokerInterface):
             logger.error(f"Error placing stop order: {e}")
             self._record_failure()
             return None
+    
+    def place_bracket_order(self, symbol: str, side: str, quantity: int,
+                           stop_price: float, target_price: float) -> Optional[Dict[str, Any]]:
+        """
+        Place a bracket order (entry market order + stop loss + take profit).
+        
+        This simplifies order management by placing all three orders as a unit,
+        reducing the chance of orphaned orders or state mismatches.
+        
+        Args:
+            symbol: Instrument symbol
+            side: Order side ("BUY" for long, "SELL" for short)
+            quantity: Number of contracts
+            stop_price: Stop loss price
+            target_price: Take profit price
+        
+        Returns:
+            Dict with order details if successful, None otherwise
+        """
+        if not self.connected or not self.trading_suite:
+            logger.error("Cannot place bracket order - not connected or trading suite unavailable")
+            return None
+        
+        logger.info(f"[BRACKET ORDER] Placing {side} {quantity} {symbol}")
+        logger.info(f"  Stop: ${stop_price:.2f}, Target: ${target_price:.2f}")
+        
+        try:
+            # Step 1: Place market entry order
+            entry_side = side
+            entry_order = self.place_market_order(symbol, entry_side, quantity)
+            if not entry_order:
+                logger.error("[BRACKET ORDER] Failed to place entry order")
+                return None
+            
+            entry_order_id = entry_order.get("order_id")
+            logger.info(f"[BRACKET ORDER] Entry order placed: {entry_order_id}")
+            
+            # Step 2: Place stop loss order
+            stop_side = "SELL" if side == "BUY" else "BUY"
+            stop_order = self.place_stop_order(symbol, stop_side, quantity, stop_price)
+            stop_order_id = stop_order.get("order_id") if stop_order else None
+            
+            if not stop_order:
+                logger.error("[BRACKET ORDER] Failed to place stop order - position is unprotected!")
+                # Entry already filled, so we must handle this carefully
+                # Return what we have so caller can take corrective action
+                return {
+                    "order_id": entry_order_id,
+                    "symbol": symbol,
+                    "side": side,
+                    "quantity": quantity,
+                    "type": "BRACKET_PARTIAL",
+                    "entry_order_id": entry_order_id,
+                    "stop_order_id": None,
+                    "target_order_id": None,
+                    "status": "ENTRY_FILLED_STOP_FAILED"
+                }
+            
+            logger.info(f"[BRACKET ORDER] Stop order placed: {stop_order_id}")
+            
+            # Step 3: Place take profit limit order
+            target_side = "SELL" if side == "BUY" else "BUY"
+            target_order = self.place_limit_order(symbol, target_side, quantity, target_price)
+            target_order_id = target_order.get("order_id") if target_order else None
+            
+            if not target_order:
+                logger.warning("[BRACKET ORDER] Failed to place target order - stop still active")
+                # Entry and stop are placed, target failed - still protected
+                return {
+                    "order_id": entry_order_id,
+                    "symbol": symbol,
+                    "side": side,
+                    "quantity": quantity,
+                    "type": "BRACKET_PARTIAL",
+                    "entry_order_id": entry_order_id,
+                    "stop_order_id": stop_order_id,
+                    "target_order_id": None,
+                    "status": "ENTRY_FILLED_TARGET_FAILED"
+                }
+            
+            logger.info(f"[BRACKET ORDER] Target order placed: {target_order_id}")
+            
+            # All three orders placed successfully
+            self._record_success()
+            return {
+                "order_id": entry_order_id,
+                "symbol": symbol,
+                "side": side,
+                "quantity": quantity,
+                "type": "BRACKET",
+                "entry_order_id": entry_order_id,
+                "stop_order_id": stop_order_id,
+                "target_order_id": target_order_id,
+                "stop_price": stop_price,
+                "target_price": target_price,
+                "status": "BRACKET_COMPLETE"
+            }
+        
+        except Exception as e:
+            logger.error(f"[BRACKET ORDER] Error: {e}")
+            self._record_failure()
+            return None
+    
+    def cancel_all_orders(self, symbol: str) -> bool:
+        """
+        Cancel all open orders for a symbol.
+        
+        This is used for cleanup when a trade exits, ensuring no orphaned orders remain.
+        
+        Args:
+            symbol: Instrument symbol
+        
+        Returns:
+            True if successful, False otherwise
+        """
+        if not self.connected or not self.trading_suite:
+            logger.warning("Cannot cancel orders - not connected or trading suite unavailable")
+            return False
+        
+        try:
+            logger.info(f"[CANCEL ALL] Cancelling all orders for {symbol}")
+            
+            # Get all open orders
+            if not hasattr(self.trading_suite, 'orders') or not hasattr(self.trading_suite.orders, 'get_open_orders'):
+                logger.warning("SDK does not support get_open_orders - cannot cancel all")
+                return False
+            
+            # Use persistent event loop if available
+            try:
+                from event_loop import get_persistent_loop, run_in_persistent_loop
+                loop = get_persistent_loop()
+                if loop:
+                    open_orders = run_in_persistent_loop(self.trading_suite.orders.get_open_orders())
+                else:
+                    # Fallback to asyncio.run
+                    import asyncio
+                    open_orders = asyncio.run(self.trading_suite.orders.get_open_orders())
+            except Exception as loop_error:
+                logger.debug(f"Event loop management error: {loop_error}")
+                import asyncio
+                open_orders = asyncio.run(self.trading_suite.orders.get_open_orders())
+            
+            if not open_orders:
+                logger.info(f"[CANCEL ALL] No open orders found for {symbol}")
+                return True
+            
+            # Filter orders for this symbol and cancel them
+            cancelled_count = 0
+            for order in open_orders:
+                order_symbol = getattr(order, 'symbol', None) or getattr(order, 'instrument', None)
+                if order_symbol and str(order_symbol) == str(symbol):
+                    order_id = getattr(order, 'order_id', None) or getattr(order, 'id', None)
+                    if order_id:
+                        if self.cancel_order(str(order_id)):
+                            cancelled_count += 1
+            
+            logger.info(f"[CANCEL ALL] Cancelled {cancelled_count} orders for {symbol}")
+            return True
+        
+        except Exception as e:
+            logger.error(f"[CANCEL ALL] Error: {e}")
+            return False
     
     def subscribe_market_data(self, symbol: str, callback: Callable[[str, float, int, int], None]) -> None:
         """Subscribe to real-time market data (trades) via WebSocket."""

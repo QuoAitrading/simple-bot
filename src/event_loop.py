@@ -37,7 +37,7 @@ class EventType(IntEnum):
     ORDER_PARTIAL_FILL = 11
     ORDER_REJECT = 12
     STOP_HIT = 13
-    POSITION_RECONCILIATION = 14  # New: Periodic position sync check
+    # REMOVED: POSITION_RECONCILIATION = 14 (no longer used - bot trusts its own state)
     CONNECTION_HEALTH = 15  # New: Periodic broker connection health check
     LICENSE_CHECK = 16  # New: Periodic license validation check
     
@@ -349,19 +349,9 @@ class TimerManager:
                             {"time": current_time}
                         )
                 
-                # Position reconciliation check
-                # Check every 5 seconds for quick position sync
-                # (Previously 5 minutes, now faster to ensure bot always knows position state)
-                # Skip during shutdown or maintenance to avoid log spam when disconnected
-                reconciliation_interval = 5
-                if (self._should_check("position_reconciliation", current_time, reconciliation_interval) and
-                    not self.event_loop.shutdown_requested and
-                    not self.bot_status.get("maintenance_idle", False)):
-                    self.event_loop.post_event(
-                        EventType.POSITION_RECONCILIATION,
-                        EventPriority.HIGH,
-                        {"time": current_time}
-                    )
+                # REMOVED: Position reconciliation check
+                # Bot now trusts its own state and detects exits via price action only.
+                # Position checks only happen at startup via load_position_state().
                 
                 # Connection health check (every 20 seconds)
                 # Run even during maintenance to detect market reopen and auto-reconnect

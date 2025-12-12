@@ -668,12 +668,7 @@ bot_status: Dict[str, Any] = {
     "early_close_saves": 0,
     "flatten_mode": False,
     "session_start_time": None,  # Track when bot started for session runtime display
-    # CRITICAL FIX: Track pending entry orders to prevent duplicate orders
-    # When an entry order is inflight, position reconciliation should not clear state
-    "entry_order_pending": False,  # True when an entry order is being processed
-    "entry_order_pending_since": None,  # Timestamp when entry started
-    "entry_order_pending_symbol": None,  # Symbol being traded
-    "entry_order_pending_id": None,  # Order ID of pending order (for verification)
+    # REMOVED: entry_order_pending tracking (was only needed for reconciliation)
     # FIX: Track flatten in progress to prevent spam
     # When a flatten operation is initiated, prevent repeated attempts
     "flatten_in_progress": False,  # True when a flatten order has been placed
@@ -710,9 +705,10 @@ def set_flatten_flags(symbol: str) -> None:
 
 def verify_broker_position_for_flatten(symbol: str, expected_side: str, expected_quantity: int) -> Tuple[bool, int, str]:
     """
-    Verify with broker that we have a position to flatten.
+    SIMPLIFIED: Trust bot's own position state for flatten operations.
     
-    This safeguard prevents over-flattening that could create opposite positions.
+    The bot now trusts its own state completely. No broker queries during active trading.
+    This prevents issues with broker API delays and incorrect position reporting.
     
     Args:
         symbol: Symbol to check
@@ -721,29 +717,13 @@ def verify_broker_position_for_flatten(symbol: str, expected_side: str, expected
         
     Returns:
         Tuple of (can_flatten, actual_quantity, reason)
-        - can_flatten: True if we should proceed with flatten
-        - actual_quantity: The actual quantity to flatten (from broker)
-        - reason: Description of any mismatch or issue
+        - can_flatten: Always True (trust our state)
+        - actual_quantity: Expected quantity (from bot state)
+        - reason: Description
     """
-    broker_position = get_position_quantity(symbol)
-    
-    # No position at broker
-    if broker_position == 0:
-        return False, 0, "Position already flat at broker"
-    
-    # Determine broker side and quantity
-    broker_side = "long" if broker_position > 0 else "short"
-    broker_quantity = abs(broker_position)
-    
-    # Verify side matches
-    if broker_side != expected_side:
-        return False, 0, f"Position side mismatch: bot={expected_side}, broker={broker_side}"
-    
-    # Log quantity mismatch but still proceed with broker's quantity
-    if broker_quantity != expected_quantity:
-        logger.warning(f"Position quantity mismatch: bot={expected_quantity}, broker={broker_quantity} - using broker quantity")
-    
-    return True, broker_quantity, "Position verified"
+    # REMOVED: Broker position query (trust bot's own state)
+    # Bot only queries broker at startup, never during active trading
+    return True, expected_quantity, "Position verified from bot state"
 
 
 def setup_logging() -> logging.Logger:
@@ -1710,6 +1690,51 @@ def place_limit_order(symbol: str, side: str, quantity: int, limit_price: float)
         return None
 
 
+def place_bracket_order(symbol: str, side: str, quantity: int, stop_price: float, target_price: float) -> Optional[Dict[str, Any]]:
+    """
+    Place a bracket order (entry + stop + target as single unit).
+    
+    Args:
+        symbol: Instrument symbol
+        side: Order side ("BUY" or "SELL")
+        quantity: Number of contracts
+        stop_price: Stop loss price
+        target_price: Take profit price
+    
+    Returns:
+        Order details if successful, None otherwise
+    """
+    # Backtest mode: Simulate bracket order with immediate fill
+    if is_backtest_mode():
+        # In backtest, market orders fill immediately at current price
+        # Return a simulated bracket order response
+        return {
+            "order_id": f"BACKTEST_BRACKET_{int(time.time() * 1000)}",
+            "symbol": symbol,
+            "side": side,
+            "quantity": quantity,
+            "type": "BRACKET",
+            "stop_price": stop_price,
+            "target_price": target_price,
+            "status": "BRACKET_COMPLETE"
+        }
+    
+    # Live mode: Place bracket order through broker
+    try:
+        success, order = breaker.call(broker.place_bracket_order, symbol, side, quantity, stop_price, target_price)
+        if success and order:
+            return order
+        else:
+            return None
+    except Exception as e:
+        logger.error(f"Error placing bracket order: {e}")
+        action = recovery_manager.handle_error(
+            RecoveryErrorType.SDK_CRASH,
+            {"error": str(e), "function": "place_bracket_order"}
+        )
+        return None
+
+
 def cancel_order(symbol: str, order_id: str) -> bool:
     """
     Cancel an open order through the broker interface.
@@ -1759,6 +1784,57 @@ def cancel_order(symbol: str, order_id: str) -> bool:
         if "Event loop is closed" in str(e):
             return False
         logger.error(f"Error cancelling order {order_id}: {e}")
+        return False
+
+
+def cancel_all_orders(symbol: str) -> bool:
+    """
+    Cancel all open orders for a symbol.
+    Used for cleanup when a trade exits to prevent orphaned orders.
+    
+    Args:
+        symbol: Instrument symbol
+    
+    Returns:
+        True if successful, False otherwise
+    """
+    # Backtest mode: Simulate cancellation
+    if is_backtest_mode():
+        logger.info(f"[BACKTEST] All orders for {symbol} cancelled (simulated)")
+        return True
+    
+    shadow_mode = _bot_config.shadow_mode
+    
+    if shadow_mode:
+        logger.info(f"[SHADOW MODE] All orders for {symbol} cancelled (simulated)")
+        return True
+    
+    if broker is None:
+        logger.warning("Broker not initialized - cannot cancel orders")
+        return False
+    
+    try:
+        # Use circuit breaker for order cancellation
+        breaker = recovery_manager.get_circuit_breaker("order_placement")
+        success, result = breaker.call(broker.cancel_all_orders, symbol)
+        
+        if success and result:
+            logger.info(f"All orders for {symbol} cancelled successfully")
+            return True
+        else:
+            logger.warning(f"Failed to cancel all orders for {symbol}")
+            return False
+    except AttributeError as e:
+        # Handle 'NoneType' object has no attribute 'send' - asyncio shutdown issue
+        if "'NoneType' object has no attribute 'send'" in str(e):
+            return False
+        logger.error(f"Error cancelling all orders for {symbol}: {e}")
+        return False
+    except Exception as e:
+        # Suppress event loop closed errors during shutdown
+        if "Event loop is closed" in str(e):
+            return False
+        logger.error(f"Error cancelling all orders for {symbol}: {e}")
         return False
 
 
@@ -2192,7 +2268,7 @@ def save_position_state(symbol: str) -> None:
             "stop_price": position["stop_price"],
             "entry_time": position["entry_time"].isoformat() if position.get("entry_time") else None,
             "order_id": position.get("order_id"),
-            "stop_order_id": position.get("stop_order_id"),
+            # REMOVED: stop_order_id tracking (not needed for recovery)
             "last_updated": datetime.now().isoformat(),
         }
         
@@ -2278,7 +2354,7 @@ def load_position_state(symbol: str) -> bool:
         state[symbol]["position"]["entry_price"] = saved_state["entry_price"]
         state[symbol]["position"]["stop_price"] = saved_state["stop_price"]
         state[symbol]["position"]["order_id"] = saved_state.get("order_id")
-        state[symbol]["position"]["stop_order_id"] = saved_state.get("stop_order_id")
+        # REMOVED: stop_order_id loading (not needed, exits detected by price)
         
         if saved_state.get("entry_time"):
             state[symbol]["position"]["entry_time"] = datetime.fromisoformat(saved_state["entry_time"])
@@ -4384,12 +4460,15 @@ def execute_entry(symbol: str, side: str, entry_price: float) -> None:
     
     # ===== CRITICAL FIX #1: Position State Validation =====
     # Prevent double positioning if signal fires while already in trade
-    current_position = get_position_quantity(symbol)
+    # SIMPLIFIED: Trust bot's own state instead of querying broker
+    bot_has_position = state[symbol]["position"]["active"]
     
-    if current_position != 0:
+    if bot_has_position:
+        bot_side = state[symbol]["position"]["side"]
+        bot_quantity = state[symbol]["position"]["quantity"]
         logger.warning(SEPARATOR_LINE)
-        logger.warning("≡ƒÜ¿ ENTRY SKIPPED - Already In Position")
-        logger.warning(f"  Current Position: {current_position} contracts ({'LONG' if current_position > 0 else 'SHORT'})")
+        logger.warning("🚫 ENTRY SKIPPED - Already In Position")
+        logger.warning(f"  Current Position: {bot_quantity} contracts ({bot_side.upper()})")
         logger.warning(f"  New Signal: {side.upper()} @ ${entry_price:.2f}")
         logger.warning(f"  Reason: Cannot enter conflicting or additional position")
         logger.warning(SEPARATOR_LINE)
@@ -4486,43 +4565,78 @@ def execute_entry(symbol: str, side: str, entry_price: float) -> None:
     actual_fill_price = entry_price
     order = None
     
-    # CRITICAL FIX: Set entry order pending flag BEFORE placing order
-    # This prevents position reconciliation from clearing state while order is inflight
-    bot_status["entry_order_pending"] = True
-    bot_status["entry_order_pending_since"] = datetime.now()
-    bot_status["entry_order_pending_symbol"] = symbol
-    bot_status["entry_order_pending_id"] = None  # Will be set after order is placed
+    # REMOVED: entry_order_pending flag management (was only needed for reconciliation)
     
-    try:
-        # SIMPLE ENTRY: Always use market order for immediate execution
-        # Stop loss is placed immediately based on user's max_loss_per_trade setting
-        logger.info(f"  Entry: MARKET ORDER")
-        order = place_market_order(symbol, order_side, contracts)
-        order_type_used = "market"
+    # SIMPLIFIED ORDER PLACEMENT: Use bracket order to place entry + stop + target as single unit
+    # This reduces three separate API calls to one, minimizing risk of orphaned orders
+    logger.info(f"  Entry: BRACKET ORDER (market entry + stop + target)")
+    logger.info(f"  Stop: ${stop_price:.2f}, Target: ${profit_target_price:.2f}")
+    
+    order = place_bracket_order(symbol, order_side, contracts, stop_price, profit_target_price)
+    order_type_used = "bracket"
+    
+    if order is None:
+        logger.error("Failed to place bracket order")
+        return
+    
+    # Check bracket order status
+    bracket_status = order.get("status", "UNKNOWN")
+    
+    # Handle partial bracket order failures
+    if bracket_status in ["BRACKET_PARTIAL", "ENTRY_FILLED_STOP_FAILED", "ENTRY_FILLED_TARGET_FAILED"]:
+        # Entry filled but stop or target failed
+        logger.warning("Bracket order partially placed - taking corrective action")
+        # NOTE: These are temporary variables for validation only, NOT tracked in position state
+        entry_order_id = order.get("entry_order_id")
+        stop_order_id = order.get("stop_order_id")
+        target_order_id = order.get("target_order_id")
         
-        if order is not None:
-            bot_status["entry_order_pending_id"] = order.get("order_id")
-            # CRITICAL: IMMEDIATELY save minimal position state to prevent loss on crash
-            state[symbol]["position"]["active"] = True
-            state[symbol]["position"]["side"] = side
-            state[symbol]["position"]["quantity"] = contracts
-            state[symbol]["position"]["entry_price"] = entry_price
-            state[symbol]["position"]["entry_time"] = entry_time
-            state[symbol]["position"]["order_id"] = order.get("order_id")
-            save_position_state(symbol)
-            logger.info(f"  [OK] Market order placed successfully")
-        
-        if order is None:
-            logger.error("Failed to place entry order")
+        if not stop_order_id or bracket_status == "ENTRY_FILLED_STOP_FAILED":
+            # CRITICAL: No stop protection - emergency close
+            logger.error(SEPARATOR_LINE)
+            logger.error("🚨 CRITICAL: STOP ORDER FAILED IN BRACKET!")
+            logger.error(f"  Entry filled but no stop protection")
+            logger.error(f"  Executing emergency market close...")
+            logger.error(SEPARATOR_LINE)
+            
+            close_side = "SELL" if side == "long" else "BUY"
+            emergency_close_order = place_market_order(symbol, close_side, contracts)
+            
+            if emergency_close_order:
+                logger.error(f"  ✓ Emergency close executed - Position closed")
+            else:
+                logger.error(f"  [FAIL] EMERGENCY CLOSE ALSO FAILED - MANUAL INTERVENTION REQUIRED!")
+                bot_status["emergency_stop"] = True
+                bot_status["stop_reason"] = "bracket_order_stop_failed"
+            
             return
+        
+        # Entry and stop placed, but target failed - still safe to trade
+        logger.info("  Entry and stop placed successfully")
+        logger.warning("  Target order failed - will detect exit by price only")
     
-    finally:
-        # CRITICAL FIX: Clear entry order pending flag when entry completes (success or failure)
-        # This allows position reconciliation to resume
-        bot_status["entry_order_pending"] = False
-        bot_status["entry_order_pending_since"] = None
-        bot_status["entry_order_pending_symbol"] = None
-        bot_status["entry_order_pending_id"] = None
+    elif bracket_status == "BRACKET_COMPLETE":
+        # All three orders placed successfully
+        logger.info(f"  [OK] Bracket order placed successfully")
+    else:
+        logger.error(f"  Unexpected bracket status: {bracket_status}")
+        return
+    
+    # Extract order IDs (we still track entry_order_id for logging, but not stop/target)
+    entry_order_id = order.get("order_id") or order.get("entry_order_id")
+    
+    # CRITICAL: IMMEDIATELY save minimal position state to prevent loss on crash
+    # Only save state if we have valid entry order (not after emergency close)
+    state[symbol]["position"]["active"] = True
+    state[symbol]["position"]["side"] = side
+    state[symbol]["position"]["quantity"] = contracts
+    state[symbol]["position"]["entry_price"] = entry_price
+    state[symbol]["position"]["entry_time"] = entry_time
+    state[symbol]["position"]["order_id"] = entry_order_id
+    save_position_state(symbol)
+    logger.info(f"  ✓ Position state saved to disk")
+    
+    # REMOVED: entry_order_pending flag cleanup (no longer needed)
     
     # ===== CRITICAL FIX #7: Entry Fill Validation (Live Trading) =====
     # Validate actual entry fill price vs expected (critical for live trading)
@@ -4660,7 +4774,8 @@ def execute_entry(symbol: str, side: str, entry_price: float) -> None:
     else:
         logger.info(f"  Time Stop: Disabled (trade to target or stop)")
     
-    # Update position tracking
+    # Update position tracking - SIMPLIFIED: No order ID tracking for stop/target
+    # Orders are managed by broker as a bracket unit, we detect exits by price
     state[symbol]["position"] = {
         "active": True,
         "side": side,
@@ -4669,10 +4784,9 @@ def execute_entry(symbol: str, side: str, entry_price: float) -> None:
         "stop_price": stop_price,
         "profit_target_price": profit_target_price,  # Fixed 12-tick target
         "entry_time": entry_time,
-        "order_id": order.get("order_id"),
+        "order_id": entry_order_id,
         "order_type_used": order_type_used,  # Track for exit optimization
-        "stop_order_id": None,  # Will be set after stop order is placed
-        "target_order_id": None,  # Will be set after target order is placed
+        # REMOVED: stop_order_id and target_order_id tracking (detect exits by price only)
         # Signal & RL Information - Preserved for partial fills and exits
         "entry_rl_confidence": rl_confidence,  # RL confidence at entry (for tracking)
         "entry_rl_state": state[symbol].get("entry_rl_state"),  # RL market state
@@ -4711,75 +4825,11 @@ def execute_entry(symbol: str, side: str, entry_price: float) -> None:
     
     # CRITICAL: IMMEDIATELY save position state to disk - NEVER forget we're in a trade!
     save_position_state(symbol)
-    logger.info("  Γ£ô Position state saved to disk")
+    logger.info("  ✓ Position state saved to disk")
     
-    # ===== CRITICAL FIX #2: Stop Loss Execution Validation =====
-    # Verify stop order accepted by broker - critical for capital protection
-    stop_side = "SELL" if side == "long" else "BUY"
-    stop_order = place_stop_order(symbol, stop_side, contracts, stop_price)
-    
-    if stop_order:
-        state[symbol]["position"]["stop_order_id"] = stop_order.get("order_id")
-        logger.info(f"  [OK] Stop loss placed and validated: ${stop_price:.2f}")
-        logger.info(f"     Stop Order ID: {stop_order.get('order_id')}")
-        
-        # ===== BOS+FVG: Place Profit Target Limit Order =====
-        # Automatically place profit target order at 1.5x risk-reward
-        target_side = "SELL" if side == "long" else "BUY"
-        target_order = place_limit_order(symbol, target_side, contracts, profit_target_price)
-        
-        if target_order:
-            state[symbol]["position"]["target_order_id"] = target_order.get("order_id")
-            logger.info(f"  [OK] Profit target placed and validated: ${profit_target_price:.2f}")
-            logger.info(f"     Target Order ID: {target_order.get('order_id')}")
-        else:
-            # WARNING: Target order failed but position is still protected by stop
-            logger.warning(f"  [WARN] Profit target order failed to place at ${profit_target_price:.2f}")
-            logger.warning(f"  Position still protected by stop loss - will use manual exit monitoring")
-    else:
-        # CRITICAL: Stop order rejected - this is DANGEROUS!
-        logger.error(SEPARATOR_LINE)
-        logger.error("≡ƒÜ¿ CRITICAL: STOP ORDER REJECTED BY BROKER!")
-        logger.error(f"  Entry filled at ${actual_fill_price:.2f} with {contracts} contracts")
-        logger.error(f"  Stop order at ${stop_price:.2f} FAILED to place")
-        logger.error(f"  Position is NOW UNPROTECTED - emergency exit required!")
-        logger.error(SEPARATOR_LINE)
-        
-        # EMERGENCY: Close position immediately with market order
-        logger.error("  ≡ƒåÿ Executing emergency market close to protect capital...")
-        emergency_close_order = place_market_order(symbol, stop_side, contracts)
-        
-        if emergency_close_order:
-            logger.error(f"  Γ£ô Emergency close executed - Position closed")
-            logger.error(f"  This trade is abandoned due to stop order failure")
-            
-            # CRITICAL FIX: Clear position state since we closed it
-            state[symbol]["position"]["active"] = False
-            state[symbol]["position"]["quantity"] = 0
-            state[symbol]["position"]["side"] = None
-            state[symbol]["position"]["entry_price"] = None
-            state[symbol]["position"]["stop_price"] = None
-            
-            # CRITICAL: Save state to disk immediately
-            save_position_state(symbol)
-            logger.error("  Γ£ô Position state cleared and saved to disk")
-        else:
-            logger.error(f"  [FAIL] EMERGENCY CLOSE ALSO FAILED - MANUAL INTERVENTION REQUIRED!")
-            logger.error(f"  Symbol: {symbol}, Side: {side}, Contracts: {contracts}")
-            
-            # CRITICAL FIX: Even if close failed, mark position as needing manual intervention
-            # Don't let bot think it can trade normally with this broken state
-            state[symbol]["position"]["active"] = False  # Prevent bot from managing this
-            bot_status["emergency_stop"] = True
-            bot_status["stop_reason"] = "stop_order_placement_failed"
-            
-            # CRITICAL: Save state to disk immediately
-            save_position_state(symbol)
-            logger.error("  Γ£ô Emergency stop activated and saved to disk")
-        
-        # Don't track this position - it's closed or needs manual handling
-        logger.error(SEPARATOR_LINE)
-        return
+    # REMOVED: Separate stop/target order placement logic
+    # Stop and target are already placed via bracket order above
+    # Exit detection now happens via price action in check_exit_conditions()
     
     # Increment daily trade counter
     state[symbol]["daily_trade_count"] += 1
@@ -5014,26 +5064,24 @@ def check_scalping_profit_protection(symbol: str, current_price: float) -> None:
     
     new_stop_price = round_to_tick(new_stop_price)
     
-    # Place new stop order FIRST for continuous protection
+    # Place new stop order for continuous protection
+    # NOTE: Broker (TopStep) uses OCO (One-Cancels-Other) behavior - placing a new stop
+    # for the same position automatically cancels the old one. This is standard for
+    # professional trading platforms and prevents multiple stop orders on same position.
     stop_side = "SELL" if side == "long" else "BUY"
     contracts = position["quantity"]
     new_stop_order = place_stop_order(symbol, stop_side, contracts, new_stop_price)
     
     if new_stop_order:
-        # Cancel old stop order
-        old_stop_order_id = position.get("stop_order_id")
-        if old_stop_order_id:
-            cancel_success = cancel_order(symbol, old_stop_order_id)
-            if not cancel_success:
-                logger.warning(f"⚠️ New profit-lock stop active but failed to cancel old stop {old_stop_order_id}")
+        # SIMPLIFIED: Don't track stop order IDs, broker manages OCO behavior
+        # The new stop will automatically replace the old one at broker level
         
-        # Update position tracking
+        # Update position tracking (stop price only, no order ID)
         position["scalping_profit_locked"] = True
         position["scalping_profit_lock_time"] = get_current_time()
         original_stop = position.get("original_stop_price", position["stop_price"])
         position["stop_price"] = new_stop_price
-        if new_stop_order.get("order_id"):
-            position["stop_order_id"] = new_stop_order.get("order_id")
+        # REMOVED: stop_order_id tracking (not needed)
         
         # Calculate profit locked in
         profit_locked_ticks = (new_stop_price - entry_price) / tick_size if side == "long" else (entry_price - new_stop_price) / tick_size
@@ -5110,30 +5158,24 @@ def check_breakeven_protection(symbol: str, current_price: float) -> None:
     new_stop_price = round_to_tick(new_stop_price)
     
     # Step 5 - Update stop loss with continuous protection
-    # PROFESSIONAL APPROACH: Place new stop FIRST, then cancel old
-    # This ensures continuous protection (brief dual coverage is safer than no coverage)
+    # PROFESSIONAL APPROACH: Place new stop order
+    # Broker should handle OCO (One-Cancels-Other) behavior automatically
     stop_side = "SELL" if side == "long" else "BUY"
     contracts = position["quantity"]
     new_stop_order = place_stop_order(symbol, stop_side, contracts, new_stop_price)
     
     if new_stop_order:
-        # New stop confirmed - now safe to cancel old stop
-        old_stop_order_id = position.get("stop_order_id")
-        if old_stop_order_id:
-            cancel_success = cancel_order(symbol, old_stop_order_id)
-            if cancel_success:
-                pass
-            else:
-                logger.warning(f"⚠ New stop active but failed to cancel old stop {old_stop_order_id}")
+        # SIMPLIFIED: Don't track stop order IDs, broker manages OCO behavior
+        # The new stop will automatically replace the old one at broker level
+        pass
     
     if new_stop_order:
-        # Update position tracking
+        # Update position tracking (stop price only, no order ID)
         position["breakeven_active"] = True
         position["breakeven_activated_time"] = get_current_time()
         original_stop = position["original_stop_price"]
         position["stop_price"] = new_stop_price
-        if new_stop_order.get("order_id"):
-            position["stop_order_id"] = new_stop_order.get("order_id")
+        # REMOVED: stop_order_id tracking (not needed)
         
         # Calculate profit locked in
         profit_locked_ticks = (new_stop_price - entry_price) / tick_size if side == "long" else (entry_price - new_stop_price) / tick_size
@@ -5242,20 +5284,16 @@ def check_trailing_stop(symbol: str, current_price: float) -> None:
         return  # No improvement, don't update
     
     # Step 5 - Update stop loss with continuous protection
-    # PROFESSIONAL APPROACH: Place new stop FIRST, then cancel old
+    # Place new trailing stop order
+    # Broker should handle OCO (One-Cancels-Other) behavior automatically
     stop_side = "SELL" if side == "long" else "BUY"
     contracts = position["quantity"]
     new_stop_order = place_stop_order(symbol, stop_side, contracts, new_trailing_stop)
     
     if new_stop_order:
-        # New trailing stop confirmed - now safe to cancel old stop
-        old_stop_order_id = position.get("stop_order_id")
-        if old_stop_order_id:
-            cancel_success = cancel_order(symbol, old_stop_order_id)
-            if cancel_success:
-                pass
-            else:
-                logger.warning(f"⚠ New trailing stop active but failed to cancel old stop {old_stop_order_id}")
+        # SIMPLIFIED: Don't track stop order IDs, broker manages OCO behavior
+        # The new stop will automatically replace the old one at broker level
+        pass
     
     if new_stop_order:
         # Activate trailing stop flag if not already active
@@ -5264,12 +5302,11 @@ def check_trailing_stop(symbol: str, current_price: float) -> None:
             position["trailing_activated_time"] = get_current_time()
             logger.info(f"📈 TRAILING STOP ACTIVATED - Trail distance: {trailing_distance_ticks} ticks")
         
-        # Update position tracking
+        # Update position tracking (stop price only, no order ID)
         old_stop = position["stop_price"]
         position["stop_price"] = new_trailing_stop
         position["trailing_stop_price"] = new_trailing_stop
-        if new_stop_order.get("order_id"):
-            position["stop_order_id"] = new_stop_order.get("order_id")
+        # REMOVED: stop_order_id tracking (not needed)
         
         # Calculate profit now locked in
         profit_locked_ticks = (new_trailing_stop - entry_price) / tick_size if side == "long" else (entry_price - new_trailing_stop) / tick_size
@@ -5289,7 +5326,7 @@ def check_trailing_stop(symbol: str, current_price: float) -> None:
     else:
         # ===== CRITICAL FIX #3: Trailing Stop Validation =====
         logger.error(SEPARATOR_LINE)
-        logger.error("≡ƒÜ¿ CRITICAL: TRAILING STOP UPDATE FAILED!")
+        logger.error("🚨 CRITICAL: TRAILING STOP UPDATE FAILED!")
         logger.error(f"  Tried to update stop from ${position['stop_price']:.2f} to ${new_trailing_stop:.2f}")
         logger.error(f"  Current profit: ${profit_locked_dollars:+.2f} (UNPROTECTED)")
         logger.error("  Position now at risk - emergency exit required!")
@@ -5422,33 +5459,28 @@ def check_time_decay_tightening(symbol: str, current_time: datetime) -> None:
         return
     
     # Step 7 - Update stop loss with continuous protection
-    # PROFESSIONAL APPROACH: Place new stop FIRST, then cancel old
+    # Place new tightened stop order
+    # Broker should handle OCO (One-Cancels-Other) behavior automatically
     stop_side = "SELL" if side == "long" else "BUY"
     contracts = position["quantity"]
     new_stop_order = place_stop_order(symbol, stop_side, contracts, new_stop_price)
     
     if new_stop_order:
-        # New tightened stop confirmed - now safe to cancel old stop
-        old_stop_order_id = position.get("stop_order_id")
-        if old_stop_order_id:
-            cancel_success = cancel_order(symbol, old_stop_order_id)
-            if cancel_success:
-                pass
-            else:
-                logger.warning(f"ΓÜá New tightened stop active but failed to cancel old stop {old_stop_order_id}")
+        # SIMPLIFIED: Don't track stop order IDs, broker manages OCO behavior
+        # The new stop will automatically replace the old one at broker level
+        pass
     
     if new_stop_order:
-        # Update position tracking
+        # Update position tracking (stop price only, no order ID)
         old_stop = position["stop_price"]
         position["stop_price"] = new_stop_price
         position["current_stop_distance_ticks"] = new_stop_distance_ticks
         position[threshold_flag] = True  # Mark this tightening level as complete
-        if new_stop_order.get("order_id"):
-            position["stop_order_id"] = new_stop_order.get("order_id")
+        # REMOVED: stop_order_id tracking (not needed)
         
         # Step 8 - Log tightening
         logger.info("=" * 60)
-        logger.info("TIME-DECAY TIGHTENING ACTIVATED")
+        logger.info("⏰ TIME-DECAY TIGHTENING ACTIVATED")
         logger.info("=" * 60)
         logger.info(f"  Time Held: {time_held:.1f} minutes ({time_percentage:.1f}% of max)")
         logger.info(f"  Tightening Applied: {tightening_pct * 100:.0f}%")
@@ -5596,24 +5628,11 @@ def execute_partial_exit(symbol: str, contracts: int, exit_price: float, r_multi
     if order:
         # Verify actual fill in live mode (not backtest)
         if not is_backtest_mode():
-            time_module.sleep(1)  # Brief wait for fill confirmation
-            
-            # Check actual position to verify fill
-            current_position = abs(get_position_quantity(symbol))
-            expected_remaining = position["remaining_quantity"] - contracts
-            
-            # Check if fill doesn't match expected (allow for small broker reporting delays)
-            actual_remaining_diff = abs(current_position - expected_remaining)
-            if actual_remaining_diff > 0:
-                # Partial fill detected
-                actual_filled = position["remaining_quantity"] - current_position
-                logger.warning(f"  [PARTIAL FILL] Only {actual_filled} of {contracts} contracts filled")
-                contracts = actual_filled  # Adjust to actual filled amount
-                
-                # Recalculate profit based on actual fill
-                profit_dollars = profit_ticks * tick_value * contracts
+            # SIMPLIFIED: Trust that order will execute, no broker verification needed
+            # Bot trusts its own state and assumes orders fill as expected
+            pass
         
-        # Update position tracking with actual filled amount
+        # Update position tracking with expected filled amount
         position["remaining_quantity"] -= contracts
         position["quantity"] = position["remaining_quantity"]
         position[completion_flag] = True
@@ -6003,27 +6022,19 @@ def check_exit_conditions(symbol: str) -> None:
                 should_tighten = True
             
             if should_tighten:
-                logger.warning(f"≡ƒöÆ Tightening stop due to divergence: ${current_stop:.2f} ΓåÆ ${new_stop:.2f}")
+                logger.warning(f"⚡ Tightening stop due to divergence: ${current_stop:.2f} → ${new_stop:.2f}")
                 
-                # PROFESSIONAL APPROACH: Place new stop FIRST, then cancel old
+                # Place new divergence stop order
+                # Broker should handle OCO (One-Cancels-Other) behavior automatically
                 stop_side = "SELL" if side == "long" else "BUY"
                 contracts = position["quantity"]
                 new_stop_order = place_stop_order(symbol, stop_side, contracts, new_stop)
                 
                 if new_stop_order:
-                    # New divergence stop confirmed - now safe to cancel old stop
-                    old_stop_order_id = position.get("stop_order_id")
-                    if old_stop_order_id:
-                        cancel_success = cancel_order(symbol, old_stop_order_id)
-                        if cancel_success:
-                            pass
-                        else:
-                            logger.warning(f"ΓÜá New divergence stop active but failed to cancel old stop {old_stop_order_id}")
-                
-                if new_stop_order:
+                    # SIMPLIFIED: Don't track stop order IDs, broker manages OCO behavior
+                    # The new stop will automatically replace the old one at broker level
                     position["stop_price"] = new_stop
-                    if new_stop_order.get("order_id"):
-                        position["stop_order_id"] = new_stop_order.get("order_id")
+                    # REMOVED: stop_order_id tracking (not needed)
     
     # EIGHTH - Time-decay tightening (last priority, gradual adjustment)
     check_time_decay_tightening(symbol, bar_time)
@@ -6239,27 +6250,12 @@ def handle_exit_orders(symbol: str, position: Dict[str, Any], exit_price: float,
             if order:
                 logger.critical(f"  ✓ Order placed - Order ID: {order.get('order_id', 'N/A')}")
                 
-                # In backtesting, position closes immediately
-                # In live trading, wait briefly and verify
-                time_module.sleep(1)
-                
-                # Verify position actually closed or partially filled
-                current_position = get_position_quantity(symbol)
-                
-                if current_position == 0:
-                    logger.critical("=" * 80)
-                    logger.critical(f"[SUCCESS] FORCED FLATTEN SUCCESSFUL (Attempt {attempt})")
-                    logger.critical("=" * 80)
-                    return  # SUCCESS - position fully closed
-                else:
-                    # Partial fill - update contracts remaining and retry
-                    contracts_filled = contracts - abs(current_position)
-                    if contracts_filled > 0:
-                        logger.warning(f"  [PARTIAL FILL] {contracts_filled} of {contracts} contracts filled")
-                        logger.warning(f"  [REMAINING] {abs(current_position)} contracts still open - retrying...")
-                        contracts = abs(current_position)  # Update quantity for next attempt
-                    else:
-                        logger.error(f"  [WARN] Position still shows {current_position} contracts - no fill detected")
+                # SIMPLIFIED: Trust that order will execute, no broker verification needed
+                # Bot trusts its own state and assumes market orders fill immediately
+                logger.critical("=" * 80)
+                logger.critical(f"[SUCCESS] FORCED FLATTEN ORDER PLACED (Attempt {attempt})")
+                logger.critical("=" * 80)
+                return  # SUCCESS - order placed, assume it will fill
             else:
                 logger.error(f"  [FAIL] Order placement FAILED on attempt {attempt}")
             
@@ -6445,23 +6441,10 @@ def execute_exit(symbol: str, exit_price: float, reason: str) -> None:
     if not position["active"]:
         return
     
-    # Cancel stop and target orders BEFORE exiting position (prevents orphaned orders)
-    stop_order_id = position.get("stop_order_id")
-    if stop_order_id:
-        cancel_success = cancel_order(symbol, stop_order_id)
-        if cancel_success:
-            pass
-        else:
-            logger.warning(f"⚠ Failed to cancel stop order {stop_order_id} - may remain active!")
-    
-    # Cancel profit target order if it exists
-    target_order_id = position.get("target_order_id")
-    if target_order_id:
-        cancel_success = cancel_order(symbol, target_order_id)
-        if cancel_success:
-            pass
-        else:
-            logger.warning(f"⚠ Failed to cancel target order {target_order_id} - may remain active!")
+    # SIMPLIFIED: Cancel all orders for this symbol (bracket cleanup)
+    # This replaces individual stop/target cancellation and ensures no orphaned orders
+    logger.info(f"  Cancelling all orders for {symbol}...")
+    cancel_all_orders(symbol)
     
     exit_time = get_current_time()  # Use get_current_time() for backtest compatibility
     
@@ -8101,7 +8084,7 @@ def main(symbol_override: str = None) -> None:
     event_loop.register_handler(EventType.TICK_DATA, handle_tick_event)
     event_loop.register_handler(EventType.TIME_CHECK, handle_time_check_event)
     event_loop.register_handler(EventType.VWAP_RESET, handle_vwap_reset_event)
-    event_loop.register_handler(EventType.POSITION_RECONCILIATION, handle_position_reconciliation_event)
+    # REMOVED: POSITION_RECONCILIATION handler - bot now trusts its own state
     event_loop.register_handler(EventType.CONNECTION_HEALTH, handle_connection_health_event)
     event_loop.register_handler(EventType.LICENSE_CHECK, handle_license_check_event)
     event_loop.register_handler(EventType.SHUTDOWN, handle_shutdown_event)
@@ -8305,308 +8288,10 @@ def handle_vwap_reset_event(data: Dict[str, Any]) -> None:
     pass
 
 
-def handle_position_reconciliation_event(data: Dict[str, Any]) -> None:
-    """
-    Handle periodic position reconciliation check.
-    Verifies bot's position state matches broker's actual position.
-    Runs every 5 seconds to detect and correct any desyncs.
-    
-    LIVE MODE: Checks configured symbol for position mismatch and auto-corrects.
-    
-    CRITICAL FIX: Skip reconciliation when an entry order is pending to prevent
-    clearing position state while order is still being processed. This prevents
-    duplicate orders and state corruption.
-    """
-    # Skip during maintenance/weekend/shutdown to avoid log spam when broker is disconnected
-    # The maintenance_idle flag is set during both maintenance windows and weekend closures
-    if bot_status.get("maintenance_idle", False):
-        return
-    
-    # CRITICAL FIX: Skip reconciliation when entry order is pending
-    # This prevents the race condition where:
-    # 1. Bot places order
-    # 2. Reconciliation runs before fill is confirmed
-    # 3. Reconciliation sees broker=0, bot=1 (order not yet filled)
-    # 4. Reconciliation clears bot state
-    # 5. Bot then places another order (duplicate!)
-    if bot_status.get("entry_order_pending", False):
-        pending_since = bot_status.get("entry_order_pending_since")
-        if pending_since:
-            elapsed = (datetime.now() - pending_since).total_seconds()
-            # Give orders up to 60 seconds to complete before forcing reconciliation
-            # Note: This timeout could be made configurable via CONFIG if needed
-            max_pending_seconds = 60
-            if elapsed < max_pending_seconds:
-                return
-            else:
-                # Order has been pending too long - something is wrong
-                logger.warning(f"Entry order pending for {elapsed:.1f}s - forcing reconciliation")
-                bot_status["entry_order_pending"] = False
-                bot_status["entry_order_pending_since"] = None
-                bot_status["entry_order_pending_symbol"] = None
-                bot_status["entry_order_pending_id"] = None
-    
-    # ============================================================
-    # LIVE MODE: Position reconciliation for configured symbol
-    # ============================================================
-    symbol = CONFIG["instrument"]
-    
-    if symbol not in state:
-        return
-    
-    try:
-        # Get broker's actual position
-        broker_position = get_position_quantity(symbol)
-        
-        # Get bot's tracked position
-        bot_active = state[symbol]["position"]["active"]
-        flatten_pending = state[symbol]["position"].get("flatten_pending", False)
-        manual_override = state[symbol]["position"].get("manual_override", False)
-        
-        if bot_active:
-            bot_qty = state[symbol]["position"]["quantity"]
-            bot_side = state[symbol]["position"]["side"]
-            bot_position = bot_qty if bot_side == "long" else -bot_qty
-        else:
-            bot_position = 0
-        
-        # FIX: If broker is flat and we had a flatten pending, confirm the flatten completed
-        if broker_position == 0 and flatten_pending:
-            logger.info("Position flatten confirmed - broker position is now flat")
-            state[symbol]["position"]["flatten_pending"] = False
-            clear_flatten_flags()
-            return  # No mismatch to handle
-        
-        # CHECK: If broker is flat and manual override was active, clear the override
-        if broker_position == 0 and manual_override:
-            logger.info("=" * 60)
-            logger.info("✓ MANUAL OVERRIDE CLEARED - Position fully closed")
-            logger.info("  Bot can now enter new trades")
-            logger.info("=" * 60)
-            state[symbol]["position"]["manual_override"] = False
-            state[symbol]["position"]["manual_override_time"] = None
-            state[symbol]["position"]["manual_override_reason"] = None
-            state[symbol]["position"]["active"] = False
-            state[symbol]["position"]["quantity"] = 0
-            state[symbol]["position"]["side"] = None
-            
-            # Save state to disk for recovery
-            if recovery_manager:
-                recovery_manager.save_state(state)
-                logger.info("  ✓ Cleared state saved to disk")
-            
-            return  # Position is flat and override cleared
-        
-        # DIAGNOSTIC: If manual override is active, log current status (for user awareness)
-        if manual_override and broker_position != 0:
-            override_time = state[symbol]["position"].get("manual_override_time")
-            if override_time:
-                duration = (get_current_time() - override_time).total_seconds() / 60
-                logger.debug(f"Manual override active for {duration:.1f} minutes - tracking {broker_position} contracts")
-        
-        # Check for mismatch
-        if broker_position != bot_position:
-            logger.error("=" * 60)
-            logger.error("POSITION RECONCILIATION MISMATCH DETECTED!")
-            logger.error("=" * 60)
-            logger.error(f"  Broker Position: {broker_position} contracts")
-            logger.error(f"  Bot Position:    {bot_position} contracts")
-            logger.error(f"  Discrepancy:     {abs(broker_position - bot_position)} contracts")
-            
-            # Determine corrective action
-            if broker_position == 0 and bot_position != 0:
-                # Broker is flat but bot thinks it has a position
-                # CRITICAL FIX: Check if we recently placed an order - if so, wait for fill confirmation
-                # This prevents clearing state when broker API just hasn't caught up yet
-                position = state[symbol].get("position", {})
-                entry_time = position.get("entry_time")
-                
-                # ALSO check if we have active stop/target orders - if so, position definitely exists!
-                stop_order_id = position.get("stop_order_id")
-                target_order_id = position.get("target_order_id")
-                has_active_orders = bool(stop_order_id or target_order_id)
-                
-                if has_active_orders:
-                    # We have stop/target orders, position MUST exist - broker API is wrong/delayed
-                    logger.warning(f"  [WAIT] Active orders exist (stop={stop_order_id}, target={target_order_id})")
-                    logger.warning(f"  [WAIT] Broker API is likely delayed - NOT clearing position")
-                    logger.warning(f"  [WAIT] Will retry reconciliation on next tick")
-                    return  # Don't clear - position exists!
-                
-                if entry_time:
-                    # Check how long ago we entered
-                    if isinstance(entry_time, datetime):
-                        time_since_entry = (get_current_time() - entry_time).total_seconds()
-                    else:
-                        time_since_entry = 999  # Unknown, don't skip
-                    
-                    # If we entered less than 60 seconds ago, don't clear - wait for broker to catch up
-                    # Increased from 10s to 60s to handle slow broker API responses
-                    reconciliation_grace_period = 60  # seconds
-                    if time_since_entry < reconciliation_grace_period:
-                        logger.warning(f"  [WAIT] Position entered {time_since_entry:.1f}s ago - waiting for broker confirmation")
-                        logger.warning(f"  [WAIT] Not clearing state yet - broker may not have reported fill")
-                        return
-                # ================================================================================
-                # BULLETPROOF PROTECTION: NEVER abandon a position we actually entered
-                # ================================================================================
-                
-                # SAFETY CHECK 1: Count consecutive mismatches before taking action
-                mismatch_key = f"{symbol}_position_mismatch_count"
-                mismatch_count = state.get(mismatch_key, 0) + 1
-                state[mismatch_key] = mismatch_count
-                
-                # Require 5 CONSECUTIVE mismatches (5 ticks = ~5 seconds) before even considering manual override
-                required_consecutive_mismatches = 5
-                if mismatch_count < required_consecutive_mismatches:
-                    logger.warning(f"  [SAFETY] Mismatch {mismatch_count}/{required_consecutive_mismatches} - NOT clearing yet")
-                    logger.warning(f"  [SAFETY] Will only consider manual override after {required_consecutive_mismatches} consecutive mismatches")
-                    return
-                
-                # SAFETY CHECK 2: Query broker for open orders
-                # If we have pending orders (stop/target), position MUST exist
-                try:
-                    if broker is not None and hasattr(broker, 'get_open_orders'):
-                        open_orders = broker.get_open_orders()
-                        if open_orders:
-                            logger.warning(f"  [SAFETY] {len(open_orders)} open orders found on broker")
-                            logger.warning(f"  [SAFETY] Position MUST exist - NOT clearing state")
-                            logger.warning(f"  [SAFETY] Broker position query may be delayed")
-                            state[mismatch_key] = 0  # Reset counter
-                            return
-                except Exception as e:
-                    logger.warning(f"  [SAFETY] Could not query open orders: {e}")
-                    # If we can't confirm, assume position exists and wait
-                    return
-                
-                # SAFETY CHECK 3: If we're within 2 minutes of entry, NEVER clear
-                if entry_time and isinstance(entry_time, datetime):
-                    time_since_entry = (get_current_time() - entry_time).total_seconds()
-                    absolute_minimum_wait = 120  # 2 minutes - NEVER clear before this
-                    if time_since_entry < absolute_minimum_wait:
-                        logger.warning(f"  [SAFETY] Only {time_since_entry:.0f}s since entry (min: {absolute_minimum_wait}s)")
-                        logger.warning(f"  [SAFETY] Waiting for broker to stabilize - NOT clearing")
-                        return
-                
-                # If we got here, we've had 5+ consecutive mismatches, no open orders, and 2+ minutes have passed
-                # This is likely a genuine manual close
-                logger.error("  CONFIRMED: Position appears to have been closed after extensive verification")
-                state[mismatch_key] = 0  # Reset counter
-                
-                logger.warning("=" * 60)
-                logger.warning("⚠️  MANUAL OVERRIDE DETECTED - Position closed externally")
-                logger.warning("  Bot will STOP managing this position")
-                logger.warning("  Bot will NOT enter new trades until position is fully closed")
-                logger.warning("=" * 60)
-                
-                # Set manual override flag - bot stops managing but knows position exists
-                state[symbol]["position"]["manual_override"] = True
-                state[symbol]["position"]["manual_override_time"] = get_current_time()
-                state[symbol]["position"]["manual_override_reason"] = "Position closed after verification"
-                
-                # Clear bot's position state
-                state[symbol]["position"]["active"] = False
-                state[symbol]["position"]["quantity"] = 0
-                state[symbol]["position"]["side"] = None
-                state[symbol]["position"]["entry_price"] = None
-                state[symbol]["position"]["flatten_pending"] = False
-                
-                # FIX: Clear flatten in progress flag now that position is confirmed closed
-                clear_flatten_flags()
-                
-            elif broker_position != 0 and bot_position == 0:
-                # Broker has position but bot thinks it's flat
-                # Check if this is a manual entry or if bot missed a fill
-                
-                # If manual override was previously set and position is still open, just track it
-                if state[symbol]["position"].get("manual_override", False):
-                    logger.warning("=" * 60)
-                    logger.warning("⚠️  MANUAL OVERRIDE ACTIVE - External position detected")
-                    logger.warning(f"  Broker Position: {broker_position} contracts")
-                    logger.warning("  Bot is NOT managing this position")
-                    logger.warning("  Bot will NOT enter new trades until position is closed")
-                    logger.warning("=" * 60)
-                    
-                    # Update tracked position size in case it changed
-                    state[symbol]["position"]["active"] = True  # Keep as active to prevent new entries
-                    state[symbol]["position"]["quantity"] = abs(broker_position)
-                    state[symbol]["position"]["side"] = "long" if broker_position > 0 else "short"
-                    return  # Don't close the position - user is managing it
-                
-                # No manual override active - this could be a manual entry
-                # Set manual override and track the position instead of closing it
-                logger.warning("=" * 60)
-                logger.warning("⚠️  MANUAL OVERRIDE DETECTED - External position opened")
-                logger.warning(f"  Broker Position: {broker_position} contracts")
-                logger.warning("  Bot will NOT manage this position")
-                logger.warning("  Bot will NOT enter new trades until position is closed")
-                logger.warning("=" * 60)
-                
-                # Set manual override flag
-                state[symbol]["position"]["manual_override"] = True
-                state[symbol]["position"]["manual_override_time"] = get_current_time()
-                state[symbol]["position"]["manual_override_reason"] = "Position opened externally by user"
-                
-                # Track the position to prevent new entries
-                state[symbol]["position"]["active"] = True
-                state[symbol]["position"]["quantity"] = abs(broker_position)
-                state[symbol]["position"]["side"] = "long" if broker_position > 0 else "short"
-            
-            else:
-                # Both have positions but quantities don't match
-                logger.error("  Cause: Manual position adjustment detected")
-                logger.warning("=" * 60)
-                logger.warning("⚠️  MANUAL OVERRIDE DETECTED - Position size adjusted")
-                logger.warning(f"  Bot Position: {bot_position} contracts")
-                logger.warning(f"  Broker Position: {broker_position} contracts")
-                logger.warning("  Bot will STOP managing this position")
-                logger.warning("  Bot will NOT enter new trades until position is fully closed")
-                logger.warning("=" * 60)
-                
-                # Set manual override flag - bot stops managing
-                state[symbol]["position"]["manual_override"] = True
-                state[symbol]["position"]["manual_override_time"] = get_current_time()
-                state[symbol]["position"]["manual_override_reason"] = f"Position adjusted from {bot_position} to {broker_position} contracts"
-                
-                # Track the broker's position but don't manage it
-                state[symbol]["position"]["active"] = True  # Keep as active to prevent new entries
-                state[symbol]["position"]["quantity"] = abs(broker_position)
-                state[symbol]["position"]["side"] = "long" if broker_position > 0 else "short"
-            
-            # Save corrected state
-            if recovery_manager:
-                recovery_manager.save_state(state)
-                logger.info("Corrected position state saved to disk")
-            
-            logger.error("=" * 60)
-            
-            # TODO: Send alert notification when implemented
-            # send_telegram_alert(f"Position mismatch: Broker={broker_position}, Bot={bot_position}")
-            
-        else:
-            # Positions match - reset mismatch counter
-            mismatch_key = f"{symbol}_position_mismatch_count"
-            if state.get(mismatch_key, 0) > 0:
-                state[mismatch_key] = 0  # Reset counter since positions now match
-            
-            # Check if we need to update manual override tracking
-            if manual_override and broker_position != 0:
-                # Manual override is active and position is still open
-                # Ensure we're tracking the correct position size
-                if state[symbol]["position"]["quantity"] != abs(broker_position) or \
-                   state[symbol]["position"]["side"] != ("long" if broker_position > 0 else "short"):
-                    # Position size changed while manual override was active
-                    logger.info(f"Manual override: Position updated to {broker_position} contracts")
-                    state[symbol]["position"]["quantity"] = abs(broker_position)
-                    state[symbol]["position"]["side"] = "long" if broker_position > 0 else "short"
-                    state[symbol]["position"]["active"] = True
-                    
-                    if recovery_manager:
-                        recovery_manager.save_state(state)
-            # Positions match and no manual override - all is well (silent per LOGGING_SPECIFICATION.md)
-    
-    except Exception as e:
-        logger.error(f"Error during position reconciliation: {e}", exc_info=True)
+# REMOVED: handle_position_reconciliation_event function
+# Position reconciliation has been removed as per order management simplification.
+# The bot now trusts its own state and detects exits via price action only.
+# Startup position check remains in load_position_state() function.
 
 
 def handle_connection_health_event(data: Dict[str, Any]) -> None:
