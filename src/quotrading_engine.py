@@ -4582,14 +4582,15 @@ def execute_entry(symbol: str, side: str, entry_price: float) -> None:
     # Check bracket order status
     bracket_status = order.get("status", "UNKNOWN")
     
-    if bracket_status == "BRACKET_PARTIAL":
+    # Handle partial bracket order failures
+    if bracket_status in ["BRACKET_PARTIAL", "ENTRY_FILLED_STOP_FAILED", "ENTRY_FILLED_TARGET_FAILED"]:
         # Entry filled but stop or target failed
         logger.warning("Bracket order partially placed - taking corrective action")
         entry_order_id = order.get("entry_order_id")
         stop_order_id = order.get("stop_order_id")
         target_order_id = order.get("target_order_id")
         
-        if not stop_order_id:
+        if not stop_order_id or bracket_status == "ENTRY_FILLED_STOP_FAILED":
             # CRITICAL: No stop protection - emergency close
             logger.error(SEPARATOR_LINE)
             logger.error("🚨 CRITICAL: STOP ORDER FAILED IN BRACKET!")
@@ -4624,6 +4625,7 @@ def execute_entry(symbol: str, side: str, entry_price: float) -> None:
     entry_order_id = order.get("order_id") or order.get("entry_order_id")
     
     # CRITICAL: IMMEDIATELY save minimal position state to prevent loss on crash
+    # Only save state if we have valid entry order (not after emergency close)
     state[symbol]["position"]["active"] = True
     state[symbol]["position"]["side"] = side
     state[symbol]["position"]["quantity"] = contracts
