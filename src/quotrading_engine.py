@@ -668,12 +668,7 @@ bot_status: Dict[str, Any] = {
     "early_close_saves": 0,
     "flatten_mode": False,
     "session_start_time": None,  # Track when bot started for session runtime display
-    # CRITICAL FIX: Track pending entry orders to prevent duplicate orders
-    # When an entry order is inflight, position reconciliation should not clear state
-    "entry_order_pending": False,  # True when an entry order is being processed
-    "entry_order_pending_since": None,  # Timestamp when entry started
-    "entry_order_pending_symbol": None,  # Symbol being traded
-    "entry_order_pending_id": None,  # Order ID of pending order (for verification)
+    # REMOVED: entry_order_pending tracking (was only needed for reconciliation)
     # FIX: Track flatten in progress to prevent spam
     # When a flatten operation is initiated, prevent repeated attempts
     "flatten_in_progress": False,  # True when a flatten order has been placed
@@ -4486,12 +4481,7 @@ def execute_entry(symbol: str, side: str, entry_price: float) -> None:
     actual_fill_price = entry_price
     order = None
     
-    # CRITICAL FIX: Set entry order pending flag BEFORE placing order
-    # This prevents position reconciliation from clearing state while order is inflight
-    bot_status["entry_order_pending"] = True
-    bot_status["entry_order_pending_since"] = datetime.now()
-    bot_status["entry_order_pending_symbol"] = symbol
-    bot_status["entry_order_pending_id"] = None  # Will be set after order is placed
+    # REMOVED: entry_order_pending flag management (was only needed for reconciliation)
     
     try:
         # SIMPLE ENTRY: Always use market order for immediate execution
@@ -4501,7 +4491,7 @@ def execute_entry(symbol: str, side: str, entry_price: float) -> None:
         order_type_used = "market"
         
         if order is not None:
-            bot_status["entry_order_pending_id"] = order.get("order_id")
+            # REMOVED: entry_order_pending_id tracking (no longer needed)
             # CRITICAL: IMMEDIATELY save minimal position state to prevent loss on crash
             state[symbol]["position"]["active"] = True
             state[symbol]["position"]["side"] = side
@@ -4516,13 +4506,7 @@ def execute_entry(symbol: str, side: str, entry_price: float) -> None:
             logger.error("Failed to place entry order")
             return
     
-    finally:
-        # CRITICAL FIX: Clear entry order pending flag when entry completes (success or failure)
-        # This allows position reconciliation to resume
-        bot_status["entry_order_pending"] = False
-        bot_status["entry_order_pending_since"] = None
-        bot_status["entry_order_pending_symbol"] = None
-        bot_status["entry_order_pending_id"] = None
+    # REMOVED: entry_order_pending flag cleanup (no longer needed)
     
     # ===== CRITICAL FIX #7: Entry Fill Validation (Live Trading) =====
     # Validate actual entry fill price vs expected (critical for live trading)
@@ -8101,7 +8085,7 @@ def main(symbol_override: str = None) -> None:
     event_loop.register_handler(EventType.TICK_DATA, handle_tick_event)
     event_loop.register_handler(EventType.TIME_CHECK, handle_time_check_event)
     event_loop.register_handler(EventType.VWAP_RESET, handle_vwap_reset_event)
-    event_loop.register_handler(EventType.POSITION_RECONCILIATION, handle_position_reconciliation_event)
+    # REMOVED: POSITION_RECONCILIATION handler - bot now trusts its own state
     event_loop.register_handler(EventType.CONNECTION_HEALTH, handle_connection_health_event)
     event_loop.register_handler(EventType.LICENSE_CHECK, handle_license_check_event)
     event_loop.register_handler(EventType.SHUTDOWN, handle_shutdown_event)
@@ -8305,308 +8289,10 @@ def handle_vwap_reset_event(data: Dict[str, Any]) -> None:
     pass
 
 
-def handle_position_reconciliation_event(data: Dict[str, Any]) -> None:
-    """
-    Handle periodic position reconciliation check.
-    Verifies bot's position state matches broker's actual position.
-    Runs every 5 seconds to detect and correct any desyncs.
-    
-    LIVE MODE: Checks configured symbol for position mismatch and auto-corrects.
-    
-    CRITICAL FIX: Skip reconciliation when an entry order is pending to prevent
-    clearing position state while order is still being processed. This prevents
-    duplicate orders and state corruption.
-    """
-    # Skip during maintenance/weekend/shutdown to avoid log spam when broker is disconnected
-    # The maintenance_idle flag is set during both maintenance windows and weekend closures
-    if bot_status.get("maintenance_idle", False):
-        return
-    
-    # CRITICAL FIX: Skip reconciliation when entry order is pending
-    # This prevents the race condition where:
-    # 1. Bot places order
-    # 2. Reconciliation runs before fill is confirmed
-    # 3. Reconciliation sees broker=0, bot=1 (order not yet filled)
-    # 4. Reconciliation clears bot state
-    # 5. Bot then places another order (duplicate!)
-    if bot_status.get("entry_order_pending", False):
-        pending_since = bot_status.get("entry_order_pending_since")
-        if pending_since:
-            elapsed = (datetime.now() - pending_since).total_seconds()
-            # Give orders up to 60 seconds to complete before forcing reconciliation
-            # Note: This timeout could be made configurable via CONFIG if needed
-            max_pending_seconds = 60
-            if elapsed < max_pending_seconds:
-                return
-            else:
-                # Order has been pending too long - something is wrong
-                logger.warning(f"Entry order pending for {elapsed:.1f}s - forcing reconciliation")
-                bot_status["entry_order_pending"] = False
-                bot_status["entry_order_pending_since"] = None
-                bot_status["entry_order_pending_symbol"] = None
-                bot_status["entry_order_pending_id"] = None
-    
-    # ============================================================
-    # LIVE MODE: Position reconciliation for configured symbol
-    # ============================================================
-    symbol = CONFIG["instrument"]
-    
-    if symbol not in state:
-        return
-    
-    try:
-        # Get broker's actual position
-        broker_position = get_position_quantity(symbol)
-        
-        # Get bot's tracked position
-        bot_active = state[symbol]["position"]["active"]
-        flatten_pending = state[symbol]["position"].get("flatten_pending", False)
-        manual_override = state[symbol]["position"].get("manual_override", False)
-        
-        if bot_active:
-            bot_qty = state[symbol]["position"]["quantity"]
-            bot_side = state[symbol]["position"]["side"]
-            bot_position = bot_qty if bot_side == "long" else -bot_qty
-        else:
-            bot_position = 0
-        
-        # FIX: If broker is flat and we had a flatten pending, confirm the flatten completed
-        if broker_position == 0 and flatten_pending:
-            logger.info("Position flatten confirmed - broker position is now flat")
-            state[symbol]["position"]["flatten_pending"] = False
-            clear_flatten_flags()
-            return  # No mismatch to handle
-        
-        # CHECK: If broker is flat and manual override was active, clear the override
-        if broker_position == 0 and manual_override:
-            logger.info("=" * 60)
-            logger.info("✓ MANUAL OVERRIDE CLEARED - Position fully closed")
-            logger.info("  Bot can now enter new trades")
-            logger.info("=" * 60)
-            state[symbol]["position"]["manual_override"] = False
-            state[symbol]["position"]["manual_override_time"] = None
-            state[symbol]["position"]["manual_override_reason"] = None
-            state[symbol]["position"]["active"] = False
-            state[symbol]["position"]["quantity"] = 0
-            state[symbol]["position"]["side"] = None
-            
-            # Save state to disk for recovery
-            if recovery_manager:
-                recovery_manager.save_state(state)
-                logger.info("  ✓ Cleared state saved to disk")
-            
-            return  # Position is flat and override cleared
-        
-        # DIAGNOSTIC: If manual override is active, log current status (for user awareness)
-        if manual_override and broker_position != 0:
-            override_time = state[symbol]["position"].get("manual_override_time")
-            if override_time:
-                duration = (get_current_time() - override_time).total_seconds() / 60
-                logger.debug(f"Manual override active for {duration:.1f} minutes - tracking {broker_position} contracts")
-        
-        # Check for mismatch
-        if broker_position != bot_position:
-            logger.error("=" * 60)
-            logger.error("POSITION RECONCILIATION MISMATCH DETECTED!")
-            logger.error("=" * 60)
-            logger.error(f"  Broker Position: {broker_position} contracts")
-            logger.error(f"  Bot Position:    {bot_position} contracts")
-            logger.error(f"  Discrepancy:     {abs(broker_position - bot_position)} contracts")
-            
-            # Determine corrective action
-            if broker_position == 0 and bot_position != 0:
-                # Broker is flat but bot thinks it has a position
-                # CRITICAL FIX: Check if we recently placed an order - if so, wait for fill confirmation
-                # This prevents clearing state when broker API just hasn't caught up yet
-                position = state[symbol].get("position", {})
-                entry_time = position.get("entry_time")
-                
-                # ALSO check if we have active stop/target orders - if so, position definitely exists!
-                stop_order_id = position.get("stop_order_id")
-                target_order_id = position.get("target_order_id")
-                has_active_orders = bool(stop_order_id or target_order_id)
-                
-                if has_active_orders:
-                    # We have stop/target orders, position MUST exist - broker API is wrong/delayed
-                    logger.warning(f"  [WAIT] Active orders exist (stop={stop_order_id}, target={target_order_id})")
-                    logger.warning(f"  [WAIT] Broker API is likely delayed - NOT clearing position")
-                    logger.warning(f"  [WAIT] Will retry reconciliation on next tick")
-                    return  # Don't clear - position exists!
-                
-                if entry_time:
-                    # Check how long ago we entered
-                    if isinstance(entry_time, datetime):
-                        time_since_entry = (get_current_time() - entry_time).total_seconds()
-                    else:
-                        time_since_entry = 999  # Unknown, don't skip
-                    
-                    # If we entered less than 60 seconds ago, don't clear - wait for broker to catch up
-                    # Increased from 10s to 60s to handle slow broker API responses
-                    reconciliation_grace_period = 60  # seconds
-                    if time_since_entry < reconciliation_grace_period:
-                        logger.warning(f"  [WAIT] Position entered {time_since_entry:.1f}s ago - waiting for broker confirmation")
-                        logger.warning(f"  [WAIT] Not clearing state yet - broker may not have reported fill")
-                        return
-                # ================================================================================
-                # BULLETPROOF PROTECTION: NEVER abandon a position we actually entered
-                # ================================================================================
-                
-                # SAFETY CHECK 1: Count consecutive mismatches before taking action
-                mismatch_key = f"{symbol}_position_mismatch_count"
-                mismatch_count = state.get(mismatch_key, 0) + 1
-                state[mismatch_key] = mismatch_count
-                
-                # Require 5 CONSECUTIVE mismatches (5 ticks = ~5 seconds) before even considering manual override
-                required_consecutive_mismatches = 5
-                if mismatch_count < required_consecutive_mismatches:
-                    logger.warning(f"  [SAFETY] Mismatch {mismatch_count}/{required_consecutive_mismatches} - NOT clearing yet")
-                    logger.warning(f"  [SAFETY] Will only consider manual override after {required_consecutive_mismatches} consecutive mismatches")
-                    return
-                
-                # SAFETY CHECK 2: Query broker for open orders
-                # If we have pending orders (stop/target), position MUST exist
-                try:
-                    if broker is not None and hasattr(broker, 'get_open_orders'):
-                        open_orders = broker.get_open_orders()
-                        if open_orders:
-                            logger.warning(f"  [SAFETY] {len(open_orders)} open orders found on broker")
-                            logger.warning(f"  [SAFETY] Position MUST exist - NOT clearing state")
-                            logger.warning(f"  [SAFETY] Broker position query may be delayed")
-                            state[mismatch_key] = 0  # Reset counter
-                            return
-                except Exception as e:
-                    logger.warning(f"  [SAFETY] Could not query open orders: {e}")
-                    # If we can't confirm, assume position exists and wait
-                    return
-                
-                # SAFETY CHECK 3: If we're within 2 minutes of entry, NEVER clear
-                if entry_time and isinstance(entry_time, datetime):
-                    time_since_entry = (get_current_time() - entry_time).total_seconds()
-                    absolute_minimum_wait = 120  # 2 minutes - NEVER clear before this
-                    if time_since_entry < absolute_minimum_wait:
-                        logger.warning(f"  [SAFETY] Only {time_since_entry:.0f}s since entry (min: {absolute_minimum_wait}s)")
-                        logger.warning(f"  [SAFETY] Waiting for broker to stabilize - NOT clearing")
-                        return
-                
-                # If we got here, we've had 5+ consecutive mismatches, no open orders, and 2+ minutes have passed
-                # This is likely a genuine manual close
-                logger.error("  CONFIRMED: Position appears to have been closed after extensive verification")
-                state[mismatch_key] = 0  # Reset counter
-                
-                logger.warning("=" * 60)
-                logger.warning("⚠️  MANUAL OVERRIDE DETECTED - Position closed externally")
-                logger.warning("  Bot will STOP managing this position")
-                logger.warning("  Bot will NOT enter new trades until position is fully closed")
-                logger.warning("=" * 60)
-                
-                # Set manual override flag - bot stops managing but knows position exists
-                state[symbol]["position"]["manual_override"] = True
-                state[symbol]["position"]["manual_override_time"] = get_current_time()
-                state[symbol]["position"]["manual_override_reason"] = "Position closed after verification"
-                
-                # Clear bot's position state
-                state[symbol]["position"]["active"] = False
-                state[symbol]["position"]["quantity"] = 0
-                state[symbol]["position"]["side"] = None
-                state[symbol]["position"]["entry_price"] = None
-                state[symbol]["position"]["flatten_pending"] = False
-                
-                # FIX: Clear flatten in progress flag now that position is confirmed closed
-                clear_flatten_flags()
-                
-            elif broker_position != 0 and bot_position == 0:
-                # Broker has position but bot thinks it's flat
-                # Check if this is a manual entry or if bot missed a fill
-                
-                # If manual override was previously set and position is still open, just track it
-                if state[symbol]["position"].get("manual_override", False):
-                    logger.warning("=" * 60)
-                    logger.warning("⚠️  MANUAL OVERRIDE ACTIVE - External position detected")
-                    logger.warning(f"  Broker Position: {broker_position} contracts")
-                    logger.warning("  Bot is NOT managing this position")
-                    logger.warning("  Bot will NOT enter new trades until position is closed")
-                    logger.warning("=" * 60)
-                    
-                    # Update tracked position size in case it changed
-                    state[symbol]["position"]["active"] = True  # Keep as active to prevent new entries
-                    state[symbol]["position"]["quantity"] = abs(broker_position)
-                    state[symbol]["position"]["side"] = "long" if broker_position > 0 else "short"
-                    return  # Don't close the position - user is managing it
-                
-                # No manual override active - this could be a manual entry
-                # Set manual override and track the position instead of closing it
-                logger.warning("=" * 60)
-                logger.warning("⚠️  MANUAL OVERRIDE DETECTED - External position opened")
-                logger.warning(f"  Broker Position: {broker_position} contracts")
-                logger.warning("  Bot will NOT manage this position")
-                logger.warning("  Bot will NOT enter new trades until position is closed")
-                logger.warning("=" * 60)
-                
-                # Set manual override flag
-                state[symbol]["position"]["manual_override"] = True
-                state[symbol]["position"]["manual_override_time"] = get_current_time()
-                state[symbol]["position"]["manual_override_reason"] = "Position opened externally by user"
-                
-                # Track the position to prevent new entries
-                state[symbol]["position"]["active"] = True
-                state[symbol]["position"]["quantity"] = abs(broker_position)
-                state[symbol]["position"]["side"] = "long" if broker_position > 0 else "short"
-            
-            else:
-                # Both have positions but quantities don't match
-                logger.error("  Cause: Manual position adjustment detected")
-                logger.warning("=" * 60)
-                logger.warning("⚠️  MANUAL OVERRIDE DETECTED - Position size adjusted")
-                logger.warning(f"  Bot Position: {bot_position} contracts")
-                logger.warning(f"  Broker Position: {broker_position} contracts")
-                logger.warning("  Bot will STOP managing this position")
-                logger.warning("  Bot will NOT enter new trades until position is fully closed")
-                logger.warning("=" * 60)
-                
-                # Set manual override flag - bot stops managing
-                state[symbol]["position"]["manual_override"] = True
-                state[symbol]["position"]["manual_override_time"] = get_current_time()
-                state[symbol]["position"]["manual_override_reason"] = f"Position adjusted from {bot_position} to {broker_position} contracts"
-                
-                # Track the broker's position but don't manage it
-                state[symbol]["position"]["active"] = True  # Keep as active to prevent new entries
-                state[symbol]["position"]["quantity"] = abs(broker_position)
-                state[symbol]["position"]["side"] = "long" if broker_position > 0 else "short"
-            
-            # Save corrected state
-            if recovery_manager:
-                recovery_manager.save_state(state)
-                logger.info("Corrected position state saved to disk")
-            
-            logger.error("=" * 60)
-            
-            # TODO: Send alert notification when implemented
-            # send_telegram_alert(f"Position mismatch: Broker={broker_position}, Bot={bot_position}")
-            
-        else:
-            # Positions match - reset mismatch counter
-            mismatch_key = f"{symbol}_position_mismatch_count"
-            if state.get(mismatch_key, 0) > 0:
-                state[mismatch_key] = 0  # Reset counter since positions now match
-            
-            # Check if we need to update manual override tracking
-            if manual_override and broker_position != 0:
-                # Manual override is active and position is still open
-                # Ensure we're tracking the correct position size
-                if state[symbol]["position"]["quantity"] != abs(broker_position) or \
-                   state[symbol]["position"]["side"] != ("long" if broker_position > 0 else "short"):
-                    # Position size changed while manual override was active
-                    logger.info(f"Manual override: Position updated to {broker_position} contracts")
-                    state[symbol]["position"]["quantity"] = abs(broker_position)
-                    state[symbol]["position"]["side"] = "long" if broker_position > 0 else "short"
-                    state[symbol]["position"]["active"] = True
-                    
-                    if recovery_manager:
-                        recovery_manager.save_state(state)
-            # Positions match and no manual override - all is well (silent per LOGGING_SPECIFICATION.md)
-    
-    except Exception as e:
-        logger.error(f"Error during position reconciliation: {e}", exc_info=True)
+# REMOVED: handle_position_reconciliation_event function
+# Position reconciliation has been removed as per order management simplification.
+# The bot now trusts its own state and detects exits via price action only.
+# Startup position check remains in load_position_state() function.
 
 
 def handle_connection_health_event(data: Dict[str, Any]) -> None:
