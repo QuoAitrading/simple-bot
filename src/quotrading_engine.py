@@ -1705,6 +1705,51 @@ def place_limit_order(symbol: str, side: str, quantity: int, limit_price: float)
         return None
 
 
+def place_bracket_order(symbol: str, side: str, quantity: int, stop_price: float, target_price: float) -> Optional[Dict[str, Any]]:
+    """
+    Place a bracket order (entry + stop + target as single unit).
+    
+    Args:
+        symbol: Instrument symbol
+        side: Order side ("BUY" or "SELL")
+        quantity: Number of contracts
+        stop_price: Stop loss price
+        target_price: Take profit price
+    
+    Returns:
+        Order details if successful, None otherwise
+    """
+    # Backtest mode: Simulate bracket order with immediate fill
+    if is_backtest_mode():
+        # In backtest, market orders fill immediately at current price
+        # Return a simulated bracket order response
+        return {
+            "order_id": f"BACKTEST_BRACKET_{int(time.time() * 1000)}",
+            "symbol": symbol,
+            "side": side,
+            "quantity": quantity,
+            "type": "BRACKET",
+            "stop_price": stop_price,
+            "target_price": target_price,
+            "status": "BRACKET_COMPLETE"
+        }
+    
+    # Live mode: Place bracket order through broker
+    try:
+        success, order = breaker.call(broker.place_bracket_order, symbol, side, quantity, stop_price, target_price)
+        if success and order:
+            return order
+        else:
+            return None
+    except Exception as e:
+        logger.error(f"Error placing bracket order: {e}")
+        action = recovery_manager.handle_error(
+            RecoveryErrorType.SDK_CRASH,
+            {"error": str(e), "function": "place_bracket_order"}
+        )
+        return None
+
+
 def cancel_order(symbol: str, order_id: str) -> bool:
     """
     Cancel an open order through the broker interface.
@@ -1754,6 +1799,57 @@ def cancel_order(symbol: str, order_id: str) -> bool:
         if "Event loop is closed" in str(e):
             return False
         logger.error(f"Error cancelling order {order_id}: {e}")
+        return False
+
+
+def cancel_all_orders(symbol: str) -> bool:
+    """
+    Cancel all open orders for a symbol.
+    Used for cleanup when a trade exits to prevent orphaned orders.
+    
+    Args:
+        symbol: Instrument symbol
+    
+    Returns:
+        True if successful, False otherwise
+    """
+    # Backtest mode: Simulate cancellation
+    if is_backtest_mode():
+        logger.info(f"[BACKTEST] All orders for {symbol} cancelled (simulated)")
+        return True
+    
+    shadow_mode = _bot_config.shadow_mode
+    
+    if shadow_mode:
+        logger.info(f"[SHADOW MODE] All orders for {symbol} cancelled (simulated)")
+        return True
+    
+    if broker is None:
+        logger.warning("Broker not initialized - cannot cancel orders")
+        return False
+    
+    try:
+        # Use circuit breaker for order cancellation
+        breaker = recovery_manager.get_circuit_breaker("order_placement")
+        success, result = breaker.call(broker.cancel_all_orders, symbol)
+        
+        if success and result:
+            logger.info(f"All orders for {symbol} cancelled successfully")
+            return True
+        else:
+            logger.warning(f"Failed to cancel all orders for {symbol}")
+            return False
+    except AttributeError as e:
+        # Handle 'NoneType' object has no attribute 'send' - asyncio shutdown issue
+        if "'NoneType' object has no attribute 'send'" in str(e):
+            return False
+        logger.error(f"Error cancelling all orders for {symbol}: {e}")
+        return False
+    except Exception as e:
+        # Suppress event loop closed errors during shutdown
+        if "Event loop is closed" in str(e):
+            return False
+        logger.error(f"Error cancelling all orders for {symbol}: {e}")
         return False
 
 
@@ -4483,28 +4579,71 @@ def execute_entry(symbol: str, side: str, entry_price: float) -> None:
     
     # REMOVED: entry_order_pending flag management (was only needed for reconciliation)
     
-    try:
-        # SIMPLE ENTRY: Always use market order for immediate execution
-        # Stop loss is placed immediately based on user's max_loss_per_trade setting
-        logger.info(f"  Entry: MARKET ORDER")
-        order = place_market_order(symbol, order_side, contracts)
-        order_type_used = "market"
+    # SIMPLIFIED ORDER PLACEMENT: Use bracket order to place entry + stop + target as single unit
+    # This reduces three separate API calls to one, minimizing risk of orphaned orders
+    logger.info(f"  Entry: BRACKET ORDER (market entry + stop + target)")
+    logger.info(f"  Stop: ${stop_price:.2f}, Target: ${profit_target_price:.2f}")
+    
+    order = place_bracket_order(symbol, order_side, contracts, stop_price, profit_target_price)
+    order_type_used = "bracket"
+    
+    if order is None:
+        logger.error("Failed to place bracket order")
+        return
+    
+    # Check bracket order status
+    bracket_status = order.get("status", "UNKNOWN")
+    
+    if bracket_status == "BRACKET_PARTIAL":
+        # Entry filled but stop or target failed
+        logger.warning("Bracket order partially placed - taking corrective action")
+        entry_order_id = order.get("entry_order_id")
+        stop_order_id = order.get("stop_order_id")
+        target_order_id = order.get("target_order_id")
         
-        if order is not None:
-            # REMOVED: entry_order_pending_id tracking (no longer needed)
-            # CRITICAL: IMMEDIATELY save minimal position state to prevent loss on crash
-            state[symbol]["position"]["active"] = True
-            state[symbol]["position"]["side"] = side
-            state[symbol]["position"]["quantity"] = contracts
-            state[symbol]["position"]["entry_price"] = entry_price
-            state[symbol]["position"]["entry_time"] = entry_time
-            state[symbol]["position"]["order_id"] = order.get("order_id")
-            save_position_state(symbol)
-            logger.info(f"  [OK] Market order placed successfully")
-        
-        if order is None:
-            logger.error("Failed to place entry order")
+        if not stop_order_id:
+            # CRITICAL: No stop protection - emergency close
+            logger.error(SEPARATOR_LINE)
+            logger.error("🚨 CRITICAL: STOP ORDER FAILED IN BRACKET!")
+            logger.error(f"  Entry filled but no stop protection")
+            logger.error(f"  Executing emergency market close...")
+            logger.error(SEPARATOR_LINE)
+            
+            close_side = "SELL" if side == "long" else "BUY"
+            emergency_close_order = place_market_order(symbol, close_side, contracts)
+            
+            if emergency_close_order:
+                logger.error(f"  ✓ Emergency close executed - Position closed")
+            else:
+                logger.error(f"  [FAIL] EMERGENCY CLOSE ALSO FAILED - MANUAL INTERVENTION REQUIRED!")
+                bot_status["emergency_stop"] = True
+                bot_status["stop_reason"] = "bracket_order_stop_failed"
+            
             return
+        
+        # Entry and stop placed, but target failed - still safe to trade
+        logger.info("  Entry and stop placed successfully")
+        logger.warning("  Target order failed - will detect exit by price only")
+    
+    elif bracket_status == "BRACKET_COMPLETE":
+        # All three orders placed successfully
+        logger.info(f"  [OK] Bracket order placed successfully")
+    else:
+        logger.error(f"  Unexpected bracket status: {bracket_status}")
+        return
+    
+    # Extract order IDs (we still track entry_order_id for logging, but not stop/target)
+    entry_order_id = order.get("order_id") or order.get("entry_order_id")
+    
+    # CRITICAL: IMMEDIATELY save minimal position state to prevent loss on crash
+    state[symbol]["position"]["active"] = True
+    state[symbol]["position"]["side"] = side
+    state[symbol]["position"]["quantity"] = contracts
+    state[symbol]["position"]["entry_price"] = entry_price
+    state[symbol]["position"]["entry_time"] = entry_time
+    state[symbol]["position"]["order_id"] = entry_order_id
+    save_position_state(symbol)
+    logger.info(f"  ✓ Position state saved to disk")
     
     # REMOVED: entry_order_pending flag cleanup (no longer needed)
     
@@ -4644,7 +4783,8 @@ def execute_entry(symbol: str, side: str, entry_price: float) -> None:
     else:
         logger.info(f"  Time Stop: Disabled (trade to target or stop)")
     
-    # Update position tracking
+    # Update position tracking - SIMPLIFIED: No order ID tracking for stop/target
+    # Orders are managed by broker as a bracket unit, we detect exits by price
     state[symbol]["position"] = {
         "active": True,
         "side": side,
@@ -4653,10 +4793,9 @@ def execute_entry(symbol: str, side: str, entry_price: float) -> None:
         "stop_price": stop_price,
         "profit_target_price": profit_target_price,  # Fixed 12-tick target
         "entry_time": entry_time,
-        "order_id": order.get("order_id"),
+        "order_id": entry_order_id,
         "order_type_used": order_type_used,  # Track for exit optimization
-        "stop_order_id": None,  # Will be set after stop order is placed
-        "target_order_id": None,  # Will be set after target order is placed
+        # REMOVED: stop_order_id and target_order_id tracking (detect exits by price only)
         # Signal & RL Information - Preserved for partial fills and exits
         "entry_rl_confidence": rl_confidence,  # RL confidence at entry (for tracking)
         "entry_rl_state": state[symbol].get("entry_rl_state"),  # RL market state
@@ -4695,75 +4834,11 @@ def execute_entry(symbol: str, side: str, entry_price: float) -> None:
     
     # CRITICAL: IMMEDIATELY save position state to disk - NEVER forget we're in a trade!
     save_position_state(symbol)
-    logger.info("  Γ£ô Position state saved to disk")
+    logger.info("  ✓ Position state saved to disk")
     
-    # ===== CRITICAL FIX #2: Stop Loss Execution Validation =====
-    # Verify stop order accepted by broker - critical for capital protection
-    stop_side = "SELL" if side == "long" else "BUY"
-    stop_order = place_stop_order(symbol, stop_side, contracts, stop_price)
-    
-    if stop_order:
-        state[symbol]["position"]["stop_order_id"] = stop_order.get("order_id")
-        logger.info(f"  [OK] Stop loss placed and validated: ${stop_price:.2f}")
-        logger.info(f"     Stop Order ID: {stop_order.get('order_id')}")
-        
-        # ===== BOS+FVG: Place Profit Target Limit Order =====
-        # Automatically place profit target order at 1.5x risk-reward
-        target_side = "SELL" if side == "long" else "BUY"
-        target_order = place_limit_order(symbol, target_side, contracts, profit_target_price)
-        
-        if target_order:
-            state[symbol]["position"]["target_order_id"] = target_order.get("order_id")
-            logger.info(f"  [OK] Profit target placed and validated: ${profit_target_price:.2f}")
-            logger.info(f"     Target Order ID: {target_order.get('order_id')}")
-        else:
-            # WARNING: Target order failed but position is still protected by stop
-            logger.warning(f"  [WARN] Profit target order failed to place at ${profit_target_price:.2f}")
-            logger.warning(f"  Position still protected by stop loss - will use manual exit monitoring")
-    else:
-        # CRITICAL: Stop order rejected - this is DANGEROUS!
-        logger.error(SEPARATOR_LINE)
-        logger.error("≡ƒÜ¿ CRITICAL: STOP ORDER REJECTED BY BROKER!")
-        logger.error(f"  Entry filled at ${actual_fill_price:.2f} with {contracts} contracts")
-        logger.error(f"  Stop order at ${stop_price:.2f} FAILED to place")
-        logger.error(f"  Position is NOW UNPROTECTED - emergency exit required!")
-        logger.error(SEPARATOR_LINE)
-        
-        # EMERGENCY: Close position immediately with market order
-        logger.error("  ≡ƒåÿ Executing emergency market close to protect capital...")
-        emergency_close_order = place_market_order(symbol, stop_side, contracts)
-        
-        if emergency_close_order:
-            logger.error(f"  Γ£ô Emergency close executed - Position closed")
-            logger.error(f"  This trade is abandoned due to stop order failure")
-            
-            # CRITICAL FIX: Clear position state since we closed it
-            state[symbol]["position"]["active"] = False
-            state[symbol]["position"]["quantity"] = 0
-            state[symbol]["position"]["side"] = None
-            state[symbol]["position"]["entry_price"] = None
-            state[symbol]["position"]["stop_price"] = None
-            
-            # CRITICAL: Save state to disk immediately
-            save_position_state(symbol)
-            logger.error("  Γ£ô Position state cleared and saved to disk")
-        else:
-            logger.error(f"  [FAIL] EMERGENCY CLOSE ALSO FAILED - MANUAL INTERVENTION REQUIRED!")
-            logger.error(f"  Symbol: {symbol}, Side: {side}, Contracts: {contracts}")
-            
-            # CRITICAL FIX: Even if close failed, mark position as needing manual intervention
-            # Don't let bot think it can trade normally with this broken state
-            state[symbol]["position"]["active"] = False  # Prevent bot from managing this
-            bot_status["emergency_stop"] = True
-            bot_status["stop_reason"] = "stop_order_placement_failed"
-            
-            # CRITICAL: Save state to disk immediately
-            save_position_state(symbol)
-            logger.error("  Γ£ô Emergency stop activated and saved to disk")
-        
-        # Don't track this position - it's closed or needs manual handling
-        logger.error(SEPARATOR_LINE)
-        return
+    # REMOVED: Separate stop/target order placement logic
+    # Stop and target are already placed via bracket order above
+    # Exit detection now happens via price action in check_exit_conditions()
     
     # Increment daily trade counter
     state[symbol]["daily_trade_count"] += 1
