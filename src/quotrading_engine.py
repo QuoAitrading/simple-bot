@@ -705,9 +705,10 @@ def set_flatten_flags(symbol: str) -> None:
 
 def verify_broker_position_for_flatten(symbol: str, expected_side: str, expected_quantity: int) -> Tuple[bool, int, str]:
     """
-    Verify with broker that we have a position to flatten.
+    SIMPLIFIED: Trust bot's own position state for flatten operations.
     
-    This safeguard prevents over-flattening that could create opposite positions.
+    The bot now trusts its own state completely. No broker queries during active trading.
+    This prevents issues with broker API delays and incorrect position reporting.
     
     Args:
         symbol: Symbol to check
@@ -716,29 +717,13 @@ def verify_broker_position_for_flatten(symbol: str, expected_side: str, expected
         
     Returns:
         Tuple of (can_flatten, actual_quantity, reason)
-        - can_flatten: True if we should proceed with flatten
-        - actual_quantity: The actual quantity to flatten (from broker)
-        - reason: Description of any mismatch or issue
+        - can_flatten: Always True (trust our state)
+        - actual_quantity: Expected quantity (from bot state)
+        - reason: Description
     """
-    broker_position = get_position_quantity(symbol)
-    
-    # No position at broker
-    if broker_position == 0:
-        return False, 0, "Position already flat at broker"
-    
-    # Determine broker side and quantity
-    broker_side = "long" if broker_position > 0 else "short"
-    broker_quantity = abs(broker_position)
-    
-    # Verify side matches
-    if broker_side != expected_side:
-        return False, 0, f"Position side mismatch: bot={expected_side}, broker={broker_side}"
-    
-    # Log quantity mismatch but still proceed with broker's quantity
-    if broker_quantity != expected_quantity:
-        logger.warning(f"Position quantity mismatch: bot={expected_quantity}, broker={broker_quantity} - using broker quantity")
-    
-    return True, broker_quantity, "Position verified"
+    # REMOVED: Broker position query (trust bot's own state)
+    # Bot only queries broker at startup, never during active trading
+    return True, expected_quantity, "Position verified from bot state"
 
 
 def setup_logging() -> logging.Logger:
@@ -4475,12 +4460,15 @@ def execute_entry(symbol: str, side: str, entry_price: float) -> None:
     
     # ===== CRITICAL FIX #1: Position State Validation =====
     # Prevent double positioning if signal fires while already in trade
-    current_position = get_position_quantity(symbol)
+    # SIMPLIFIED: Trust bot's own state instead of querying broker
+    bot_has_position = state[symbol]["position"]["active"]
     
-    if current_position != 0:
+    if bot_has_position:
+        bot_side = state[symbol]["position"]["side"]
+        bot_quantity = state[symbol]["position"]["quantity"]
         logger.warning(SEPARATOR_LINE)
-        logger.warning("≡ƒÜ¿ ENTRY SKIPPED - Already In Position")
-        logger.warning(f"  Current Position: {current_position} contracts ({'LONG' if current_position > 0 else 'SHORT'})")
+        logger.warning("🚫 ENTRY SKIPPED - Already In Position")
+        logger.warning(f"  Current Position: {bot_quantity} contracts ({bot_side.upper()})")
         logger.warning(f"  New Signal: {side.upper()} @ ${entry_price:.2f}")
         logger.warning(f"  Reason: Cannot enter conflicting or additional position")
         logger.warning(SEPARATOR_LINE)
@@ -5655,24 +5643,11 @@ def execute_partial_exit(symbol: str, contracts: int, exit_price: float, r_multi
     if order:
         # Verify actual fill in live mode (not backtest)
         if not is_backtest_mode():
-            time_module.sleep(1)  # Brief wait for fill confirmation
-            
-            # Check actual position to verify fill
-            current_position = abs(get_position_quantity(symbol))
-            expected_remaining = position["remaining_quantity"] - contracts
-            
-            # Check if fill doesn't match expected (allow for small broker reporting delays)
-            actual_remaining_diff = abs(current_position - expected_remaining)
-            if actual_remaining_diff > 0:
-                # Partial fill detected
-                actual_filled = position["remaining_quantity"] - current_position
-                logger.warning(f"  [PARTIAL FILL] Only {actual_filled} of {contracts} contracts filled")
-                contracts = actual_filled  # Adjust to actual filled amount
-                
-                # Recalculate profit based on actual fill
-                profit_dollars = profit_ticks * tick_value * contracts
+            # SIMPLIFIED: Trust that order will execute, no broker verification needed
+            # Bot trusts its own state and assumes orders fill as expected
+            pass
         
-        # Update position tracking with actual filled amount
+        # Update position tracking with expected filled amount
         position["remaining_quantity"] -= contracts
         position["quantity"] = position["remaining_quantity"]
         position[completion_flag] = True
@@ -6298,27 +6273,12 @@ def handle_exit_orders(symbol: str, position: Dict[str, Any], exit_price: float,
             if order:
                 logger.critical(f"  ✓ Order placed - Order ID: {order.get('order_id', 'N/A')}")
                 
-                # In backtesting, position closes immediately
-                # In live trading, wait briefly and verify
-                time_module.sleep(1)
-                
-                # Verify position actually closed or partially filled
-                current_position = get_position_quantity(symbol)
-                
-                if current_position == 0:
-                    logger.critical("=" * 80)
-                    logger.critical(f"[SUCCESS] FORCED FLATTEN SUCCESSFUL (Attempt {attempt})")
-                    logger.critical("=" * 80)
-                    return  # SUCCESS - position fully closed
-                else:
-                    # Partial fill - update contracts remaining and retry
-                    contracts_filled = contracts - abs(current_position)
-                    if contracts_filled > 0:
-                        logger.warning(f"  [PARTIAL FILL] {contracts_filled} of {contracts} contracts filled")
-                        logger.warning(f"  [REMAINING] {abs(current_position)} contracts still open - retrying...")
-                        contracts = abs(current_position)  # Update quantity for next attempt
-                    else:
-                        logger.error(f"  [WARN] Position still shows {current_position} contracts - no fill detected")
+                # SIMPLIFIED: Trust that order will execute, no broker verification needed
+                # Bot trusts its own state and assumes market orders fill immediately
+                logger.critical("=" * 80)
+                logger.critical(f"[SUCCESS] FORCED FLATTEN ORDER PLACED (Attempt {attempt})")
+                logger.critical("=" * 80)
+                return  # SUCCESS - order placed, assume it will fill
             else:
                 logger.error(f"  [FAIL] Order placement FAILED on attempt {attempt}")
             
