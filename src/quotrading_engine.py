@@ -5069,20 +5069,15 @@ def check_scalping_profit_protection(symbol: str, current_price: float) -> None:
     new_stop_order = place_stop_order(symbol, stop_side, contracts, new_stop_price)
     
     if new_stop_order:
-        # Cancel old stop order
-        old_stop_order_id = position.get("stop_order_id")
-        if old_stop_order_id:
-            cancel_success = cancel_order(symbol, old_stop_order_id)
-            if not cancel_success:
-                logger.warning(f"⚠️ New profit-lock stop active but failed to cancel old stop {old_stop_order_id}")
+        # SIMPLIFIED: Don't track stop order IDs, broker manages OCO behavior
+        # The new stop will automatically replace the old one at broker level
         
-        # Update position tracking
+        # Update position tracking (stop price only, no order ID)
         position["scalping_profit_locked"] = True
         position["scalping_profit_lock_time"] = get_current_time()
         original_stop = position.get("original_stop_price", position["stop_price"])
         position["stop_price"] = new_stop_price
-        if new_stop_order.get("order_id"):
-            position["stop_order_id"] = new_stop_order.get("order_id")
+        # REMOVED: stop_order_id tracking (not needed)
         
         # Calculate profit locked in
         profit_locked_ticks = (new_stop_price - entry_price) / tick_size if side == "long" else (entry_price - new_stop_price) / tick_size
@@ -5159,30 +5154,24 @@ def check_breakeven_protection(symbol: str, current_price: float) -> None:
     new_stop_price = round_to_tick(new_stop_price)
     
     # Step 5 - Update stop loss with continuous protection
-    # PROFESSIONAL APPROACH: Place new stop FIRST, then cancel old
-    # This ensures continuous protection (brief dual coverage is safer than no coverage)
+    # PROFESSIONAL APPROACH: Place new stop order
+    # Broker should handle OCO (One-Cancels-Other) behavior automatically
     stop_side = "SELL" if side == "long" else "BUY"
     contracts = position["quantity"]
     new_stop_order = place_stop_order(symbol, stop_side, contracts, new_stop_price)
     
     if new_stop_order:
-        # New stop confirmed - now safe to cancel old stop
-        old_stop_order_id = position.get("stop_order_id")
-        if old_stop_order_id:
-            cancel_success = cancel_order(symbol, old_stop_order_id)
-            if cancel_success:
-                pass
-            else:
-                logger.warning(f"⚠ New stop active but failed to cancel old stop {old_stop_order_id}")
+        # SIMPLIFIED: Don't track stop order IDs, broker manages OCO behavior
+        # The new stop will automatically replace the old one at broker level
+        pass
     
     if new_stop_order:
-        # Update position tracking
+        # Update position tracking (stop price only, no order ID)
         position["breakeven_active"] = True
         position["breakeven_activated_time"] = get_current_time()
         original_stop = position["original_stop_price"]
         position["stop_price"] = new_stop_price
-        if new_stop_order.get("order_id"):
-            position["stop_order_id"] = new_stop_order.get("order_id")
+        # REMOVED: stop_order_id tracking (not needed)
         
         # Calculate profit locked in
         profit_locked_ticks = (new_stop_price - entry_price) / tick_size if side == "long" else (entry_price - new_stop_price) / tick_size
@@ -5291,20 +5280,16 @@ def check_trailing_stop(symbol: str, current_price: float) -> None:
         return  # No improvement, don't update
     
     # Step 5 - Update stop loss with continuous protection
-    # PROFESSIONAL APPROACH: Place new stop FIRST, then cancel old
+    # Place new trailing stop order
+    # Broker should handle OCO (One-Cancels-Other) behavior automatically
     stop_side = "SELL" if side == "long" else "BUY"
     contracts = position["quantity"]
     new_stop_order = place_stop_order(symbol, stop_side, contracts, new_trailing_stop)
     
     if new_stop_order:
-        # New trailing stop confirmed - now safe to cancel old stop
-        old_stop_order_id = position.get("stop_order_id")
-        if old_stop_order_id:
-            cancel_success = cancel_order(symbol, old_stop_order_id)
-            if cancel_success:
-                pass
-            else:
-                logger.warning(f"⚠ New trailing stop active but failed to cancel old stop {old_stop_order_id}")
+        # SIMPLIFIED: Don't track stop order IDs, broker manages OCO behavior
+        # The new stop will automatically replace the old one at broker level
+        pass
     
     if new_stop_order:
         # Activate trailing stop flag if not already active
@@ -5313,12 +5298,11 @@ def check_trailing_stop(symbol: str, current_price: float) -> None:
             position["trailing_activated_time"] = get_current_time()
             logger.info(f"📈 TRAILING STOP ACTIVATED - Trail distance: {trailing_distance_ticks} ticks")
         
-        # Update position tracking
+        # Update position tracking (stop price only, no order ID)
         old_stop = position["stop_price"]
         position["stop_price"] = new_trailing_stop
         position["trailing_stop_price"] = new_trailing_stop
-        if new_stop_order.get("order_id"):
-            position["stop_order_id"] = new_stop_order.get("order_id")
+        # REMOVED: stop_order_id tracking (not needed)
         
         # Calculate profit now locked in
         profit_locked_ticks = (new_trailing_stop - entry_price) / tick_size if side == "long" else (entry_price - new_trailing_stop) / tick_size
@@ -5338,7 +5322,7 @@ def check_trailing_stop(symbol: str, current_price: float) -> None:
     else:
         # ===== CRITICAL FIX #3: Trailing Stop Validation =====
         logger.error(SEPARATOR_LINE)
-        logger.error("≡ƒÜ¿ CRITICAL: TRAILING STOP UPDATE FAILED!")
+        logger.error("🚨 CRITICAL: TRAILING STOP UPDATE FAILED!")
         logger.error(f"  Tried to update stop from ${position['stop_price']:.2f} to ${new_trailing_stop:.2f}")
         logger.error(f"  Current profit: ${profit_locked_dollars:+.2f} (UNPROTECTED)")
         logger.error("  Position now at risk - emergency exit required!")
@@ -5471,33 +5455,28 @@ def check_time_decay_tightening(symbol: str, current_time: datetime) -> None:
         return
     
     # Step 7 - Update stop loss with continuous protection
-    # PROFESSIONAL APPROACH: Place new stop FIRST, then cancel old
+    # Place new tightened stop order
+    # Broker should handle OCO (One-Cancels-Other) behavior automatically
     stop_side = "SELL" if side == "long" else "BUY"
     contracts = position["quantity"]
     new_stop_order = place_stop_order(symbol, stop_side, contracts, new_stop_price)
     
     if new_stop_order:
-        # New tightened stop confirmed - now safe to cancel old stop
-        old_stop_order_id = position.get("stop_order_id")
-        if old_stop_order_id:
-            cancel_success = cancel_order(symbol, old_stop_order_id)
-            if cancel_success:
-                pass
-            else:
-                logger.warning(f"ΓÜá New tightened stop active but failed to cancel old stop {old_stop_order_id}")
+        # SIMPLIFIED: Don't track stop order IDs, broker manages OCO behavior
+        # The new stop will automatically replace the old one at broker level
+        pass
     
     if new_stop_order:
-        # Update position tracking
+        # Update position tracking (stop price only, no order ID)
         old_stop = position["stop_price"]
         position["stop_price"] = new_stop_price
         position["current_stop_distance_ticks"] = new_stop_distance_ticks
         position[threshold_flag] = True  # Mark this tightening level as complete
-        if new_stop_order.get("order_id"):
-            position["stop_order_id"] = new_stop_order.get("order_id")
+        # REMOVED: stop_order_id tracking (not needed)
         
         # Step 8 - Log tightening
         logger.info("=" * 60)
-        logger.info("TIME-DECAY TIGHTENING ACTIVATED")
+        logger.info("⏰ TIME-DECAY TIGHTENING ACTIVATED")
         logger.info("=" * 60)
         logger.info(f"  Time Held: {time_held:.1f} minutes ({time_percentage:.1f}% of max)")
         logger.info(f"  Tightening Applied: {tightening_pct * 100:.0f}%")
@@ -6039,27 +6018,19 @@ def check_exit_conditions(symbol: str) -> None:
                 should_tighten = True
             
             if should_tighten:
-                logger.warning(f"≡ƒöÆ Tightening stop due to divergence: ${current_stop:.2f} ΓåÆ ${new_stop:.2f}")
+                logger.warning(f"⚡ Tightening stop due to divergence: ${current_stop:.2f} → ${new_stop:.2f}")
                 
-                # PROFESSIONAL APPROACH: Place new stop FIRST, then cancel old
+                # Place new divergence stop order
+                # Broker should handle OCO (One-Cancels-Other) behavior automatically
                 stop_side = "SELL" if side == "long" else "BUY"
                 contracts = position["quantity"]
                 new_stop_order = place_stop_order(symbol, stop_side, contracts, new_stop)
                 
                 if new_stop_order:
-                    # New divergence stop confirmed - now safe to cancel old stop
-                    old_stop_order_id = position.get("stop_order_id")
-                    if old_stop_order_id:
-                        cancel_success = cancel_order(symbol, old_stop_order_id)
-                        if cancel_success:
-                            pass
-                        else:
-                            logger.warning(f"ΓÜá New divergence stop active but failed to cancel old stop {old_stop_order_id}")
-                
-                if new_stop_order:
+                    # SIMPLIFIED: Don't track stop order IDs, broker manages OCO behavior
+                    # The new stop will automatically replace the old one at broker level
                     position["stop_price"] = new_stop
-                    if new_stop_order.get("order_id"):
-                        position["stop_order_id"] = new_stop_order.get("order_id")
+                    # REMOVED: stop_order_id tracking (not needed)
     
     # EIGHTH - Time-decay tightening (last priority, gradual adjustment)
     check_time_decay_tightening(symbol, bar_time)

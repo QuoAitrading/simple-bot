@@ -37,7 +37,7 @@ class EventType(IntEnum):
     ORDER_PARTIAL_FILL = 11
     ORDER_REJECT = 12
     STOP_HIT = 13
-    POSITION_RECONCILIATION = 14  # New: Periodic position sync check
+    # REMOVED: POSITION_RECONCILIATION = 14 (no longer used - bot trusts its own state)
     CONNECTION_HEALTH = 15  # New: Periodic broker connection health check
     LICENSE_CHECK = 16  # New: Periodic license validation check
     
