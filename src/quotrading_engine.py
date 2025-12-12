@@ -4586,6 +4586,7 @@ def execute_entry(symbol: str, side: str, entry_price: float) -> None:
     if bracket_status in ["BRACKET_PARTIAL", "ENTRY_FILLED_STOP_FAILED", "ENTRY_FILLED_TARGET_FAILED"]:
         # Entry filled but stop or target failed
         logger.warning("Bracket order partially placed - taking corrective action")
+        # NOTE: These are temporary variables for validation only, NOT tracked in position state
         entry_order_id = order.get("entry_order_id")
         stop_order_id = order.get("stop_order_id")
         target_order_id = order.get("target_order_id")
@@ -5063,7 +5064,10 @@ def check_scalping_profit_protection(symbol: str, current_price: float) -> None:
     
     new_stop_price = round_to_tick(new_stop_price)
     
-    # Place new stop order FIRST for continuous protection
+    # Place new stop order for continuous protection
+    # NOTE: Broker (TopStep) uses OCO (One-Cancels-Other) behavior - placing a new stop
+    # for the same position automatically cancels the old one. This is standard for
+    # professional trading platforms and prevents multiple stop orders on same position.
     stop_side = "SELL" if side == "long" else "BUY"
     contracts = position["quantity"]
     new_stop_order = place_stop_order(symbol, stop_side, contracts, new_stop_price)
