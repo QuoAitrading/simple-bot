@@ -2283,7 +2283,7 @@ def save_position_state(symbol: str) -> None:
             "stop_price": position["stop_price"],
             "entry_time": position["entry_time"].isoformat() if position.get("entry_time") else None,
             "order_id": position.get("order_id"),
-            "stop_order_id": position.get("stop_order_id"),
+            # REMOVED: stop_order_id tracking (not needed for recovery)
             "last_updated": datetime.now().isoformat(),
         }
         
@@ -2369,7 +2369,7 @@ def load_position_state(symbol: str) -> bool:
         state[symbol]["position"]["entry_price"] = saved_state["entry_price"]
         state[symbol]["position"]["stop_price"] = saved_state["stop_price"]
         state[symbol]["position"]["order_id"] = saved_state.get("order_id")
-        state[symbol]["position"]["stop_order_id"] = saved_state.get("stop_order_id")
+        # REMOVED: stop_order_id loading (not needed, exits detected by price)
         
         if saved_state.get("entry_time"):
             state[symbol]["position"]["entry_time"] = datetime.fromisoformat(saved_state["entry_time"])
@@ -6504,23 +6504,10 @@ def execute_exit(symbol: str, exit_price: float, reason: str) -> None:
     if not position["active"]:
         return
     
-    # Cancel stop and target orders BEFORE exiting position (prevents orphaned orders)
-    stop_order_id = position.get("stop_order_id")
-    if stop_order_id:
-        cancel_success = cancel_order(symbol, stop_order_id)
-        if cancel_success:
-            pass
-        else:
-            logger.warning(f"⚠ Failed to cancel stop order {stop_order_id} - may remain active!")
-    
-    # Cancel profit target order if it exists
-    target_order_id = position.get("target_order_id")
-    if target_order_id:
-        cancel_success = cancel_order(symbol, target_order_id)
-        if cancel_success:
-            pass
-        else:
-            logger.warning(f"⚠ Failed to cancel target order {target_order_id} - may remain active!")
+    # SIMPLIFIED: Cancel all orders for this symbol (bracket cleanup)
+    # This replaces individual stop/target cancellation and ensures no orphaned orders
+    logger.info(f"  Cancelling all orders for {symbol}...")
+    cancel_all_orders(symbol)
     
     exit_time = get_current_time()  # Use get_current_time() for backtest compatibility
     
