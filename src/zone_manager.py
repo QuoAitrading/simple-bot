@@ -124,22 +124,3 @@ class ZoneManager:
         """
         zone['entry_time'] = None
         zone['entry_price'] = None
-    
-    def is_price_in_zone(self, zone: Dict, candle_high: float, candle_low: float) -> bool:
-        """
-        Check if price is currently in a zone based on candle high/low.
-        
-        Args:
-            zone: The zone to check
-            candle_high: High of current candle
-            candle_low: Low of current candle
-            
-        Returns:
-            True if price is in zone, False otherwise
-        """
-        if zone['zone_type'] == 'supply':
-            # For supply zones, check if candle high touched or exceeded zone bottom
-            return candle_high >= zone['zone_bottom']
-        else:  # demand
-            # For demand zones, check if candle low touched or went below zone top
-            return candle_low <= zone['zone_top']

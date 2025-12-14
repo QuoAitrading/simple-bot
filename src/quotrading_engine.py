@@ -7540,11 +7540,14 @@ def execute_zone_trading_logic(symbol: str, current_price: float, current_time: 
     volume_lookback = 30
     average_volume = 0
     if len(bars) >= volume_lookback:
-        recent_volumes = [bar.get("volume", 0) for bar in list(bars)[-volume_lookback:]]
+        # Get recent bars for volume calculation
+        bars_list = list(bars) if not isinstance(bars, list) else bars
+        recent_volumes = [bar.get("volume", 0) for bar in bars_list[-volume_lookback:]]
         average_volume = sum(recent_volumes) / len(recent_volumes) if recent_volumes else 0
     elif len(bars) > 0:
         # Use what we have if less than lookback period
-        recent_volumes = [bar.get("volume", 0) for bar in list(bars)]
+        bars_list = list(bars) if not isinstance(bars, list) else bars
+        recent_volumes = [bar.get("volume", 0) for bar in bars_list]
         average_volume = sum(recent_volumes) / len(recent_volumes) if recent_volumes else 0
     
     # Check and mark dead zones

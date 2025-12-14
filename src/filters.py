@@ -3,7 +3,7 @@ Filters - Implements velocity, volume, and time-in-zone filters for trade valida
 """
 
 import logging
-from typing import Dict, Optional
+from typing import Dict, Optional, List
 from datetime import datetime
 import time
 

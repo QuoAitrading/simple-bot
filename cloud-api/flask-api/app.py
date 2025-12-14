@@ -1776,7 +1776,7 @@ def heartbeat():
                 # Get zones for the configured symbol (if metadata contains symbol info)
                 # For legacy mode without symbol parameter, try to get symbol from metadata
                 metadata = data.get('metadata', {})
-                symbol_for_zones = metadata.get('symbol') if metadata else None
+                symbol_for_zones = metadata.get('symbol')
                 zones = get_zones_for_symbol(symbol_for_zones) if symbol_for_zones else []
                 
                 return jsonify({
