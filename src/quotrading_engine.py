@@ -65,7 +65,7 @@ Friday Special Rules:
 For Multi-User Subscriptions:
 - All users see US Eastern times (CME standard)
 - Bot uses Eastern Time, can display in user's local timezone if needed
-- Each user gets their own position/RL/VWAP state
+- Each user gets their own position and market state
 
 """
 
@@ -826,65 +826,9 @@ logger = setup_logging()
 
 
 # ============================================================================
-# CLOUD API INTEGRATION - Data Collection Only
+# TRADING LOGIC PLACEHOLDER
 # ============================================================================
-# Cloud API is used ONLY for reporting trade outcomes (data collection).
-# Trading decisions (confidence/approval) are made locally using RL brain.
-
-
-
-async def get_ml_confidence_async(rl_state: Dict[str, Any], side: str) -> Tuple[bool, float, str]:
-    """
-    Stub function - RL system has been removed.
-    Always returns default approval.
-    
-    Returns: (take_signal, confidence, reason)
-    """
-    # Default approval - no RL filtering
-    return True, 1.0, "RL system removed - default approval"
-
-
-def get_ml_confidence(rl_state: Dict[str, Any], side: str) -> Tuple[bool, float, str]:
-    """Synchronous wrapper for get_ml_confidence_async"""
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    try:
-        return loop.run_until_complete(get_ml_confidence_async(rl_state, side))
-    finally:
-        _cleanup_event_loop(loop)
-
-
-
-async def save_trade_experience_async(
-    rl_state: Dict[str, Any],
-    side: str,
-    pnl: float,
-    duration_minutes: float,
-    execution_data: Dict[str, Any]
-) -> None:
-    """
-    Stub function - RL system has been removed.
-    Trade outcome tracking is no longer active.
-    """
-    # No-op - RL system removed
-    pass
-
-
-
-def save_trade_experience(
-    rl_state: Dict[str, Any],
-    side: str,
-    pnl: float,
-    duration_minutes: float,
-    execution_data: Dict[str, Any]
-) -> None:
-    """Synchronous wrapper for save_trade_experience_async"""
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    try:
-        loop.run_until_complete(save_trade_experience_async(rl_state, side, pnl, duration_minutes, execution_data))
-    finally:
-        _cleanup_event_loop(loop)
+# Strategy components have been removed - awaiting new trading logic implementation
 
 
 # ============================================================================
@@ -3479,7 +3423,7 @@ def capture_market_state(symbol: str, current_price: float) -> Dict[str, Any]:
 def is_regime_tradeable(regime: str) -> bool:
     """
     Check if the current regime allows trading.
-    Currently returns True for all regimes (RL handles filtering).
+    Currently returns True for all regimes.
     
     Args:
         regime: Current market regime. Expected values:
@@ -3492,12 +3436,8 @@ def is_regime_tradeable(regime: str) -> bool:
         
     Returns:
         True if regime allows trading (currently always True)
-        
-    Note:
-        All regimes are currently tradeable. The RL confidence system
-        provides pattern-based filtering instead of regime-based blocking.
     """
-    # All regimes are tradeable - RL confidence system provides filtering
+    # All regimes are tradeable - new strategy logic will handle filtering
     return True
 
 
@@ -3550,7 +3490,6 @@ def check_for_signals(symbol: str) -> None:
     regime = state[symbol].get("current_regime", "NORMAL")
     
     # REGIME CHECK: All regimes are now tradeable (no blocking)
-    # The RL signal confidence system provides sufficient filtering
     # This check is maintained for future extensibility but currently allows all regimes
     if not is_regime_tradeable(regime):
         # This should never happen since all regimes are enabled, but keeping for safety
@@ -3581,8 +3520,7 @@ def check_for_signals(symbol: str) -> None:
     # Check for long signal
     long_passed = check_long_signal_conditions(symbol, prev_bar, current_bar)
     if long_passed:
-        # MARKET STATE CAPTURE - Record comprehensive market conditions
-        # Capture current market state (pattern matching fields)
+        # Capture current market state for logging
         market_state = capture_market_state(symbol, current_bar["close"])
         
         # Show signal diagnostic in live mode (without exposing strategy details)
@@ -3596,37 +3534,14 @@ def check_for_signals(symbol: str) -> None:
         if is_backtest_mode():
             logger.info(f"[MARKET STATE] Long - Pattern analysis complete")
         
-        # Ask cloud RL API for decision (or local RL as fallback)
-        take_signal, confidence, reason = get_ml_confidence(market_state, "long")
-        
-        if not take_signal:
-            # Show rejected signals without exposing strategy details
-            if not is_backtest_mode():
-                logger.info(f"  ✗ Signal Declined: LONG | Confidence: {confidence:.0%}")
-            else:
-                logger.info(f"[-] Signal Declined: LONG at ${current_bar['close']:.2f} - Low confidence ({confidence:.0%})")
-            # Store the rejected signal state for potential future learning
-            state[symbol]["last_rejected_signal"] = {
-                "time": get_current_time(),
-                "state": market_state,
-                "side": "long",
-                "confidence": confidence,
-                "reason": reason
-            }
-            return
-        
-        # RL approved - adjust position size based on confidence
-        regime = market_state.get('regime', 'NORMAL')
-        
         # Show approved signal - generic message in live mode, detailed in backtest
         if is_backtest_mode():
-            logger.info(f"[+] LONG SIGNAL APPROVED | Price: ${current_bar['close']:.2f} | AI Confidence: {confidence:.0%}")
+            logger.info(f"[+] LONG SIGNAL APPROVED | Price: ${current_bar['close']:.2f}")
         else:
-            logger.info(f"  > Signal Approved: LONG | Price: ${current_bar['close']:.2f} | Confidence: {confidence:.0%}")
+            logger.info(f"  > Signal Approved: LONG | Price: ${current_bar['close']:.2f}")
         
-        # Store market state for outcome recording
+        # Store market state for tracking
         state[symbol]["entry_market_state"] = market_state
-        state[symbol]["entry_rl_confidence"] = confidence
         
         # Strategy removed - FVG marking code no longer needed
         
@@ -3636,8 +3551,7 @@ def check_for_signals(symbol: str) -> None:
     # Check for short signal
     short_passed = check_short_signal_conditions(symbol, prev_bar, current_bar)
     if short_passed:
-        # MARKET STATE CAPTURE - Record comprehensive market conditions
-        # Capture current market state (pattern matching fields)
+        # Capture current market state for logging
         market_state = capture_market_state(symbol, current_bar["close"])
         
         # Show signal diagnostic in live mode (without exposing strategy details)
@@ -3651,37 +3565,14 @@ def check_for_signals(symbol: str) -> None:
         if is_backtest_mode():
             logger.info(f"[MARKET STATE] Short - Pattern analysis complete")
         
-        # Ask cloud RL API for decision (or local RL as fallback)
-        take_signal, confidence, reason = get_ml_confidence(market_state, "short")
-        
-        if not take_signal:
-            # Show rejected signals without exposing strategy details
-            if not is_backtest_mode():
-                logger.info(f"  ✗ Signal Declined: SHORT | Confidence: {confidence:.0%}")
-            else:
-                logger.info(f"[-] Signal Declined: SHORT at ${current_bar['close']:.2f} - Low confidence ({confidence:.0%})")
-            # Store the rejected signal state for potential future learning
-            state[symbol]["last_rejected_signal"] = {
-                "time": get_current_time(),
-                "state": market_state,
-                "side": "short",
-                "confidence": confidence,
-                "reason": reason
-            }
-            return
-        
-        # RL approved - adjust position size based on confidence
-        regime = market_state.get('regime', 'NORMAL')
-        
         # Show approved signal - generic message in live mode, detailed in backtest
         if is_backtest_mode():
-            logger.info(f"[+] SHORT SIGNAL APPROVED | Price: ${current_bar['close']:.2f} | AI Confidence: {confidence:.0%}")
+            logger.info(f"[+] SHORT SIGNAL APPROVED | Price: ${current_bar['close']:.2f}")
         else:
-            logger.info(f"  > Signal Approved: SHORT | Price: ${current_bar['close']:.2f} | Confidence: {confidence:.0%}")
+            logger.info(f"  > Signal Approved: SHORT | Price: ${current_bar['close']:.2f}")
         
-        # Store market state for outcome recording
+        # Store market state for tracking
         state[symbol]["entry_market_state"] = market_state
-        state[symbol]["entry_rl_confidence"] = confidence
         
         # Strategy removed - FVG marking code no longer needed
         
@@ -3693,7 +3584,7 @@ def check_for_signals(symbol: str) -> None:
 # PHASE EIGHT: Position Sizing
 # ============================================================================
 
-def calculate_position_size(symbol: str, side: str, entry_price: float, rl_confidence: Optional[float] = None) -> Tuple[int, float]:
+def calculate_position_size(symbol: str, side: str, entry_price: float) -> Tuple[int, float]:
     """
     Calculate position size based on risk management rules.
     
@@ -3726,7 +3617,6 @@ def calculate_position_size(symbol: str, side: str, entry_price: float, rl_confi
         symbol: Instrument symbol (ES, NQ, CL, GC, etc.)
         side: 'long' or 'short'
         entry_price: Expected entry price
-        rl_confidence: Optional RL confidence (for tracking, not used for position sizing)
     
     Returns:
         Tuple of (contracts, stop_price)
@@ -4060,23 +3950,8 @@ def execute_entry(symbol: str, side: str, entry_price: float) -> None:
         logger.warning(f"  Signal: {side.upper()} @ ${entry_price:.2f}")
         logger.warning(SEPARATOR_LINE)
         
-        # Store for potential shadow outcome tracking
-        rl_state = state[symbol].get("entry_rl_state")
-        if rl_state is not None:
-            # Extract price movement from reason (e.g., "Price moved UP 5.0 ticks")
-            import re
-            match = re.search(r'(\d+\.?\d*)\s+ticks', price_reason)
-            price_move_ticks = float(match.group(1)) if match else 0.0
-            
-            state[symbol]["last_rejected_signal"] = {
-                "time": get_current_time(),
-                "state": rl_state,
-                "side": side,
-                "reason": price_reason,
-                "price_move_ticks": price_move_ticks,
-                "signal_price": entry_price,
-                "current_price": current_market_price
-            }
+        # Price moved too much - skip trade
+        return
         
         return
     
@@ -4084,11 +3959,8 @@ def execute_entry(symbol: str, side: str, entry_price: float) -> None:
     logger.info(f"  [OK] Price validation passed: ${entry_price:.2f} -> ${current_market_price:.2f}")
     entry_price = current_market_price
     
-    # Get RL confidence if available (for tracking)
-    rl_confidence = state[symbol].get("entry_rl_confidence")
-    
     # Calculate position size
-    contracts, stop_price = calculate_position_size(symbol, side, entry_price, rl_confidence)
+    contracts, stop_price = calculate_position_size(symbol, side, entry_price)
     
     if contracts == 0:
         logger.warning("Cannot enter trade - position size is zero")
@@ -4354,12 +4226,9 @@ def execute_entry(symbol: str, side: str, entry_price: float) -> None:
         "order_id": entry_order_id,
         "order_type_used": order_type_used,  # Track for exit optimization
         # REMOVED: stop_order_id and target_order_id tracking (detect exits by price only)
-        # Signal & RL Information - Preserved for partial fills and exits
-        "entry_rl_confidence": rl_confidence,  # RL confidence at entry (for tracking)
-        "entry_rl_state": state[symbol].get("entry_rl_state"),  # RL market state
+        # Signal Information - Preserved for partial fills and exits
         "original_entry_price": entry_price,  # Original signal price (before validation)
         "actual_entry_price": actual_fill_price,  # Actual fill price
-        # BOS+FVG doesn't use regime detection - removed for performance
         # Advanced Exit Management - Breakeven State
         "breakeven_active": False,
         "original_stop_price": stop_price,
@@ -6075,37 +5944,12 @@ def execute_exit(symbol: str, exit_price: float, reason: str) -> None:
             # Get the side from position
             trade_side = position.get("side", "unknown")
             
-            # Get execution quality metrics for RL learning
-            order_type_used = position.get("order_type_used", "unknown")
-            
-            # Calculate entry slippage if we have the data (tick_size from get_symbol_tick_specs() on line ~6718)
-            entry_slippage_ticks = 0
-            if position.get("actual_entry_price") and position.get("original_entry_price"):
-                entry_slippage = abs(position.get("actual_entry_price", 0) - position.get("original_entry_price", 0))
-                entry_slippage_ticks = entry_slippage / tick_size if tick_size > 0 else 0
-            
-            # Record market state + outcomes to local RL brain (backtest) or cloud (live)
-            save_trade_experience(
-                rl_state=market_state,  # Market state (flat structure)
-                side=trade_side,  # Trade direction (for cloud API)
-                pnl=pnl,
-                duration_minutes=duration_minutes,
-                execution_data={
-                    "mfe": mfe,
-                    "mae": mae,
-                    "exit_reason": reason,  # CRITICAL: How trade closed
-                    "order_type_used": order_type_used,  # IMPORTANT: Order type for execution optimization
-                    "entry_slippage_ticks": entry_slippage_ticks  # IMPORTANT: Slippage tracking
-                }
-            )
-            
-            logger.info(f"πΎ [EXPERIENCE] Recorded: ${pnl:+.2f} in {duration_minutes:.1f}min | MFE: ${mfe:.2f}, MAE: ${mae:.2f}")
+            # Log trade metrics
+            logger.info(f"πΎ [TRADE METRICS] ${pnl:+.2f} in {duration_minutes:.1f}min | MFE: ${mfe:.2f}, MAE: ${mae:.2f}")
             
             # Clean up state
             if "entry_market_state" in state[symbol]:
                 del state[symbol]["entry_market_state"]
-            if "entry_rl_confidence" in state[symbol]:
-                del state[symbol]["entry_rl_confidence"]
         
     except Exception as e:
         pass
@@ -7664,10 +7508,6 @@ def main(symbol_override: str = None) -> None:
             logger.warning(f"Failed to subscribe to quotes: {e}")
             logger.warning("Continuing without bid/ask quote data")
     
-    # RL is CLOUD-ONLY - no local RL components
-    # Users get confidence from cloud, contribute to cloud hive mind
-    # Only the dev (Kevin) gets the experience data saved to cloud
-    
     # Show current date/time before starting
     current_time = datetime.now(tz)
     logger.info(f"📅 {current_time.strftime('%A, %B %d, %Y at %I:%M %p %Z')}")
@@ -8634,8 +8474,6 @@ Multi-Symbol Mode:
   Launch separate terminals for each symbol:
   - Window 1: python src/quotrading_engine.py ES
   - Window 2: python src/quotrading_engine.py NQ
-  
-  Each window uses symbol-specific RL data from experiences/{symbol}/
         """
     )
     parser.add_argument(
