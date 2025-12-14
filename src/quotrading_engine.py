@@ -564,10 +564,6 @@ IDLE_STATUS_MESSAGE_INTERVAL = 300  # Show status message every 5 minutes (300 s
 # Regime Detection Constants
 DEFAULT_FALLBACK_ATR = 5.0  # Default ATR when calculation not possible (ES futures typical value)
 
-# BOS + FVG Strategy Constants - Optimized for 57.6% Win Rate
-BOS_FVG_STOP_BUFFER_TICKS = 2.5  # Ticks beyond FVG zone for stop placement (optimized)
-BOS_FVG_PROFIT_TARGET_MULTIPLIER = 1.18  # Risk-reward ratio (1:1.18) - quick profit capture
-
 # Fixed Stop Loss and Profit Target Configuration
 FIXED_STOP_LOSS_TICKS = 12  # Fixed stop loss at 12 ticks for all symbols
 FIXED_PROFIT_TARGET_TICKS = 12  # Fixed profit target at 12 ticks for all symbols
@@ -2257,16 +2253,16 @@ def update_1min_bar(symbol: str, price: float, volume: int, dt: datetime) -> Non
             bar_count = len(state[symbol]["bars_1min"])
             
             # Calculate VWAP after new bar is added
-            # NOTE: VWAP not needed for BOS+FVG strategy - disabled for performance
+            # Technical indicators disabled - strategy refactoring in progress
             # calculate_vwap(symbol)
             
             # Update all indicators after each 1-minute bar (consistent with backtest mode)
-            # NOTE: MACD and RSI not needed for BOS+FVG strategy - disabled for performance
+            # Technical indicators disabled during refactoring
             # update_macd(symbol)
             # update_rsi(symbol)
             update_volume_average(symbol)
             
-            # Process BOS and FVG detection after bar is completed
+            # Strategy signal processing
             process_bos_fvg(symbol)
             
             # Classify market condition on every bar if bid_ask_manager available
@@ -2396,15 +2392,15 @@ def inject_complete_bar(symbol: str, bar: Dict[str, Any]) -> None:
     # Add the complete bar with proper OHLC
     state[symbol]["bars_1min"].append(bar)
     
-    # Process BOS and FVG detection after bar is added
+    # Strategy signal processing
     process_bos_fvg(symbol)
     
     # Update current regime after adding new bar
-    # NOTE: Regime detection not needed for BOS+FVG strategy - disabled for performance
+    # Regime detection disabled during strategy refactoring
     # update_current_regime(symbol)
     
     # Update all indicators after each 1-minute bar (all on same timeframe)
-    # NOTE: MACD, RSI, VWAP not needed for BOS+FVG strategy - disabled for performance
+    # Technical indicators disabled during refactoring
     # update_macd(symbol)
     # update_rsi(symbol)
     update_volume_average(symbol)
