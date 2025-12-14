@@ -774,6 +774,8 @@ def load_config(environment: Optional[str] = None, backtest_mode: bool = False) 
         env_vars_set.add("dry_run")
     if os.getenv("BOT_SHADOW_MODE"):
         env_vars_set.add("shadow_mode")
+    if os.getenv("BOT_TRADING_STYLE"):
+        env_vars_set.add("trading_style")
     if os.getenv("BOT_STOP_LOSS_TICKS"):
         env_vars_set.add("stop_loss_ticks")
     if os.getenv("BOT_TAKE_PROFIT_TICKS"):
