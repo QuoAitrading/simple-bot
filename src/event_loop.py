@@ -213,7 +213,7 @@ class EventLoop:
                 # Detect stalls (iterations taking too long)
                 if iteration_time_ms > 1000:  # 1 second
                     self.metrics["stall_count"] += 1
-                    logger.warning(f"Event loop stall detected: {iteration_time_ms:.2f}ms")
+                    logger.debug(f"Event loop stall detected: {iteration_time_ms:.2f}ms")
                 
                 self.metrics["last_iteration_time"] = time.time()
                 
@@ -247,7 +247,7 @@ class EventLoop:
             # Log slow events
             processing_time_ms = (time.time() - start_time) * 1000
             if processing_time_ms > 100:  # 100ms
-                logger.warning(
+                logger.debug(
                     f"Slow event processing: {event.event_type.name} "
                     f"took {processing_time_ms:.2f}ms"
                 )

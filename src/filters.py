@@ -53,12 +53,12 @@ class FilterManager:
         self.pending_velocity_check = {}  # zone_id -> start_time
         self.pending_volume_check = {}  # zone_id -> start_time
         
-        logger.info(f"🔧 FilterManager initialized:")
-        logger.info(f"  • Velocity threshold: {velocity_threshold} ticks/sec")
-        logger.info(f"  • Reaction window: {reaction_window}s")
-        logger.info(f"  • Volume lookback: {volume_lookback} bars")
-        logger.info(f"  • High volume threshold: {high_volume_threshold}x")
-        logger.info(f"  • Time in zone limit: {time_in_zone_limit}s")
+        logger.debug(f"🔧 FilterManager initialized:")
+        logger.debug(f"  • Velocity threshold: {velocity_threshold} ticks/sec")
+        logger.debug(f"  • Reaction window: {reaction_window}s")
+        logger.debug(f"  • Volume lookback: {volume_lookback} bars")
+        logger.debug(f"  • High volume threshold: {high_volume_threshold}x")
+        logger.debug(f"  • Time in zone limit: {time_in_zone_limit}s")
     
     def calculate_velocity(self, current_price: float, entry_price: float, 
                           current_time: datetime, entry_time: datetime) -> float:

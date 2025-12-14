@@ -1275,15 +1275,15 @@ class BidAskManager:
         self.position_sizer = SpreadAwarePositionSizer(config)
         self.exit_optimizer = ExitOrderOptimizer(config)
         
-        logger.info("Bid/Ask Manager initialized")
-        logger.info(f"  Passive order timeout: {config.get('passive_order_timeout', 10)}s")
-        logger.info(f"  Abnormal spread multiplier: {config.get('abnormal_spread_multiplier', 2.0)}x")
-        logger.info(f"  Mixed order strategy: {config.get('use_mixed_order_strategy', False)}")
-        logger.info(f"  Max queue size: {config.get('max_queue_size', 100)}")
-        logger.info(f"  Min bid/ask size: {config.get('min_bid_ask_size', 1)}")
-        logger.info(f"  Market condition classification: Enabled")
-        logger.info(f"  Fill probability estimation: Enabled")
-        logger.info(f"  Spread-aware position sizing: Enabled")
+        logger.debug("Bid/Ask Manager initialized")
+        logger.debug(f"  Passive order timeout: {config.get('passive_order_timeout', 10)}s")
+        logger.debug(f"  Abnormal spread multiplier: {config.get('abnormal_spread_multiplier', 2.0)}x")
+        logger.debug(f"  Mixed order strategy: {config.get('use_mixed_order_strategy', False)}")
+        logger.debug(f"  Max queue size: {config.get('max_queue_size', 100)}")
+        logger.debug(f"  Min bid/ask size: {config.get('min_bid_ask_size', 1)}")
+        logger.debug(f"  Market condition classification: Enabled")
+        logger.debug(f"  Fill probability estimation: Enabled")
+        logger.debug(f"  Spread-aware position sizing: Enabled")
     
     def update_quote(self, symbol: str, bid_price: float, ask_price: float,
                      bid_size: int, ask_size: int, last_price: float, timestamp: int) -> None:

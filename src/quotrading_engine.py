@@ -7391,33 +7391,33 @@ def main(symbol_override: str = None) -> None:
     proximal_reaction_window = CONFIG.get("proximal_reaction_window", 5.0)
     buffer_size_price = proximal_buffer_ticks * tick_size
     
-    logger.info("🎯 Zone-Based Trading Strategy Initialized:")
-    logger.info(f"  • Symbol: {trading_symbol}")
-    logger.info(f"  • Tick Specs: tick_size={tick_size}, tick_value={tick_value}")
-    logger.info(f"  • Stop Loss: {stop_loss_ticks} ticks ({stop_loss_ticks * tick_size:.2f} points = ${stop_loss_dollars:.2f})")
-    logger.info(f"  • Take Profit: {take_profit_ticks} ticks ({take_profit_ticks * tick_size:.2f} points = ${take_profit_dollars:.2f})")
+    logger.debug("🎯 Zone-Based Trading Strategy Initialized:")
+    logger.debug(f"  • Symbol: {trading_symbol}")
+    logger.debug(f"  • Tick Specs: tick_size={tick_size}, tick_value={tick_value}")
+    logger.debug(f"  • Stop Loss: {stop_loss_ticks} ticks ({stop_loss_ticks * tick_size:.2f} points = ${stop_loss_dollars:.2f})")
+    logger.debug(f"  • Take Profit: {take_profit_ticks} ticks ({take_profit_ticks * tick_size:.2f} points = ${take_profit_dollars:.2f})")
     
     # Log trading style configuration
     trading_style = CONFIG.get("trading_style", 1)
     style_names = {0: "🛡️ CONSERVATIVE", 1: "⚖️ MODERATE", 2: "⚡ AGGRESSIVE"}
     style_name = style_names.get(trading_style, "⚖️ MODERATE")
-    logger.info(f"  • Trading Style: {style_name}")
+    logger.debug(f"  • Trading Style: {style_name}")
     if trading_style == 0:
-        logger.info(f"    ↳ Main zones only (no proximity buffer trades)")
+        logger.debug(f"    ↳ Main zones only (no proximity buffer trades)")
     elif trading_style == 1:
-        logger.info(f"    ↳ All features enabled (filters + proximity buffer)")
+        logger.debug(f"    ↳ All features enabled (filters + proximity buffer)")
     elif trading_style == 2:
-        logger.info(f"    ↳ No filters on main zones (instant execution on body out)")
+        logger.debug(f"    ↳ No filters on main zones (instant execution on body out)")
     
-    logger.info(f"  • Velocity Filter: 5.0 ticks/sec (10s reaction window) - Symbol-agnostic")
-    logger.info(f"  • Volume Filter: 2.0x average (10s reaction window) - Symbol-agnostic")
-    logger.info(f"  • Time in Zone Limit: 45 seconds - Symbol-agnostic")
+    logger.debug(f"  • Velocity Filter: 5.0 ticks/sec (10s reaction window) - Symbol-agnostic")
+    logger.debug(f"  • Volume Filter: 2.0x average (10s reaction window) - Symbol-agnostic")
+    logger.debug(f"  • Time in Zone Limit: 45 seconds - Symbol-agnostic")
     if use_proximal_buffer:
-        logger.info(f"  • 🎁 BONUS: Proximal Buffer ENABLED - {proximal_buffer_ticks} ticks ({buffer_size_price:.2f} points)")
-        logger.info(f"  •   Proximal Reaction Window: {proximal_reaction_window}s (tighter for buffer trades)")
+        logger.debug(f"  • 🎁 BONUS: Proximal Buffer ENABLED - {proximal_buffer_ticks} ticks ({buffer_size_price:.2f} points)")
+        logger.debug(f"  •   Proximal Reaction Window: {proximal_reaction_window}s (tighter for buffer trades)")
     else:
-        logger.info(f"  • Proximal Buffer: DISABLED")
-    logger.info("")
+        logger.debug(f"  • Proximal Buffer: DISABLED")
+    logger.debug("")
     
     # Legacy strategy components removed - system refactored to zone-based approach
     # Trading logic will be updated with new strategy

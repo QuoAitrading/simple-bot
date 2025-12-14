@@ -216,24 +216,24 @@ class BotConfiguration:
         # Those are user preferences that customers can configure themselves
         
         if logger:
-            logger.info("=" * 80)
-            logger.info(f"[AUTO-CONFIG] Configured for {account_label}")
-            logger.info("=" * 80)
-            logger.info(f"Account Type: {account_type}")
-            logger.info(f"Account Balance: ${account_balance:,.2f}")
-            logger.info("")
+            logger.debug("=" * 80)
+            logger.debug(f"[AUTO-CONFIG] Configured for {account_label}")
+            logger.debug("=" * 80)
+            logger.debug(f"Account Type: {account_type}")
+            logger.debug(f"Account Balance: ${account_balance:,.2f}")
+            logger.debug("")
             if self.auto_calculate_limits:
-                logger.info("Auto-Calculated Limits (Based on Account Balance):")
+                logger.debug("Auto-Calculated Limits (Based on Account Balance):")
             else:
-                logger.info(f"Manual Limits (Custom {self.daily_loss_percent}%):")
-            logger.info(f"  Daily Loss Limit: ${self.daily_loss_limit:,.2f} ({self.daily_loss_percent}% of balance)")
+                logger.debug(f"Manual Limits (Custom {self.daily_loss_percent}%):")
+            logger.debug(f"  Daily Loss Limit: ${self.daily_loss_limit:,.2f} ({self.daily_loss_percent}% of balance)")
             if self.auto_calculate_limits:
-                logger.info(f"  Profit Target: ${profit_target:,.2f} (6% target)")
-            logger.info("")
-            logger.info("User Configurable Settings (Not Changed):")
-            logger.info(f"  Max Contracts: {self.max_contracts}")
-            logger.info(f"  Max Trades/Day: {self.max_trades_per_day}")
-            logger.info("[SUCCESS] Risk limits applied successfully")
+                logger.debug(f"  Profit Target: ${profit_target:,.2f} (6% target)")
+            logger.debug("")
+            logger.debug("User Configurable Settings (Not Changed):")
+            logger.debug(f"  Max Contracts: {self.max_contracts}")
+            logger.debug(f"  Max Trades/Day: {self.max_trades_per_day}")
+            logger.debug("[SUCCESS] Risk limits applied successfully")
         
         return True
     

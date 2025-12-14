@@ -73,7 +73,7 @@ class CircuitBreaker:
         self.failure_threshold = failure_threshold
         self.timeout_seconds = timeout_seconds
         
-        logger.info(f"Circuit breaker '{name}' initialized "
+        logger.debug(f"Circuit breaker '{name}' initialized "
                    f"(threshold={failure_threshold}, timeout={timeout_seconds}s)")
     
     def call(self, operation: Callable, *args, **kwargs) -> Tuple[bool, Any]:
@@ -180,7 +180,7 @@ class RetryManager:
         self.max_delay = max_delay
         self.backoff_factor = backoff_factor
         
-        logger.info(f"Retry manager initialized (max_retries={max_retries}, "
+        logger.debug(f"Retry manager initialized (max_retries={max_retries}, "
                    f"initial_delay={initial_delay}s, backoff_factor={backoff_factor})")
     
     def execute_with_retry(self, operation: Callable, operation_name: str,
@@ -246,7 +246,7 @@ class StatePersistence:
             state_file = f"data/bot_state_{account_id}.json"
         
         self.state_file = state_file
-        logger.info(f"State persistence initialized (file={state_file})")
+        logger.debug(f"State persistence initialized (file={state_file})")
     
     def save_state(self, state: Dict[str, Any]) -> bool:
         """
@@ -480,7 +480,7 @@ class ErrorRecoveryManager:
         # Create default circuit breakers
         self._create_circuit_breakers()
         
-        logger.info("Error recovery manager initialized")
+        logger.debug("Error recovery manager initialized")
     
     def _create_circuit_breakers(self) -> None:
         """Create circuit breakers for different operations."""
