@@ -290,6 +290,10 @@ class BotConfiguration:
     shadow_mode: bool = False  # Signal-only mode - shows trading signals without executing trades (manual trading)
     max_bars_storage: int = 200
     
+    # Trading Style - Controls zone filtering and proximity behavior
+    # 0 = Conservative (main zones only, no proximity), 1 = Moderate (all features), 2 = Aggressive (no filters on main zones)
+    trading_style: int = 1  # Default to Moderate
+    
     # Bid/Ask Trading Strategy Parameters
     passive_order_timeout: int = 10  # Seconds to wait for passive order fill
     abnormal_spread_multiplier: float = 2.0  # Multiplier for abnormal spread detection
@@ -582,6 +586,17 @@ def load_from_env() -> BotConfiguration:
     
     if os.getenv("BOT_SHADOW_MODE"):
         config.shadow_mode = os.getenv("BOT_SHADOW_MODE").lower() in ("true", "1", "yes")
+    
+    # Trading Style (0=Conservative, 1=Moderate, 2=Aggressive)
+    if os.getenv("BOT_TRADING_STYLE"):
+        try:
+            style_value = int(os.getenv("BOT_TRADING_STYLE"))
+            if 0 <= style_value <= 2:
+                config.trading_style = style_value
+            else:
+                logger.warning(f"Invalid BOT_TRADING_STYLE value: {style_value}. Using default (1=Moderate)")
+        except ValueError:
+            logger.warning(f"Invalid BOT_TRADING_STYLE format. Using default (1=Moderate)")
     
     # Zone-Based Strategy Configuration (USER CONFIGURABLE via GUI)
     if os.getenv("BOT_STOP_LOSS_TICKS"):

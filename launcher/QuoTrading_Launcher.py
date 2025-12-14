@@ -3411,6 +3411,10 @@ BOT_DAILY_LOSS_LIMIT={self.loss_entry.get()}
 BOT_MAX_LOSS_PER_TRADE={self.config.get("max_loss_per_trade", 200)}
 # Position closes automatically if a single trade loses this amount
 
+# Trading Style (Conservative/Moderate/Aggressive)
+BOT_TRADING_STYLE={self.trading_style_var.get()}
+# 0=Conservative (main zones only), 1=Moderate (all features), 2=Aggressive (no filters on main zones)
+
 # Trading Mode (Shadow Trading / Shadow Mode)
 BOT_SHADOW_MODE={'true' if self.shadow_mode_var.get() else 'false'}
 # When true: Bot provides signals only, no automatic trade execution (manual trading)
