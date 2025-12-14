@@ -38,6 +38,5 @@
   "shadow_mode": true,
   "selected_account": "50KTC-V2-430672-29952795 - $49,887.16",
   "selected_account_id": "50KTC-V2-430672-29952795",
-  "alerts_enabled": false,
-  "confidence_threshold": 70.0
+  "alerts_enabled": false
 }

@@ -3687,7 +3687,7 @@ def validate_entry_price_still_valid(symbol: str, signal_price: float, side: str
     SIMPLIFIED: Check once and decide immediately - no waiting.
     
     If price moved away, skip the entry and let the next bar generate a new signal
-    if conditions persist. This keeps the bot responsive and lets the RL system
+    if conditions persist. This keeps the bot responsive and lets the system
     learn optimal entry timing patterns.
     
     Args:
@@ -7406,7 +7406,7 @@ def main(symbol_override: str = None) -> None:
         logger.info(f"  • Proximal Buffer: DISABLED")
     logger.info("")
     
-    # RL system and strategy components removed - undergoing refactoring
+    # Legacy strategy components removed - system refactored to zone-based approach
     # Trading logic will be updated with new strategy
     
     # Symbol specifications - suppress detailed info, just essentials

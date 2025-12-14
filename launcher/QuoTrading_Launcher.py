@@ -3455,10 +3455,6 @@ BOT_DAILY_LOSS_LIMIT={self.loss_entry.get()}
 BOT_MAX_LOSS_PER_TRADE={self.config.get("max_loss_per_trade", 200)}
 # Position closes automatically if a single trade loses this amount
 
-# AI/Confidence Settings
-BOT_CONFIDENCE_THRESHOLD={self.confidence_var.get()}
-# Bot only takes signals above this confidence threshold (user's minimum)
-
 # Trading Mode (Shadow Trading / Shadow Mode)
 BOT_SHADOW_MODE={'true' if self.shadow_mode_var.get() else 'false'}
 # When true: Bot provides signals only, no automatic trade execution (manual trading)
