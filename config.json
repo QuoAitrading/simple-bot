@@ -41,5 +41,6 @@
   "selected_account": "150KTC-V2-439793-24199277 - $150,813.30",
   "selected_account_id": "150KTC-V2-439793-24199277",
   "alerts_enabled": false,
-  "time_exit_enabled": false
+  "time_exit_enabled": false,
+  "confidence_threshold": 50.0
 }

@@ -1250,10 +1250,8 @@ def check_symbol_session_conflict(conn, license_key: str, symbol: str, device_fi
                             "seconds_remaining": max(0, SESSION_TIMEOUT_SECONDS - int(time_since_last.total_seconds()))
                         }
                 else:
-                    logging.info(f"⏰ Session expired ({int(time_since_last.total_seconds())}s > {SESSION_TIMEOUT_SECONDS}s), cleaning up...")
-
-                else:
                     # Session expired - clean it up
+                    logging.info(f"⏰ Session expired ({int(time_since_last.total_seconds())}s > {SESSION_TIMEOUT_SECONDS}s), cleaning up...")
                     cursor.execute("""
                         DELETE FROM active_sessions
                         WHERE license_key = %s AND symbol = %s

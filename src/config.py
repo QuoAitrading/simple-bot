@@ -278,6 +278,9 @@ class BotConfiguration:
     tick_size: float = 0.25
     tick_value: float = 12.50  # ES full contract: $12.50 per tick
     
+    # Confidence Threshold (kept for future feature - GUI slider)
+    confidence_threshold: float = 50.0  # 0-100 scale, reserved for future use
+    
     # Operational Parameters
     shadow_mode: bool = False  # Signal-only mode - shows trading signals without executing trades (manual trading)
     max_bars_storage: int = 200
@@ -467,6 +470,9 @@ class BotConfiguration:
             "max_stop_loss_dollars": self.max_stop_loss_dollars,
             "account_size": self.account_size,
             
+            # Confidence Threshold (kept for future feature)
+            "confidence_threshold": self.confidence_threshold,
+            
             # Operational Mode
             "shadow_mode": self.shadow_mode,
             "max_bars_storage": self.max_bars_storage,
@@ -563,10 +569,10 @@ def load_from_env() -> BotConfiguration:
                 logger = logging.getLogger(__name__)
                 logger.error(f"Invalid ACCOUNT_SIZE format: {account_size_str}. Using default: {config.account_size}")
     
-    # RL/AI Configuration from GUI
+    # Confidence threshold from GUI (kept for future feature)
     if os.getenv("BOT_CONFIDENCE_THRESHOLD"):
-        # GUI provides confidence as percentage (0-100), config expects decimal (0-1)
-        # Values > 1.0 are treated as percentages and converted
+        # GUI provides confidence as percentage (0-100)
+        config.confidence_threshold = float(os.getenv("BOT_CONFIDENCE_THRESHOLD"))
     
     if os.getenv("BOT_TICK_SIZE"):
         config.tick_size = float(os.getenv("BOT_TICK_SIZE"))
