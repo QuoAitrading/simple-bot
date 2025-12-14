@@ -337,7 +337,7 @@ class BotConfiguration:
     # - breakeven_buffer_ticks: 1 (entry + 1 tick offset)
     # - trailing_trigger_ticks: 15 (start trailing after 15 ticks profit)
     # - trailing_distance_ticks: 8 (trail 8 ticks behind peak)
-    # - max_hold_bars: 20 (time stop - user configurable via GUI)
+
     #
     # WHY TRAILING WORKS:
     # - Small reversal: Trail protects gains, locks in 16+ ticks
@@ -351,9 +351,7 @@ class BotConfiguration:
     trailing_stop_trigger_ticks: int = 15  # HARDCODED - Start trailing after 15 ticks
     trailing_stop_distance_ticks: int = 8  # HARDCODED - Trail 8 ticks behind peak
     
-    # Time-Based Exit (INTERNAL - Not exposed in GUI)
-    time_stop_enabled: bool = False  # Internal use only - Exit after max_hold_bars if no resolution
-    max_hold_bars: int = 20  # Internal - Time stop after 20 bars (20 min on 1-min chart)
+
     
     # Partial Exits - DISABLED (Trailing stop manages exits now)
     # Trailing stop handles all profit-taking, no need for partial exits
@@ -498,10 +496,6 @@ class BotConfiguration:
             "trailing_stop_distance_ticks": self.trailing_stop_distance_ticks,
             "trailing_distance_ticks": self.trailing_stop_distance_ticks,  # Alias
             
-            # Time Stop (INTERNAL - Not exposed in GUI)
-            "time_stop_enabled": self.time_stop_enabled,
-            "max_hold_bars": self.max_hold_bars,
-            "time_stop_bars": self.max_hold_bars,  # Alias
             
             # Partial Exits DISABLED (trailing handles exits)
             "partial_exits_enabled": self.partial_exits_enabled,
@@ -618,9 +612,6 @@ def load_from_env() -> BotConfiguration:
     if os.getenv("BOT_PROXIMAL_REACTION_WINDOW"):
         config.proximal_reaction_window = float(os.getenv("BOT_PROXIMAL_REACTION_WINDOW"))
     
-    # Time-Based Exit (INTERNAL - Not exposed in GUI, kept for backward compatibility)
-    if os.getenv("BOT_TIME_EXIT_ENABLED"):
-        config.time_stop_enabled = os.getenv("BOT_TIME_EXIT_ENABLED").lower() in ("true", "1", "yes")
     
     if os.getenv("BOT_ENVIRONMENT"):
         config.environment = os.getenv("BOT_ENVIRONMENT")

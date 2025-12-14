@@ -843,12 +843,6 @@ logger = setup_logging()
 
 
 # ============================================================================
-# TRADING LOGIC PLACEHOLDER
-# ============================================================================
-# Strategy components have been removed - awaiting new trading logic implementation
-
-
-# ============================================================================
 # PHASE TWO: SDK Integration
 # ============================================================================
 
@@ -2345,8 +2339,7 @@ def update_1min_bar(symbol: str, price: float, volume: int, dt: datetime) -> Non
             
             # Check for exit conditions if position is active
             check_exit_conditions(symbol)
-            # Check for entry signals if no position
-            check_for_signals(symbol)
+            # Zone-based trading logic is called in handle_tick_event (not here on bar close)
         
         # Start new bar
         state[symbol]["current_1min_bar"] = {
@@ -2410,7 +2403,7 @@ def inject_complete_bar(symbol: str, bar: Dict[str, Any]) -> None:
     # Update VWAP and check conditions
     # calculate_vwap(symbol)
     check_exit_conditions(symbol)
-    check_for_signals(symbol)
+    # Zone-based trading logic is called in handle_tick_event (not here on bar close)
 
 
 
