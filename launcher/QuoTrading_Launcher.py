@@ -713,7 +713,7 @@ class QuoTradingLauncher:
         self.root.title("QuoTrading - Broker Setup")
         
         # Header - plain white text, NO rainbow in launcher GUI
-        header = self.create_header("Welcome to QuoTrading Professional Trading System", 
+        header = self.create_header("Welcome to QuoTrading AI", 
                                    "Select your account type and broker", 
                                    rainbow=False,
                                    rainbow_animated=False)
@@ -1351,33 +1351,6 @@ class QuoTradingLauncher:
         tk.Label(
             shadow_mode_frame,
             text="View signals without auto-trading",
-            font=("Segoe UI", 7, "bold"),
-            bg=self.colors['card'],
-            fg=self.colors['text_light']
-        ).pack(anchor=tk.W, padx=(20, 0))
-        
-        # Time-Based Exit Mode (USER CONFIGURABLE)
-        time_exit_frame = tk.Frame(modes_section, bg=self.colors['card'])
-        time_exit_frame.pack(fill=tk.X, pady=(0, 5))
-        
-        self.time_exit_var = tk.BooleanVar(value=self.config.get("time_exit_enabled", False))
-        
-        tk.Checkbutton(
-            time_exit_frame,
-            text="⏱️ Time-Based Exit",
-            variable=self.time_exit_var,
-            font=("Segoe UI", 8, "bold"),
-            bg=self.colors['card'],
-            fg=self.colors['text'],
-            selectcolor=self.colors['secondary'],
-            activebackground=self.colors['card'],
-            activeforeground=self.colors['success'],
-            cursor="hand2"
-        ).pack(anchor=tk.W)
-        
-        tk.Label(
-            time_exit_frame,
-            text="Exit trades after 20 bars if no resolution",
             font=("Segoe UI", 7, "bold"),
             bg=self.colors['card'],
             fg=self.colors['text_light']
@@ -2080,7 +2053,6 @@ class QuoTradingLauncher:
         self.config["max_trades"] = self.trades_var.get()
         # Note: confidence_threshold removed - slider is aesthetic only
         self.config["shadow_mode"] = self.shadow_mode_var.get()
-        self.config["time_exit_enabled"] = self.time_exit_var.get()
         self.config["selected_account"] = self.account_dropdown_var.get()
         
         # Get selected account ID - parse from dropdown display format
@@ -2205,7 +2177,6 @@ class QuoTradingLauncher:
         max_trades = self.trades_var.get()
         confidence = self.confidence_var.get()
         shadow_mode = "ON" if self.shadow_mode_var.get() else "OFF"
-        time_exit = "ON" if self.time_exit_var.get() else "OFF"
         max_loss_per_trade = self.config.get("max_loss_per_trade", 200)
         
         settings_text = f"""
@@ -2218,7 +2189,6 @@ Daily Loss Limit: ${loss_limit}
 Max Trades/Day: {max_trades}
 Confidence Threshold: {confidence}%
 Shadow Mode: {shadow_mode}
-Time-Based Exit: {time_exit}
         """
         
         settings_label = tk.Label(
@@ -3458,10 +3428,6 @@ BOT_MAX_LOSS_PER_TRADE={self.config.get("max_loss_per_trade", 200)}
 # Trading Mode (Shadow Trading / Shadow Mode)
 BOT_SHADOW_MODE={'true' if self.shadow_mode_var.get() else 'false'}
 # When true: Bot provides signals only, no automatic trade execution (manual trading)
-
-# Time-Based Exit (User Configurable)
-BOT_TIME_EXIT_ENABLED={'true' if self.time_exit_var.get() else 'false'}
-# When true: Exit trades after 20 bars (20 minutes) if no target/stop hit
 
 # Account Selection
 SELECTED_ACCOUNT={self.config.get("selected_account", "Default Account")}
