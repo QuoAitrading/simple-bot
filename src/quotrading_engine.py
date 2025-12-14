@@ -3405,9 +3405,9 @@ def capture_market_state(symbol: str, current_price: float) -> Dict[str, Any]:
         current_price: Current market price
     
     Returns:
-        Empty dictionary - RL removed
+        Dictionary with basic market information (symbol, timestamp, price)
     """
-    # Return empty dict - RL system removed
+    # Return minimal state - RL system removed
     return {
         "symbol": symbol,
         "timestamp": datetime.now(pytz.UTC).isoformat(),
