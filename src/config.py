@@ -275,8 +275,8 @@ class BotConfiguration:
     use_fixed_ticks: bool = True  # When True, use fixed ticks instead of FVG-based stops
     
     # Zone-Based Strategy Configuration - USER CONFIGURABLE
-    zone_stop_loss_ticks: int = 6  # Stop loss for zone rejection trades (USER CONFIGURABLE via GUI)
-    zone_take_profit_ticks: int = 12  # Take profit for zone rejection trades (USER CONFIGURABLE via GUI)
+    stop_loss_ticks: int = 6  # Stop loss in ticks (USER CONFIGURABLE via GUI)
+    take_profit_ticks: int = 12  # Take profit in ticks (USER CONFIGURABLE via GUI)
     
     # Instrument Specifications
     tick_size: float = 0.25
@@ -502,8 +502,8 @@ class BotConfiguration:
             "partial_exits_enabled": self.partial_exits_enabled,
             
             # Zone-Based Strategy Configuration (USER CONFIGURABLE)
-            "zone_stop_loss_ticks": self.zone_stop_loss_ticks,
-            "zone_take_profit_ticks": self.zone_take_profit_ticks,
+            "stop_loss_ticks": self.stop_loss_ticks,
+            "take_profit_ticks": self.take_profit_ticks,
         }
 
 
@@ -596,11 +596,11 @@ def load_from_env() -> BotConfiguration:
         config.time_stop_enabled = os.getenv("BOT_TIME_EXIT_ENABLED").lower() in ("true", "1", "yes")
     
     # Zone-Based Strategy Configuration (USER CONFIGURABLE via GUI)
-    if os.getenv("BOT_ZONE_STOP_LOSS_TICKS"):
-        config.zone_stop_loss_ticks = int(os.getenv("BOT_ZONE_STOP_LOSS_TICKS"))
+    if os.getenv("BOT_STOP_LOSS_TICKS"):
+        config.stop_loss_ticks = int(os.getenv("BOT_STOP_LOSS_TICKS"))
     
-    if os.getenv("BOT_ZONE_TAKE_PROFIT_TICKS"):
-        config.zone_take_profit_ticks = int(os.getenv("BOT_ZONE_TAKE_PROFIT_TICKS"))
+    if os.getenv("BOT_TAKE_PROFIT_TICKS"):
+        config.take_profit_ticks = int(os.getenv("BOT_TAKE_PROFIT_TICKS"))
     
     if os.getenv("BOT_ENVIRONMENT"):
         config.environment = os.getenv("BOT_ENVIRONMENT")
@@ -760,10 +760,10 @@ def load_config(environment: Optional[str] = None, backtest_mode: bool = False) 
         env_vars_set.add("dry_run")
     if os.getenv("BOT_SHADOW_MODE"):
         env_vars_set.add("shadow_mode")
-    if os.getenv("BOT_ZONE_STOP_LOSS_TICKS"):
-        env_vars_set.add("zone_stop_loss_ticks")
-    if os.getenv("BOT_ZONE_TAKE_PROFIT_TICKS"):
-        env_vars_set.add("zone_take_profit_ticks")
+    if os.getenv("BOT_STOP_LOSS_TICKS"):
+        env_vars_set.add("stop_loss_ticks")
+    if os.getenv("BOT_TAKE_PROFIT_TICKS"):
+        env_vars_set.add("take_profit_ticks")
     if os.getenv("BOT_ENVIRONMENT"):
         env_vars_set.add("environment")
     if os.getenv("BOT_BROKER") or os.getenv("BROKER"):
