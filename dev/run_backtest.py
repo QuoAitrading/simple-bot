@@ -1,11 +1,10 @@
 #!/usr/bin/env python3
 """
-Development Backtesting Environment for BOS+FVG Trading Bot
+Development Backtesting Environment for QuoTrading Bot
 
 This is the development/testing environment that:
 - Runs backtests to test bot performance
-- Loads signal RL locally from data/signal_experience.json
-- Includes pattern matching and all trading logic
+- Includes all trading logic and pattern matching
 - Follows same UTC maintenance and flatten rules as production
 - Does everything the live bot does with all trade management
 
@@ -24,7 +23,7 @@ import pytz
 # CRITICAL: Set backtest mode BEFORE any imports that load the bot module
 # This ensures config validation skips broker requirements
 os.environ['BOT_BACKTEST_MODE'] = 'true'
-# Disable cloud API calls during backtest (use local RL only)
+# Disable cloud API calls during backtest
 os.environ['USE_CLOUD_SIGNALS'] = 'false'
 
 # Add parent directory to path to import from src/
@@ -39,7 +38,6 @@ from backtest_reporter import reset_reporter, get_reporter
 # Import production bot modules
 from config import load_config
 from monitoring import setup_logging
-from signal_confidence import SignalConfidenceRL
 
 
 def parse_arguments():
@@ -61,7 +59,7 @@ Examples:
   # Save backtest report to file
   python dev/run_backtest.py --days 30 --report backtest_results.txt
 
-Note: All trading parameters (account_size, max_contracts, rl_exploration_rate, etc.) 
+Note: All trading parameters (account_size, max_contracts, etc.) 
       are configured in data/config.json
         """
     )
@@ -119,22 +117,19 @@ Note: All trading parameters (account_size, max_contracts, rl_exploration_rate, 
     return parser.parse_args()
 
 
-def initialize_rl_brains_for_backtest(bot_config) -> Tuple[Any, ModuleType]:
+def load_bot_module_for_backtest(bot_config) -> ModuleType:
     """
-    Initialize RL brain (signal confidence) for backtest mode.
-    This ensures experience files are loaded before the backtest runs.
+    Load the trading engine module for backtest mode.
     
     Args:
-        bot_config: Bot configuration object with RL parameters
+        bot_config: Bot configuration object
     
     Returns:
-        Tuple of (rl_brain, bot_module) where rl_brain is the SignalConfidenceRL 
-        instance and bot_module is the loaded trading engine module
+        Loaded trading engine module
     """
     logger = logging.getLogger('backtest')
     
-    # Import the bot module to access its RL brain
-    # Note: We need to import it dynamically since quotrading_engine is the actual module
+    # Import the bot module dynamically
     import importlib.util
     spec = importlib.util.spec_from_file_location(
         "quotrading_engine",
@@ -149,7 +144,7 @@ def initialize_rl_brains_for_backtest(bot_config) -> Tuple[Any, ModuleType]:
     # Load the module
     spec.loader.exec_module(bot_module)
     
-    # Get symbol for symbol-specific experience folder
+    # Get symbol for symbol-specific configuration
     symbol = bot_config.instrument
     
     # CRITICAL: Update CONFIG with symbol-specific tick size/value
@@ -168,29 +163,7 @@ def initialize_rl_brains_for_backtest(bot_config) -> Tuple[Any, ModuleType]:
     # Also update SYMBOL_SPEC in bot module
     bot_module.SYMBOL_SPEC = symbol_spec
     
-    # Note: BOS+FVG strategy uses bos_detector and fvg_detector
-    # These are initialized automatically in initialize_state() per symbol
-    
-    # Initialize RL brain with symbol-specific experience file
-    # Get RL parameters from config or use defaults
-    exploration_rate = bot_config.rl_exploration_rate if hasattr(bot_config, 'rl_exploration_rate') else 1.0
-    confidence_threshold = bot_config.rl_confidence_threshold if hasattr(bot_config, 'rl_confidence_threshold') else 0.0
-    
-    signal_exp_file = os.path.join(PROJECT_ROOT, f"experiences/{symbol}/signal_experience.json")
-    rl_brain = SignalConfidenceRL(
-        experience_file=signal_exp_file,
-        backtest_mode=True,
-        confidence_threshold=confidence_threshold,
-        exploration_rate=exploration_rate,
-        min_exploration=exploration_rate,   # Keep at same rate
-        exploration_decay=1.0  # No decay - maintain exploration rate
-    )
-    
-    # Set the global rl_brain in the bot module's namespace
-    # This is critical - the module uses 'global rl_brain' which looks up in module.__dict__
-    bot_module.__dict__['rl_brain'] = rl_brain
-    
-    return rl_brain, bot_module
+    return bot_module
 
 
 def run_backtest(args: argparse.Namespace) -> Dict[str, Any]:
@@ -316,11 +289,8 @@ def run_backtest(args: argparse.Namespace) -> Dict[str, Any]:
     if hasattr(engine, 'logger'):
         engine.logger.setLevel(logging.CRITICAL)
     
-    # Initialize RL brain and bot module with config values
-    rl_brain, bot_module = initialize_rl_brains_for_backtest(bot_config)
-    
-    # Track initial experience count to show how many were added during backtest
-    initial_experience_count = len(rl_brain.experiences) if rl_brain else 0
+    # Load bot module with config values
+    bot_module = load_bot_module_for_backtest(bot_config)
     
     # Import bot functions from the loaded module
     initialize_state = bot_module.initialize_state
@@ -335,13 +305,12 @@ def run_backtest(args: argparse.Namespace) -> Dict[str, Any]:
     symbol = bot_config_dict['instrument']
     initialize_state(symbol)
     
-    # Create a simple object to hold RL brain reference for tracking
-    class BotRLReferences:
-        def __init__(self):
-            self.signal_rl = rl_brain
+    # Create a simple object to hold bot references for tracking
+    class BotReferences:
+        pass
     
-    # Set bot instance for RL tracking
-    bot_ref = BotRLReferences()
+    # Set bot instance for tracking
+    bot_ref = BotReferences()
     engine.set_bot_instance(bot_ref)
     
     # Use Eastern timezone for daily reset checks (follows production rules)
@@ -352,8 +321,8 @@ def run_backtest(args: argparse.Namespace) -> Dict[str, Any]:
     bars_processed = 0
     total_bars = 0
     
-    # Track RL confidence for each trade
-    trade_confidences = {}
+    # Track trade data
+    trade_data = {}
     last_exit_reason = 'bot_exit'  # Track last exit reason
     prev_position_active = False
     
@@ -413,7 +382,7 @@ def run_backtest(args: argparse.Namespace) -> Dict[str, Any]:
                     # Position just opened - save the confidence and regime
                     entry_time = pos.get('entry_time', timestamp)
                     entry_time_key = str(entry_time)
-                    confidence = state[symbol].get('entry_rl_confidence', 0.5)
+                    confidence = state[symbol].get('entry_confidence', 0.5)
                     # Convert to percentage
                     if confidence <= 1.0:
                         confidence = confidence * 100
@@ -501,19 +470,8 @@ def run_backtest(args: argparse.Namespace) -> Dict[str, Any]:
     # Print clean summary
     reporter.print_summary()
     
-    # Save RL experiences at the end
-    print("Saving RL experiences...")
-    experience_path = f"experiences/{symbol}/signal_experience.json"
-    if rl_brain is not None and hasattr(rl_brain, 'save_experience'):
-        rl_brain.save_experience()
-        final_experience_count = len(rl_brain.experiences)
-        new_experiences = final_experience_count - initial_experience_count
-        print(f"[OK] Signal RL experiences saved to {experience_path}")
-        print(f"   Total experiences: {final_experience_count}")
-        print(f"   New experiences this backtest: {new_experiences}")
-    else:
-        print("⚠️  No RL brain to save")
-    
+    # Backtest complete
+    print("Backtest complete")
     # Return results
     return results
 
@@ -561,7 +519,7 @@ def main():
     logging.getLogger('bos_fvg_bot').setLevel(logging.ERROR)
     logging.getLogger('backtest').setLevel(logging.WARNING)
     logging.getLogger('regime_detection').setLevel(logging.WARNING)  # Suppress regime change spam
-    logging.getLogger('signal_confidence').setLevel(logging.WARNING)  # Only show warnings and errors
+    # Suppress verbose logging for clean output
     
     # Initialize clean reporter with account_size and max_contracts from config
     reporter = reset_reporter(
