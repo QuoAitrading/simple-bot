@@ -2009,19 +2009,6 @@ def initialize_state(symbol: str) -> None:
     }
 
 
-def initialize_bos_fvg_detectors(symbol: str) -> None:
-    """
-    Stub function - BOS/FVG strategy has been removed.
-    Strategy components are being refactored.
-    
-    Args:
-        symbol: Instrument symbol
-    """
-    # No-op - strategy removed
-    pass
-    
-
-
 # ============================================================================
 # PHASE FOUR: Data Processing Pipeline
 # ============================================================================
@@ -2262,9 +2249,6 @@ def update_1min_bar(symbol: str, price: float, volume: int, dt: datetime) -> Non
             # update_rsi(symbol)
             update_volume_average(symbol)
             
-            # Strategy signal processing
-            process_bos_fvg(symbol)
-            
             # Classify market condition on every bar if bid_ask_manager available
             if bid_ask_manager is not None:
                 try:
@@ -2391,9 +2375,6 @@ def inject_complete_bar(symbol: str, bar: Dict[str, Any]) -> None:
     
     # Add the complete bar with proper OHLC
     state[symbol]["bars_1min"].append(bar)
-    
-    # Strategy signal processing
-    process_bos_fvg(symbol)
     
     # Update current regime after adding new bar
     # Regime detection disabled during strategy refactoring
@@ -2793,19 +2774,6 @@ def update_volume_average(symbol: str) -> None:
         state[symbol]["recent_volume_history"].append(current_volume)
 
 
-def process_bos_fvg(symbol: str) -> None:
-    """
-    Stub function - BOS/FVG strategy has been removed.
-    Strategy components are being refactored.
-    
-    Args:
-        symbol: Instrument symbol
-    """
-    # No-op - strategy removed
-    pass
-    
-
-
 def detect_volume_surge(symbol: str) -> Tuple[bool, float]:
     """
     Detect if volume is surging (potential reversal signal).
@@ -3192,8 +3160,10 @@ def validate_signal_requirements(symbol: str, bar_time: datetime) -> Tuple[bool,
 def check_long_signal_conditions(symbol: str, prev_bar: Dict[str, Any], 
                                  current_bar: Dict[str, Any]) -> bool:
     """
-    Stub function - BOS/FVG strategy has been removed.
-    Strategy components are being refactored.
+    Check for long entry signal conditions.
+    
+    AWAITING IMPLEMENTATION: This function will contain the new strategy logic.
+    Currently returns False (no signals generated).
     
     Args:
         symbol: Instrument symbol
@@ -3201,17 +3171,19 @@ def check_long_signal_conditions(symbol: str, prev_bar: Dict[str, Any],
         current_bar: Current 1-minute bar
     
     Returns:
-        False - no signals during refactoring
+        False - awaiting new strategy implementation
     """
-    # No signals - strategy removed
+    # TODO: Implement new strategy logic here
     return False
 
 
 def check_short_signal_conditions(symbol: str, prev_bar: Dict[str, Any], 
                                   current_bar: Dict[str, Any]) -> bool:
     """
-    Stub function - BOS/FVG strategy has been removed.
-    Strategy components are being refactored.
+    Check for short entry signal conditions.
+    
+    AWAITING IMPLEMENTATION: This function will contain the new strategy logic.
+    Currently returns False (no signals generated).
     
     Args:
         symbol: Instrument symbol
@@ -3219,9 +3191,9 @@ def check_short_signal_conditions(symbol: str, prev_bar: Dict[str, Any],
         current_bar: Current 1-minute bar
     
     Returns:
-        False - no signals during refactoring
+        False - awaiting new strategy implementation
     """
-    # No signals - strategy removed
+    # TODO: Implement new strategy logic here
     return False
 
 
@@ -3395,27 +3367,6 @@ def get_volatility_regime(atr: float, symbol: str) -> str:
         return "MEDIUM"
 
 
-def capture_market_state(symbol: str, current_price: float) -> Dict[str, Any]:
-    """
-    Stub function - RL system and strategy have been removed.
-    Returns minimal state for compatibility.
-    
-    Args:
-        symbol: Instrument symbol
-        current_price: Current market price
-    
-    Returns:
-        Dictionary with basic market information (symbol, timestamp, price)
-    """
-    # Return minimal state - RL system removed
-    return {
-        "symbol": symbol,
-        "timestamp": datetime.now(pytz.UTC).isoformat(),
-        "price": current_price
-    }
-
-
-
 def is_regime_tradeable(regime: str) -> bool:
     """
     Check if the current regime allows trading.
@@ -3516,9 +3467,6 @@ def check_for_signals(symbol: str) -> None:
     # Check for long signal
     long_passed = check_long_signal_conditions(symbol, prev_bar, current_bar)
     if long_passed:
-        # Capture current market state for logging
-        market_state = capture_market_state(symbol, current_bar["close"])
-        
         # Show signal diagnostic in live mode (without exposing strategy details)
         if not is_backtest_mode() and should_log_diagnostic:
             logger.info("📊 Signal Diagnostic:")
@@ -3536,20 +3484,12 @@ def check_for_signals(symbol: str) -> None:
         else:
             logger.info(f"  > Signal Approved: LONG | Price: ${current_bar['close']:.2f}")
         
-        # Store market state for tracking
-        state[symbol]["entry_market_state"] = market_state
-        
-        # Strategy removed - FVG marking code no longer needed
-        
         execute_entry(symbol, "long", current_bar["close"])
         return
     
     # Check for short signal
     short_passed = check_short_signal_conditions(symbol, prev_bar, current_bar)
     if short_passed:
-        # Capture current market state for logging
-        market_state = capture_market_state(symbol, current_bar["close"])
-        
         # Show signal diagnostic in live mode (without exposing strategy details)
         if not is_backtest_mode() and should_log_diagnostic:
             logger.info("📊 Signal Diagnostic:")
@@ -3566,11 +3506,6 @@ def check_for_signals(symbol: str) -> None:
             logger.info(f"[+] SHORT SIGNAL APPROVED | Price: ${current_bar['close']:.2f}")
         else:
             logger.info(f"  > Signal Approved: SHORT | Price: ${current_bar['close']:.2f}")
-        
-        # Store market state for tracking
-        state[symbol]["entry_market_state"] = market_state
-        
-        # Strategy removed - FVG marking code no longer needed
         
         execute_entry(symbol, "short", current_bar["close"])
         return
@@ -5904,48 +5839,37 @@ def execute_exit(symbol: str, exit_price: float, reason: str) -> None:
     except Exception as e:
         pass
     
-    # REINFORCEMENT LEARNING - Record outcome to cloud API (shared learning pool)
+    # Calculate and log trade metrics
     try:
-        # Check if we have the entry market state stored (NEW FORMAT)
-        if "entry_market_state" in state[symbol]:
-            market_state = state[symbol]["entry_market_state"]
-            
-            # Calculate trade duration in minutes
-            entry_time = position.get("entry_time")
-            duration_minutes = 0
-            if entry_time:
-                duration = exit_time - entry_time
-                duration_minutes = duration.total_seconds() / 60
-            
-            # Calculate MFE (Max Favorable Excursion) and MAE (Max Adverse Excursion)
-            entry_price = position.get("entry_price", exit_price)
-            # Use symbol-specific tick values for accurate P&L calculation across different instruments
-            tick_size, tick_value = get_symbol_tick_specs(symbol)
-            
-            # Get from position tracking (if available)
-            if position["side"] == "long":
-                highest_price = position.get("highest_price_reached", exit_price)
-                lowest_price = position.get("lowest_price_reached", exit_price)
-                mfe_ticks = (highest_price - entry_price) / tick_size
-                mae_ticks = (entry_price - lowest_price) / tick_size
-            else:  # short
-                highest_price = position.get("highest_price_reached", exit_price)
-                lowest_price = position.get("lowest_price_reached", exit_price)
-                mfe_ticks = (entry_price - lowest_price) / tick_size
-                mae_ticks = (highest_price - entry_price) / tick_size
-            
-            mfe = mfe_ticks * tick_value
-            mae = mae_ticks * tick_value
-            
-            # Get the side from position
-            trade_side = position.get("side", "unknown")
-            
-            # Log trade metrics
-            logger.info(f"πΎ [TRADE METRICS] ${pnl:+.2f} in {duration_minutes:.1f}min | MFE: ${mfe:.2f}, MAE: ${mae:.2f}")
-            
-            # Clean up state
-            if "entry_market_state" in state[symbol]:
-                del state[symbol]["entry_market_state"]
+        # Calculate trade duration in minutes
+        entry_time = position.get("entry_time")
+        duration_minutes = 0
+        if entry_time:
+            duration = exit_time - entry_time
+            duration_minutes = duration.total_seconds() / 60
+        
+        # Calculate MFE (Max Favorable Excursion) and MAE (Max Adverse Excursion)
+        entry_price = position.get("entry_price", exit_price)
+        # Use symbol-specific tick values for accurate P&L calculation across different instruments
+        tick_size, tick_value = get_symbol_tick_specs(symbol)
+        
+        # Get from position tracking (if available)
+        if position["side"] == "long":
+            highest_price = position.get("highest_price_reached", exit_price)
+            lowest_price = position.get("lowest_price_reached", exit_price)
+            mfe_ticks = (highest_price - entry_price) / tick_size
+            mae_ticks = (entry_price - lowest_price) / tick_size
+        else:  # short
+            highest_price = position.get("highest_price_reached", exit_price)
+            lowest_price = position.get("lowest_price_reached", exit_price)
+            mfe_ticks = (entry_price - lowest_price) / tick_size
+            mae_ticks = (highest_price - entry_price) / tick_size
+        
+        mfe = mfe_ticks * tick_value
+        mae = mae_ticks * tick_value
+        
+        # Log trade metrics
+        logger.info(f"πΎ [TRADE METRICS] ${pnl:+.2f} in {duration_minutes:.1f}min | MFE: ${mfe:.2f}, MAE: ${mae:.2f}")
         
     except Exception as e:
         pass
