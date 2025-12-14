@@ -7363,28 +7363,33 @@ def main(symbol_override: str = None) -> None:
     zone_manager = ZoneManager()
     rejection_detector = RejectionDetector()
     
-    # Initialize filter manager with default thresholds
-    tick_size = CONFIG.get("tick_size", 0.25)
+    # Initialize filter manager with symbol-specific tick_size (no ES-specific defaults)
+    tick_size = CONFIG.get("tick_size")
+    if tick_size is None:
+        raise ValueError(f"tick_size not configured for symbol {trading_symbol}. Symbol specifications must be loaded.")
+    
     filter_manager = FilterManager(
         velocity_threshold=5.0,  # ticks per second
         reaction_window=10.0,  # seconds
         volume_lookback=30,  # bars
         high_volume_threshold=2.0,  # times average
         time_in_zone_limit=45.0,  # seconds
-        tick_size=tick_size
+        tick_size=tick_size  # Symbol-specific, NOT defaulted to ES
     )
     
     # Get stop loss and take profit from configuration (user configurable)
     zone_stop_loss_ticks = CONFIG.get("zone_stop_loss_ticks", ZONE_STOP_LOSS_TICKS_DEFAULT)
     zone_take_profit_ticks = CONFIG.get("zone_take_profit_ticks", ZONE_PROFIT_TARGET_TICKS_DEFAULT)
+    tick_value = CONFIG.get("tick_value")
     
     logger.info("🎯 Zone-Based Trading Strategy Initialized:")
-    logger.info(f"  • Symbol: {trading_symbol} (tick_size={tick_size}, tick_value={CONFIG.get('tick_value', 12.50)})")
-    logger.info(f"  • Stop Loss: {zone_stop_loss_ticks} ticks ({zone_stop_loss_ticks * tick_size:.2f} points)")
-    logger.info(f"  • Take Profit: {zone_take_profit_ticks} ticks ({zone_take_profit_ticks * tick_size:.2f} points)")
-    logger.info(f"  • Velocity Filter: 5.0 ticks/sec (10s reaction window)")
-    logger.info(f"  • Volume Filter: 2.0x average (10s reaction window)")
-    logger.info(f"  • Time in Zone Limit: 45 seconds")
+    logger.info(f"  • Symbol: {trading_symbol}")
+    logger.info(f"  • Tick Specs: tick_size={tick_size}, tick_value={tick_value}")
+    logger.info(f"  • Stop Loss: {zone_stop_loss_ticks} ticks ({zone_stop_loss_ticks * tick_size:.2f} points = ${zone_stop_loss_ticks * tick_size * (tick_value / tick_size):.2f})")
+    logger.info(f"  • Take Profit: {zone_take_profit_ticks} ticks ({zone_take_profit_ticks * tick_size:.2f} points = ${zone_take_profit_ticks * tick_size * (tick_value / tick_size):.2f})")
+    logger.info(f"  • Velocity Filter: 5.0 ticks/sec (10s reaction window) - Symbol-agnostic")
+    logger.info(f"  • Volume Filter: 2.0x average (10s reaction window) - Symbol-agnostic")
+    logger.info(f"  • Time in Zone Limit: 45 seconds - Symbol-agnostic")
     logger.info("")
     
     # RL system and strategy components removed - undergoing refactoring
@@ -7658,10 +7663,15 @@ def enter_zone_rejection_trade(symbol: str, zone: Dict, current_price: float,
         order_side = "BUY"
         entry_price = current_price
     
-    # Calculate stop loss and take profit from configuration (user configurable)
-    tick_size = CONFIG.get("tick_size", 0.25)
+    # Calculate stop loss and take profit from configuration (user configurable, symbol-specific)
+    tick_size = CONFIG.get("tick_size")
+    tick_value = CONFIG.get("tick_value")
     stop_loss_ticks = CONFIG.get("zone_stop_loss_ticks", ZONE_STOP_LOSS_TICKS_DEFAULT)
     take_profit_ticks = CONFIG.get("zone_take_profit_ticks", ZONE_PROFIT_TARGET_TICKS_DEFAULT)
+    
+    if tick_size is None or tick_value is None:
+        logger.error(f"❌ Cannot enter trade - tick_size or tick_value not configured for symbol {symbol}")
+        return
     
     if side == "short":
         stop_loss_price = entry_price + (stop_loss_ticks * tick_size)

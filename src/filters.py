@@ -27,7 +27,7 @@ class FilterManager:
                  volume_lookback: int = 30,
                  high_volume_threshold: float = 2.0,
                  time_in_zone_limit: float = 45.0,
-                 tick_size: float = 0.25):
+                 tick_size: float = None):
         """
         Initialize filter manager with thresholds.
         
@@ -37,8 +37,11 @@ class FilterManager:
             volume_lookback: Number of bars for volume average (default 30)
             high_volume_threshold: Volume multiplier threshold (default 2.0)
             time_in_zone_limit: Maximum seconds in zone (default 45.0)
-            tick_size: Tick size for velocity calculation (default 0.25)
+            tick_size: Tick size for velocity calculation (REQUIRED - symbol-specific)
         """
+        if tick_size is None:
+            raise ValueError("tick_size is required and must be provided from symbol configuration")
+        
         self.velocity_threshold = velocity_threshold
         self.reaction_window = reaction_window
         self.volume_lookback = volume_lookback
