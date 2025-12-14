@@ -571,8 +571,10 @@ IDLE_STATUS_MESSAGE_INTERVAL = 300  # Show status message every 5 minutes (300 s
 DEFAULT_FALLBACK_ATR = 5.0  # Default ATR when calculation not possible (ES futures typical value)
 
 # Fixed Stop Loss and Profit Target Configuration (Zone-Based Strategy)
-ZONE_STOP_LOSS_TICKS = 6  # Stop loss at 6 ticks for zone rejection trades
-ZONE_PROFIT_TARGET_TICKS = 12  # Profit target at 12 ticks for zone rejection trades
+# These are now loaded from configuration - user can set in GUI
+# Fallback defaults if not configured
+ZONE_STOP_LOSS_TICKS_DEFAULT = 6  # Default stop loss for zone rejection trades
+ZONE_PROFIT_TARGET_TICKS_DEFAULT = 12  # Default profit target for zone rejection trades
 
 # Legacy Fixed Stop Loss and Profit Target Configuration
 FIXED_STOP_LOSS_TICKS = 12  # Fixed stop loss at 12 ticks for all symbols (legacy)
@@ -7372,9 +7374,14 @@ def main(symbol_override: str = None) -> None:
         tick_size=tick_size
     )
     
+    # Get stop loss and take profit from configuration (user configurable)
+    zone_stop_loss_ticks = CONFIG.get("zone_stop_loss_ticks", ZONE_STOP_LOSS_TICKS_DEFAULT)
+    zone_take_profit_ticks = CONFIG.get("zone_take_profit_ticks", ZONE_PROFIT_TARGET_TICKS_DEFAULT)
+    
     logger.info("🎯 Zone-Based Trading Strategy Initialized:")
-    logger.info(f"  • Stop Loss: 6 ticks ({6 * tick_size:.2f} points)")
-    logger.info(f"  • Take Profit: 12 ticks ({12 * tick_size:.2f} points)")
+    logger.info(f"  • Symbol: {trading_symbol} (tick_size={tick_size}, tick_value={CONFIG.get('tick_value', 12.50)})")
+    logger.info(f"  • Stop Loss: {zone_stop_loss_ticks} ticks ({zone_stop_loss_ticks * tick_size:.2f} points)")
+    logger.info(f"  • Take Profit: {zone_take_profit_ticks} ticks ({zone_take_profit_ticks * tick_size:.2f} points)")
     logger.info(f"  • Velocity Filter: 5.0 ticks/sec (10s reaction window)")
     logger.info(f"  • Volume Filter: 2.0x average (10s reaction window)")
     logger.info(f"  • Time in Zone Limit: 45 seconds")
@@ -7651,10 +7658,10 @@ def enter_zone_rejection_trade(symbol: str, zone: Dict, current_price: float,
         order_side = "BUY"
         entry_price = current_price
     
-    # Calculate stop loss and take profit
+    # Calculate stop loss and take profit from configuration (user configurable)
     tick_size = CONFIG.get("tick_size", 0.25)
-    stop_loss_ticks = ZONE_STOP_LOSS_TICKS
-    take_profit_ticks = ZONE_PROFIT_TARGET_TICKS
+    stop_loss_ticks = CONFIG.get("zone_stop_loss_ticks", ZONE_STOP_LOSS_TICKS_DEFAULT)
+    take_profit_ticks = CONFIG.get("zone_take_profit_ticks", ZONE_PROFIT_TARGET_TICKS_DEFAULT)
     
     if side == "short":
         stop_loss_price = entry_price + (stop_loss_ticks * tick_size)
