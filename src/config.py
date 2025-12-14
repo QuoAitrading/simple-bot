@@ -278,6 +278,11 @@ class BotConfiguration:
     stop_loss_ticks: int = 6  # Stop loss in ticks (USER CONFIGURABLE via GUI)
     take_profit_ticks: int = 12  # Take profit in ticks (USER CONFIGURABLE via GUI)
     
+    # Proximal Zone Buffer Configuration - BONUS FEATURE
+    use_proximal_buffer: bool = True  # Enable proximal buffer detection (USER CONFIGURABLE)
+    proximal_buffer_ticks: int = 2  # Buffer size in ticks (default: 2 ticks, USER CONFIGURABLE)
+    proximal_reaction_window: float = 5.0  # Tighter reaction window for proximal trades (seconds)
+    
     # Instrument Specifications
     tick_size: float = 0.25
     tick_value: float = 12.50  # ES full contract: $12.50 per tick
@@ -504,6 +509,11 @@ class BotConfiguration:
             # Zone-Based Strategy Configuration (USER CONFIGURABLE)
             "stop_loss_ticks": self.stop_loss_ticks,
             "take_profit_ticks": self.take_profit_ticks,
+            
+            # Proximal Zone Buffer Configuration (BONUS FEATURE)
+            "use_proximal_buffer": self.use_proximal_buffer,
+            "proximal_buffer_ticks": self.proximal_buffer_ticks,
+            "proximal_reaction_window": self.proximal_reaction_window,
         }
 
 
@@ -601,6 +611,16 @@ def load_from_env() -> BotConfiguration:
     
     if os.getenv("BOT_TAKE_PROFIT_TICKS"):
         config.take_profit_ticks = int(os.getenv("BOT_TAKE_PROFIT_TICKS"))
+    
+    # Proximal Buffer Configuration (BONUS FEATURE)
+    if os.getenv("BOT_USE_PROXIMAL_BUFFER"):
+        config.use_proximal_buffer = os.getenv("BOT_USE_PROXIMAL_BUFFER").lower() in ("true", "1", "yes")
+    
+    if os.getenv("BOT_PROXIMAL_BUFFER_TICKS"):
+        config.proximal_buffer_ticks = int(os.getenv("BOT_PROXIMAL_BUFFER_TICKS"))
+    
+    if os.getenv("BOT_PROXIMAL_REACTION_WINDOW"):
+        config.proximal_reaction_window = float(os.getenv("BOT_PROXIMAL_REACTION_WINDOW"))
     
     if os.getenv("BOT_ENVIRONMENT"):
         config.environment = os.getenv("BOT_ENVIRONMENT")

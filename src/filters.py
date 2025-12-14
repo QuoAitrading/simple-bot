@@ -91,7 +91,8 @@ class FilterManager:
         return velocity
     
     def check_velocity_filter(self, zone: Dict, current_price: float, 
-                             current_time: datetime, is_body_displaced: bool) -> tuple:
+                             current_time: datetime, is_body_displaced: bool,
+                             reaction_window: float = None) -> tuple:
         """
         Check velocity filter.
         
@@ -108,12 +109,15 @@ class FilterManager:
             current_price: Current price
             current_time: Current time
             is_body_displaced: Whether body is currently displaced
+            reaction_window: Override reaction window (for proximal trades)
             
         Returns:
             Tuple of (filter_status, should_wait)
             filter_status: 'pass', 'fail', or 'pending'
             should_wait: True if waiting for reaction window
         """
+        # Use custom reaction window if provided, otherwise use default
+        window = reaction_window if reaction_window is not None else self.reaction_window
         if not zone.get('entry_time') or not zone.get('entry_price'):
             logger.warning("⚠️ Velocity filter: No entry time/price recorded")
             return 'pass', False
@@ -138,7 +142,7 @@ class FilterManager:
         if zone_id not in self.pending_velocity_check:
             # Start pending state
             self.pending_velocity_check[zone_id] = current_time
-            logger.info(f"⏳ Velocity filter PENDING: Waiting {self.reaction_window}s for body displacement (absorption)")
+            logger.info(f"⏳ Velocity filter PENDING: Waiting {window}s for body displacement (absorption)")
             return 'pending', True
         
         # We're in pending state - check if body is displaced
@@ -152,18 +156,19 @@ class FilterManager:
         pending_start = self.pending_velocity_check[zone_id]
         time_waiting = (current_time - pending_start).total_seconds()
         
-        if time_waiting >= self.reaction_window:
+        if time_waiting >= window:
             # Window expired without displacement - this is acceptance
             logger.info(f"❌ Velocity filter FAIL: Reaction window expired without displacement (acceptance)")
             del self.pending_velocity_check[zone_id]
             return 'fail', False
         
         # Still waiting
-        logger.debug(f"⏳ Velocity filter waiting: {time_waiting:.1f}s / {self.reaction_window}s")
+        logger.debug(f"⏳ Velocity filter waiting: {time_waiting:.1f}s / {window}s")
         return 'pending', True
     
     def check_volume_filter(self, current_volume: float, average_volume: float,
-                          zone: Dict, current_time: datetime, is_body_displaced: bool) -> tuple:
+                          zone: Dict, current_time: datetime, is_body_displaced: bool,
+                          reaction_window: float = None) -> tuple:
         """
         Check volume filter.
         
@@ -181,12 +186,15 @@ class FilterManager:
             zone: The zone being checked
             current_time: Current time
             is_body_displaced: Whether body is currently displaced
+            reaction_window: Override reaction window (for proximal trades)
             
         Returns:
             Tuple of (filter_status, should_wait)
             filter_status: 'pass', 'fail', or 'pending'
             should_wait: True if waiting for reaction window
         """
+        # Use custom reaction window if provided, otherwise use default
+        window = reaction_window if reaction_window is not None else self.reaction_window
         # Calculate relative volume
         if average_volume <= 0:
             logger.warning("⚠️ Volume filter: Average volume is zero, defaulting to pass")
@@ -208,7 +216,7 @@ class FilterManager:
         if zone_id not in self.pending_volume_check:
             # Start pending state
             self.pending_volume_check[zone_id] = current_time
-            logger.info(f"⏳ Volume filter PENDING: Waiting {self.reaction_window}s for body displacement (absorption)")
+            logger.info(f"⏳ Volume filter PENDING: Waiting {window}s for body displacement (absorption)")
             return 'pending', True
         
         # We're in pending state - check if body is displaced
@@ -222,14 +230,14 @@ class FilterManager:
         pending_start = self.pending_volume_check[zone_id]
         time_waiting = (current_time - pending_start).total_seconds()
         
-        if time_waiting >= self.reaction_window:
+        if time_waiting >= window:
             # Window expired without displacement - this is acceptance
             logger.info(f"❌ Volume filter FAIL: Reaction window expired without displacement (acceptance)")
             del self.pending_volume_check[zone_id]
             return 'fail', False
         
         # Still waiting
-        logger.debug(f"⏳ Volume filter waiting: {time_waiting:.1f}s / {self.reaction_window}s")
+        logger.debug(f"⏳ Volume filter waiting: {time_waiting:.1f}s / {window}s")
         return 'pending', True
     
     def check_time_in_zone_filter(self, zone: Dict, current_time: datetime, 
@@ -265,7 +273,7 @@ class FilterManager:
     
     def check_all_filters(self, zone: Dict, current_price: float, current_time: datetime,
                          current_volume: float, average_volume: float,
-                         is_body_displaced: bool) -> tuple:
+                         is_body_displaced: bool, reaction_window: float = None) -> tuple:
         """
         Run all three filters.
         
@@ -279,6 +287,7 @@ class FilterManager:
             current_volume: Current bar volume
             average_volume: Average volume over lookback period
             is_body_displaced: Whether body is currently displaced
+            reaction_window: Override reaction window (for proximal trades)
             
         Returns:
             Tuple of (all_passed, should_wait, pending_filters)
@@ -288,9 +297,9 @@ class FilterManager:
         """
         pending_filters = []
         
-        # Check velocity filter
+        # Check velocity filter (with custom reaction window if provided)
         velocity_status, velocity_wait = self.check_velocity_filter(
-            zone, current_price, current_time, is_body_displaced
+            zone, current_price, current_time, is_body_displaced, reaction_window
         )
         
         if velocity_status == 'fail':
@@ -298,9 +307,9 @@ class FilterManager:
         elif velocity_status == 'pending':
             pending_filters.append('velocity')
         
-        # Check volume filter
+        # Check volume filter (with custom reaction window if provided)
         volume_status, volume_wait = self.check_volume_filter(
-            current_volume, average_volume, zone, current_time, is_body_displaced
+            current_volume, average_volume, zone, current_time, is_body_displaced, reaction_window
         )
         
         if volume_status == 'fail':

@@ -13,11 +13,22 @@ class RejectionDetector:
     Detects body displacement from zones in real-time.
     
     Calculates live candle body and checks for zone entry and body displacement.
+    Supports proximal buffer detection for near-zone rejections.
     """
     
-    def __init__(self):
-        """Initialize the rejection detector"""
-        pass
+    def __init__(self, use_proximal_buffer: bool = True, proximal_buffer_ticks: int = 2, tick_size: float = 0.25):
+        """
+        Initialize the rejection detector
+        
+        Args:
+            use_proximal_buffer: Enable proximal buffer detection (default: True)
+            proximal_buffer_ticks: Buffer size in ticks (default: 2)
+            tick_size: Symbol's tick size for buffer calculation
+        """
+        self.use_proximal_buffer = use_proximal_buffer
+        self.proximal_buffer_ticks = proximal_buffer_ticks
+        self.tick_size = tick_size
+        self.buffer_size = proximal_buffer_ticks * tick_size  # Convert ticks to price distance
     
     def calculate_body_high_low(self, open_price: float, current_price: float) -> tuple:
         """
@@ -37,12 +48,12 @@ class RejectionDetector:
         body_low = min(open_price, current_price)
         return body_high, body_low
     
-    def has_entered_zone(self, zone: Dict, candle_high: float, candle_low: float) -> bool:
+    def has_entered_zone(self, zone: Dict, candle_high: float, candle_low: float) -> tuple:
         """
-        Check if price has entered a zone.
+        Check if price has entered a zone (including proximal buffer).
         
-        Supply zone: Price enters if candle high >= zone bottom
-        Demand zone: Price enters if candle low <= zone top
+        Supply zone: Price enters if candle high >= zone bottom OR high >= zone bottom - buffer
+        Demand zone: Price enters if candle low <= zone top OR low <= zone top + buffer
         
         Args:
             zone: The zone to check
@@ -50,20 +61,51 @@ class RejectionDetector:
             candle_low: Low of current candle
             
         Returns:
-            True if price has entered the zone, False otherwise
+            Tuple of (has_entered, is_proximal)
+            - has_entered: True if price entered zone or buffer
+            - is_proximal: True if only buffer was touched (not actual zone)
         """
         if zone['zone_type'] == 'supply':
-            # Supply zone: price enters if high touched or exceeded zone bottom
-            entered = candle_high >= zone['zone_bottom']
-            if entered:
-                logger.debug(f"Price entered SUPPLY zone: candle_high={candle_high:.2f} >= zone_bottom={zone['zone_bottom']:.2f}")
-            return entered
+            # Supply zone: check actual zone and buffer
+            touched_zone = candle_high >= zone['zone_bottom']
+            
+            if self.use_proximal_buffer:
+                buffer_boundary = zone['zone_bottom'] - self.buffer_size
+                touched_buffer = candle_high >= buffer_boundary and not touched_zone
+                
+                if touched_zone:
+                    logger.debug(f"Price entered SUPPLY zone: candle_high={candle_high:.2f} >= zone_bottom={zone['zone_bottom']:.2f}")
+                    return True, False  # Entered actual zone
+                elif touched_buffer:
+                    logger.info(f"📍 Price entered PROXIMAL buffer (supply): candle_high={candle_high:.2f} >= buffer={buffer_boundary:.2f}")
+                    return True, True  # Entered proximal buffer only
+                else:
+                    return False, False
+            else:
+                if touched_zone:
+                    logger.debug(f"Price entered SUPPLY zone: candle_high={candle_high:.2f} >= zone_bottom={zone['zone_bottom']:.2f}")
+                return touched_zone, False
+                
         else:  # demand
-            # Demand zone: price enters if low touched or went below zone top
-            entered = candle_low <= zone['zone_top']
-            if entered:
-                logger.debug(f"Price entered DEMAND zone: candle_low={candle_low:.2f} <= zone_top={zone['zone_top']:.2f}")
-            return entered
+            # Demand zone: check actual zone and buffer
+            touched_zone = candle_low <= zone['zone_top']
+            
+            if self.use_proximal_buffer:
+                buffer_boundary = zone['zone_top'] + self.buffer_size
+                touched_buffer = candle_low <= buffer_boundary and not touched_zone
+                
+                if touched_zone:
+                    logger.debug(f"Price entered DEMAND zone: candle_low={candle_low:.2f} <= zone_top={zone['zone_top']:.2f}")
+                    return True, False  # Entered actual zone
+                elif touched_buffer:
+                    logger.info(f"📍 Price entered PROXIMAL buffer (demand): candle_low={candle_low:.2f} <= buffer={buffer_boundary:.2f}")
+                    return True, True  # Entered proximal buffer only
+                else:
+                    return False, False
+            else:
+                if touched_zone:
+                    logger.debug(f"Price entered DEMAND zone: candle_low={candle_low:.2f} <= zone_top={zone['zone_top']:.2f}")
+                return touched_zone, False
     
     def is_body_displaced(self, zone: Dict, body_high: float, body_low: float) -> bool:
         """

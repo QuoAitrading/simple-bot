@@ -7361,7 +7361,15 @@ def main(symbol_override: str = None) -> None:
     # Initialize zone-based trading strategy components
     global zone_manager, rejection_detector, filter_manager
     zone_manager = ZoneManager()
-    rejection_detector = RejectionDetector()
+    
+    # Initialize rejection detector with proximal buffer support (symbol-specific)
+    use_proximal_buffer = CONFIG.get("use_proximal_buffer", True)
+    proximal_buffer_ticks = CONFIG.get("proximal_buffer_ticks", 2)
+    rejection_detector = RejectionDetector(
+        use_proximal_buffer=use_proximal_buffer,
+        proximal_buffer_ticks=proximal_buffer_ticks,
+        tick_size=tick_size
+    )
     
     # Initialize filter manager with symbol-specific tick_size (no ES-specific defaults)
     tick_size = CONFIG.get("tick_size")
@@ -7374,7 +7382,7 @@ def main(symbol_override: str = None) -> None:
     
     filter_manager = FilterManager(
         velocity_threshold=5.0,  # ticks per second
-        reaction_window=10.0,  # seconds
+        reaction_window=10.0,  # seconds (normal zone touches)
         volume_lookback=30,  # bars
         high_volume_threshold=2.0,  # times average
         time_in_zone_limit=45.0,  # seconds
@@ -7389,6 +7397,10 @@ def main(symbol_override: str = None) -> None:
     stop_loss_dollars = stop_loss_ticks * tick_value
     take_profit_dollars = take_profit_ticks * tick_value
     
+    # Get proximal buffer configuration
+    proximal_reaction_window = CONFIG.get("proximal_reaction_window", 5.0)
+    buffer_size_price = proximal_buffer_ticks * tick_size
+    
     logger.info("🎯 Zone-Based Trading Strategy Initialized:")
     logger.info(f"  • Symbol: {trading_symbol}")
     logger.info(f"  • Tick Specs: tick_size={tick_size}, tick_value={tick_value}")
@@ -7397,6 +7409,11 @@ def main(symbol_override: str = None) -> None:
     logger.info(f"  • Velocity Filter: 5.0 ticks/sec (10s reaction window) - Symbol-agnostic")
     logger.info(f"  • Volume Filter: 2.0x average (10s reaction window) - Symbol-agnostic")
     logger.info(f"  • Time in Zone Limit: 45 seconds - Symbol-agnostic")
+    if use_proximal_buffer:
+        logger.info(f"  • 🎁 BONUS: Proximal Buffer ENABLED - {proximal_buffer_ticks} ticks ({buffer_size_price:.2f} points)")
+        logger.info(f"  •   Proximal Reaction Window: {proximal_reaction_window}s (tighter for buffer trades)")
+    else:
+        logger.info(f"  • Proximal Buffer: DISABLED")
     logger.info("")
     
     # RL system and strategy components removed - undergoing refactoring
@@ -7595,26 +7612,34 @@ def execute_zone_trading_logic(symbol: str, current_price: float, current_time: 
     # Calculate body high and low
     body_high, body_low = rejection_detector.calculate_body_high_low(open_price, current_price)
     
+    # Get proximal reaction window for buffer trades
+    proximal_reaction_window = CONFIG.get("proximal_reaction_window", 5.0)
+    
     # Check each active zone
     for zone in active_zones:
-        # Check if price has entered this zone
-        has_entered = rejection_detector.has_entered_zone(zone, high_price, low_price)
+        # Check if price has entered this zone (including proximal buffer)
+        has_entered, is_proximal = rejection_detector.has_entered_zone(zone, high_price, low_price)
         
-        # If price just entered, record entry
+        # If price just entered, record entry and mark if proximal
         if has_entered and zone.get('entry_time') is None:
             zone_manager.record_zone_entry(zone, current_time, current_price)
+            zone['is_proximal'] = is_proximal  # Tag the zone entry type
         
-        # If price is in zone, check for body displacement
+        # If price is in zone or buffer, check for body displacement
         if has_entered:
             is_body_displaced = rejection_detector.is_body_displaced(zone, body_high, body_low)
             
             # If body is displaced, run filters
             if is_body_displaced:
-                # Check all filters
+                # Use tighter reaction window for proximal trades
+                reaction_window = proximal_reaction_window if zone.get('is_proximal', False) else None
+                
+                # Check all filters (with custom reaction window for proximal trades)
                 all_passed, should_wait, pending_filters = filter_manager.check_all_filters(
                     zone, current_price, current_time,
                     current_volume, average_volume,
-                    is_body_displaced
+                    is_body_displaced,
+                    reaction_window=reaction_window
                 )
                 
                 # If filters are pending, continue monitoring
@@ -7623,20 +7648,23 @@ def execute_zone_trading_logic(symbol: str, current_price: float, current_time: 
                 
                 # If all filters passed, enter trade
                 if all_passed:
-                    enter_zone_rejection_trade(symbol, zone, current_price, body_high, body_low)
+                    # Determine trade type for tagging
+                    trade_type = "proximal" if zone.get('is_proximal', False) else "zone_touch"
+                    enter_zone_rejection_trade(symbol, zone, current_price, body_high, body_low, trade_type)
                     # Clear zone entry state so it can be traded again later
                     zone_manager.clear_zone_entry(zone)
                     filter_manager.clear_pending_checks(zone)
                     break  # Only one trade at a time
                 else:
                     # Filters failed, clear this zone
-                    logger.info(f"⛔ Trade skipped - filters failed for {zone['zone_type']} zone")
+                    trade_type = "proximal" if zone.get('is_proximal', False) else "zone_touch"
+                    logger.info(f"⛔ Trade skipped - filters failed for {zone['zone_type']} zone ({trade_type})")
                     zone_manager.clear_zone_entry(zone)
                     filter_manager.clear_pending_checks(zone)
 
 
 def enter_zone_rejection_trade(symbol: str, zone: Dict, current_price: float, 
-                               body_high: float, body_low: float) -> None:
+                               body_high: float, body_low: float, trade_type: str = "zone_touch") -> None:
     """
     Enter a trade based on zone rejection.
     
@@ -7646,6 +7674,7 @@ def enter_zone_rejection_trade(symbol: str, zone: Dict, current_price: float,
         current_price: Current market price
         body_high: High of the candle body
         body_low: Low of the candle body
+        trade_type: Type of trade - "zone_touch" or "proximal" (for analysis)
     """
     global broker
     
@@ -7690,13 +7719,17 @@ def enter_zone_rejection_trade(symbol: str, zone: Dict, current_price: float,
     # Get quantity from config
     quantity = CONFIG.get("max_contracts", 1)
     
+    # Log trade type indicator
+    trade_type_indicator = "🎁 PROXIMAL" if trade_type == "proximal" else "✅ ZONE TOUCH"
+    
     logger.info("=" * 80)
-    logger.info(f"🎯 ENTERING {side.upper()} TRADE - {zone['zone_type'].upper()} Zone Rejection")
+    logger.info(f"🎯 ENTERING {side.upper()} TRADE - {zone['zone_type'].upper()} Zone Rejection [{trade_type_indicator}]")
     logger.info(f"  Zone: {zone['zone_bottom']:.2f} - {zone['zone_top']:.2f} ({zone['zone_strength']})")
     logger.info(f"  Entry: {entry_price:.2f}")
     logger.info(f"  Stop Loss: {stop_loss_price:.2f} ({stop_loss_ticks} ticks)")
     logger.info(f"  Take Profit: {take_profit_price:.2f} ({take_profit_ticks} ticks)")
     logger.info(f"  Quantity: {quantity}")
+    logger.info(f"  Trade Type: {trade_type.upper()}")
     logger.info("=" * 80)
     
     try:
@@ -7732,7 +7765,8 @@ def enter_zone_rejection_trade(symbol: str, zone: Dict, current_price: float,
                 "take_profit": take_profit_price,
                 "entry_time": datetime.now(pytz.timezone(CONFIG.get("timezone", "US/Eastern"))),
                 "zone_type": zone['zone_type'],
-                "zone_strength": zone['zone_strength']
+                "zone_strength": zone['zone_strength'],
+                "trade_type": trade_type  # Tag: "zone_touch" or "proximal"
             }
             
             # Save position state to disk
