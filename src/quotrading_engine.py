@@ -250,6 +250,12 @@ from event_loop import EventLoop, EventType, EventPriority, TimerManager
 from error_recovery import ErrorRecoveryManager, ErrorType as RecoveryErrorType
 from bid_ask_manager import BidAskManager, BidAskQuote
 from notifications import get_notifier
+
+# Import zone-based trading strategy modules
+from zone_manager import ZoneManager
+from rejection_detector import RejectionDetector
+from filters import FilterManager
+
 # Conditionally import cloud API (only needed for live trading)
 try:
     from cloud_api import CloudAPIClient
@@ -585,6 +591,15 @@ cloud_api_client: Optional[CloudAPIClient] = None
 
 # Global bid/ask manager
 bid_ask_manager: Optional[BidAskManager] = None
+
+# Global zone manager for supply/demand trading strategy
+zone_manager = None
+
+# Global rejection detector for zone body displacement
+rejection_detector = None
+
+# Global filter manager for trade validation
+filter_manager = None
 
 # Global shutdown flag - when True, suppress all non-essential logging
 _shutdown_in_progress = False
@@ -7337,6 +7352,30 @@ def main(symbol_override: str = None) -> None:
     logger.info("=" * 80)
     logger.info("")
     
+    # Initialize zone-based trading strategy components
+    global zone_manager, rejection_detector, filter_manager
+    zone_manager = ZoneManager()
+    rejection_detector = RejectionDetector()
+    
+    # Initialize filter manager with default thresholds
+    tick_size = CONFIG.get("tick_size", 0.25)
+    filter_manager = FilterManager(
+        velocity_threshold=5.0,  # ticks per second
+        reaction_window=10.0,  # seconds
+        volume_lookback=30,  # bars
+        high_volume_threshold=2.0,  # times average
+        time_in_zone_limit=45.0,  # seconds
+        tick_size=tick_size
+    )
+    
+    logger.info("🎯 Zone-Based Trading Strategy Initialized:")
+    logger.info(f"  • Stop Loss: 6 ticks ({6 * tick_size:.2f} points)")
+    logger.info(f"  • Take Profit: 12 ticks ({12 * tick_size:.2f} points)")
+    logger.info(f"  • Velocity Filter: 5.0 ticks/sec (10s reaction window)")
+    logger.info(f"  • Volume Filter: 2.0x average (10s reaction window)")
+    logger.info(f"  • Time in Zone Limit: 45 seconds")
+    logger.info("")
+    
     # RL system and strategy components removed - undergoing refactoring
     # Trading logic will be updated with new strategy
     
@@ -7977,7 +8016,7 @@ def send_heartbeat() -> None:
     
     Uses current_trading_symbol for symbol-specific session (multi-symbol support).
     """
-    global broker, current_trading_symbol
+    global broker, current_trading_symbol, zone_manager
     
     # Skip in backtest mode
     if is_backtest_mode():
@@ -8066,6 +8105,12 @@ def send_heartbeat() -> None:
         
         if response.status_code == 200:
             data = response.json()
+            
+            # Extract zones from heartbeat response and update zone manager
+            if "zones" in data and zone_manager is not None:
+                zones_data = data.get("zones", [])
+                if zones_data:
+                    zone_manager.update_zones_from_heartbeat(zones_data)
             
             # Check for license expiration FIRST (even with 200 status, data might indicate invalid)
             if "license_valid" in data and data["license_valid"] is False:
