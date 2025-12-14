@@ -7362,6 +7362,15 @@ def main(symbol_override: str = None) -> None:
     global zone_manager, rejection_detector, filter_manager
     zone_manager = ZoneManager()
     
+    # Get symbol-specific tick specifications first
+    tick_size = CONFIG.get("tick_size")
+    tick_value = CONFIG.get("tick_value")
+    
+    if tick_size is None or tick_size <= 0:
+        raise ValueError(f"Invalid tick_size for symbol {trading_symbol}. Symbol specifications must be loaded.")
+    if tick_value is None or tick_value <= 0:
+        raise ValueError(f"Invalid tick_value for symbol {trading_symbol}. Symbol specifications must be loaded.")
+    
     # Initialize rejection detector with proximal buffer support (symbol-specific)
     use_proximal_buffer = CONFIG.get("use_proximal_buffer", True)
     proximal_buffer_ticks = CONFIG.get("proximal_buffer_ticks", 2)
@@ -7372,14 +7381,6 @@ def main(symbol_override: str = None) -> None:
     )
     
     # Initialize filter manager with symbol-specific tick_size (no ES-specific defaults)
-    tick_size = CONFIG.get("tick_size")
-    tick_value = CONFIG.get("tick_value")
-    
-    if tick_size is None or tick_size <= 0:
-        raise ValueError(f"Invalid tick_size for symbol {trading_symbol}. Symbol specifications must be loaded.")
-    if tick_value is None or tick_value <= 0:
-        raise ValueError(f"Invalid tick_value for symbol {trading_symbol}. Symbol specifications must be loaded.")
-    
     filter_manager = FilterManager(
         velocity_threshold=5.0,  # ticks per second
         reaction_window=10.0,  # seconds (normal zone touches)
