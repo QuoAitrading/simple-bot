@@ -1691,6 +1691,9 @@ def heartbeat():
                         days_until_expiration = time_until_expiration.days
                         hours_until_expiration = time_until_expiration.total_seconds() / 3600
                     
+                    # Get zones for this symbol
+                    zones = get_zones_for_symbol(symbol)
+                    
                     return jsonify({
                         "status": "success",
                         "message": f"Heartbeat recorded for {symbol}",
@@ -1700,7 +1703,8 @@ def heartbeat():
                         "active_symbols": active_count,
                         "license_expiration": format_datetime_utc(license_expiration),
                         "days_until_expiration": days_until_expiration,
-                        "hours_until_expiration": hours_until_expiration
+                        "hours_until_expiration": hours_until_expiration,
+                        "zones": zones
                     }), 200
                 
                 # LEGACY: No symbol provided - use original single-session logic
@@ -1769,6 +1773,12 @@ def heartbeat():
                     days_until_expiration = time_until_expiration.days
                     hours_until_expiration = time_until_expiration.total_seconds() / 3600
                 
+                # Get zones for the configured symbol (if metadata contains symbol info)
+                # For legacy mode without symbol parameter, try to get symbol from metadata
+                metadata = data.get('metadata', {})
+                symbol_for_zones = metadata.get('symbol') if metadata else None
+                zones = get_zones_for_symbol(symbol_for_zones) if symbol_for_zones else []
+                
                 return jsonify({
                     "status": "success",
                     "message": "Heartbeat recorded",
@@ -1776,7 +1786,8 @@ def heartbeat():
                     "session_conflict": False,
                     "license_expiration": license_expiration.isoformat() if license_expiration else None,
                     "days_until_expiration": days_until_expiration,
-                    "hours_until_expiration": hours_until_expiration
+                    "hours_until_expiration": hours_until_expiration,
+                    "zones": zones
                 }), 200
             finally:
                 return_connection(conn)
@@ -4875,6 +4886,146 @@ def admin_retention_metrics():
 def serve_admin_dashboard():
     """Serve the admin dashboard HTML file"""
     return send_from_directory('.', 'admin-dashboard-full.html')
+
+
+# ============================================================================
+# ZONE MANAGEMENT FOR SUPPLY/DEMAND TRADING STRATEGY
+# ============================================================================
+
+# In-memory zone storage (keyed by symbol)
+# Structure: { "ES": [zone1, zone2, ...], "NQ": [...], ... }
+_zones_by_symbol = {}
+
+
+def get_zones_for_symbol(symbol: str) -> list:
+    """
+    Get zones for a specific symbol.
+    
+    Args:
+        symbol: Trading symbol (e.g., "ES", "NQ")
+        
+    Returns:
+        List of zones for the symbol
+    """
+    return _zones_by_symbol.get(symbol, [])
+
+
+def set_zones_for_symbol(symbol: str, zones: list) -> None:
+    """
+    Set zones for a specific symbol (replaces existing zones).
+    
+    Args:
+        symbol: Trading symbol
+        zones: List of zone dictionaries
+    """
+    _zones_by_symbol[symbol] = zones
+    logging.info(f"📍 Zones updated for {symbol}: {len(zones)} zones")
+
+
+def add_zone_for_symbol(symbol: str, zone: dict) -> None:
+    """
+    Add a single zone to a symbol's zone list.
+    
+    Args:
+        symbol: Trading symbol
+        zone: Zone dictionary
+    """
+    if symbol not in _zones_by_symbol:
+        _zones_by_symbol[symbol] = []
+    _zones_by_symbol[symbol].append(zone)
+    logging.info(f"📍 Zone added to {symbol}: {zone['zone_type']} {zone['zone_bottom']}-{zone['zone_top']}")
+
+
+@app.route('/api/zones/webhook', methods=['POST'])
+def receive_tradingview_webhook():
+    """
+    Receive zone data from TradingView via webhooks.
+    
+    Expected JSON payload:
+    {
+        "action": "new" or "sync",
+        "symbol": "ES",
+        "timeframe": "5m",
+        "zones": [
+            {
+                "zone_type": "supply" or "demand",
+                "zone_top": 4500.00,
+                "zone_bottom": 4495.00,
+                "zone_strength": "strong" or "medium" or "weak"
+            },
+            ...
+        ]
+    }
+    
+    Actions:
+    - "new": Add zones to existing list
+    - "sync": Replace entire zone list with new zones
+    """
+    try:
+        data = request.get_json()
+        
+        if not data:
+            return jsonify({"status": "error", "message": "No JSON data provided"}), 400
+        
+        action = data.get('action', 'sync')
+        symbol = data.get('symbol')
+        zones = data.get('zones', [])
+        timeframe = data.get('timeframe', 'unknown')
+        
+        if not symbol:
+            return jsonify({"status": "error", "message": "Symbol is required"}), 400
+        
+        if action not in ['new', 'sync']:
+            return jsonify({"status": "error", "message": "Action must be 'new' or 'sync'"}), 400
+        
+        # Validate zones
+        for zone in zones:
+            required_fields = ['zone_type', 'zone_top', 'zone_bottom', 'zone_strength']
+            for field in required_fields:
+                if field not in zone:
+                    return jsonify({
+                        "status": "error",
+                        "message": f"Zone missing required field: {field}"
+                    }), 400
+            
+            # Validate zone_type
+            if zone['zone_type'] not in ['supply', 'demand']:
+                return jsonify({
+                    "status": "error",
+                    "message": f"Invalid zone_type: {zone['zone_type']} (must be 'supply' or 'demand')"
+                }), 400
+            
+            # Validate zone_strength
+            if zone['zone_strength'] not in ['strong', 'medium', 'weak']:
+                return jsonify({
+                    "status": "error",
+                    "message": f"Invalid zone_strength: {zone['zone_strength']}"
+                }), 400
+        
+        # Process action
+        if action == 'sync':
+            # Replace entire zone list
+            set_zones_for_symbol(symbol, zones)
+            logging.info(f"📍 TradingView webhook: SYNC {len(zones)} zones for {symbol} ({timeframe})")
+        else:  # action == 'new'
+            # Add zones to existing list
+            for zone in zones:
+                add_zone_for_symbol(symbol, zone)
+            logging.info(f"📍 TradingView webhook: NEW {len(zones)} zones for {symbol} ({timeframe})")
+        
+        return jsonify({
+            "status": "success",
+            "message": f"{len(zones)} zones processed",
+            "action": action,
+            "symbol": symbol,
+            "timeframe": timeframe,
+            "total_zones": len(get_zones_for_symbol(symbol))
+        }), 200
+        
+    except Exception as e:
+        logging.error(f"❌ Webhook error: {e}")
+        logging.error(traceback.format_exc())
+        return jsonify({"status": "error", "message": str(e)}), 500
 
 
 # Global error handlers for production safety
