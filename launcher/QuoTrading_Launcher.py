@@ -1582,8 +1582,8 @@ class QuoTradingLauncher:
             fg=self.colors['text_light']
         ).pack(side=tk.LEFT, padx=(4, 0))
         
-        # Current value display with trading style
-        self.confidence_var = tk.DoubleVar(value=self.config.get("confidence_threshold", 70.0))
+        # Current value display with trading style (aesthetic only - not used by bot)
+        self.confidence_var = tk.DoubleVar(value=70.0)  # Default aesthetic value, not persisted
         
         self.confidence_style_label = tk.Label(
             conf_header,
@@ -2078,7 +2078,7 @@ class QuoTradingLauncher:
         self.config["max_loss_per_trade"] = max_loss_per_trade
         self.config["max_contracts"] = self.contracts_var.get()
         self.config["max_trades"] = self.trades_var.get()
-        self.config["confidence_threshold"] = self.confidence_var.get()
+        # Note: confidence_threshold removed - slider is aesthetic only
         self.config["shadow_mode"] = self.shadow_mode_var.get()
         self.config["time_exit_enabled"] = self.time_exit_var.get()
         self.config["selected_account"] = self.account_dropdown_var.get()
