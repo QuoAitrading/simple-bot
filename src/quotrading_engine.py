@@ -7492,9 +7492,304 @@ def main(symbol_override: str = None) -> None:
 # EVENT HANDLERS
 # ============================================================================
 
+def execute_zone_trading_logic(symbol: str, current_price: float, current_time: datetime) -> None:
+    """
+    Execute zone-based trading logic on each tick.
+    
+    Strategy:
+    1. Check and mark dead zones based on current price
+    2. For each active zone:
+       a. Check if price has entered the zone
+       b. If entered, track entry time and price
+       c. Check if body is displaced
+       d. If displaced, run filters
+       e. If all filters pass, enter trade with bracket order
+    3. Monitor open positions
+    
+    Args:
+        symbol: Trading symbol
+        current_price: Current market price
+        current_time: Current timestamp
+    """
+    global zone_manager, rejection_detector, filter_manager, broker
+    
+    # Skip if trading is disabled
+    if not bot_status.get("trading_enabled", False):
+        return
+    
+    # Skip if we don't have required components
+    if zone_manager is None or rejection_detector is None or filter_manager is None:
+        return
+    
+    # Skip if no bars yet (need open, high, low for candle)
+    if symbol not in state or not state[symbol].get("bars"):
+        return
+    
+    # Get current bar data (last 1-minute bar)
+    bars = state[symbol]["bars"]
+    if not bars:
+        return
+    
+    current_bar = bars[-1]
+    open_price = current_bar["open"]
+    high_price = current_bar["high"]
+    low_price = current_bar["low"]
+    current_volume = current_bar.get("volume", 0)
+    
+    # Calculate average volume for volume filter
+    volume_lookback = 30
+    average_volume = 0
+    if len(bars) >= volume_lookback:
+        recent_volumes = [bar.get("volume", 0) for bar in list(bars)[-volume_lookback:]]
+        average_volume = sum(recent_volumes) / len(recent_volumes) if recent_volumes else 0
+    elif len(bars) > 0:
+        # Use what we have if less than lookback period
+        recent_volumes = [bar.get("volume", 0) for bar in list(bars)]
+        average_volume = sum(recent_volumes) / len(recent_volumes) if recent_volumes else 0
+    
+    # Check and mark dead zones
+    zone_manager.check_and_mark_dead_zones(current_price)
+    
+    # Get active zones
+    active_zones = zone_manager.get_active_zones()
+    
+    if not active_zones:
+        return
+    
+    # Check if we already have an open position
+    position = state[symbol].get("position", {})
+    has_open_position = position.get("active", False)
+    
+    # If we have an open position, broker handles stop loss and take profit automatically
+    # Just monitor for exit (position management is done by broker bracket orders)
+    if has_open_position:
+        return
+    
+    # Calculate body high and low
+    body_high, body_low = rejection_detector.calculate_body_high_low(open_price, current_price)
+    
+    # Check each active zone
+    for zone in active_zones:
+        # Check if price has entered this zone
+        has_entered = rejection_detector.has_entered_zone(zone, high_price, low_price)
+        
+        # If price just entered, record entry
+        if has_entered and zone.get('entry_time') is None:
+            zone_manager.record_zone_entry(zone, current_time, current_price)
+        
+        # If price is in zone, check for body displacement
+        if has_entered:
+            is_body_displaced = rejection_detector.is_body_displaced(zone, body_high, body_low)
+            
+            # If body is displaced, run filters
+            if is_body_displaced:
+                # Check all filters
+                all_passed, should_wait, pending_filters = filter_manager.check_all_filters(
+                    zone, current_price, current_time,
+                    current_volume, average_volume,
+                    is_body_displaced
+                )
+                
+                # If filters are pending, continue monitoring
+                if should_wait:
+                    continue
+                
+                # If all filters passed, enter trade
+                if all_passed:
+                    enter_zone_rejection_trade(symbol, zone, current_price, body_high, body_low)
+                    # Clear zone entry state so it can be traded again later
+                    zone_manager.clear_zone_entry(zone)
+                    filter_manager.clear_pending_checks(zone)
+                    break  # Only one trade at a time
+                else:
+                    # Filters failed, clear this zone
+                    logger.info(f"⛔ Trade skipped - filters failed for {zone['zone_type']} zone")
+                    zone_manager.clear_zone_entry(zone)
+                    filter_manager.clear_pending_checks(zone)
+
+
+def enter_zone_rejection_trade(symbol: str, zone: Dict, current_price: float, 
+                               body_high: float, body_low: float) -> None:
+    """
+    Enter a trade based on zone rejection.
+    
+    Args:
+        symbol: Trading symbol
+        zone: The zone that was rejected
+        current_price: Current market price
+        body_high: High of the candle body
+        body_low: Low of the candle body
+    """
+    global broker
+    
+    if broker is None:
+        logger.error("❌ Cannot enter trade - broker not initialized")
+        return
+    
+    # Check if we can trade (max trades per day, etc.)
+    if not can_enter_new_trade(symbol):
+        logger.info("⛔ Cannot enter trade - trading limits reached")
+        return
+    
+    # Determine trade direction
+    if zone['zone_type'] == 'supply':
+        # Supply zone rejection = SHORT
+        side = "short"
+        order_side = "SELL"
+        entry_price = current_price
+    else:  # demand
+        # Demand zone rejection = LONG
+        side = "long"
+        order_side = "BUY"
+        entry_price = current_price
+    
+    # Calculate stop loss and take profit
+    tick_size = CONFIG.get("tick_size", 0.25)
+    stop_loss_ticks = 6
+    take_profit_ticks = 12
+    
+    if side == "short":
+        stop_loss_price = entry_price + (stop_loss_ticks * tick_size)
+        take_profit_price = entry_price - (take_profit_ticks * tick_size)
+    else:  # long
+        stop_loss_price = entry_price - (stop_loss_ticks * tick_size)
+        take_profit_price = entry_price + (take_profit_ticks * tick_size)
+    
+    # Get quantity from config
+    quantity = CONFIG.get("max_contracts", 1)
+    
+    logger.info("=" * 80)
+    logger.info(f"🎯 ENTERING {side.upper()} TRADE - {zone['zone_type'].upper()} Zone Rejection")
+    logger.info(f"  Zone: {zone['zone_bottom']:.2f} - {zone['zone_top']:.2f} ({zone['zone_strength']})")
+    logger.info(f"  Entry: {entry_price:.2f}")
+    logger.info(f"  Stop Loss: {stop_loss_price:.2f} ({stop_loss_ticks} ticks)")
+    logger.info(f"  Take Profit: {take_profit_price:.2f} ({take_profit_ticks} ticks)")
+    logger.info(f"  Quantity: {quantity}")
+    logger.info("=" * 80)
+    
+    try:
+        # Place bracket order (entry + stop loss + take profit)
+        if hasattr(broker, 'place_bracket_order'):
+            order = broker.place_bracket_order(
+                symbol=symbol,
+                side=order_side,
+                quantity=quantity,
+                stop_loss=stop_loss_price,
+                take_profit=take_profit_price
+            )
+        else:
+            # Fallback: place market order and then protective stops
+            order = broker.place_market_order(symbol, order_side, quantity)
+            if order:
+                # Place stop loss
+                stop_side = "BUY" if side == "short" else "SELL"
+                broker.place_stop_order(symbol, stop_side, quantity, stop_loss_price)
+                # Place take profit (limit order)
+                broker.place_limit_order(symbol, stop_side, quantity, take_profit_price)
+        
+        if order:
+            logger.info(f"✅ Trade entered successfully - Order ID: {order.get('order_id', 'N/A')}")
+            
+            # Update position state
+            state[symbol]["position"] = {
+                "active": True,
+                "side": side,
+                "quantity": quantity,
+                "entry_price": entry_price,
+                "stop_loss": stop_loss_price,
+                "take_profit": take_profit_price,
+                "entry_time": datetime.now(pytz.timezone(CONFIG.get("timezone", "US/Eastern"))),
+                "zone_type": zone['zone_type'],
+                "zone_strength": zone['zone_strength']
+            }
+            
+            # Save position state to disk
+            save_position_state(symbol)
+        else:
+            logger.error("❌ Failed to enter trade - order returned None")
+            
+    except Exception as e:
+        logger.error(f"❌ Error entering trade: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
+
+
+def can_enter_new_trade(symbol: str) -> bool:
+    """
+    Check if we can enter a new trade.
+    
+    Checks:
+    - Max trades per day not exceeded
+    - Daily loss limit not reached
+    - Within entry window
+    - Not in flatten mode
+    
+    Args:
+        symbol: Trading symbol
+        
+    Returns:
+        True if we can enter a new trade, False otherwise
+    """
+    # Check if trading is enabled
+    if not bot_status.get("trading_enabled", False):
+        return False
+    
+    # Check if in flatten mode
+    if bot_status.get("flatten_mode", False):
+        return False
+    
+    # Check max trades per day
+    if symbol in state:
+        session_stats = state[symbol].get("session_stats", {})
+        trades_today = len(session_stats.get("trades", []))
+        max_trades = CONFIG.get("max_trades_per_day", 10)
+        
+        if trades_today >= max_trades:
+            logger.info(f"⛔ Max trades per day reached ({trades_today}/{max_trades})")
+            return False
+        
+        # Check daily loss limit
+        total_pnl = session_stats.get("total_pnl", 0.0)
+        daily_loss_limit = CONFIG.get("daily_loss_limit", 500)
+        
+        if total_pnl <= -daily_loss_limit:
+            logger.info(f"⛔ Daily loss limit reached (${total_pnl:.2f})")
+            return False
+    
+    # Check if within entry window
+    tz = pytz.timezone(CONFIG.get("timezone", "US/Eastern"))
+    current_time = datetime.now(tz).time()
+    
+    # Parse entry window times
+    entry_start = CONFIG.get("entry_start_time", "18:00")
+    entry_end = CONFIG.get("entry_end_time", "16:00")
+    
+    # Convert to time objects
+    from datetime import time as dt_time
+    start_hour, start_min = map(int, entry_start.split(":"))
+    end_hour, end_min = map(int, entry_end.split(":"))
+    
+    start_time = dt_time(start_hour, start_min)
+    end_time = dt_time(end_hour, end_min)
+    
+    # Check if current time is within entry window
+    # Handle overnight window (e.g., 18:00 to 16:00 next day)
+    if start_time > end_time:
+        # Overnight window
+        in_window = current_time >= start_time or current_time <= end_time
+    else:
+        # Same-day window
+        in_window = start_time <= current_time <= end_time
+    
+    if not in_window:
+        return False
+    
+    return True
+
+
 def handle_tick_event(event) -> None:
     """Handle tick data event from event loop"""
-    global backtest_current_time
+    global backtest_current_time, zone_manager, rejection_detector, filter_manager
     
     # Extract data from Event object
     data = event.data if hasattr(event, 'data') else event
@@ -7538,6 +7833,10 @@ def handle_tick_event(event) -> None:
     
     # Update 15-minute bars
     update_15min_bar(symbol, price, volume, dt)
+    
+    # Execute zone-based trading logic
+    if zone_manager is not None and rejection_detector is not None and filter_manager is not None:
+        execute_zone_trading_logic(symbol, price, dt)
 
 
 def handle_time_check_event(data: Dict[str, Any]) -> None:
