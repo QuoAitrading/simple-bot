@@ -347,18 +347,7 @@ class BotConfiguration:
     # Trailing stop handles all profit-taking, no need for partial exits
     partial_exits_enabled: bool = False  # DISABLED - Trailing stop manages exits
     
-    # Reinforcement Learning Parameters
-    # RL confidence filtering - uses RL experience to filter out low-confidence signals
-    # USER CONFIGURABLE - threshold determines which signals to take
-    rl_enabled: bool = True  # ENABLED - RL layer filters signals based on confidence
-    rl_exploration_rate: float = 0.30  # 30% exploration (for learning)
-    rl_min_exploration_rate: float = 0.05  # Minimum exploration after decay
-    rl_exploration_decay: float = 0.995  # Decay rate per signal
-    rl_confidence_threshold: float = 0.5  # USER CONFIGURABLE via GUI - minimum confidence to take signal
-    # NOTE: Contracts are FIXED at user's max_contracts setting (no dynamic scaling)
-    # NOTE: For production, RL is cloud-based. Local files only for backtesting/development.
-    rl_experience_file: str = None  # Path to local RL experience file (None = cloud-based RL)
-    rl_save_frequency: int = 5  # Save experiences every N trades
+    # Strategy parameters removed - undergoing refactoring
     
     # Broker Configuration (only for live trading)
     api_token: Optional[str] = None
@@ -501,12 +490,6 @@ class BotConfiguration:
             
             # Partial Exits DISABLED (trailing handles exits)
             "partial_exits_enabled": self.partial_exits_enabled,
-            
-            # RL Configuration
-            "rl_confidence_threshold": self.rl_confidence_threshold,
-            "rl_exploration_rate": self.rl_exploration_rate,
-            "rl_min_exploration_rate": self.rl_min_exploration_rate,
-            "rl_exploration_decay": self.rl_exploration_decay,
         }
 
 
@@ -584,13 +567,6 @@ def load_from_env() -> BotConfiguration:
     if os.getenv("BOT_CONFIDENCE_THRESHOLD"):
         # GUI provides confidence as percentage (0-100), config expects decimal (0-1)
         # Values > 1.0 are treated as percentages and converted
-        # Values <= 1.0 are treated as already in decimal form
-        threshold = float(os.getenv("BOT_CONFIDENCE_THRESHOLD"))
-        # Note: 1.0 is treated as 100% confidence (decimal), not 1% confidence
-        # If you want 1% confidence, use 0.01 or set to 1 (which will be converted to 0.01)
-        if threshold > 1.0:
-            threshold = threshold / 100.0
-        config.rl_confidence_threshold = threshold
     
     if os.getenv("BOT_TICK_SIZE"):
         config.tick_size = float(os.getenv("BOT_TICK_SIZE"))
@@ -663,14 +639,6 @@ def _load_config_from_json(config: BotConfiguration) -> BotConfiguration:
                 config.instrument = json_config['symbols'][0]
                 config.instruments = json_config['symbols']
             
-            # Handle GUI confidence_threshold field (percentage) -> rl_confidence_threshold (decimal)
-            # GUI saves as percentage (0-100), bot expects decimal (0-1)
-            if 'confidence_threshold' in json_config:
-                threshold = json_config['confidence_threshold']
-                # Convert percentage to decimal if > 1.0
-                if threshold > 1.0:
-                    threshold = threshold / 100.0
-                config.rl_confidence_threshold = threshold
     
     return config
 
@@ -763,8 +731,6 @@ def load_config(environment: Optional[str] = None, backtest_mode: bool = False) 
         env_vars_set.add("auto_calculate_limits")
     if os.getenv("ACCOUNT_SIZE"):
         env_vars_set.add("account_size")
-    if os.getenv("BOT_CONFIDENCE_THRESHOLD"):
-        env_vars_set.add("rl_confidence_threshold")
     if os.getenv("BOT_TICK_SIZE"):
         env_vars_set.add("tick_size")
     if os.getenv("BOT_TICK_VALUE"):

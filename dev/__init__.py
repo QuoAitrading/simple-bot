@@ -1,35 +1,17 @@
 """
-Development Environment for BOS+FVG Trading Bot
+Development Environment for QuoTrading Bot
 
-This folder contains the backtesting framework and development tools.
+This folder contains development tools and data recording utilities.
 Separated from production code in src/ for clean architecture.
+
+Note: Backtesting framework has been removed during refactoring.
 """
 
 __version__ = "1.0.0"
 
-# Export backtesting components
-from .backtesting import (
-    BacktestConfig,
-    BacktestEngine,
-    HistoricalDataLoader,
-    PerformanceMetrics,
-    ReportGenerator,
-    Trade
-)
-
-# Export backtest runner functions
-from .run_backtest import (
-    run_backtest,
-    initialize_rl_brains_for_backtest
-)
+# Export data recorder components
+from .data_recorder import DataRecorder
 
 __all__ = [
-    'BacktestConfig',
-    'BacktestEngine',
-    'HistoricalDataLoader',
-    'PerformanceMetrics',
-    'ReportGenerator',
-    'Trade',
-    'run_backtest',
-    'initialize_rl_brains_for_backtest'
+    'DataRecorder'
 ]
