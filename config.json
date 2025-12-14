@@ -37,7 +37,6 @@
   "max_loss_per_trade": 150.0,
   "max_contracts": 1,
   "max_trades": 20,
-  "confidence_threshold": 50.0,
   "shadow_mode": false,
   "selected_account": "150KTC-V2-439793-24199277 - $150,813.30",
   "selected_account_id": "150KTC-V2-439793-24199277",

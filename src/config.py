@@ -1,16 +1,15 @@
 """
-Configuration Management for BOS+FVG Trading Bot
+Configuration Management for QuoTrading Bot
 Supports multiple environments with validation and environment variable overrides.
 
-STRATEGY: BOS+FVG (Break of Structure + Fair Value Gap)
-- Detect trend direction using Break of Structure (BOS)
-- Identify Fair Value Gaps (FVG) in price action
-- Enter when price fills into FVG zones
-- Use tight stops with 1.5:1 risk-reward ratio
+REFACTORING IN PROGRESS:
+Strategy components have been removed from the repository.
+Trading logic is being redesigned and will be implemented with new approach.
 
-STOP LOSS: Strategy-specific with GUI override
-- Primary stop: 2 ticks beyond FVG zone
-- Emergency max: max_stop_loss_dollars setting (user configurable via GUI)
+RISK MANAGEMENT:
+- Configurable stop loss per trade
+- Daily loss limits
+- Position sizing controls
 """
 
 import os
@@ -59,19 +58,10 @@ class BotConfiguration:
         # Total cost per round-trip: ~3 ticks slippage + $2.50 commission = ~$42.50/contract
     
     # ==========================================================================
-    # BOS+FVG STRATEGY - HARDCODED PARAMETERS
+    # STRATEGY PARAMETERS - REMOVED
     # ==========================================================================
-    # These parameters are HARDCODED in bos_detector.py and fvg_detector.py
-    # They are NOT configurable - the strategy uses fixed rules for all trades.
-    # 
-    # HARDCODED VALUES (see bos_detector.py and fvg_detector.py for implementation):
-    # - swing_lookback: 5 bars (for BOS detection)
-    # - fvg_min_size_ticks: 2 (minimum FVG size)
-    # - fvg_max_size_ticks: 20 (maximum FVG size)
-    # - fvg_expiry_minutes: 75 (FVG lifetime)
-    # - max_active_fvgs: 15 (max tracked FVGs)
-    # - stop_buffer_ticks: 2.5 (beyond FVG zone)
-    # - profit_target_multiplier: 1.18 (1:1.18 risk-reward)
+    # Strategy code has been removed from the repository.
+    # Trading logic is being refactored.
     #
     # USER CONFIGURABLE via GUI:
     # - max_stop_loss_dollars: Emergency max stop (caps stop loss in dollars)

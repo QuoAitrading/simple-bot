@@ -1,48 +1,28 @@
 """
-BOS + FVG Scalping Bot - Institutional Footprint Trading Strategy
-Event-driven bot that trades price inefficiencies (Fair Value Gaps) in the direction of structure breaks
+QuoTrading Bot - Automated Futures Trading Engine
+Event-driven trading bot for futures markets with risk management
 
-THE EDGE:
-Identify trend direction using Break of Structure (BOS), then trade mean reversion fills
-into Fair Value Gaps (FVGs). When price leaves gaps due to fast movement, wait for the
-fill and scalp the reversion with adaptive risk management and quick profit locks.
+REFACTORING IN PROGRESS:
+Strategy components have been removed from the repository.
+Trading logic is being redesigned and will be implemented with new approach.
 
-STRATEGY FLOW:
-1. DETECT BOS - Price breaks above swing high (bullish) or below swing low (bearish)
-2. IDENTIFY FVG - 3-candle gap where bar1.high < bar3.low (bullish) or bar1.low > bar3.high (bearish)
-3. ENTRY TRIGGER - Price fills into FVG zone (touches gap from the other side)
-4. MARKET ORDER - Immediate entry at market price
-5. STOP LOSS - Default 12 ticks OR GUI max loss per trade (whichever is smaller)
-6. PROFIT TARGET - ALWAYS 12 ticks from entry
-7. PROFIT LOCK - After 8 ticks profit, move stop to entry +3 ticks (locks in profit)
+CORE FEATURES:
+- Real-time market data processing
+- Position and risk management
+- Order execution and monitoring
+- Multi-symbol support
 
-ORDER EXECUTION (3 ACTIVE ORDERS MAX):
-1. Market Order Entry - Executed immediately
-2. Initial Stop Loss - 12 ticks OR GUI max loss (whichever is smaller)
-3. Profit Target - 12 ticks from entry (always)
-4. Profit Lock Stop - Entry +3 ticks (replaces initial stop after 8 ticks profit)
+RISK MANAGEMENT:
+- Configurable stop loss per trade
+- Daily loss limits
+- Position sizing controls
+- One trade at a time (prevents overtrading)
 
-ADAPTIVE STOP LOSS & FIXED PROFIT TARGET:
-- Stop Loss: 12 ticks OR GUI "Max Loss Per Trade" (uses smaller value)
-  * RESPECTS GUI max loss if less than 12 ticks for the symbol
-  * Adapts to user's risk tolerance automatically
-- Profit Target: ALWAYS 12 ticks from entry (fixed)
-- Profit Lock: After 8 ticks profit → Stop moves to entry +3 ticks
-  * Locks in 3 tick profit to protect against reversals
-  * Quick scalping strategy - lock profits and get out fast
-- Order Placement: Immediate market order entry with stop & target orders placed instantly
-- Symbol Agnostic: AI knows tick values for all symbols (ES, NQ, MES, MNQ, CL, GC, etc.)
-- Per Contract Risk: Same stop/target distance regardless of contract count
-
-ONE TRADE AT A TIME:
-- Bot only enters when flat (no existing position)
-- Prevents multiple concurrent trades
-- Ensures proper risk management
-
-FVG FILTERS:
-- Size: 2-20 ticks (filters noise and extreme moves)
-- Expiry: 60 minutes (prevents stale zones)
-- FIFO: First filled FVG wins (prevents over-trading)
+ORDER EXECUTION:
+- Market order entry
+- Automated stop loss placement
+- Profit target management
+- Symbol-agnostic (works with ES, NQ, MES, MNQ, CL, GC, etc.)
 
 ========================================================================
 24/7 MULTI-USER READY ARCHITECTURE - US EASTERN TIME (DST-AWARE)
@@ -815,8 +795,7 @@ def setup_logging() -> logging.Logger:
         child_logger.addHandler(logging.NullHandler())  # Add null handler
         child_logger.disabled = True  # Completely disable
     
-    # 2. Initialization & Setup (RL brain, bid/ask manager, event loop, broker SDK details)
-    logging.getLogger('signal_confidence').setLevel(logging.WARNING)  # RL brain initialization
+    # 2. Initialization & Setup (bid/ask manager, event loop, broker SDK details)
     logging.getLogger('bid_ask_manager').setLevel(logging.WARNING)  # Bid/ask manager initialization
     logging.getLogger('event_loop').setLevel(logging.ERROR)  # Event loop initialization & stats (suppress warnings)
     logging.getLogger('broker_interface').setLevel(logging.ERROR)  # Broker SDK initialization details (suppress warnings)
@@ -889,22 +868,6 @@ async def save_trade_experience_async(
     """
     # No-op - RL system removed
     pass
-        
-        # Report to cloud in background (non-blocking) with execution_data
-        loop = asyncio.get_event_loop()
-        await loop.run_in_executor(
-            None,
-            cloud_api_client.report_trade_outcome,
-            state_with_context,
-            True,  # took_trade
-            pnl,
-            duration_seconds,
-            execution_data  # Pass execution metrics to cloud
-        )
-        
-        
-    except Exception as e:
-        pass
 
 
 
@@ -3510,63 +3473,6 @@ def capture_market_state(symbol: str, current_price: float) -> Dict[str, Any]:
         "timestamp": datetime.now(pytz.UTC).isoformat(),
         "price": current_price
     }
-    entry_details = state[symbol].get("entry_details", {})
-    if entry_details and "fvg_size_ticks" in entry_details:
-        fvg_size_ticks = entry_details.get("fvg_size_ticks", 0.0)
-        fvg_top = entry_details.get("fvg_top", current_price)
-        fvg_bottom = entry_details.get("fvg_bottom", current_price)
-        
-        # Calculate how deep into FVG price has penetrated
-        fvg_range = abs(fvg_top - fvg_bottom)
-        if fvg_range > 0:
-            if bos_direction == 'bullish':
-                # For bullish: measure from top (entry point) down
-                penetration = abs(fvg_top - current_price)
-            else:
-                # For bearish: measure from bottom (entry point) up
-                penetration = abs(current_price - fvg_bottom)
-            price_in_fvg_pct = (penetration / fvg_range) * 100.0
-            price_in_fvg_pct = min(100.0, max(0.0, price_in_fvg_pct))
-    
-    # Get active FVG count
-    if fvg_detector:
-        unfilled_fvgs = fvg_detector.get_unfilled_fvgs()
-        fvg_count_active = len(unfilled_fvgs)
-        
-        # If we have an FVG being traded, calculate age
-        if entry_details and "fvg_id" in entry_details:
-            fvg_id = entry_details["fvg_id"]
-            for fvg in fvg_detector.active_fvgs:
-                if fvg['id'] == fvg_id:
-                    created_at = fvg.get('created_at')
-                    if created_at:
-                        age_delta = current_time - created_at
-                        fvg_age_bars = int(age_delta.total_seconds() / 60)  # Minutes = bars
-                    break
-    
-    # Build the simplified 15-field experience record structure for BOS+FVG
-    # 11 pattern matching fields + 4 metadata fields (symbol, timestamp, pnl, took_trade)
-    market_state = {
-        # The 11 Pattern Matching Fields
-        "bos_direction": bos_direction if bos_direction else "NONE",
-        "fvg_size_ticks": round(fvg_size_ticks, 1),
-        "fvg_age_bars": fvg_age_bars,
-        "price_in_fvg_pct": round(price_in_fvg_pct, 1),
-        "volume_ratio": round(volume_ratio, 2),
-        "atr_ratio": round(atr_ratio, 2),
-        "session": session,
-        "hour": hour,
-        "fvg_count_active": fvg_count_active,
-        "swing_high": round(swing_high, 2),
-        "swing_low": round(swing_low, 2),
-        
-        # The 4 Metadata Fields
-        "symbol": symbol,
-        "timestamp": current_time.isoformat(),
-        # pnl and took_trade will be added by record_outcome()
-    }
-    
-    return market_state
 
 
 
@@ -3722,12 +3628,7 @@ def check_for_signals(symbol: str) -> None:
         state[symbol]["entry_market_state"] = market_state
         state[symbol]["entry_rl_confidence"] = confidence
         
-        # Mark the FVG as traded to prevent trading it again
-        entry_details = state[symbol].get("entry_details", {})
-        if "fvg_id" in entry_details:
-            fvg_detector = state[symbol]["fvg_detector"]
-            if fvg_detector:
-                fvg_detector.mark_fvg_traded(entry_details["fvg_id"])
+        # Strategy removed - FVG marking code no longer needed
         
         execute_entry(symbol, "long", current_bar["close"])
         return
@@ -3782,12 +3683,7 @@ def check_for_signals(symbol: str) -> None:
         state[symbol]["entry_market_state"] = market_state
         state[symbol]["entry_rl_confidence"] = confidence
         
-        # Mark the FVG as traded to prevent trading it again
-        entry_details = state[symbol].get("entry_details", {})
-        if "fvg_id" in entry_details:
-            fvg_detector = state[symbol]["fvg_detector"]
-            if fvg_detector:
-                fvg_detector.mark_fvg_traded(entry_details["fvg_id"])
+        # Strategy removed - FVG marking code no longer needed
         
         execute_entry(symbol, "short", current_bar["close"])
         return
