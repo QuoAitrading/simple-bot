@@ -18,9 +18,7 @@ logger = logging.getLogger(__name__)
 SEVERITY_HIGH = 0.90
 SEVERITY_MODERATE = 0.80
 
-# Confidence thresholds based on severity
-CONFIDENCE_THRESHOLD_HIGH = 85.0
-CONFIDENCE_THRESHOLD_MODERATE = 75.0
+ # Threshold recommendations used to surface warnings (confidence features removed)
 
 
 class SessionStateManager:
@@ -119,7 +117,7 @@ class SessionStateManager:
         self,
         account_size: float,
         daily_loss_limit: float,
-        current_confidence: float,
+        current_confidence: Optional[float],
         max_contracts: int
     ) -> Tuple[list, list, Dict[str, Any]]:
         """
@@ -162,22 +160,8 @@ class SessionStateManager:
                 "message": f"⚠️ WARNING: Approaching daily loss limit ({daily_loss_severity*100:.0f}% of max). Bot will STOP trading."
             })
         
-        # Generate recommendations based on daily loss severity
-        if approaching_failure:
-            # Recommend higher confidence based on daily loss severity
-            if daily_loss_severity >= SEVERITY_HIGH:
-                recommended_confidence = CONFIDENCE_THRESHOLD_HIGH
-            elif daily_loss_severity >= SEVERITY_MODERATE:
-                recommended_confidence = CONFIDENCE_THRESHOLD_MODERATE
-            else:
-                recommended_confidence = current_confidence
-            
-            if recommended_confidence > current_confidence:
-                recommendations.append({
-                    "priority": "high",
-                    "message": f"📊 RECOMMEND: Increase confidence threshold to {recommended_confidence:.0f}% (currently {current_confidence:.0f}%)"
-                })
-                smart_settings["confidence_threshold"] = recommended_confidence
+        # Confidence/ML features removed. Keep only loss-limit warnings and informational messages.
+        _ = (current_confidence, max_contracts)
         
         # Show dollar amounts instead of percentages for clarity
         if daily_pnl < 0:

@@ -1,6 +1,6 @@
-"""
-QuoTrading Flask API with RL Brain + PostgreSQL License Validation
-Simple, reliable API that works everywhere
+"""QuoTrading Flask API.
+
+Simple, reliable API that works everywhere.
 """
 from flask import Flask, request, jsonify, send_from_directory
 from flask_cors import CORS
@@ -1335,26 +1335,8 @@ def count_active_symbol_sessions(conn, license_key: str):
 
 
 def load_experiences(symbol='ES'):
-    """
-    DEPRECATED: Bots use local experience files for decision-making.
-    Cloud API only collects trade outcomes, does not serve experiences.
-    
-    Args:
-        symbol: Trading symbol (ES, NQ, MES, MNQ, etc.)
-    
-    Returns:
-        Empty list (function deprecated)
-    """
-    logging.warning("⚠️ load_experiences() is DEPRECATED - bots use local files")
+    """Deprecated no-op; kept temporarily for older clients."""
     return []
-
-def calculate_confidence(signal_type, regime, vix_level, experiences):
-    """
-    DEPRECATED: Bots calculate confidence locally.
-    This returns a neutral value for backward compatibility.
-    """
-    logging.warning("⚠️ calculate_confidence() is DEPRECATED - bots calculate locally")
-    return 0.5
 
 @app.route('/api/hello', methods=['GET'])
 def hello():
@@ -1363,12 +1345,13 @@ def hello():
         "status": "success",
         "message": "✅ QuoTrading Cloud API - Data Collection Only",
         "endpoints": [
-            "POST /api/rl/submit-outcome - Submit trade outcome",
+            "POST /api/heartbeat - Bot heartbeat (equity/PnL)",
+            "POST /api/zones/ingest - Ingest zones",
             "GET /api/profile - Get user profile and trading statistics",
             "GET /api/hello - Health check"
         ],
         "database_configured": bool(DB_PASSWORD),
-        "note": "Bots make decisions locally using their own RL brain"
+        "note": "Bots make decisions locally"
     }), 200
 
 @app.route('/api/validate-license', methods=['POST'])
@@ -2045,13 +2028,12 @@ def main():
                 finally:
                     return_connection(conn)
         
-        # Process signal with RL brain
+        # Process signal (cloud does not decide; bot decides locally)
         signal_type = data.get('signal_type', 'NEUTRAL')
         regime = data.get('regime', 'RANGING')
         vix_level = data.get('vix_level', 15.0)
         
         experiences = load_experiences()
-        confidence = calculate_confidence(signal_type, regime, vix_level, experiences)
         
         # Calculate days until expiration
         days_until_expiration = None
@@ -2073,7 +2055,6 @@ def main():
             "license_expiration": expiration_date.isoformat() if expiration_date else None,
             "days_until_expiration": days_until_expiration,
             "hours_until_expiration": hours_until_expiration,
-            "signal_confidence": confidence,
             "experiences_used": len(experiences),
             "signal_type": signal_type,
             "regime": regime
@@ -2480,29 +2461,12 @@ def admin_dashboard_stats():
             """)
             api_calls_24h = cursor.fetchone()['count']
             
-            # Get RL experience counts
-            cursor.execute("""
-                SELECT 
-                    COUNT(*) as total,
-                    COUNT(*) FILTER (WHERE created_at > NOW() - INTERVAL '24 hours') as today
-                FROM rl_experiences
-                WHERE took_trade = TRUE
-            """)
-            rl_stats = cursor.fetchone()
-            signal_exp_total = rl_stats['total'] or 0
-            signal_exp_24h = rl_stats['today'] or 0
-            
-            # Get trade statistics (total trades and P&L)
-            cursor.execute("""
-                SELECT 
-                    COUNT(*) as total_trades,
-                    COALESCE(SUM(pnl), 0) as total_pnl
-                FROM rl_experiences
-                WHERE took_trade = TRUE
-            """)
-            trade_stats = cursor.fetchone()
-            total_trades = trade_stats['total_trades'] or 0
-            total_pnl = float(trade_stats['total_pnl']) if trade_stats['total_pnl'] else 0.0
+            # NOTE: Trade/experience analytics removed from dashboard stats.
+            # Keeping these fields for backward compatibility with the admin UI.
+            signal_exp_total = 0
+            signal_exp_24h = 0
+            total_trades = 0
+            total_pnl = 0.0
             
             # Calculate revenue metrics
             pricing = {
@@ -2544,10 +2508,6 @@ def admin_dashboard_stats():
                     "total": total_trades,
                     "total_pnl": total_pnl
                 },
-                "rl_experiences": {
-                    "total_signal_experiences": signal_exp_total,
-                    "signal_experiences_24h": signal_exp_24h
-                },
                 "revenue": {
                     "mrr": round(mrr, 2),
                     "arr": round(arr, 2),
@@ -2573,18 +2533,17 @@ def admin_list_users():
     
     try:
         with conn.cursor(cursor_factory=RealDictCursor) as cursor:
+            # Primary query without any trade/experience tables.
             cursor.execute("""
-                SELECT u.account_id, u.email, u.license_key, u.license_type, u.license_status, 
+                SELECT u.account_id, u.email, u.license_key, u.license_type, u.license_status,
                        u.license_expiration, u.created_at,
                        MAX(a.created_at) as last_active,
-                       CASE WHEN MAX(a.created_at) > NOW() - INTERVAL '5 minutes' 
+                       CASE WHEN MAX(a.created_at) > NOW() - INTERVAL '5 minutes'
                             THEN true ELSE false END as is_online,
-                       COUNT(a.id) as api_call_count,
-                       (SELECT COUNT(*) FROM rl_experiences r 
-                        WHERE r.license_key = u.license_key AND r.took_trade = TRUE) as trade_count
+                       COUNT(a.id) as api_call_count
                 FROM users u
                 LEFT JOIN api_logs a ON u.license_key = a.license_key
-                GROUP BY u.account_id, u.email, u.license_key, u.license_type, u.license_status, 
+                GROUP BY u.account_id, u.email, u.license_key, u.license_type, u.license_status,
                          u.license_expiration, u.created_at
                 ORDER BY u.created_at DESC
             """)
@@ -2604,7 +2563,7 @@ def admin_list_users():
                     "last_active": format_datetime_utc(user['last_active']),
                     "is_online": user['is_online'],
                     "api_call_count": int(user['api_call_count']) if user['api_call_count'] else 0,
-                    "trade_count": int(user['trade_count']) if user['trade_count'] else 0
+                    "trade_count": 0
                 })
             
             return jsonify({"users": formatted_users}), 200
@@ -2652,17 +2611,8 @@ def admin_get_user(account_id):
             api_call_result = cursor.fetchone()
             api_call_count = api_call_result['api_calls'] if api_call_result else 0
             
-            # Get trade statistics for this user
-            cursor.execute("""
-                SELECT 
-                    COUNT(*) as total_trades,
-                    COALESCE(SUM(pnl), 0) as total_pnl,
-                    COALESCE(AVG(pnl), 0) as avg_pnl,
-                    COUNT(*) FILTER (WHERE pnl > 0) as winning_trades
-                FROM rl_experiences
-                WHERE license_key = %s AND took_trade = TRUE
-            """, (user['license_key'],))
-            trade_stats_result = cursor.fetchone()
+            # Trade/experience statistics removed.
+            trade_stats_result = None
             
             # Format user data
             user_data = {
@@ -2932,9 +2882,7 @@ def admin_delete_user(account_id):
         
         user_license_key = user[2]
         
-        # Delete user's RL experiences (uses license_key, not account_id)
-        cursor.execute("DELETE FROM rl_experiences WHERE license_key = %s", (user_license_key,))
-        deleted_experiences = cursor.rowcount
+        deleted_experiences = 0
         
         # Delete user's API logs
         cursor.execute("DELETE FROM api_logs WHERE license_key = %s", (user_license_key,))
@@ -2945,7 +2893,7 @@ def admin_delete_user(account_id):
         
         conn.commit()
         
-        logging.info(f"Admin deleted user: {account_id} (email: {user[1]}) - {deleted_experiences} experiences, {deleted_logs} api logs")
+        logging.info(f"Admin deleted user: {account_id} (email: {user[1]}) - {deleted_logs} api logs")
         
         return jsonify({
             "status": "success",
@@ -2953,7 +2901,6 @@ def admin_delete_user(account_id):
             "deleted": {
                 "account_id": account_id,
                 "email": user[1],
-                "experiences": deleted_experiences,
                 "api_logs": deleted_logs
             }
         }), 200
@@ -3096,11 +3043,9 @@ def expire_licenses():
         return jsonify({"status": "error", "message": str(e)}), 500
 
 # ============================================================================
-# RL EXPERIENCE ENDPOINTS - Centralized Learning System
+# Deprecated analytics section
 # ============================================================================
-# Note: RL experiences are now stored in PostgreSQL (rl_experiences table)
-# Bots write experiences directly to the database via the bot SDK
-# Admin endpoints query the database for monitoring and analytics
+# NOTE: This service no longer exposes trade-scoring analytics.
 
 @app.route('/api/profile', methods=['GET'])
 def get_user_profile():
@@ -3193,20 +3138,16 @@ def get_user_profile():
                     logging.warning(f"⚠️ Suspended account tried to access profile: {mask_sensitive(license_key)}")
                     return jsonify({"error": "Account suspended. Contact support."}), 403
                 
-                # 2. Get trading statistics
-                cursor.execute("""
-                    SELECT 
-                        COUNT(*) as total_trades,
-                        COALESCE(SUM(pnl), 0) as total_pnl,
-                        COALESCE(AVG(pnl), 0) as avg_pnl,
-                        COUNT(*) FILTER (WHERE pnl > 0) as winning_trades,
-                        COUNT(*) FILTER (WHERE pnl < 0) as losing_trades,
-                        COALESCE(MAX(pnl), 0) as best_trade,
-                        COALESCE(MIN(pnl), 0) as worst_trade
-                    FROM rl_experiences
-                    WHERE license_key = %s AND took_trade = TRUE
-                """, (license_key,))
-                trade_stats = cursor.fetchone()
+                # 2. Trade analytics removed
+                trade_stats = {
+                    "total_trades": 0,
+                    "total_pnl": 0,
+                    "avg_pnl": 0,
+                    "winning_trades": 0,
+                    "losing_trades": 0,
+                    "best_trade": 0,
+                    "worst_trade": 0,
+                }
                 
                 # 3. Get API call statistics
                 cursor.execute("""
@@ -3225,15 +3166,8 @@ def get_user_profile():
                 """, (license_key,))
                 api_today = cursor.fetchone()
                 
-                # 5. Get symbols traded
-                cursor.execute("""
-                    SELECT DISTINCT symbol
-                    FROM rl_experiences
-                    WHERE license_key = %s AND took_trade = TRUE
-                    ORDER BY symbol
-                """, (license_key,))
-                symbols = cursor.fetchall()
-                symbols_list = [s['symbol'] for s in symbols] if symbols else []
+                # 5. Symbols traded removed
+                symbols_list = []
                 
                 # Calculate derived fields
                 now = datetime.now(timezone.utc)
@@ -3328,7 +3262,7 @@ def get_user_profile():
 # ============================================================================
 
 # ============================================================================
-# RL ADMIN/STATS ENDPOINTS (existing)
+# ADMIN/STATS ENDPOINTS
 # ============================================================================
 
 @app.route('/', methods=['GET'])
@@ -3450,243 +3384,51 @@ def admin_chart_mrr():
 
 @app.route('/api/admin/charts/collective-pnl', methods=['GET'])
 def admin_chart_collective_pnl():
-    """Get collective P&L for all users daily (last 30 days)"""
+    """Deprecated: trade analytics removed."""
     admin_key = request.args.get('admin_key') or request.args.get('license_key')
     if admin_key != ADMIN_API_KEY:
         return jsonify({"error": "Unauthorized"}), 401
     
-    conn = get_db_connection()
-    if not conn:
-        return jsonify({"dates": [], "pnl": []}), 200
-    
-    try:
-        with conn.cursor(cursor_factory=RealDictCursor) as cursor:
-            cursor.execute("""
-                SELECT 
-                    DATE(created_at) as date,
-                    SUM(pnl) as daily_pnl
-                FROM rl_experiences
-                WHERE created_at >= NOW() - INTERVAL '30 days'
-                AND took_trade = TRUE
-                GROUP BY DATE(created_at)
-                ORDER BY DATE(created_at)
-            """)
-            results = cursor.fetchall()
-            
-            # Calculate cumulative P&L
-            cumulative = 0
-            dates = []
-            pnl_values = []
-            
-            for r in results:
-                cumulative += float(r['daily_pnl']) if r['daily_pnl'] else 0
-                dates.append(r['date'].strftime('%b %d'))
-                pnl_values.append(round(cumulative, 2))
-            
-            return jsonify({"dates": dates, "pnl": pnl_values}), 200
-    except Exception as e:
-        logging.error(f"Collective P&L chart error: {e}")
-        return jsonify({"dates": [], "pnl": []}), 200
-    finally:
-        return_connection(conn)
+    return jsonify({"dates": [], "pnl": []}), 200
 
 @app.route('/api/admin/charts/win-rate-trend', methods=['GET'])
 def admin_chart_win_rate_trend():
-    """Get win rate trend by week"""
+    """Deprecated: trade analytics removed."""
     admin_key = request.args.get('admin_key') or request.args.get('license_key')
     if admin_key != ADMIN_API_KEY:
         return jsonify({"error": "Unauthorized"}), 401
     
-    conn = get_db_connection()
-    if not conn:
-        return jsonify({"weeks": [], "win_rates": []}), 200
-    
-    try:
-        with conn.cursor(cursor_factory=RealDictCursor) as cursor:
-            cursor.execute("""
-                SELECT 
-                    DATE_TRUNC('week', created_at) as week,
-                    COUNT(*) FILTER (WHERE pnl > 0) * 100.0 / NULLIF(COUNT(*), 0) as win_rate
-                FROM rl_experiences
-                WHERE created_at >= NOW() - INTERVAL '12 weeks'
-                AND took_trade = TRUE
-                GROUP BY week
-                ORDER BY week
-            """)
-            results = cursor.fetchall()
-            
-            weeks = [f"Week {i+1}" for i in range(len(results))]
-            win_rates = [round(float(r['win_rate']), 2) if r['win_rate'] else 0 for r in results]
-            
-            return jsonify({"weeks": weeks, "win_rates": win_rates}), 200
-    except Exception as e:
-        logging.error(f"Win rate trend chart error: {e}")
-        return jsonify({"weeks": [], "win_rates": []}), 200
-    finally:
-        return_connection(conn)
+    return jsonify({"weeks": [], "win_rates": []}), 200
 
 @app.route('/api/admin/charts/top-performers', methods=['GET'])
 def admin_chart_top_performers():
-    """Get top 10 users by P&L"""
+    """Deprecated: trade analytics removed."""
     admin_key = request.args.get('admin_key') or request.args.get('license_key')
     if admin_key != ADMIN_API_KEY:
         return jsonify({"error": "Unauthorized"}), 401
     
-    conn = get_db_connection()
-    if not conn:
-        return jsonify({"users": [], "pnl": []}), 200
-    
-    try:
-        with conn.cursor(cursor_factory=RealDictCursor) as cursor:
-            cursor.execute("""
-                SELECT 
-                    license_key,
-                    SUM(pnl) as total_pnl
-                FROM rl_experiences
-                WHERE took_trade = TRUE
-                GROUP BY license_key
-                ORDER BY total_pnl DESC
-                LIMIT 10
-            """)
-            results = cursor.fetchall()
-            
-            users = [r['license_key'][:12] + '...' for r in results]  # Truncate long keys
-            pnl = [round(float(r['total_pnl']), 2) if r['total_pnl'] else 0 for r in results]
-            
-            return jsonify({"users": users, "pnl": pnl}), 200
-    except Exception as e:
-        logging.error(f"Top performers chart error: {e}")
-        return jsonify({"users": [], "pnl": []}), 200
-    finally:
-        return_connection(conn)
+    return jsonify({"users": [], "pnl": []}), 200
 
 @app.route('/api/admin/charts/experience-growth', methods=['GET'])
 def admin_chart_experience_growth():
-    """Get experience accumulation over time (last 30 days)"""
+    """Deprecated: trade analytics removed."""
     admin_key = request.args.get('admin_key') or request.args.get('license_key')
     if admin_key != ADMIN_API_KEY:
         return jsonify({"error": "Unauthorized"}), 401
     
-    conn = get_db_connection()
-    if not conn:
-        return jsonify({"dates": [], "counts": []}), 200
-    
-    try:
-        with conn.cursor(cursor_factory=RealDictCursor) as cursor:
-            cursor.execute("""
-                SELECT 
-                    DATE(created_at) as date,
-                    COUNT(*) as daily_count
-                FROM rl_experiences
-                WHERE created_at >= NOW() - INTERVAL '30 days'
-                GROUP BY DATE(created_at)
-                ORDER BY DATE(created_at)
-            """)
-            results = cursor.fetchall()
-            
-            # Calculate cumulative count
-            cumulative = 0
-            dates = []
-            counts = []
-            
-            for r in results:
-                cumulative += int(r['daily_count'])
-                dates.append(r['date'].strftime('%b %d'))
-                counts.append(cumulative)
-            
-            return jsonify({"dates": dates, "counts": counts}), 200
-    except Exception as e:
-        logging.error(f"Experience growth chart error: {e}")
-        return jsonify({"dates": [], "counts": []}), 200
-    finally:
-        return_connection(conn)
+    return jsonify({"dates": [], "counts": []}), 200
 
 @app.route('/api/admin/charts/confidence-dist', methods=['GET'])
-def admin_chart_confidence_dist():
-    """Get confidence level distribution (histogram)"""
-    admin_key = request.args.get('admin_key') or request.args.get('license_key')
-    if admin_key != ADMIN_API_KEY:
-        return jsonify({"error": "Unauthorized"}), 401
-    
-    conn = get_db_connection()
-    if not conn:
-        return jsonify({"ranges": [], "counts": []}), 200
-    
-    try:
-        with conn.cursor(cursor_factory=RealDictCursor) as cursor:
-            # Assuming confidence can be derived from took_trade probability
-            # For now, create mock distribution based on trade patterns
-            cursor.execute("""
-                SELECT 
-                    CASE 
-                        WHEN ABS(recent_pnl) < 10 THEN '0-20%'
-                        WHEN ABS(recent_pnl) < 20 THEN '20-40%'
-                        WHEN ABS(recent_pnl) < 30 THEN '40-60%'
-                        WHEN ABS(recent_pnl) < 40 THEN '60-80%'
-                        ELSE '80-100%'
-                    END as confidence_range,
-                    COUNT(*) as count
-                FROM rl_experiences
-                GROUP BY confidence_range
-                ORDER BY confidence_range
-            """)
-            results = cursor.fetchall()
-            
-            ranges = [r['confidence_range'] for r in results]
-            counts = [int(r['count']) for r in results]
-            
-            return jsonify({"ranges": ranges, "counts": counts}), 200
-    except Exception as e:
-        logging.error(f"Confidence distribution chart error: {e}")
-        return jsonify({"ranges": [], "counts": []}), 200
-    finally:
-        return_connection(conn)
+@app.route('/api/admin/charts/score-dist', methods=['GET'])
+def admin_chart_score_dist():
+    """Deprecated."""
+    return jsonify({"ranges": [], "counts": []}), 200
 
 @app.route('/api/admin/charts/confidence-winrate', methods=['GET'])
-def admin_chart_confidence_winrate():
-    """Get win rate by confidence level (scatter plot data)"""
-    admin_key = request.args.get('admin_key') or request.args.get('license_key')
-    if admin_key != ADMIN_API_KEY:
-        return jsonify({"error": "Unauthorized"}), 401
-    
-    conn = get_db_connection()
-    if not conn:
-        return jsonify({"confidence": [], "win_rate": [], "sample_size": []}), 200
-    
-    try:
-        with conn.cursor(cursor_factory=RealDictCursor) as cursor:
-            cursor.execute("""
-                SELECT 
-                    CASE 
-                        WHEN ABS(recent_pnl) < 10 THEN 10
-                        WHEN ABS(recent_pnl) < 20 THEN 30
-                        WHEN ABS(recent_pnl) < 30 THEN 50
-                        WHEN ABS(recent_pnl) < 40 THEN 70
-                        ELSE 90
-                    END as confidence_level,
-                    COUNT(*) FILTER (WHERE pnl > 0) * 100.0 / NULLIF(COUNT(*), 0) as win_rate,
-                    COUNT(*) as sample_size
-                FROM rl_experiences
-                WHERE took_trade = TRUE
-                GROUP BY confidence_level
-                ORDER BY confidence_level
-            """)
-            results = cursor.fetchall()
-            
-            confidence = [int(r['confidence_level']) for r in results]
-            win_rate = [round(float(r['win_rate']), 2) if r['win_rate'] else 0 for r in results]
-            sample_size = [int(r['sample_size']) for r in results]
-            
-            return jsonify({
-                "confidence": confidence,
-                "win_rate": win_rate,
-                "sample_size": sample_size
-            }), 200
-    except Exception as e:
-        logging.error(f"Confidence vs win rate chart error: {e}")
-        return jsonify({"confidence": [], "win_rate": [], "sample_size": []}), 200
-    finally:
-        return_connection(conn)
+@app.route('/api/admin/charts/score-winrate', methods=['GET'])
+def admin_chart_score_winrate():
+    """Deprecated."""
+    return jsonify({"score": [], "win_rate": [], "sample_size": []}), 200
 
 # ==================== REPORTS ENDPOINTS ====================
 
@@ -3726,7 +3468,6 @@ def admin_report_user_activity():
                 COALESCE(SUM(r.pnl), 0) as total_pnl
             FROM users l
             LEFT JOIN api_logs a ON l.license_key = a.license_key
-            LEFT JOIN rl_experiences r ON l.license_key = r.license_key AND r.took_trade = TRUE
             WHERE 1=1
         """
         params = []
@@ -3887,84 +3628,16 @@ def admin_report_performance():
     end_date = request.args.get('end_date')
     symbol = request.args.get('symbol', 'all')
     
-    try:
-        conn = psycopg2.connect(
-            host=DB_HOST,
-            database=DB_NAME,
-            user=DB_USER,
-            password=DB_PASSWORD,
-            port=DB_PORT
-        )
-        cursor = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
-        
-        query = """
-            SELECT 
-                COUNT(*) as total_trades,
-                AVG(CASE WHEN pnl > 0 THEN 1.0 ELSE 0.0 END) * 100 as win_rate,
-                SUM(pnl) as total_pnl,
-                AVG(confidence) as avg_confidence,
-                AVG(EXTRACT(EPOCH FROM (exit_time - entry_time)) / 60) as avg_duration_minutes
-            FROM rl_experiences
-            WHERE took_trade = TRUE
-        """
-        params = []
-        
-        if start_date:
-            query += " AND timestamp >= %s"
-            params.append(start_date)
-        if end_date:
-            query += " AND timestamp <= %s"
-            params.append(end_date)
-        if symbol != 'all':
-            query += " AND symbol = %s"
-            params.append(symbol)
-        
-        cursor.execute(query, params)
-        result = cursor.fetchone()
-        
-        # Get best and worst days
-        day_query = """
-            SELECT 
-                DATE(timestamp) as trade_date,
-                SUM(pnl) as daily_pnl
-            FROM rl_experiences
-            WHERE took_trade = TRUE
-        """
-        if start_date:
-            day_query += " AND timestamp >= %s"
-        if end_date:
-            day_query += " AND timestamp <= %s"
-        if symbol != 'all':
-            day_query += " AND symbol = %s"
-        
-        day_query += " GROUP BY DATE(timestamp) ORDER BY daily_pnl DESC LIMIT 1"
-        cursor.execute(day_query, params)
-        best_day = cursor.fetchone()
-        
-        day_query = day_query.replace("DESC", "ASC")
-        cursor.execute(day_query, params)
-        worst_day = cursor.fetchone()
-        
-        return jsonify({
-            "total_trades": int(result['total_trades']) if result['total_trades'] else 0,
-            "win_rate": round(float(result['win_rate']), 2) if result['win_rate'] else 0,
-            "total_pnl": round(float(result['total_pnl']), 2) if result['total_pnl'] else 0,
-            "avg_confidence": round(float(result['avg_confidence']), 2) if result['avg_confidence'] else 0,
-            "avg_duration_minutes": round(float(result['avg_duration_minutes']), 2) if result['avg_duration_minutes'] else 0,
-            "best_day": {
-                "date": best_day['trade_date'].strftime('%Y-%m-%d') if best_day else "N/A",
-                "pnl": round(float(best_day['daily_pnl']), 2) if best_day else 0
-            },
-            "worst_day": {
-                "date": worst_day['trade_date'].strftime('%Y-%m-%d') if worst_day else "N/A",
-                "pnl": round(float(worst_day['daily_pnl']), 2) if worst_day else 0
-            }
-        }), 200
-    except Exception as e:
-        logging.error(f"Performance report error: {e}")
-        return jsonify({"error": str(e)}), 200
-    finally:
-        return_connection(conn)
+    return jsonify({
+        "total_trades": 0,
+        "win_rate": 0,
+        "total_pnl": 0,
+        "avg_score": 0,
+        "avg_confidence": 0,
+        "avg_duration_minutes": 0,
+        "best_day": {"date": "N/A", "pnl": 0},
+        "worst_day": {"date": "N/A", "pnl": 0}
+    }), 200
 
 @app.route('/api/admin/reports/retention', methods=['GET'])
 def admin_report_retention():
@@ -4052,7 +3725,7 @@ def admin_report_retention():
         return_connection(conn)
 
 def init_database_if_needed():
-    """Initialize database table and indexes if they don't exist"""
+    """Initialize required database tables/indexes if they don't exist."""
     try:
         conn = psycopg2.connect(
             host=DB_HOST,
@@ -4063,46 +3736,7 @@ def init_database_if_needed():
         )
         cursor = conn.cursor()
         
-        # Create table if not exists
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS rl_experiences (
-                id SERIAL PRIMARY KEY,
-                license_key VARCHAR(50) NOT NULL,
-                -- The 12 Pattern Matching Fields
-                flush_size_ticks DECIMAL(10,2) NOT NULL,
-                flush_velocity DECIMAL(10,2) NOT NULL,
-                volume_climax_ratio DECIMAL(10,2) NOT NULL,
-                flush_direction VARCHAR(10) NOT NULL,
-                rsi DECIMAL(5,2) NOT NULL,
-                distance_from_flush_low DECIMAL(10,2) NOT NULL,
-                reversal_candle BOOLEAN NOT NULL,
-                no_new_extreme BOOLEAN NOT NULL,
-                vwap_distance_ticks DECIMAL(10,2) NOT NULL,
-                regime VARCHAR(50) NOT NULL,
-                session VARCHAR(10) NOT NULL,
-                hour INTEGER NOT NULL,
-                -- The 4 Metadata Fields
-                symbol VARCHAR(20) NOT NULL,
-                timestamp TIMESTAMP NOT NULL,
-                pnl DECIMAL(10,2) NOT NULL,
-                took_trade BOOLEAN NOT NULL,
-                created_at TIMESTAMP DEFAULT NOW()
-            )
-        """)
-        
-        # Create indexes if not exist
-        indexes = [
-            "CREATE INDEX IF NOT EXISTS idx_rl_experiences_license ON rl_experiences(license_key)",
-            "CREATE INDEX IF NOT EXISTS idx_rl_experiences_symbol ON rl_experiences(symbol)",
-            "CREATE INDEX IF NOT EXISTS idx_rl_experiences_created ON rl_experiences(created_at DESC)",
-            "CREATE INDEX IF NOT EXISTS idx_rl_experiences_took_trade ON rl_experiences(took_trade)",
-            "CREATE INDEX IF NOT EXISTS idx_rl_experiences_regime ON rl_experiences(regime)",
-            "CREATE INDEX IF NOT EXISTS idx_rl_experiences_timestamp ON rl_experiences(timestamp DESC)",
-            "CREATE INDEX IF NOT EXISTS idx_rl_experiences_similarity ON rl_experiences(symbol, regime, rsi, flush_direction, session)"
-        ]
-        
-        for idx in indexes:
-            cursor.execute(idx)
+        # NOTE: This service no longer manages or requires any trade/experience tables.
         
         conn.commit()
         cursor.close()
@@ -4291,11 +3925,6 @@ def admin_system_health():
         conn = get_db_connection()
         if conn:
             with conn.cursor(cursor_factory=RealDictCursor) as cursor:
-                # Get RL experience count
-                cursor.execute("SELECT COUNT(*) as count FROM rl_experiences WHERE took_trade = TRUE")
-                result = cursor.fetchone()
-                total_experiences = result['count'] if result else 0
-                
                 # Get active license count
                 cursor.execute("SELECT COUNT(*) as count FROM users WHERE license_status = 'ACTIVE'")
                 result = cursor.fetchone()
@@ -4304,9 +3933,9 @@ def admin_system_health():
             return_connection(conn)
             db_time = (datetime.now() - db_start).total_seconds() * 1000
             
-            health_data["rl_engine"] = {
-                "status": "healthy",
-                "total_experiences": total_experiences,
+            health_data["trade_analytics"] = {
+                "status": "disabled",
+                "total_trades": 0,
                 "response_time_ms": round(db_time, 2),
                 "error": None
             }
@@ -4314,17 +3943,17 @@ def admin_system_health():
                 "active_count": active_licenses
             }
         else:
-            health_data["rl_engine"] = {
-                "status": "unhealthy",
-                "total_experiences": 0,
+            health_data["trade_analytics"] = {
+                "status": "disabled",
+                "total_trades": 0,
                 "response_time_ms": 0,
-                "error": "Cannot query RL data - database unavailable"
+                "error": "Database unavailable"
             }
     except Exception as e:
         logging.error(f"Admin health check error: {e}")
-        health_data["rl_engine"] = {
-            "status": "unhealthy",
-            "total_experiences": 0,
+        health_data["trade_analytics"] = {
+            "status": "disabled",
+            "total_trades": 0,
             "response_time_ms": 0,
             "error": str(e)
         }
@@ -4505,7 +4134,7 @@ def admin_view_database_table(table_name):
         return jsonify({"error": "Unauthorized"}), 401
     
     # Whitelist allowed tables - SECURITY: Strictly validated before use
-    allowed_tables = ['rl_experiences', 'users', 'api_logs', 'heartbeats']
+    allowed_tables = ['users', 'api_logs', 'heartbeats']
     if table_name not in allowed_tables:
         return jsonify({"error": f"Table '{table_name}' not allowed"}), 400
     
@@ -4892,9 +4521,54 @@ def serve_admin_dashboard():
 # ZONE MANAGEMENT FOR SUPPLY/DEMAND TRADING STRATEGY
 # ============================================================================
 
-# In-memory zone storage (keyed by symbol)
-# Structure: { "ES": [zone1, zone2, ...], "NQ": [...], ... }
+# In-memory zone storage (keyed by *canonical symbol group*)
+# Structure: { "ES": [zone1, ...], "NQ": [...], ... }
+# NOTE: These are shared groups:
+# - ES zones are shared with MES
+# - NQ zones are shared with MNQ
 _zones_by_symbol = {}
+_zones_last_update_utc = {}
+
+# Retention limits (prevent unbounded growth)
+ZONES_MAX_PER_SYMBOL = int(os.environ.get("ZONES_MAX_PER_SYMBOL", "250"))
+
+# Auto-expiry (seconds). If TradingView stops sending, zones will age out.
+# Set to 0 to disable TTL expiry.
+ZONES_TTL_SECONDS = int(os.environ.get("ZONES_TTL_SECONDS", "900"))
+
+
+def canonical_zone_symbol(symbol: str) -> str:
+    """Normalize a symbol to its shared zones group key."""
+    if not symbol:
+        return symbol
+    s = symbol.strip().upper()
+    if s in ("MES",):
+        return "ES"
+    if s in ("MNQ",):
+        return "NQ"
+    return s
+
+
+def _prune_stale_zones(now_utc: datetime | None = None) -> None:
+    """Remove zone groups that haven't been updated within TTL."""
+    if ZONES_TTL_SECONDS <= 0:
+        return
+    if now_utc is None:
+        now_utc = datetime.now(timezone.utc)
+
+    stale_keys = []
+    for key, last_dt in _zones_last_update_utc.items():
+        if last_dt is None:
+            continue
+        age_seconds = (now_utc - last_dt).total_seconds()
+        if age_seconds > ZONES_TTL_SECONDS:
+            stale_keys.append(key)
+
+    for key in stale_keys:
+        removed = len(_zones_by_symbol.get(key, []))
+        _zones_by_symbol.pop(key, None)
+        _zones_last_update_utc.pop(key, None)
+        logging.info(f"🕒 Zones TTL expired for {key} (removed {removed})")
 
 
 def get_zones_for_symbol(symbol: str) -> list:
@@ -4907,7 +4581,9 @@ def get_zones_for_symbol(symbol: str) -> list:
     Returns:
         List of zones for the symbol
     """
-    return _zones_by_symbol.get(symbol, [])
+    _prune_stale_zones()
+    key = canonical_zone_symbol(symbol)
+    return _zones_by_symbol.get(key, [])
 
 
 def set_zones_for_symbol(symbol: str, zones: list) -> None:
@@ -4918,8 +4594,14 @@ def set_zones_for_symbol(symbol: str, zones: list) -> None:
         symbol: Trading symbol
         zones: List of zone dictionaries
     """
-    _zones_by_symbol[symbol] = zones
-    logging.info(f"📍 Zones updated for {symbol}: {len(zones)} zones")
+    _prune_stale_zones()
+    key = canonical_zone_symbol(symbol)
+    zones = zones or []
+    if len(zones) > ZONES_MAX_PER_SYMBOL:
+        zones = zones[-ZONES_MAX_PER_SYMBOL:]
+    _zones_by_symbol[key] = zones
+    _zones_last_update_utc[key] = datetime.now(timezone.utc)
+    logging.info(f"📍 Zones updated for {key}: {len(zones)} zones")
 
 
 def add_zone_for_symbol(symbol: str, zone: dict) -> None:
@@ -4930,10 +4612,127 @@ def add_zone_for_symbol(symbol: str, zone: dict) -> None:
         symbol: Trading symbol
         zone: Zone dictionary
     """
-    if symbol not in _zones_by_symbol:
-        _zones_by_symbol[symbol] = []
-    _zones_by_symbol[symbol].append(zone)
-    logging.info(f"📍 Zone added to {symbol}: {zone['zone_type']} {zone['zone_bottom']}-{zone['zone_top']}")
+    _prune_stale_zones()
+    key = canonical_zone_symbol(symbol)
+    if key not in _zones_by_symbol:
+        _zones_by_symbol[key] = []
+    _zones_by_symbol[key].append(zone)
+    if len(_zones_by_symbol[key]) > ZONES_MAX_PER_SYMBOL:
+        _zones_by_symbol[key] = _zones_by_symbol[key][-ZONES_MAX_PER_SYMBOL:]
+    _zones_last_update_utc[key] = datetime.now(timezone.utc)
+    try:
+        logging.info(f"📍 Zone added to {key}: {zone.get('zone_type')} {zone.get('zone_bottom')}-{zone.get('zone_top')}")
+    except Exception:
+        logging.info(f"📍 Zone added to {key}")
+
+
+def _require_admin_key_from_request() -> bool:
+    admin_key = request.args.get('admin_key', '')
+    return bool(admin_key) and admin_key == ADMIN_API_KEY
+
+
+@app.route('/api/admin/zones/symbols', methods=['GET'])
+def admin_list_zone_symbols():
+    """List canonical symbols that currently have zone data."""
+    if not _require_admin_key_from_request():
+        return jsonify({"error": "Unauthorized"}), 401
+    _prune_stale_zones()
+    symbols = sorted(_zones_by_symbol.keys())
+    last_update = {k: format_datetime_utc(_zones_last_update_utc.get(k)) for k in symbols}
+    return jsonify({"symbols": symbols, "count": len(symbols), "last_update": last_update}), 200
+
+
+@app.route('/api/admin/zones/latest', methods=['GET'])
+def admin_get_latest_zones():
+    """Fetch latest zones for a symbol group (ES/NQ/etc)."""
+    if not _require_admin_key_from_request():
+        return jsonify({"error": "Unauthorized"}), 401
+    _prune_stale_zones()
+    symbol = request.args.get('symbol', '')
+    if not symbol:
+        return jsonify({"error": "symbol is required"}), 400
+
+    key = canonical_zone_symbol(symbol)
+    zones = get_zones_for_symbol(key)
+    if key == "ES":
+        shared_with = ["MES"]
+    elif key == "NQ":
+        shared_with = ["MNQ"]
+    else:
+        shared_with = []
+    return jsonify({
+        "symbol": key,
+        "shared_with": shared_with,
+        "count": len(zones),
+        "last_update": format_datetime_utc(_zones_last_update_utc.get(key)),
+        "zones": zones
+    }), 200
+
+
+@app.route('/api/admin/zones/all', methods=['GET'])
+def admin_get_all_zones():
+    """Fetch all current zone groups (canonical keys)."""
+    if not _require_admin_key_from_request():
+        return jsonify({"error": "Unauthorized"}), 401
+
+    _prune_stale_zones()
+    out = {}
+    for key in sorted(_zones_by_symbol.keys()):
+        if key == "ES":
+            shared_with = ["MES"]
+        elif key == "NQ":
+            shared_with = ["MNQ"]
+        else:
+            shared_with = []
+
+        out[key] = {
+            "symbol": key,
+            "shared_with": shared_with,
+            "count": len(_zones_by_symbol.get(key, [])),
+            "last_update": format_datetime_utc(_zones_last_update_utc.get(key)),
+            "zones": _zones_by_symbol.get(key, [])
+        }
+
+    return jsonify({
+        "ttl_seconds": ZONES_TTL_SECONDS,
+        "symbols": list(out.keys()),
+        "data": out
+    }), 200
+
+
+@app.route('/api/admin/zones/clear', methods=['POST'])
+def admin_clear_zones():
+    """Clear zones for a symbol group (canonical). Body: {"symbol": "ES"} or query ?symbol=ES"""
+    if not _require_admin_key_from_request():
+        return jsonify({"error": "Unauthorized"}), 401
+
+    payload = request.get_json(silent=True) or {}
+    symbol = (payload.get('symbol') or request.args.get('symbol') or '').strip()
+    if not symbol:
+        return jsonify({"error": "symbol is required"}), 400
+
+    key = canonical_zone_symbol(symbol)
+    removed_count = len(_zones_by_symbol.get(key, []))
+    _zones_by_symbol.pop(key, None)
+    _zones_last_update_utc.pop(key, None)
+
+    logging.info(f"🧹 Admin cleared zones for {key} (removed {removed_count})")
+    return jsonify({"status": "success", "symbol": key, "removed": removed_count}), 200
+
+
+@app.route('/api/admin/zones/clear-all', methods=['POST'])
+def admin_clear_all_zones():
+    """Clear zones for all symbols."""
+    if not _require_admin_key_from_request():
+        return jsonify({"error": "Unauthorized"}), 401
+
+    total_symbols = len(_zones_by_symbol)
+    total_zones = sum(len(v) for v in _zones_by_symbol.values())
+    _zones_by_symbol.clear()
+    _zones_last_update_utc.clear()
+
+    logging.info(f"🧹 Admin cleared ALL zones ({total_symbols} symbols, {total_zones} zones)")
+    return jsonify({"status": "success", "symbols_cleared": total_symbols, "zones_cleared": total_zones}), 200
 
 
 @app.route('/api/zones/webhook', methods=['POST'])
@@ -5002,22 +4801,22 @@ def receive_tradingview_webhook():
                     "message": f"Invalid zone_strength: {zone['zone_strength']}"
                 }), 400
         
-        # Process action
+        # Process action (store under canonical shared symbol)
         if action == 'sync':
             # Replace entire zone list
             set_zones_for_symbol(symbol, zones)
-            logging.info(f"📍 TradingView webhook: SYNC {len(zones)} zones for {symbol} ({timeframe})")
+            logging.info(f"📍 TradingView webhook: SYNC {len(zones)} zones for {canonical_zone_symbol(symbol)} ({timeframe})")
         else:  # action == 'new'
             # Add zones to existing list
             for zone in zones:
                 add_zone_for_symbol(symbol, zone)
-            logging.info(f"📍 TradingView webhook: NEW {len(zones)} zones for {symbol} ({timeframe})")
+            logging.info(f"📍 TradingView webhook: NEW {len(zones)} zones for {canonical_zone_symbol(symbol)} ({timeframe})")
         
         return jsonify({
             "status": "success",
             "message": f"{len(zones)} zones processed",
             "action": action,
-            "symbol": symbol,
+            "symbol": canonical_zone_symbol(symbol),
             "timeframe": timeframe,
             "total_zones": len(get_zones_for_symbol(symbol))
         }), 200

@@ -245,28 +245,24 @@ def get_data_file_path(filename: str) -> 'Path':
     return file_path
 
 # Import new production modules
-from config import load_config, BotConfiguration, DEFAULT_MAX_STOP_LOSS_DOLLARS
-from event_loop import EventLoop, EventType, EventPriority, TimerManager
-from error_recovery import ErrorRecoveryManager, ErrorType as RecoveryErrorType
-from bid_ask_manager import BidAskManager, BidAskQuote
-from notifications import get_notifier
+from .config import load_config, BotConfiguration
+from .event_loop import EventLoop, EventType, EventPriority, TimerManager
+from .error_recovery import ErrorRecoveryManager, ErrorType as RecoveryErrorType
+from .bid_ask_manager import BidAskManager, BidAskQuote
+from .notifications import get_notifier
 
 # Import zone-based trading strategy modules
-from zone_manager import ZoneManager
-from rejection_detector import RejectionDetector
-from filters import FilterManager
+from .zone_manager import ZoneManager
+from .rejection_detector import RejectionDetector
+from .filters import FilterManager
 
-# Conditionally import cloud API (only needed for live trading)
-try:
-    from cloud_api import CloudAPIClient
-    CLOUD_API_AVAILABLE = True
-except ImportError:
-    CLOUD_API_AVAILABLE = False
-    CloudAPIClient = None
+# Cloud API is not used
+CLOUD_API_AVAILABLE = False
+CloudAPIClient = None
 
 # Conditionally import broker (only needed for live trading, not backtesting)
 try:
-    from broker_interface import create_broker, BrokerInterface, BrokerSDKImplementation
+    from .broker_interface import create_broker, BrokerInterface, BrokerSDKImplementation
 except ImportError:
     # Broker interface not available (e.g., in backtest-only mode)
     create_broker = None
@@ -592,8 +588,8 @@ recovery_manager: Optional[ErrorRecoveryManager] = None
 # Global timer manager
 timer_manager: Optional[TimerManager] = None
 
-# Global cloud API client for reporting trade outcomes (data collection only)
-cloud_api_client: Optional[CloudAPIClient] = None
+# Cloud API client removed (client-side decisions; zones/heartbeat handled elsewhere)
+cloud_api_client = None
 
 # Global bid/ask manager
 bid_ask_manager: Optional[BidAskManager] = None

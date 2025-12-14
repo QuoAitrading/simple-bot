@@ -9,12 +9,11 @@ __version__ = "1.0.0"
 __author__ = "Kevin Suero"
 
 # Core production modules
+# Note: avoid importing the trading engine at package import time (side effects).
 from . import config
-from . import quotrading_engine as quotrading_bot  # Main trading engine
 from . import broker_interface
 
 __all__ = [
     "config",
-    "quotrading_bot",  # Main engine (quotrading_engine.py)
     "broker_interface",
 ]

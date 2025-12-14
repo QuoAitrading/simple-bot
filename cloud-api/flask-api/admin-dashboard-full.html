@@ -684,7 +684,7 @@
     <!-- Tabs -->
     <div class="tabs">
         <div class="tab active" onclick="switchTab('users')">👥 Users</div>
-        <div class="tab" onclick="switchTab('rl')">🧠 RL Experience</div>
+        <div class="tab" onclick="switchTab('zones')">🧩 Zones</div>
         <div class="tab" onclick="switchTab('activity')">📊 Activity</div>
         <div class="tab" onclick="switchTab('license')">🔑 License Manager</div>
         <div class="tab" onclick="switchTab('reports')">📈 Reports</div>
@@ -928,95 +928,31 @@
             </div>
         </div>
 
-        <!-- RL Experience Tab -->
-        <div class="tab-content" id="rl-tab">
+        <!-- Zones Tab -->
+        <div class="tab-content" id="zones-tab">
             <div style="padding: 40px;">
-                <div style="max-width: 1800px; margin: 0 auto;">
-                    <h2 style="font-size: 28px; margin-bottom: 30px; color: #202124;">
-                        🧠 Database Explorer
-                    </h2>
-                    
-                    <div style="background: white; border-radius: 16px; padding: 24px; box-shadow: 0 2px 8px rgba(0,0,0,0.08); margin-bottom: 24px;">
-                        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;">
-                            <div style="display: flex; gap: 12px; align-items: center;">
-                                <h3 style="font-size: 20px; margin: 0; color: #202124;">📊 Table:</h3>
-                                <select id="dbTableSelector" onchange="loadSelectedTable()" style="padding: 8px 12px; border: 1px solid #dadce0; border-radius: 4px; font-size: 14px;">
-                                    <option value="rl_experiences">🧠 RL Experiences</option>
-                                    <option value="users">👥 Users (Raw)</option>
-                                    <option value="api_logs">📊 API Logs (Raw)</option>
-                                    <option value="heartbeats">💓 Heartbeats</option>
-                                </select>
-                                <select id="symbolFilter" onchange="filterRLBySymbol()" style="padding: 8px 12px; border: 1px solid #dadce0; border-radius: 4px; font-size: 14px; display: none;">
-                                    <option value="all">All Symbols</option>
-                                    <option value="ES">📈 ES</option>
-                                    <option value="NQ">📊 NQ</option>
-                                    <option value="MNQ">📉 MNQ</option>
-                                    <option value="MES">📐 MES</option>
-                                    <option value="YM">📏 YM</option>
-                                    <option value="RTY">📋 RTY</option>
-                                    <option value="GC">🥇 GC</option>
-                                    <option value="CL">🛢️ CL</option>
-                                    <option value="NG">🔥 NG</option>
-                                    <option value="6E">💶 6E</option>
-                                    <option value="ZN">📜 ZN</option>
-                                    <option value="MBTX">₿ MBTX</option>
-                                </select>
-                            </div>
-                            <div>
-                                <input type="text" id="rlExpSearch" placeholder="Filter..." onkeyup="filterRLTable()" 
-                                    style="padding: 8px 12px; border: 1px solid #dadce0; border-radius: 4px; margin-right: 10px;">
-                                <button class="filter-btn" onclick="loadSelectedTable()">🔄 Refresh</button>
-                                <button class="filter-btn" onclick="showExportOptions()">📥 Export CSV ▼</button>
-                                <button class="filter-btn" onclick="showDeleteOptions()" style="background: linear-gradient(135deg, #ff6b6b 0%, #ee5a52 100%); color: white; border: none; font-weight: 600;">🗑️ Delete Data ▼</button>
-                            </div>
-                        </div>
-                        <div style="margin-bottom: 16px; color: #5f6368; font-size: 14px;">
-                            <span id="rlRowCount">0 rows</span> • Last updated: <span id="rlLastUpdate">Never</span>
-                        </div>
-                        
-                        <div style="overflow-x: auto;" id="dbTableContainer">
-                            <table class="sheet-table" style="font-size: 13px;">
-                                <thead id="dbTableHead">
-                                    <tr>
-                                        <th style="width: 120px">Timestamp</th>
-                                        <th style="width: 100px">License</th>
-                                        <th style="width: 60px">Symbol</th>
-                                        <th style="width: 70px">Price</th>
-                                        <th style="width: 70px">Returns</th>
-                                        <th style="width: 80px">VWAP Dist</th>
-                                        <th style="width: 80px">VWAP Slope</th>
-                                        <th style="width: 60px">ATR</th>
-                                        <th style="width: 80px">ATR Slope</th>
-                                        <th style="width: 60px">RSI</th>
-                                        <th style="width: 70px">MACD Hist</th>
-                                        <th style="width: 70px">Stoch K</th>
-                                        <th style="width: 80px">Vol Ratio</th>
-                                        <th style="width: 80px">Vol Slope</th>
-                                        <th style="width: 50px">Hour</th>
-                                        <th style="width: 70px">Session</th>
-                                        <th style="width: 90px">Regime</th>
-                                        <th style="width: 90px">Vol Regime</th>
-                                        <th style="width: 80px">P&L</th>
-                                        <th style="width: 70px">Duration</th>
-                                        <th style="width: 80px">Took Trade</th>
-                                        <th style="width: 90px">Explore Rate</th>
-                                        <th style="width: 70px">MFE</th>
-                                        <th style="width: 70px">MAE</th>
-                                        <th style="width: 80px">Order Type</th>
-                                        <th style="width: 80px">Entry Slip</th>
-                                        <th style="width: 90px">Exit Reason</th>
-                                    </tr>
-                                </thead>
-                                <tbody id="dbRlExpTable">
-                                    <tr>
-                                        <td colspan="27" class="empty-state">
-                                            <div class="empty-state-icon">🧠</div>
-                                            <div class="empty-state-text">Loading data from PostgreSQL...</div>
-                                        </td>
-                                    </tr>
-                                </tbody>
-                            </table>
-                        </div>
+                <div style="max-width: 1600px; margin: 0 auto;">
+                    <h2 style="font-size: 28px; margin-bottom: 12px; color: #202124;">🧩 Zones (TradingView JSON)</h2>
+                    <div style="color: #5f6368; font-size: 14px; margin-bottom: 24px;">
+                        ES zones are shared with MES • NQ zones are shared with MNQ
+                    </div>
+
+                    <div style="display: flex; gap: 16px; align-items: center; margin-bottom: 16px;">
+                        <label style="font-weight: 600; color: #202124;">Symbol Group</label>
+                        <select id="zonesSymbol" onchange="onZonesSymbolChange()" style="padding: 8px 12px; border: 1px solid #dadce0; border-radius: 4px; font-size: 14px;">
+                            <option value="ALL">All (ES/MES + NQ/MNQ)</option>
+                            <option value="ES">ES (shared with MES)</option>
+                            <option value="NQ">NQ (shared with MNQ)</option>
+                        </select>
+                        <button class="filter-btn" onclick="loadZonesNow()">🔄 Refresh</button>
+                        <button class="filter-btn" onclick="clearZonesForCurrentSymbol()" style="background: #ea4335; color: white; border: none; font-weight: 600;">🗑️ Clear This</button>
+                        <button class="filter-btn" onclick="clearZonesAll()" style="background: #b3261e; color: white; border: none; font-weight: 600;">🧨 Clear All</button>
+                        <span style="color: #5f6368; font-size: 13px;">Last updated: <span id="zonesLastUpdate">Never</span></span>
+                        <span style="color: #5f6368; font-size: 13px;">Count: <span id="zonesCount">0</span></span>
+                    </div>
+
+                    <div style="background: white; border-radius: 16px; padding: 16px; box-shadow: 0 2px 8px rgba(0,0,0,0.08);">
+                        <pre id="zonesJson" style="margin: 0; white-space: pre-wrap; word-break: break-word; font-size: 12px; line-height: 1.4; max-height: 60vh; overflow: auto;"></pre>
                     </div>
                 </div>
             </div>
@@ -1351,12 +1287,71 @@
     </div>
 
     <script>
-        const API_URL = 'https://quotrading-flask-api.azurewebsites.net';
-        const ADMIN_KEY = 'ADMIN-DEV-KEY-2026';
-        const API_KEY = 'ADMIN-DEV-KEY-2024';  // Same as ADMIN_KEY for compatibility
+        // -----------------------------------------------------------------
+        // API configuration
+        // -----------------------------------------------------------------
+        // If you're opening this file locally (file://...), it will call the live API.
+        // If it's served by Flask (https://quotrading-flask-api.azurewebsites.net/admin-dashboard-full.html),
+        // it will call the same origin by default.
+        const API_URL = (window.location.origin && window.location.origin.startsWith('http'))
+            ? window.location.origin
+            : 'https://quotrading-flask-api.azurewebsites.net';
+
+        // NEVER hardcode the admin key in the dashboard.
+        // Provide it via one of:
+        // 1) URL:  ?admin_key=YOUR_KEY
+        // 2) LocalStorage: localStorage.setItem('ADMIN_API_KEY','YOUR_KEY')
+        const ADMIN_KEY = new URLSearchParams(window.location.search).get('admin_key')
+            || localStorage.getItem('ADMIN_API_KEY')
+            || '';
+
+        // Back-compat alias (older code used API_KEY)
+        const API_KEY = ADMIN_KEY;
 
         let allUsers = [];
         let currentFilter = 'all';
+
+        function requireAdminKey() {
+            if (ADMIN_KEY && ADMIN_KEY.trim().length > 0) return true;
+            console.error('Missing admin key. Provide ?admin_key=... or set localStorage ADMIN_API_KEY.');
+            alert('Missing admin key.\n\nOpen this dashboard with:\n?admin_key=YOUR_ADMIN_KEY\n\nOr run in DevTools:\nlocalStorage.setItem(\'ADMIN_API_KEY\',\'YOUR_ADMIN_KEY\')\nthen refresh.');
+            return false;
+        }
+
+        async function apiFetch(path, { method = 'GET', headers = {}, body = undefined } = {}) {
+            const url = new URL(`${API_URL}${path}`);
+
+            // All admin endpoints accept either license_key or admin_key.
+            // Standardize on admin_key.
+            if (path.startsWith('/api/admin/')) {
+                if (!requireAdminKey()) throw new Error('Admin key missing');
+                url.searchParams.set('admin_key', ADMIN_KEY);
+            }
+
+            const resp = await fetch(url.toString(), {
+                method,
+                headers: {
+                    'Accept': 'application/json',
+                    ...headers
+                },
+                body
+            });
+
+            const text = await resp.text();
+            let data;
+            try {
+                data = text ? JSON.parse(text) : {};
+            } catch {
+                data = { raw: text };
+            }
+
+            if (!resp.ok) {
+                const msg = data?.error || data?.detail || data?.message || `HTTP ${resp.status}`;
+                throw new Error(msg);
+            }
+
+            return data;
+        }
 
         // Auto-refresh every 30 seconds
         setInterval(() => {
@@ -1369,8 +1364,11 @@
         }, 30000);
 
         // Load on page load
-        loadDashboard();
+        // Health endpoint is public; admin endpoints require key.
         loadSystemHealth();
+        if (ADMIN_KEY) {
+            loadDashboard();
+        }
         
         // Auto-load RL experiences on RL tab
         let rlDataLoaded = false;
@@ -1390,8 +1388,7 @@
             `;
             
             try {
-                const response = await fetch(`${API_URL}/api/health`);
-                const data = await response.json();
+                const data = await apiFetch(`/api/health`);
                 const totalTime = Date.now() - startTime;
                 
                 const overallColor = data.overall_status === 'healthy' ? '#34a853' : 
@@ -1602,8 +1599,7 @@
                 loadStats(),
                 loadUsers(),
                 loadActivity(),
-                loadOnlineUsers(),
-                loadRLStats()
+                loadOnlineUsers()
             ]);
             
             document.getElementById('lastUpdate').textContent = 
@@ -1612,8 +1608,7 @@
 
         async function loadStats() {
             try {
-                const response = await fetch(`${API_URL}/api/admin/dashboard-stats?license_key=${ADMIN_KEY}`);
-                const data = await response.json();
+                const data = await apiFetch(`/api/admin/dashboard-stats`);
                 
                 document.getElementById('totalUsers').textContent = data.users.total;
                 document.getElementById('activeUsers').textContent = data.users.active;
@@ -1626,13 +1621,6 @@
                 pnlEl.textContent = '$' + pnl.toFixed(2);
                 pnlEl.className = 'stat-value ' + (pnl >= 0 ? 'profit' : 'loss');
                 
-                // Update RL experience count from database
-                const dbSignalExp = data.rl_experiences?.total_signal_experiences || 0;
-                
-                document.getElementById('signalExpCount').textContent = 
-                    dbSignalExp.toLocaleString();
-                document.getElementById('signalExp24h').textContent = 
-                    (data.rl_experiences?.signal_experiences_24h || 0).toLocaleString();
             } catch (error) {
                 console.error('Failed to load stats:', error);
             }
@@ -1640,8 +1628,7 @@
 
         async function loadUsers() {
             try {
-                const response = await fetch(`${API_URL}/api/admin/users?license_key=${ADMIN_KEY}`);
-                const data = await response.json();
+                const data = await apiFetch(`/api/admin/users`);
                 allUsers = data.users;
                 
                 renderUsers(allUsers);
@@ -1771,8 +1758,7 @@
 
         async function loadActivity() {
             try {
-                const response = await fetch(`${API_URL}/api/admin/recent-activity?license_key=${ADMIN_KEY}&limit=50`);
-                const data = await response.json();
+                const data = await apiFetch(`/api/admin/recent-activity?limit=50`);
                 
                 const tbody = document.getElementById('activityTableBody');
                 
@@ -1838,8 +1824,7 @@
 
         async function loadWebhooks() {
             try {
-                const response = await fetch(`${API_URL}/api/admin/webhooks?license_key=${ADMIN_KEY}&limit=100`);
-                const data = await response.json();
+                const data = await apiFetch(`/api/admin/webhooks?limit=100`);
                 
                 const tbody = document.getElementById('webhooksTableBody');
                 
@@ -1875,8 +1860,7 @@
 
         async function loadSecurityEvents() {
             try {
-                const response = await fetch(`${API_URL}/api/admin/security-events?license_key=${ADMIN_KEY}&limit=100`);
-                const data = await response.json();
+                const data = await apiFetch(`/api/admin/security-events?limit=100`);
                 
                 const tbody = document.getElementById('securityTableBody');
                 
@@ -1910,8 +1894,7 @@
 
         async function loadOnlineUsers() {
             try {
-                const response = await fetch(`${API_URL}/api/admin/online-users?license_key=${ADMIN_KEY}`);
-                const data = await response.json();
+                const data = await apiFetch(`/api/admin/online-users`);
                 
                 const tbody = document.getElementById('onlineTableBody');
                 
@@ -2021,8 +2004,7 @@
         async function loadRLExperiences() {
             try {
                 // Get recent experiences from the API
-                const response = await fetch(`${API_URL}/api/admin/rl-experiences?admin_key=${ADMIN_KEY}&limit=100`);
-                const data = await response.json();
+                const data = await apiFetch(`/api/admin/rl-experiences?limit=100`);
                 
                 allRLExperiences = data.experiences || [];
                 renderRLExperiences(allRLExperiences);
@@ -2102,10 +2084,126 @@
             document.querySelectorAll('.tab-content').forEach(content => content.classList.remove('active'));
             document.getElementById(tabName + '-tab').classList.add('active');
             
-            // Auto-load RL data when switching to RL tab
-            if (tabName === 'rl' && !rlDataLoaded) {
-                loadRLExperiencesData();
-                rlDataLoaded = true;
+            // Auto-load Zones when switching to Zones tab
+            if (tabName === 'zones') {
+                initZonesTab();
+            } else {
+                stopZonesPolling();
+            }
+        }
+
+        let zonesPollInterval = null;
+        let zonesTabActive = false;
+
+        function startZonesPolling() {
+            if (zonesPollInterval) return;
+            zonesTabActive = true;
+            loadZonesNow();
+            zonesPollInterval = setInterval(() => {
+                if (!zonesTabActive) return;
+                loadZonesNow();
+            }, 2500);
+        }
+
+        function stopZonesPolling() {
+            zonesTabActive = false;
+            if (zonesPollInterval) {
+                clearInterval(zonesPollInterval);
+                zonesPollInterval = null;
+            }
+        }
+
+        function initZonesTab() {
+            startZonesPolling();
+        }
+
+        function onZonesSymbolChange() {
+            if (zonesTabActive) {
+                loadZonesNow();
+            }
+        }
+
+        async function loadZonesNow() {
+            const symbolSelect = document.getElementById('zonesSymbol');
+            const symbol = symbolSelect ? symbolSelect.value : 'ES';
+
+            try {
+                let out;
+                let count = 0;
+                let lastUpdateText = '';
+
+                if (symbol === 'ALL') {
+                    const data = await apiFetch(`/api/admin/zones/all`);
+                    out = {
+                        ttl_seconds: data.ttl_seconds,
+                        symbols: data.symbols,
+                        data: data.data
+                    };
+                    for (const k of (data.symbols || [])) {
+                        count += (data.data?.[k]?.count || 0);
+                    }
+                    lastUpdateText = new Date().toLocaleTimeString();
+                } else {
+                    const data = await apiFetch(`/api/admin/zones/latest?symbol=${encodeURIComponent(symbol)}`);
+                    out = {
+                        symbol: data.symbol,
+                        shared_with: data.shared_with,
+                        last_update: data.last_update,
+                        count: data.count,
+                        zones: data.zones
+                    };
+                    count = data.count ?? 0;
+                    lastUpdateText = data.last_update ? `${data.last_update}` : new Date().toLocaleTimeString();
+                }
+
+                const pre = document.getElementById('zonesJson');
+                if (pre) pre.textContent = JSON.stringify(out, null, 2);
+
+                const countEl = document.getElementById('zonesCount');
+                if (countEl) countEl.textContent = String(count);
+
+                const lastEl = document.getElementById('zonesLastUpdate');
+                if (lastEl) lastEl.textContent = lastUpdateText;
+            } catch (e) {
+                const pre = document.getElementById('zonesJson');
+                if (pre) pre.textContent = `Error loading zones: ${e?.message || e}`;
+            }
+        }
+
+        async function clearZonesForCurrentSymbol() {
+            const symbolSelect = document.getElementById('zonesSymbol');
+            const symbol = symbolSelect ? symbolSelect.value : 'ES';
+            if (symbol === 'ALL') {
+                return clearZonesAll();
+            }
+            const ok = confirm(`Clear zones on server for ${symbol}?\n\nNote: ES is shared with MES; NQ is shared with MNQ.`);
+            if (!ok) return;
+
+            try {
+                await apiFetch('/api/admin/zones/clear', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ symbol })
+                });
+                await loadZonesNow();
+            } catch (e) {
+                alert(`Failed to clear zones: ${e?.message || e}`);
+            }
+        }
+
+        async function clearZonesAll() {
+            const ok = confirm('Clear ALL zones on server? This affects ES/MES and NQ/MNQ.');
+            if (!ok) return;
+
+            try {
+                await apiFetch('/api/admin/zones/clear-all', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({})
+                });
+                await loadZonesNow();
+            } catch (e) {
+                alert(`Failed to clear all zones: ${e?.message || e}`);
             }
         }
 
@@ -2241,21 +2339,18 @@
             `;
             
             try {
-                const response = await fetch(`${API_URL}/api/admin/add-user?license_key=${ADMIN_KEY}`, {
+                const data = await apiFetch(`/api/admin/add-user`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
-                        account_id: `user_${Date.now()}`,
                         email: `user_${Date.now()}@quotrading.com`,
                         license_type: licenseType,
                         minutes_valid: minutes_valid,
                         send_email: false
                     })
                 });
-                
-                const data = await response.json();
-                
-                if (response.ok) {
+
+                if (data) {
                     const expiresAt = data.expires_at ? new Date(data.expires_at).toLocaleString() : 'Unknown';
                     
                     resultDiv.innerHTML = `
@@ -2278,12 +2373,6 @@
                     
                     // Refresh dashboard
                     setTimeout(() => loadDashboard(), 1000);
-                } else {
-                    resultDiv.innerHTML = `
-                        <div style="background: #fce8e6; border: 1px solid #d93025; color: #d93025; padding: 12px; border-radius: 6px; font-size: 13px;">
-                            ❌ Error: ${data.detail || data.error || 'Failed to create license'}
-                        </div>
-                    `;
                 }
             } catch (error) {
                 resultDiv.innerHTML = `
@@ -2325,19 +2414,13 @@
             `;
             
             try {
-                // Send email using the admin endpoint
-                const response = await fetch(`${API_URL}/api/admin/send-license-email?license_key=${ADMIN_KEY}`, {
+                const data = await apiFetch(`/api/admin/send-license-email`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        email: email,
-                        license_key: licenseKey
-                    })
+                    body: JSON.stringify({ email: email, license_key: licenseKey })
                 });
-                
-                const data = await response.json();
-                
-                if (response.ok) {
+
+                if (data) {
                     resultDiv.innerHTML = `
                         <div style="background: #e6f4ea; border: 2px solid #34a853; border-radius: 8px; padding: 16px;">
                             <div style="font-size: 32px; text-align: center; margin-bottom: 8px;">✅</div>
@@ -2351,12 +2434,6 @@
                     // Clear form
                     document.getElementById('emailLicenseKey').value = '';
                     document.getElementById('emailAddress').value = '';
-                } else {
-                    resultDiv.innerHTML = `
-                        <div style="background: #fce8e6; border: 1px solid #d93025; color: #d93025; padding: 12px; border-radius: 6px; font-size: 13px;">
-                            ❌ Error: ${data.error || 'Failed to send email'}
-                        </div>
-                    `;
                 }
             } catch (error) {
                 resultDiv.innerHTML = `
@@ -2407,18 +2484,10 @@
             if (!confirm(`Are you sure you want to suspend ${accountId}?`)) return;
             
             try {
-                const response = await fetch(
-                    `${API_URL}/api/admin/suspend-user/${accountId}?license_key=${ADMIN_KEY}`,
-                    { method: 'PUT' }
-                );
-                
-                const data = await response.json();
-                
-                if (response.ok) {
+                const data = await apiFetch(`/api/admin/suspend-user/${accountId}`, { method: 'PUT' });
+                if (data) {
                     await loadDashboard();
                     alert(`✅ ${data.message || 'User suspended successfully'}`);
-                } else {
-                    alert(`❌ Failed: ${data.error || data.detail || 'Unknown error'}`);
                 }
             } catch (error) {
                 console.error('Suspend error:', error);
@@ -2428,18 +2497,10 @@
 
         async function activateUser(accountId) {
             try {
-                const response = await fetch(
-                    `${API_URL}/api/admin/activate-user/${accountId}?license_key=${ADMIN_KEY}`,
-                    { method: 'PUT' }
-                );
-                
-                const data = await response.json();
-                
-                if (response.ok) {
+                const data = await apiFetch(`/api/admin/activate-user/${accountId}`, { method: 'PUT' });
+                if (data) {
                     await loadDashboard();
                     alert(`✅ ${data.message || 'User activated successfully'}`);
-                } else {
-                    alert(`❌ Failed: ${data.error || data.detail || 'Unknown error'}`);
                 }
             } catch (error) {
                 console.error('Activate error:', error);
@@ -2452,18 +2513,10 @@
             if (!days || isNaN(days) || parseInt(days) <= 0) return;
             
             try {
-                const response = await fetch(
-                    `${API_URL}/api/admin/extend-license/${accountId}?license_key=${ADMIN_KEY}&days=${days}`,
-                    { method: 'PUT' }
-                );
-                
-                const data = await response.json();
-                
-                if (response.ok) {
+                const data = await apiFetch(`/api/admin/extend-license/${accountId}?days=${days}`, { method: 'PUT' });
+                if (data) {
                     await loadDashboard();
                     alert(`✅ Added ${days} days. New expiration: ${data.new_expiration ? new Date(data.new_expiration).toLocaleDateString() : 'Unknown'}`);
-                } else {
-                    alert(`❌ Failed: ${data.error || data.detail || 'Unknown error'}`);
                 }
             } catch (error) {
                 console.error('Extend error:', error);
@@ -2487,21 +2540,9 @@
             }
             
             try {
-                const url = `${API_URL}/api/admin/delete-user/${accountId}?license_key=${ADMIN_KEY}`;
-                console.log('Deleting user:', url);
-                
-                const response = await fetch(url, { method: 'DELETE' });
-                console.log('Delete response status:', response.status);
-                
-                const data = await response.json();
-                console.log('Delete response data:', data);
-                
-                if (response.ok) {
+                await apiFetch(`/api/admin/delete-user/${accountId}`, { method: 'DELETE' });
                     await loadDashboard();
                     alert(`✅ User ${accountId} has been permanently deleted`);
-                } else {
-                    alert(`❌ Failed to delete user: ${data.detail || data.error || 'Unknown error'}`);
-                }
             } catch (error) {
                 console.error('Delete error:', error);
                 alert('❌ Failed to delete user: ' + error.message);
@@ -2511,18 +2552,7 @@
         async function viewDetails(accountId) {
             console.log('viewDetails called for:', accountId);
             try {
-                const url = `${API_URL}/api/admin/user/${accountId}?license_key=${ADMIN_KEY}`;
-                console.log('Fetching:', url);
-                
-                const response = await fetch(url);
-                console.log('Response status:', response.status);
-                
-                if (!response.ok) {
-                    const errorData = await response.json().catch(() => ({}));
-                    throw new Error(errorData.error || errorData.detail || `HTTP ${response.status}`);
-                }
-                
-                const data = await response.json();
+                const data = await apiFetch(`/api/admin/user/${accountId}`);
                 console.log('User data received:', data);
                 
                 // Create modal HTML
@@ -2671,23 +2701,18 @@
             const notes = document.getElementById('notes').value;
             
             try {
-                const response = await fetch(
-                    `${API_URL}/api/admin/add-user?license_key=${ADMIN_KEY}`,
-                    {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({
-                            email: email,
-                            license_type: licenseType,
-                            days_valid: parseInt(daysValid),
-                            notes: notes
-                        })
-                    }
-                );
-                
-                const data = await response.json();
-                
-                if (response.ok) {
+                const data = await apiFetch(`/api/admin/add-user`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        email: email,
+                        license_type: licenseType,
+                        days_valid: parseInt(daysValid),
+                        notes: notes
+                    })
+                });
+
+                if (data) {
                     const msg = document.getElementById('successMessage');
                     msg.innerHTML = `✅ User created successfully!<br><strong>License Key (API Key):</strong> ${data.license_key}`;
                     msg.classList.add('show');
@@ -2696,11 +2721,50 @@
                         closeAddUserModal();
                         loadDashboard();
                     }, 3000);
-                } else {
-                    alert('Failed to create user: ' + (data.error || data.detail || 'Unknown error'));
-                }
             } catch (error) {
                 alert('Failed to create user: ' + error.message);
+            }
+        }
+
+        // -----------------------------------------------------------------
+        // Remaining admin operations wired to the same apiFetch helper
+        // -----------------------------------------------------------------
+        async function sendLicenseEmail(email, licenseKey) {
+            if (!email || !licenseKey) {
+                alert('Email and license key are required');
+                return;
+            }
+            try {
+                const data = await apiFetch(`/api/admin/send-license-email`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ email, license_key: licenseKey })
+                });
+                alert(`✅ ${data.message || 'Email sent'}`);
+            } catch (error) {
+                console.error('Send email error:', error);
+                alert('❌ Failed to send email: ' + error.message);
+            }
+        }
+
+        async function loadLicensesForAdminTools() {
+            try {
+                const data = await apiFetch(`/api/admin/list-licenses`);
+                return data;
+            } catch (error) {
+                console.error('Failed to load licenses:', error);
+                throw error;
+            }
+        }
+
+        async function loadDatabaseTable(tableName, limit = 100) {
+            try {
+                const safeTable = encodeURIComponent(tableName);
+                const data = await apiFetch(`/api/admin/database/${safeTable}?limit=${limit}`);
+                return data;
+            } catch (error) {
+                console.error('Database table load error:', error);
+                throw error;
             }
         }
 
@@ -3158,16 +3222,10 @@
             }
             
             try {
-                const response = await fetch(
-                    `${API_URL}/api/admin/extend-license/${accountId}?license_key=${ADMIN_KEY}&days=${days}`,
-                    { method: 'PUT' }
-                );
-
-                if (response.ok) {
+                await apiFetch(`/api/admin/extend-license/${accountId}?days=${days}`, { method: 'PUT' });
+                {
                     await loadDashboard();
                     alert(`✅ Added ${days} day(s) to ${accountId}'s license`);
-                } else {
-                    alert('❌ Failed to compensate user');
                 }
             } catch (error) {
                 alert('❌ Error: ' + error.message);
@@ -3236,8 +3294,7 @@
             
             try {
                 // First, get all active license keys
-                const usersResponse = await fetch(`${API_URL}/api/admin/list-licenses?license_key=${ADMIN_KEY}`);
-                const usersData = await usersResponse.json();
+                const usersData = await apiFetch(`/api/admin/list-licenses`);
                 
                 const activeLicenseKeys = usersData.licenses
                     .filter(user => user.license_status === 'ACTIVE')
@@ -3294,12 +3351,7 @@
                 currentDatabaseTable = tableName;
                 
                 // Fetch data from API
-                const response = await fetch(`${API_URL}/api/admin/database/${tableName}?admin_key=${API_KEY}&limit=100`);
-                if (!response.ok) {
-                    throw new Error(`Failed to load ${tableName}`);
-                }
-                
-                const data = await response.json();
+                const data = await apiFetch(`/api/admin/database/${encodeURIComponent(tableName)}?limit=100`);
                 databaseData[tableName] = data.rows || [];
                 
                 // Update row count and timestamp
@@ -3471,12 +3523,7 @@
 
         async function loadDatabaseTable(tableName) {
             try {
-                const response = await fetch(`${API_URL}/api/admin/database/${tableName}?admin_key=${ADMIN_KEY}&limit=100`);
-                if (!response.ok) {
-                    throw new Error(`Failed to load ${tableName}`);
-                }
-                
-                const data = await response.json();
+                const data = await apiFetch(`/api/admin/database/${encodeURIComponent(tableName)}?limit=100`);
                 
                 // Update row count
                 document.getElementById('rlRowCount').textContent = `${data.total_rows || 0} total rows`;
@@ -3541,12 +3588,7 @@
 
         async function loadRLExperiencesData() {
             try {
-                const response = await fetch(`${API_URL}/api/admin/database/rl_experiences?admin_key=${ADMIN_KEY}&limit=100`);
-                if (!response.ok) {
-                    throw new Error('Failed to load RL experiences');
-                }
-                
-                const data = await response.json();
+                const data = await apiFetch(`/api/admin/database/rl_experiences?limit=100`);
                 databaseData['rl_experiences'] = data.rows || [];
                 
                 // Update row count and timestamp
@@ -3648,9 +3690,7 @@
                 
                 if (symbolToExport === 'all') {
                     // Fetch ALL data from server
-                    const response = await fetch(`${API_URL}/api/admin/database/rl_experiences?admin_key=${ADMIN_KEY}&limit=999999`);
-                    if (!response.ok) throw new Error('Failed to load all RL experiences');
-                    const data = await response.json();
+                    const data = await apiFetch(`/api/admin/database/rl_experiences?limit=999999`);
                     dataToExport = data.rows || [];
                     filename = `rl_experiences_ALL_${new Date().toISOString().split('T')[0]}.csv`;
                 } else if (symbolToExport === 'current') {
@@ -3659,9 +3699,7 @@
                     filename = `rl_experiences_${new Date().toISOString().split('T')[0]}.csv`;
                 } else {
                     // Filter by specific symbol from all data
-                    const response = await fetch(`${API_URL}/api/admin/database/rl_experiences?admin_key=${ADMIN_KEY}&limit=999999`);
-                    if (!response.ok) throw new Error('Failed to load RL experiences');
-                    const data = await response.json();
+                    const data = await apiFetch(`/api/admin/database/rl_experiences?limit=999999`);
                     const allData = data.rows || [];
                     dataToExport = allData.filter(row => row.symbol === symbolToExport);
                     filename = `rl_experiences_${symbolToExport}_${new Date().toISOString().split('T')[0]}.csv`;
@@ -3701,13 +3739,11 @@
                 let confirmMessage, deleteCount;
                 
                 if (symbolToDelete === 'all') {
-                    const response = await fetch(`${API_URL}/api/admin/database/rl_experiences?admin_key=${ADMIN_KEY}&limit=1`);
-                    const data = await response.json();
+                    const data = await apiFetch(`/api/admin/database/rl_experiences?limit=1`);
                     deleteCount = data.total_rows || 0;
                     confirmMessage = `⚠️ DELETE ALL RL DATA\n\nThis will permanently delete ${deleteCount.toLocaleString()} experiences from ALL symbols.\n\nThis CANNOT be undone!\n\nContinue?`;
                 } else {
-                    const response = await fetch(`${API_URL}/api/admin/database/rl_experiences?admin_key=${ADMIN_KEY}&limit=999999`);
-                    const data = await response.json();
+                    const data = await apiFetch(`/api/admin/database/rl_experiences?limit=999999`);
                     const allData = data.rows || [];
                     const symbolData = allData.filter(row => row.symbol === symbolToDelete);
                     deleteCount = symbolData.length;
@@ -3729,10 +3765,10 @@
                     method: 'DELETE',
                     headers: {
                         'Content-Type': 'application/json',
-                        'X-API-Key': ADMIN_KEY
+                        // Server expects admin key in X-Admin-API-Key for admin operations
+                        'X-Admin-API-Key': ADMIN_KEY
                     },
                     body: JSON.stringify({
-                        admin_key: ADMIN_KEY,
                         symbol: symbolToDelete === 'all' ? null : symbolToDelete
                     })
                 });
@@ -3761,12 +3797,7 @@
         async function exportAndClearAllRLData() {
             try {
                 // First, load all RL data (not just the limited view)
-                const response = await fetch(`${API_URL}/api/admin/database/rl_experiences?admin_key=${ADMIN_KEY}&limit=999999`);
-                if (!response.ok) {
-                    throw new Error('Failed to load RL experiences for export');
-                }
-                
-                const data = await response.json();
+                const data = await apiFetch(`/api/admin/database/rl_experiences?limit=999999`);
                 const allData = data.rows || [];
                 
                 if (allData.length === 0) {
