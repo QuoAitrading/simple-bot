@@ -65,7 +65,7 @@ Friday Special Rules:
 For Multi-User Subscriptions:
 - All users see US Eastern times (CME standard)
 - Bot uses Eastern Time, can display in user's local timezone if needed
-- Each user gets their own position/RL/VWAP state
+- Each user gets their own position tracking and session state
 
 """
 
@@ -564,10 +564,6 @@ IDLE_STATUS_MESSAGE_INTERVAL = 300  # Show status message every 5 minutes (300 s
 # Regime Detection Constants
 DEFAULT_FALLBACK_ATR = 5.0  # Default ATR when calculation not possible (ES futures typical value)
 
-# BOS + FVG Strategy Constants - Optimized for 57.6% Win Rate
-BOS_FVG_STOP_BUFFER_TICKS = 2.5  # Ticks beyond FVG zone for stop placement (optimized)
-BOS_FVG_PROFIT_TARGET_MULTIPLIER = 1.18  # Risk-reward ratio (1:1.18) - quick profit capture
-
 # Fixed Stop Loss and Profit Target Configuration
 FIXED_STOP_LOSS_TICKS = 12  # Fixed stop loss at 12 ticks for all symbols
 FIXED_PROFIT_TARGET_TICKS = 12  # Fixed profit target at 12 ticks for all symbols
@@ -826,65 +822,9 @@ logger = setup_logging()
 
 
 # ============================================================================
-# CLOUD API INTEGRATION - Data Collection Only
+# TRADING LOGIC PLACEHOLDER
 # ============================================================================
-# Cloud API is used ONLY for reporting trade outcomes (data collection).
-# Trading decisions (confidence/approval) are made locally using RL brain.
-
-
-
-async def get_ml_confidence_async(rl_state: Dict[str, Any], side: str) -> Tuple[bool, float, str]:
-    """
-    Stub function - RL system has been removed.
-    Always returns default approval.
-    
-    Returns: (take_signal, confidence, reason)
-    """
-    # Default approval - no RL filtering
-    return True, 1.0, "RL system removed - default approval"
-
-
-def get_ml_confidence(rl_state: Dict[str, Any], side: str) -> Tuple[bool, float, str]:
-    """Synchronous wrapper for get_ml_confidence_async"""
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    try:
-        return loop.run_until_complete(get_ml_confidence_async(rl_state, side))
-    finally:
-        _cleanup_event_loop(loop)
-
-
-
-async def save_trade_experience_async(
-    rl_state: Dict[str, Any],
-    side: str,
-    pnl: float,
-    duration_minutes: float,
-    execution_data: Dict[str, Any]
-) -> None:
-    """
-    Stub function - RL system has been removed.
-    Trade outcome tracking is no longer active.
-    """
-    # No-op - RL system removed
-    pass
-
-
-
-def save_trade_experience(
-    rl_state: Dict[str, Any],
-    side: str,
-    pnl: float,
-    duration_minutes: float,
-    execution_data: Dict[str, Any]
-) -> None:
-    """Synchronous wrapper for save_trade_experience_async"""
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    try:
-        loop.run_until_complete(save_trade_experience_async(rl_state, side, pnl, duration_minutes, execution_data))
-    finally:
-        _cleanup_event_loop(loop)
+# Strategy components have been removed - awaiting new trading logic implementation
 
 
 # ============================================================================
@@ -2034,7 +1974,7 @@ def initialize_state(symbol: str) -> None:
             "manual_override": False,  # True when user manually adjusted position
             "manual_override_time": None,  # When manual override was detected
             "manual_override_reason": None,  # Description of what was adjusted
-            # BOS+FVG doesn't use regime detection - removed for performance
+            # Regime detection removed - not needed for current architecture
             # Advanced Exit Management - Breakeven State
             "breakeven_active": False,
             "original_stop_price": None,
@@ -2067,19 +2007,6 @@ def initialize_state(symbol: str) -> None:
         
         # Strategy components removed - undergoing refactoring
     }
-
-
-def initialize_bos_fvg_detectors(symbol: str) -> None:
-    """
-    Stub function - BOS/FVG strategy has been removed.
-    Strategy components are being refactored.
-    
-    Args:
-        symbol: Instrument symbol
-    """
-    # No-op - strategy removed
-    pass
-    
 
 
 # ============================================================================
@@ -2313,17 +2240,14 @@ def update_1min_bar(symbol: str, price: float, volume: int, dt: datetime) -> Non
             bar_count = len(state[symbol]["bars_1min"])
             
             # Calculate VWAP after new bar is added
-            # NOTE: VWAP not needed for BOS+FVG strategy - disabled for performance
+            # Technical indicators disabled - strategy refactoring in progress
             # calculate_vwap(symbol)
             
             # Update all indicators after each 1-minute bar (consistent with backtest mode)
-            # NOTE: MACD and RSI not needed for BOS+FVG strategy - disabled for performance
+            # Technical indicators disabled during refactoring
             # update_macd(symbol)
             # update_rsi(symbol)
             update_volume_average(symbol)
-            
-            # Process BOS and FVG detection after bar is completed
-            process_bos_fvg(symbol)
             
             # Classify market condition on every bar if bid_ask_manager available
             if bid_ask_manager is not None:
@@ -2347,7 +2271,7 @@ def update_1min_bar(symbol: str, price: float, volume: int, dt: datetime) -> Non
                 else:
                     vwap_data = state[symbol].get("vwap", {})
                     market_cond = state[symbol].get("market_condition", "UNKNOWN")
-                    # Legacy regime tracking removed - BOS+FVG doesn't use it
+                    # Legacy regime tracking removed - not needed
                     
                     # Get current bid/ask from bid_ask_manager if available
                     quote_info = ""
@@ -2373,7 +2297,7 @@ def update_1min_bar(symbol: str, price: float, volume: int, dt: datetime) -> Non
                 # Fallback if session_start_time not set (shouldn't happen)
                 vwap_data = state[symbol].get("vwap", {})
                 market_cond = state[symbol].get("market_condition", "UNKNOWN")
-                # Legacy regime tracking removed - BOS+FVG doesn't use it
+                # Legacy regime tracking removed - not needed
                 
                 # Get current bid/ask from bid_ask_manager if available
                 quote_info = ""
@@ -2396,7 +2320,7 @@ def update_1min_bar(symbol: str, price: float, volume: int, dt: datetime) -> Non
                 
                 logger.info(f"📊 Market: {symbol} @ ${current_bar['close']:.2f}{quote_info}{vol_info} | Bars: {bar_count}{vwap_info} | Condition: {market_cond}")
             
-            # Regime detection not needed for BOS+FVG strategy - removed for performance
+            # Regime detection not needed - removed for performance
             
             # Check for exit conditions if position is active
             check_exit_conditions(symbol)
@@ -2452,15 +2376,12 @@ def inject_complete_bar(symbol: str, bar: Dict[str, Any]) -> None:
     # Add the complete bar with proper OHLC
     state[symbol]["bars_1min"].append(bar)
     
-    # Process BOS and FVG detection after bar is added
-    process_bos_fvg(symbol)
-    
     # Update current regime after adding new bar
-    # NOTE: Regime detection not needed for BOS+FVG strategy - disabled for performance
+    # Regime detection disabled during strategy refactoring
     # update_current_regime(symbol)
     
     # Update all indicators after each 1-minute bar (all on same timeframe)
-    # NOTE: MACD, RSI, VWAP not needed for BOS+FVG strategy - disabled for performance
+    # Technical indicators disabled during refactoring
     # update_macd(symbol)
     # update_rsi(symbol)
     update_volume_average(symbol)
@@ -2853,19 +2774,6 @@ def update_volume_average(symbol: str) -> None:
         state[symbol]["recent_volume_history"].append(current_volume)
 
 
-def process_bos_fvg(symbol: str) -> None:
-    """
-    Stub function - BOS/FVG strategy has been removed.
-    Strategy components are being refactored.
-    
-    Args:
-        symbol: Instrument symbol
-    """
-    # No-op - strategy removed
-    pass
-    
-
-
 def detect_volume_surge(symbol: str) -> Tuple[bool, float]:
     """
     Detect if volume is surging (potential reversal signal).
@@ -3137,7 +3045,7 @@ def validate_signal_requirements(symbol: str, bar_time: datetime) -> Tuple[bool,
     # WARMUP PERIOD: Block signals until enough bars for ATR calculation
     # ========================================================================
     # ATR calculation requires 21 bars (1 for prev close + 20 for calculation)
-    # BOS+FVG strategy also needs minimum bars for swing point detection
+    # Strategy also needs minimum bars for swing point detection
     WARMUP_BARS_REQUIRED = 21
     current_bar_count = len(state[symbol]["bars_1min"])
     
@@ -3173,26 +3081,24 @@ def validate_signal_requirements(symbol: str, bar_time: datetime) -> Tuple[bool,
         logger.info(f"   🚀 Signal generation: ENABLED")
         logger.info("=" * 60)
     
-    # VWAP not needed for BOS+FVG strategy - removed
+    # VWAP not needed - removed
     
-    # Trend filter - DISABLED for BOS+FVG strategy
-    # BOS direction determines trade direction (BOS replaces regime/flush logic)
-    # - Long: Bullish BOS + bullish FVG fill
-    # - Short: Bearish BOS + bearish FVG fill
+    # Trend filter - DISABLED
+    # Direction will be determined by new strategy logic
     
-    # NOTE: RSI not needed for BOS+FVG strategy - disabled for performance
+    # NOTE: RSI not needed - disabled for performance
     rsi = state[symbol]["rsi"]
     if rsi is None:
         pass
-        # Legacy note: RSI was used in old strategies but not in BOS+FVG
+        # Legacy note: RSI was used in old strategies
     
-    # NOTE: Volume not needed for BOS+FVG strategy - disabled for performance
+    # NOTE: Volume not needed - disabled for performance
     avg_volume = state[symbol].get("avg_volume")
     if avg_volume is None:
         pass
-        # Legacy note: Volume was used in old strategies but not in BOS+FVG
+        # Legacy note: Volume was used in old strategies
     
-    # NOTE: VWAP not used in BOS+FVG strategy - disabled for performance
+    # NOTE: VWAP not used - disabled for performance
     
     # Check bid/ask spread and market condition (Phase: Bid/Ask Strategy)
     # ✓ BACKTEST MODE: Bid/ask validation SKIPPED - uses bar close prices only (no bid/ask in historical data)
@@ -3252,8 +3158,10 @@ def validate_signal_requirements(symbol: str, bar_time: datetime) -> Tuple[bool,
 def check_long_signal_conditions(symbol: str, prev_bar: Dict[str, Any], 
                                  current_bar: Dict[str, Any]) -> bool:
     """
-    Stub function - BOS/FVG strategy has been removed.
-    Strategy components are being refactored.
+    Check for long entry signal conditions.
+    
+    AWAITING IMPLEMENTATION: This function will contain the new strategy logic.
+    Currently returns False (no signals generated).
     
     Args:
         symbol: Instrument symbol
@@ -3261,17 +3169,19 @@ def check_long_signal_conditions(symbol: str, prev_bar: Dict[str, Any],
         current_bar: Current 1-minute bar
     
     Returns:
-        False - no signals during refactoring
+        False - awaiting new strategy implementation
     """
-    # No signals - strategy removed
+    # TODO: Implement new strategy logic here
     return False
 
 
 def check_short_signal_conditions(symbol: str, prev_bar: Dict[str, Any], 
                                   current_bar: Dict[str, Any]) -> bool:
     """
-    Stub function - BOS/FVG strategy has been removed.
-    Strategy components are being refactored.
+    Check for short entry signal conditions.
+    
+    AWAITING IMPLEMENTATION: This function will contain the new strategy logic.
+    Currently returns False (no signals generated).
     
     Args:
         symbol: Instrument symbol
@@ -3279,9 +3189,9 @@ def check_short_signal_conditions(symbol: str, prev_bar: Dict[str, Any],
         current_bar: Current 1-minute bar
     
     Returns:
-        False - no signals during refactoring
+        False - awaiting new strategy implementation
     """
-    # No signals - strategy removed
+    # TODO: Implement new strategy logic here
     return False
 
 
@@ -3455,31 +3365,10 @@ def get_volatility_regime(atr: float, symbol: str) -> str:
         return "MEDIUM"
 
 
-def capture_market_state(symbol: str, current_price: float) -> Dict[str, Any]:
-    """
-    Stub function - RL system and strategy have been removed.
-    Returns minimal state for compatibility.
-    
-    Args:
-        symbol: Instrument symbol
-        current_price: Current market price
-    
-    Returns:
-        Empty dictionary - RL removed
-    """
-    # Return empty dict - RL system removed
-    return {
-        "symbol": symbol,
-        "timestamp": datetime.now(pytz.UTC).isoformat(),
-        "price": current_price
-    }
-
-
-
 def is_regime_tradeable(regime: str) -> bool:
     """
     Check if the current regime allows trading.
-    Currently returns True for all regimes (RL handles filtering).
+    Currently returns True for all regimes.
     
     Args:
         regime: Current market regime. Expected values:
@@ -3492,12 +3381,8 @@ def is_regime_tradeable(regime: str) -> bool:
         
     Returns:
         True if regime allows trading (currently always True)
-        
-    Note:
-        All regimes are currently tradeable. The RL confidence system
-        provides pattern-based filtering instead of regime-based blocking.
     """
-    # All regimes are tradeable - RL confidence system provides filtering
+    # All regimes are tradeable - new strategy logic will handle filtering
     return True
 
 
@@ -3550,7 +3435,6 @@ def check_for_signals(symbol: str) -> None:
     regime = state[symbol].get("current_regime", "NORMAL")
     
     # REGIME CHECK: All regimes are now tradeable (no blocking)
-    # The RL signal confidence system provides sufficient filtering
     # This check is maintained for future extensibility but currently allows all regimes
     if not is_regime_tradeable(regime):
         # This should never happen since all regimes are enabled, but keeping for safety
@@ -3581,10 +3465,6 @@ def check_for_signals(symbol: str) -> None:
     # Check for long signal
     long_passed = check_long_signal_conditions(symbol, prev_bar, current_bar)
     if long_passed:
-        # MARKET STATE CAPTURE - Record comprehensive market conditions
-        # Capture current market state (pattern matching fields)
-        market_state = capture_market_state(symbol, current_bar["close"])
-        
         # Show signal diagnostic in live mode (without exposing strategy details)
         if not is_backtest_mode() and should_log_diagnostic:
             logger.info("📊 Signal Diagnostic:")
@@ -3596,39 +3476,11 @@ def check_for_signals(symbol: str) -> None:
         if is_backtest_mode():
             logger.info(f"[MARKET STATE] Long - Pattern analysis complete")
         
-        # Ask cloud RL API for decision (or local RL as fallback)
-        take_signal, confidence, reason = get_ml_confidence(market_state, "long")
-        
-        if not take_signal:
-            # Show rejected signals without exposing strategy details
-            if not is_backtest_mode():
-                logger.info(f"  ✗ Signal Declined: LONG | Confidence: {confidence:.0%}")
-            else:
-                logger.info(f"[-] Signal Declined: LONG at ${current_bar['close']:.2f} - Low confidence ({confidence:.0%})")
-            # Store the rejected signal state for potential future learning
-            state[symbol]["last_rejected_signal"] = {
-                "time": get_current_time(),
-                "state": market_state,
-                "side": "long",
-                "confidence": confidence,
-                "reason": reason
-            }
-            return
-        
-        # RL approved - adjust position size based on confidence
-        regime = market_state.get('regime', 'NORMAL')
-        
         # Show approved signal - generic message in live mode, detailed in backtest
         if is_backtest_mode():
-            logger.info(f"[+] LONG SIGNAL APPROVED | Price: ${current_bar['close']:.2f} | AI Confidence: {confidence:.0%}")
+            logger.info(f"[+] LONG SIGNAL APPROVED | Price: ${current_bar['close']:.2f}")
         else:
-            logger.info(f"  > Signal Approved: LONG | Price: ${current_bar['close']:.2f} | Confidence: {confidence:.0%}")
-        
-        # Store market state for outcome recording
-        state[symbol]["entry_market_state"] = market_state
-        state[symbol]["entry_rl_confidence"] = confidence
-        
-        # Strategy removed - FVG marking code no longer needed
+            logger.info(f"  > Signal Approved: LONG | Price: ${current_bar['close']:.2f}")
         
         execute_entry(symbol, "long", current_bar["close"])
         return
@@ -3636,10 +3488,6 @@ def check_for_signals(symbol: str) -> None:
     # Check for short signal
     short_passed = check_short_signal_conditions(symbol, prev_bar, current_bar)
     if short_passed:
-        # MARKET STATE CAPTURE - Record comprehensive market conditions
-        # Capture current market state (pattern matching fields)
-        market_state = capture_market_state(symbol, current_bar["close"])
-        
         # Show signal diagnostic in live mode (without exposing strategy details)
         if not is_backtest_mode() and should_log_diagnostic:
             logger.info("📊 Signal Diagnostic:")
@@ -3651,39 +3499,11 @@ def check_for_signals(symbol: str) -> None:
         if is_backtest_mode():
             logger.info(f"[MARKET STATE] Short - Pattern analysis complete")
         
-        # Ask cloud RL API for decision (or local RL as fallback)
-        take_signal, confidence, reason = get_ml_confidence(market_state, "short")
-        
-        if not take_signal:
-            # Show rejected signals without exposing strategy details
-            if not is_backtest_mode():
-                logger.info(f"  ✗ Signal Declined: SHORT | Confidence: {confidence:.0%}")
-            else:
-                logger.info(f"[-] Signal Declined: SHORT at ${current_bar['close']:.2f} - Low confidence ({confidence:.0%})")
-            # Store the rejected signal state for potential future learning
-            state[symbol]["last_rejected_signal"] = {
-                "time": get_current_time(),
-                "state": market_state,
-                "side": "short",
-                "confidence": confidence,
-                "reason": reason
-            }
-            return
-        
-        # RL approved - adjust position size based on confidence
-        regime = market_state.get('regime', 'NORMAL')
-        
         # Show approved signal - generic message in live mode, detailed in backtest
         if is_backtest_mode():
-            logger.info(f"[+] SHORT SIGNAL APPROVED | Price: ${current_bar['close']:.2f} | AI Confidence: {confidence:.0%}")
+            logger.info(f"[+] SHORT SIGNAL APPROVED | Price: ${current_bar['close']:.2f}")
         else:
-            logger.info(f"  > Signal Approved: SHORT | Price: ${current_bar['close']:.2f} | Confidence: {confidence:.0%}")
-        
-        # Store market state for outcome recording
-        state[symbol]["entry_market_state"] = market_state
-        state[symbol]["entry_rl_confidence"] = confidence
-        
-        # Strategy removed - FVG marking code no longer needed
+            logger.info(f"  > Signal Approved: SHORT | Price: ${current_bar['close']:.2f}")
         
         execute_entry(symbol, "short", current_bar["close"])
         return
@@ -3693,7 +3513,7 @@ def check_for_signals(symbol: str) -> None:
 # PHASE EIGHT: Position Sizing
 # ============================================================================
 
-def calculate_position_size(symbol: str, side: str, entry_price: float, rl_confidence: Optional[float] = None) -> Tuple[int, float]:
+def calculate_position_size(symbol: str, side: str, entry_price: float) -> Tuple[int, float]:
     """
     Calculate position size based on risk management rules.
     
@@ -3726,7 +3546,6 @@ def calculate_position_size(symbol: str, side: str, entry_price: float, rl_confi
         symbol: Instrument symbol (ES, NQ, CL, GC, etc.)
         side: 'long' or 'short'
         entry_price: Expected entry price
-        rl_confidence: Optional RL confidence (for tracking, not used for position sizing)
     
     Returns:
         Tuple of (contracts, stop_price)
@@ -3843,7 +3662,7 @@ def calculate_position_size(symbol: str, side: str, entry_price: float, rl_confi
     logger.info(f"Position sizing: {contracts} contract(s)")
     logger.info(f"  Entry: ${entry_price:.2f}, Stop: ${stop_price:.2f}")
     logger.info(f"  Risk: {ticks_at_risk:.1f} ticks (${risk_per_contract:.2f})")
-    # logger.info(f"  VWAP: ${vwap:.2f} (mean reversion reference)")  # VWAP not used in BOS+FVG
+    # logger.info(f"  VWAP: ${vwap:.2f} (mean reversion reference)")  # VWAP not used
     
     return contracts, stop_price
 
@@ -4060,23 +3879,8 @@ def execute_entry(symbol: str, side: str, entry_price: float) -> None:
         logger.warning(f"  Signal: {side.upper()} @ ${entry_price:.2f}")
         logger.warning(SEPARATOR_LINE)
         
-        # Store for potential shadow outcome tracking
-        rl_state = state[symbol].get("entry_rl_state")
-        if rl_state is not None:
-            # Extract price movement from reason (e.g., "Price moved UP 5.0 ticks")
-            import re
-            match = re.search(r'(\d+\.?\d*)\s+ticks', price_reason)
-            price_move_ticks = float(match.group(1)) if match else 0.0
-            
-            state[symbol]["last_rejected_signal"] = {
-                "time": get_current_time(),
-                "state": rl_state,
-                "side": side,
-                "reason": price_reason,
-                "price_move_ticks": price_move_ticks,
-                "signal_price": entry_price,
-                "current_price": current_market_price
-            }
+        # Price moved too much - skip trade
+        return
         
         return
     
@@ -4084,11 +3888,8 @@ def execute_entry(symbol: str, side: str, entry_price: float) -> None:
     logger.info(f"  [OK] Price validation passed: ${entry_price:.2f} -> ${current_market_price:.2f}")
     entry_price = current_market_price
     
-    # Get RL confidence if available (for tracking)
-    rl_confidence = state[symbol].get("entry_rl_confidence")
-    
     # Calculate position size
-    contracts, stop_price = calculate_position_size(symbol, side, entry_price, rl_confidence)
+    contracts, stop_price = calculate_position_size(symbol, side, entry_price)
     
     if contracts == 0:
         logger.warning("Cannot enter trade - position size is zero")
@@ -4310,9 +4111,9 @@ def execute_entry(symbol: str, side: str, entry_price: float) -> None:
     profit_target_price = round_to_tick(profit_target_price)
     profit_target_ticks = profit_target_distance / CONFIG["tick_size"]
     
-    # BOS+FVG doesn't use regime or ATR - removed for performance
+    # Regime detection and ATR not used - removed for performance
     
-    # BOS+FVG SCALPING: Fixed trade management rules
+    # SCALPING: Fixed trade management rules
     breakeven_trigger = CONFIG.get("breakeven_trigger_ticks", 12)
     breakeven_offset = CONFIG.get("breakeven_offset_ticks", 1)
     trailing_trigger = CONFIG.get("trailing_trigger_ticks", 15)
@@ -4354,12 +4155,9 @@ def execute_entry(symbol: str, side: str, entry_price: float) -> None:
         "order_id": entry_order_id,
         "order_type_used": order_type_used,  # Track for exit optimization
         # REMOVED: stop_order_id and target_order_id tracking (detect exits by price only)
-        # Signal & RL Information - Preserved for partial fills and exits
-        "entry_rl_confidence": rl_confidence,  # RL confidence at entry (for tracking)
-        "entry_rl_state": state[symbol].get("entry_rl_state"),  # RL market state
+        # Signal Information - Preserved for partial fills and exits
         "original_entry_price": entry_price,  # Original signal price (before validation)
         "actual_entry_price": actual_fill_price,  # Actual fill price
-        # BOS+FVG doesn't use regime detection - removed for performance
         # Advanced Exit Management - Breakeven State
         "breakeven_active": False,
         "original_stop_price": stop_price,
@@ -4434,9 +4232,9 @@ def check_stop_hit(symbol: str, current_bar: Dict[str, Any], position: Dict[str,
 
 def check_profit_target_hit(symbol: str, current_bar: Dict[str, Any], position: Dict[str, Any]) -> Tuple[bool, Optional[float]]:
     """
-    Check if profit target has been hit (BOS+FVG Strategy).
+    Check if profit target has been hit.
     
-    BOS+FVG uses a fixed 1.5x risk-reward profit target.
+    Uses a fixed profit target based on risk-reward ratio.
     
     Args:
         symbol: Instrument symbol
@@ -4446,7 +4244,7 @@ def check_profit_target_hit(symbol: str, current_bar: Dict[str, Any], position: 
     Returns:
         Tuple of (target_hit, target_price)
     """
-    # Check if position has profit target (BOS+FVG strategy)
+    # Check if position has profit target
     profit_target_price = position.get("profit_target_price")
     
     if profit_target_price is None:
@@ -4470,7 +4268,7 @@ def check_reversal_signal(symbol: str, current_bar: Dict[str, Any], position: Di
     """
     Check if price has reached reversal level before trailing stop activates.
     
-    BOS+FVG EXIT STRATEGY:
+    EXIT STRATEGY:
     - Trailing stop handles all profit-taking (activates at 15+ ticks profit)
     - Early exit check: If price reverses before trailing activates, exit early
     - Once trailing is active (15+ ticks), let trailing ride
@@ -4679,7 +4477,7 @@ def check_breakeven_protection(symbol: str, current_price: float) -> None:
     """
     Check if breakeven protection should be activated and move stop to breakeven.
     
-    BOS+FVG STRATEGY - FIXED RULES:
+    BREAKEVEN RULES:
     - Trigger: After 12 ticks profit
     - Action: Move stop to entry + 3 ticks (covers fees)
     - Same rule every time, no exceptions
@@ -4700,7 +4498,7 @@ def check_breakeven_protection(symbol: str, current_price: float) -> None:
     # Use symbol-specific tick values for accurate P&L calculation across different instruments
     tick_size, tick_value = get_symbol_tick_specs(symbol)
     
-    # BOS+FVG STRATEGY: Fixed breakeven threshold at 12 ticks
+    # Fixed breakeven threshold at 12 ticks
     breakeven_threshold_ticks = CONFIG.get("breakeven_trigger_ticks", 12)
     
     # Stop at entry + 3 ticks (locks in 3 tick profit to cover fees)
@@ -4770,7 +4568,7 @@ def check_trailing_stop(symbol: str, current_price: float) -> None:
     """
     Check and update trailing stop based on price movement.
     
-    BOS+FVG STRATEGY - FIXED RULES:
+    TRAILING STOP RULES:
     - Trigger: After 15 ticks profit
     - Trail: 8 ticks behind the peak profit
     - Same rule every time, no exceptions
@@ -4794,7 +4592,7 @@ def check_trailing_stop(symbol: str, current_price: float) -> None:
     # Use symbol-specific tick values for accurate P&L calculation across different instruments
     tick_size, tick_value = get_symbol_tick_specs(symbol)
     
-    # BOS+FVG STRATEGY: Fixed trailing parameters
+    # Fixed trailing parameters
     trailing_distance_ticks = CONFIG.get("trailing_distance_ticks", 8)
     min_profit_ticks = CONFIG.get("trailing_trigger_ticks", 15)
     
@@ -5241,7 +5039,7 @@ def execute_partial_exit(symbol: str, contracts: int, exit_price: float, r_multi
         logger.error(f"Failed to execute partial exit #{level}")
 
 
-# LEGACY FUNCTION - Not used in BOS+FVG strategy
+# LEGACY FUNCTION - Not currently used
 # def update_current_regime(symbol: str) -> None:
 #     """
 #     Update the current regime for the symbol based on latest bars.
@@ -5255,7 +5053,7 @@ def execute_partial_exit(symbol: str, contracts: int, exit_price: float, r_multi
 #     pass
 
 
-# LEGACY FUNCTION - Not used in BOS+FVG strategy  
+# LEGACY FUNCTION - Not currently used  
 # def check_regime_change(symbol: str, current_price: float) -> None:
 #     """
 #     Check if market regime has changed during an active trade (informational only).
@@ -5535,7 +5333,7 @@ def check_exit_conditions(symbol: str) -> None:
         execute_exit(symbol, price, "stop_loss")
         return
     
-    # THIRD - Profit target check (BOS+FVG Strategy)
+    # THIRD - Profit target check
     target_hit, price = check_profit_target_hit(symbol, current_bar, position)
     if target_hit:
         execute_exit(symbol, price, "profit_target")
@@ -5545,7 +5343,7 @@ def check_exit_conditions(symbol: str) -> None:
     # This locks in profits and protects against reversals
     check_scalping_profit_protection(symbol, current_bar["close"])
     
-    # BOS+FVG strategy doesn't use regime detection - removed for performance
+    # Regime detection not used - removed for performance
     
     # Get current time for any time-based checks
     current_time = get_current_time()
@@ -6039,73 +5837,37 @@ def execute_exit(symbol: str, exit_price: float, reason: str) -> None:
     except Exception as e:
         pass
     
-    # REINFORCEMENT LEARNING - Record outcome to cloud API (shared learning pool)
+    # Calculate and log trade metrics
     try:
-        # Check if we have the entry market state stored (NEW FORMAT)
-        if "entry_market_state" in state[symbol]:
-            market_state = state[symbol]["entry_market_state"]
-            
-            # Calculate trade duration in minutes
-            entry_time = position.get("entry_time")
-            duration_minutes = 0
-            if entry_time:
-                duration = exit_time - entry_time
-                duration_minutes = duration.total_seconds() / 60
-            
-            # Calculate MFE (Max Favorable Excursion) and MAE (Max Adverse Excursion)
-            entry_price = position.get("entry_price", exit_price)
-            # Use symbol-specific tick values for accurate P&L calculation across different instruments
-            tick_size, tick_value = get_symbol_tick_specs(symbol)
-            
-            # Get from position tracking (if available)
-            if position["side"] == "long":
-                highest_price = position.get("highest_price_reached", exit_price)
-                lowest_price = position.get("lowest_price_reached", exit_price)
-                mfe_ticks = (highest_price - entry_price) / tick_size
-                mae_ticks = (entry_price - lowest_price) / tick_size
-            else:  # short
-                highest_price = position.get("highest_price_reached", exit_price)
-                lowest_price = position.get("lowest_price_reached", exit_price)
-                mfe_ticks = (entry_price - lowest_price) / tick_size
-                mae_ticks = (highest_price - entry_price) / tick_size
-            
-            mfe = mfe_ticks * tick_value
-            mae = mae_ticks * tick_value
-            
-            # Get the side from position
-            trade_side = position.get("side", "unknown")
-            
-            # Get execution quality metrics for RL learning
-            order_type_used = position.get("order_type_used", "unknown")
-            
-            # Calculate entry slippage if we have the data (tick_size from get_symbol_tick_specs() on line ~6718)
-            entry_slippage_ticks = 0
-            if position.get("actual_entry_price") and position.get("original_entry_price"):
-                entry_slippage = abs(position.get("actual_entry_price", 0) - position.get("original_entry_price", 0))
-                entry_slippage_ticks = entry_slippage / tick_size if tick_size > 0 else 0
-            
-            # Record market state + outcomes to local RL brain (backtest) or cloud (live)
-            save_trade_experience(
-                rl_state=market_state,  # Market state (flat structure)
-                side=trade_side,  # Trade direction (for cloud API)
-                pnl=pnl,
-                duration_minutes=duration_minutes,
-                execution_data={
-                    "mfe": mfe,
-                    "mae": mae,
-                    "exit_reason": reason,  # CRITICAL: How trade closed
-                    "order_type_used": order_type_used,  # IMPORTANT: Order type for execution optimization
-                    "entry_slippage_ticks": entry_slippage_ticks  # IMPORTANT: Slippage tracking
-                }
-            )
-            
-            logger.info(f"πΎ [EXPERIENCE] Recorded: ${pnl:+.2f} in {duration_minutes:.1f}min | MFE: ${mfe:.2f}, MAE: ${mae:.2f}")
-            
-            # Clean up state
-            if "entry_market_state" in state[symbol]:
-                del state[symbol]["entry_market_state"]
-            if "entry_rl_confidence" in state[symbol]:
-                del state[symbol]["entry_rl_confidence"]
+        # Calculate trade duration in minutes
+        entry_time = position.get("entry_time")
+        duration_minutes = 0
+        if entry_time:
+            duration = exit_time - entry_time
+            duration_minutes = duration.total_seconds() / 60
+        
+        # Calculate MFE (Max Favorable Excursion) and MAE (Max Adverse Excursion)
+        entry_price = position.get("entry_price", exit_price)
+        # Use symbol-specific tick values for accurate P&L calculation across different instruments
+        tick_size, tick_value = get_symbol_tick_specs(symbol)
+        
+        # Get from position tracking (if available)
+        if position["side"] == "long":
+            highest_price = position.get("highest_price_reached", exit_price)
+            lowest_price = position.get("lowest_price_reached", exit_price)
+            mfe_ticks = (highest_price - entry_price) / tick_size
+            mae_ticks = (entry_price - lowest_price) / tick_size
+        else:  # short
+            highest_price = position.get("highest_price_reached", exit_price)
+            lowest_price = position.get("lowest_price_reached", exit_price)
+            mfe_ticks = (entry_price - lowest_price) / tick_size
+            mae_ticks = (highest_price - entry_price) / tick_size
+        
+        mfe = mfe_ticks * tick_value
+        mae = mae_ticks * tick_value
+        
+        # Log trade metrics
+        logger.info(f"πΎ [TRADE METRICS] ${pnl:+.2f} in {duration_minutes:.1f}min | MFE: ${mfe:.2f}, MAE: ${mae:.2f}")
         
     except Exception as e:
         pass
@@ -7664,10 +7426,6 @@ def main(symbol_override: str = None) -> None:
             logger.warning(f"Failed to subscribe to quotes: {e}")
             logger.warning("Continuing without bid/ask quote data")
     
-    # RL is CLOUD-ONLY - no local RL components
-    # Users get confidence from cloud, contribute to cloud hive mind
-    # Only the dev (Kevin) gets the experience data saved to cloud
-    
     # Show current date/time before starting
     current_time = datetime.now(tz)
     logger.info(f"📅 {current_time.strftime('%A, %B %d, %Y at %I:%M %p %Z')}")
@@ -8634,8 +8392,6 @@ Multi-Symbol Mode:
   Launch separate terminals for each symbol:
   - Window 1: python src/quotrading_engine.py ES
   - Window 2: python src/quotrading_engine.py NQ
-  
-  Each window uses symbol-specific RL data from experiences/{symbol}/
         """
     )
     parser.add_argument(
