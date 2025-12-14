@@ -1974,7 +1974,7 @@ def initialize_state(symbol: str) -> None:
             "manual_override": False,  # True when user manually adjusted position
             "manual_override_time": None,  # When manual override was detected
             "manual_override_reason": None,  # Description of what was adjusted
-            # BOS+FVG doesn't use regime detection - removed for performance
+            # Regime detection removed - not needed for current architecture
             # Advanced Exit Management - Breakeven State
             "breakeven_active": False,
             "original_stop_price": None,
@@ -2271,7 +2271,7 @@ def update_1min_bar(symbol: str, price: float, volume: int, dt: datetime) -> Non
                 else:
                     vwap_data = state[symbol].get("vwap", {})
                     market_cond = state[symbol].get("market_condition", "UNKNOWN")
-                    # Legacy regime tracking removed - BOS+FVG doesn't use it
+                    # Legacy regime tracking removed - not needed
                     
                     # Get current bid/ask from bid_ask_manager if available
                     quote_info = ""
@@ -2297,7 +2297,7 @@ def update_1min_bar(symbol: str, price: float, volume: int, dt: datetime) -> Non
                 # Fallback if session_start_time not set (shouldn't happen)
                 vwap_data = state[symbol].get("vwap", {})
                 market_cond = state[symbol].get("market_condition", "UNKNOWN")
-                # Legacy regime tracking removed - BOS+FVG doesn't use it
+                # Legacy regime tracking removed - not needed
                 
                 # Get current bid/ask from bid_ask_manager if available
                 quote_info = ""
@@ -2320,7 +2320,7 @@ def update_1min_bar(symbol: str, price: float, volume: int, dt: datetime) -> Non
                 
                 logger.info(f"📊 Market: {symbol} @ ${current_bar['close']:.2f}{quote_info}{vol_info} | Bars: {bar_count}{vwap_info} | Condition: {market_cond}")
             
-            # Regime detection not needed for BOS+FVG strategy - removed for performance
+            # Regime detection not needed - removed for performance
             
             # Check for exit conditions if position is active
             check_exit_conditions(symbol)
@@ -3045,7 +3045,7 @@ def validate_signal_requirements(symbol: str, bar_time: datetime) -> Tuple[bool,
     # WARMUP PERIOD: Block signals until enough bars for ATR calculation
     # ========================================================================
     # ATR calculation requires 21 bars (1 for prev close + 20 for calculation)
-    # BOS+FVG strategy also needs minimum bars for swing point detection
+    # Strategy also needs minimum bars for swing point detection
     WARMUP_BARS_REQUIRED = 21
     current_bar_count = len(state[symbol]["bars_1min"])
     
@@ -3081,26 +3081,24 @@ def validate_signal_requirements(symbol: str, bar_time: datetime) -> Tuple[bool,
         logger.info(f"   🚀 Signal generation: ENABLED")
         logger.info("=" * 60)
     
-    # VWAP not needed for BOS+FVG strategy - removed
+    # VWAP not needed - removed
     
-    # Trend filter - DISABLED for BOS+FVG strategy
-    # BOS direction determines trade direction (BOS replaces regime/flush logic)
-    # - Long: Bullish BOS + bullish FVG fill
-    # - Short: Bearish BOS + bearish FVG fill
+    # Trend filter - DISABLED
+    # Direction will be determined by new strategy logic
     
-    # NOTE: RSI not needed for BOS+FVG strategy - disabled for performance
+    # NOTE: RSI not needed - disabled for performance
     rsi = state[symbol]["rsi"]
     if rsi is None:
         pass
-        # Legacy note: RSI was used in old strategies but not in BOS+FVG
+        # Legacy note: RSI was used in old strategies
     
-    # NOTE: Volume not needed for BOS+FVG strategy - disabled for performance
+    # NOTE: Volume not needed - disabled for performance
     avg_volume = state[symbol].get("avg_volume")
     if avg_volume is None:
         pass
-        # Legacy note: Volume was used in old strategies but not in BOS+FVG
+        # Legacy note: Volume was used in old strategies
     
-    # NOTE: VWAP not used in BOS+FVG strategy - disabled for performance
+    # NOTE: VWAP not used - disabled for performance
     
     # Check bid/ask spread and market condition (Phase: Bid/Ask Strategy)
     # ✓ BACKTEST MODE: Bid/ask validation SKIPPED - uses bar close prices only (no bid/ask in historical data)
@@ -3664,7 +3662,7 @@ def calculate_position_size(symbol: str, side: str, entry_price: float) -> Tuple
     logger.info(f"Position sizing: {contracts} contract(s)")
     logger.info(f"  Entry: ${entry_price:.2f}, Stop: ${stop_price:.2f}")
     logger.info(f"  Risk: {ticks_at_risk:.1f} ticks (${risk_per_contract:.2f})")
-    # logger.info(f"  VWAP: ${vwap:.2f} (mean reversion reference)")  # VWAP not used in BOS+FVG
+    # logger.info(f"  VWAP: ${vwap:.2f} (mean reversion reference)")  # VWAP not used
     
     return contracts, stop_price
 
@@ -4113,9 +4111,9 @@ def execute_entry(symbol: str, side: str, entry_price: float) -> None:
     profit_target_price = round_to_tick(profit_target_price)
     profit_target_ticks = profit_target_distance / CONFIG["tick_size"]
     
-    # BOS+FVG doesn't use regime or ATR - removed for performance
+    # Regime detection and ATR not used - removed for performance
     
-    # BOS+FVG SCALPING: Fixed trade management rules
+    # SCALPING: Fixed trade management rules
     breakeven_trigger = CONFIG.get("breakeven_trigger_ticks", 12)
     breakeven_offset = CONFIG.get("breakeven_offset_ticks", 1)
     trailing_trigger = CONFIG.get("trailing_trigger_ticks", 15)
@@ -4234,9 +4232,9 @@ def check_stop_hit(symbol: str, current_bar: Dict[str, Any], position: Dict[str,
 
 def check_profit_target_hit(symbol: str, current_bar: Dict[str, Any], position: Dict[str, Any]) -> Tuple[bool, Optional[float]]:
     """
-    Check if profit target has been hit (BOS+FVG Strategy).
+    Check if profit target has been hit.
     
-    BOS+FVG uses a fixed 1.5x risk-reward profit target.
+    Uses a fixed profit target based on risk-reward ratio.
     
     Args:
         symbol: Instrument symbol
@@ -4246,7 +4244,7 @@ def check_profit_target_hit(symbol: str, current_bar: Dict[str, Any], position: 
     Returns:
         Tuple of (target_hit, target_price)
     """
-    # Check if position has profit target (BOS+FVG strategy)
+    # Check if position has profit target
     profit_target_price = position.get("profit_target_price")
     
     if profit_target_price is None:
@@ -4270,7 +4268,7 @@ def check_reversal_signal(symbol: str, current_bar: Dict[str, Any], position: Di
     """
     Check if price has reached reversal level before trailing stop activates.
     
-    BOS+FVG EXIT STRATEGY:
+    EXIT STRATEGY:
     - Trailing stop handles all profit-taking (activates at 15+ ticks profit)
     - Early exit check: If price reverses before trailing activates, exit early
     - Once trailing is active (15+ ticks), let trailing ride
@@ -4479,7 +4477,7 @@ def check_breakeven_protection(symbol: str, current_price: float) -> None:
     """
     Check if breakeven protection should be activated and move stop to breakeven.
     
-    BOS+FVG STRATEGY - FIXED RULES:
+    BREAKEVEN RULES:
     - Trigger: After 12 ticks profit
     - Action: Move stop to entry + 3 ticks (covers fees)
     - Same rule every time, no exceptions
@@ -4500,7 +4498,7 @@ def check_breakeven_protection(symbol: str, current_price: float) -> None:
     # Use symbol-specific tick values for accurate P&L calculation across different instruments
     tick_size, tick_value = get_symbol_tick_specs(symbol)
     
-    # BOS+FVG STRATEGY: Fixed breakeven threshold at 12 ticks
+    # Fixed breakeven threshold at 12 ticks
     breakeven_threshold_ticks = CONFIG.get("breakeven_trigger_ticks", 12)
     
     # Stop at entry + 3 ticks (locks in 3 tick profit to cover fees)
@@ -4570,7 +4568,7 @@ def check_trailing_stop(symbol: str, current_price: float) -> None:
     """
     Check and update trailing stop based on price movement.
     
-    BOS+FVG STRATEGY - FIXED RULES:
+    TRAILING STOP RULES:
     - Trigger: After 15 ticks profit
     - Trail: 8 ticks behind the peak profit
     - Same rule every time, no exceptions
@@ -4594,7 +4592,7 @@ def check_trailing_stop(symbol: str, current_price: float) -> None:
     # Use symbol-specific tick values for accurate P&L calculation across different instruments
     tick_size, tick_value = get_symbol_tick_specs(symbol)
     
-    # BOS+FVG STRATEGY: Fixed trailing parameters
+    # Fixed trailing parameters
     trailing_distance_ticks = CONFIG.get("trailing_distance_ticks", 8)
     min_profit_ticks = CONFIG.get("trailing_trigger_ticks", 15)
     
@@ -5041,7 +5039,7 @@ def execute_partial_exit(symbol: str, contracts: int, exit_price: float, r_multi
         logger.error(f"Failed to execute partial exit #{level}")
 
 
-# LEGACY FUNCTION - Not used in BOS+FVG strategy
+# LEGACY FUNCTION - Not currently used
 # def update_current_regime(symbol: str) -> None:
 #     """
 #     Update the current regime for the symbol based on latest bars.
@@ -5055,7 +5053,7 @@ def execute_partial_exit(symbol: str, contracts: int, exit_price: float, r_multi
 #     pass
 
 
-# LEGACY FUNCTION - Not used in BOS+FVG strategy  
+# LEGACY FUNCTION - Not currently used  
 # def check_regime_change(symbol: str, current_price: float) -> None:
 #     """
 #     Check if market regime has changed during an active trade (informational only).
@@ -5335,7 +5333,7 @@ def check_exit_conditions(symbol: str) -> None:
         execute_exit(symbol, price, "stop_loss")
         return
     
-    # THIRD - Profit target check (BOS+FVG Strategy)
+    # THIRD - Profit target check
     target_hit, price = check_profit_target_hit(symbol, current_bar, position)
     if target_hit:
         execute_exit(symbol, price, "profit_target")
@@ -5345,7 +5343,7 @@ def check_exit_conditions(symbol: str) -> None:
     # This locks in profits and protects against reversals
     check_scalping_profit_protection(symbol, current_bar["close"])
     
-    # BOS+FVG strategy doesn't use regime detection - removed for performance
+    # Regime detection not used - removed for performance
     
     # Get current time for any time-based checks
     current_time = get_current_time()
