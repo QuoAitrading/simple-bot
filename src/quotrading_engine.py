@@ -250,6 +250,12 @@ from event_loop import EventLoop, EventType, EventPriority, TimerManager
 from error_recovery import ErrorRecoveryManager, ErrorType as RecoveryErrorType
 from bid_ask_manager import BidAskManager, BidAskQuote
 from notifications import get_notifier
+
+# Import zone-based trading strategy modules
+from zone_manager import ZoneManager
+from rejection_detector import RejectionDetector
+from filters import FilterManager
+
 # Conditionally import cloud API (only needed for live trading)
 try:
     from cloud_api import CloudAPIClient
@@ -564,9 +570,15 @@ IDLE_STATUS_MESSAGE_INTERVAL = 300  # Show status message every 5 minutes (300 s
 # Regime Detection Constants
 DEFAULT_FALLBACK_ATR = 5.0  # Default ATR when calculation not possible (ES futures typical value)
 
-# Fixed Stop Loss and Profit Target Configuration
-FIXED_STOP_LOSS_TICKS = 12  # Fixed stop loss at 12 ticks for all symbols
-FIXED_PROFIT_TARGET_TICKS = 12  # Fixed profit target at 12 ticks for all symbols
+# Fixed Stop Loss and Profit Target Configuration (Zone-Based Strategy)
+# These are now loaded from configuration - user can set in GUI
+# Fallback defaults if not configured
+ZONE_STOP_LOSS_TICKS_DEFAULT = 6  # Default stop loss for zone rejection trades
+ZONE_PROFIT_TARGET_TICKS_DEFAULT = 12  # Default profit target for zone rejection trades
+
+# Legacy Fixed Stop Loss and Profit Target Configuration
+FIXED_STOP_LOSS_TICKS = 12  # Fixed stop loss at 12 ticks for all symbols (legacy)
+FIXED_PROFIT_TARGET_TICKS = 12  # Fixed profit target at 12 ticks for all symbols (legacy)
 
 # Global broker instance (replaces sdk_client)
 broker: Optional[BrokerInterface] = None
@@ -585,6 +597,15 @@ cloud_api_client: Optional[CloudAPIClient] = None
 
 # Global bid/ask manager
 bid_ask_manager: Optional[BidAskManager] = None
+
+# Global zone manager for supply/demand trading strategy
+zone_manager = None
+
+# Global rejection detector for zone body displacement
+rejection_detector = None
+
+# Global filter manager for trade validation
+filter_manager = None
 
 # Global shutdown flag - when True, suppress all non-essential logging
 _shutdown_in_progress = False
@@ -819,12 +840,6 @@ def setup_logging() -> logging.Logger:
 
 
 logger = setup_logging()
-
-
-# ============================================================================
-# TRADING LOGIC PLACEHOLDER
-# ============================================================================
-# Strategy components have been removed - awaiting new trading logic implementation
 
 
 # ============================================================================
@@ -2324,8 +2339,7 @@ def update_1min_bar(symbol: str, price: float, volume: int, dt: datetime) -> Non
             
             # Check for exit conditions if position is active
             check_exit_conditions(symbol)
-            # Check for entry signals if no position
-            check_for_signals(symbol)
+            # Zone-based trading logic is called in handle_tick_event (not here on bar close)
         
         # Start new bar
         state[symbol]["current_1min_bar"] = {
@@ -2389,7 +2403,7 @@ def inject_complete_bar(symbol: str, bar: Dict[str, Any]) -> None:
     # Update VWAP and check conditions
     # calculate_vwap(symbol)
     check_exit_conditions(symbol)
-    check_for_signals(symbol)
+    # Zone-based trading logic is called in handle_tick_event (not here on bar close)
 
 
 
@@ -7337,6 +7351,65 @@ def main(symbol_override: str = None) -> None:
     logger.info("=" * 80)
     logger.info("")
     
+    # Initialize zone-based trading strategy components
+    global zone_manager, rejection_detector, filter_manager
+    zone_manager = ZoneManager()
+    
+    # Get symbol-specific tick specifications first
+    tick_size = CONFIG.get("tick_size")
+    tick_value = CONFIG.get("tick_value")
+    
+    if tick_size is None or tick_size <= 0:
+        raise ValueError(f"Invalid tick_size for symbol {trading_symbol}. Symbol specifications must be loaded.")
+    if tick_value is None or tick_value <= 0:
+        raise ValueError(f"Invalid tick_value for symbol {trading_symbol}. Symbol specifications must be loaded.")
+    
+    # Initialize rejection detector with proximal buffer support (symbol-specific)
+    use_proximal_buffer = CONFIG.get("use_proximal_buffer", True)
+    proximal_buffer_ticks = CONFIG.get("proximal_buffer_ticks", 2)
+    rejection_detector = RejectionDetector(
+        use_proximal_buffer=use_proximal_buffer,
+        proximal_buffer_ticks=proximal_buffer_ticks,
+        tick_size=tick_size
+    )
+    
+    # Initialize filter manager with symbol-specific tick_size (no ES-specific defaults)
+    filter_manager = FilterManager(
+        velocity_threshold=5.0,  # ticks per second
+        reaction_window=10.0,  # seconds (normal zone touches)
+        volume_lookback=30,  # bars
+        high_volume_threshold=2.0,  # times average
+        time_in_zone_limit=45.0,  # seconds
+        tick_size=tick_size  # Symbol-specific, NOT defaulted to ES
+    )
+    
+    # Get stop loss and take profit from configuration (user configurable)
+    stop_loss_ticks = CONFIG.get("stop_loss_ticks", ZONE_STOP_LOSS_TICKS_DEFAULT)
+    take_profit_ticks = CONFIG.get("take_profit_ticks", ZONE_PROFIT_TARGET_TICKS_DEFAULT)
+    
+    # Calculate dollar values for logging
+    stop_loss_dollars = stop_loss_ticks * tick_value
+    take_profit_dollars = take_profit_ticks * tick_value
+    
+    # Get proximal buffer configuration
+    proximal_reaction_window = CONFIG.get("proximal_reaction_window", 5.0)
+    buffer_size_price = proximal_buffer_ticks * tick_size
+    
+    logger.info("🎯 Zone-Based Trading Strategy Initialized:")
+    logger.info(f"  • Symbol: {trading_symbol}")
+    logger.info(f"  • Tick Specs: tick_size={tick_size}, tick_value={tick_value}")
+    logger.info(f"  • Stop Loss: {stop_loss_ticks} ticks ({stop_loss_ticks * tick_size:.2f} points = ${stop_loss_dollars:.2f})")
+    logger.info(f"  • Take Profit: {take_profit_ticks} ticks ({take_profit_ticks * tick_size:.2f} points = ${take_profit_dollars:.2f})")
+    logger.info(f"  • Velocity Filter: 5.0 ticks/sec (10s reaction window) - Symbol-agnostic")
+    logger.info(f"  • Volume Filter: 2.0x average (10s reaction window) - Symbol-agnostic")
+    logger.info(f"  • Time in Zone Limit: 45 seconds - Symbol-agnostic")
+    if use_proximal_buffer:
+        logger.info(f"  • 🎁 BONUS: Proximal Buffer ENABLED - {proximal_buffer_ticks} ticks ({buffer_size_price:.2f} points)")
+        logger.info(f"  •   Proximal Reaction Window: {proximal_reaction_window}s (tighter for buffer trades)")
+    else:
+        logger.info(f"  • Proximal Buffer: DISABLED")
+    logger.info("")
+    
     # RL system and strategy components removed - undergoing refactoring
     # Trading logic will be updated with new strategy
     
@@ -7453,9 +7526,330 @@ def main(symbol_override: str = None) -> None:
 # EVENT HANDLERS
 # ============================================================================
 
+def execute_zone_trading_logic(symbol: str, current_price: float, current_time: datetime) -> None:
+    """
+    Execute zone-based trading logic on each tick.
+    
+    Strategy:
+    1. Check and mark dead zones based on current price
+    2. For each active zone:
+       a. Check if price has entered the zone
+       b. If entered, track entry time and price
+       c. Check if body is displaced
+       d. If displaced, run filters
+       e. If all filters pass, enter trade with bracket order
+    3. Monitor open positions
+    
+    Args:
+        symbol: Trading symbol
+        current_price: Current market price
+        current_time: Current timestamp
+    """
+    global zone_manager, rejection_detector, filter_manager, broker
+    
+    # Skip if trading is disabled
+    if not bot_status.get("trading_enabled", False):
+        return
+    
+    # Skip if we don't have required components
+    if zone_manager is None or rejection_detector is None or filter_manager is None:
+        return
+    
+    # Skip if no bars yet (need open, high, low for candle)
+    if symbol not in state or not state[symbol].get("bars"):
+        return
+    
+    # Get current bar data (last 1-minute bar)
+    bars = state[symbol]["bars"]
+    if not bars:
+        return
+    
+    current_bar = bars[-1]
+    open_price = current_bar["open"]
+    high_price = current_bar["high"]
+    low_price = current_bar["low"]
+    current_volume = current_bar.get("volume", 0)
+    
+    # Convert bars to list once for efficient iteration
+    bars_list = list(bars) if not isinstance(bars, list) else bars
+    
+    # Calculate average volume for volume filter
+    volume_lookback = 30  # Should match FilterManager's volume_lookback
+    average_volume = 0
+    if len(bars) >= volume_lookback:
+        # Get recent bars for volume calculation
+        recent_volumes = [bar.get("volume", 0) for bar in bars_list[-volume_lookback:]]
+        average_volume = sum(recent_volumes) / len(recent_volumes) if recent_volumes else 0
+    elif len(bars) > 0:
+        # Use what we have if less than lookback period
+        recent_volumes = [bar.get("volume", 0) for bar in bars_list]
+        average_volume = sum(recent_volumes) / len(recent_volumes) if recent_volumes else 0
+    
+    # Check and mark dead zones
+    zone_manager.check_and_mark_dead_zones(current_price)
+    
+    # Get active zones
+    active_zones = zone_manager.get_active_zones()
+    
+    if not active_zones:
+        return
+    
+    # Check if we already have an open position
+    position = state[symbol].get("position", {})
+    has_open_position = position.get("active", False)
+    
+    # If we have an open position, broker handles stop loss and take profit automatically
+    # Just monitor for exit (position management is done by broker bracket orders)
+    if has_open_position:
+        return
+    
+    # Calculate body high and low
+    body_high, body_low = rejection_detector.calculate_body_high_low(open_price, current_price)
+    
+    # Get proximal reaction window for buffer trades
+    proximal_reaction_window = CONFIG.get("proximal_reaction_window", 5.0)
+    
+    # Check each active zone
+    for zone in active_zones:
+        # Check if price has entered this zone (including proximal buffer)
+        has_entered, is_proximal = rejection_detector.has_entered_zone(zone, high_price, low_price)
+        
+        # If price just entered, record entry and mark if proximal
+        if has_entered and zone.get('entry_time') is None:
+            zone_manager.record_zone_entry(zone, current_time, current_price)
+            zone['is_proximal'] = is_proximal  # Tag the zone entry type
+        
+        # If price is in zone or buffer, check for body displacement
+        if has_entered:
+            is_body_displaced = rejection_detector.is_body_displaced(zone, body_high, body_low)
+            
+            # If body is displaced, run filters
+            if is_body_displaced:
+                # Use tighter reaction window for proximal trades
+                reaction_window = proximal_reaction_window if zone.get('is_proximal', False) else None
+                
+                # Check all filters (with custom reaction window for proximal trades)
+                all_passed, should_wait, pending_filters = filter_manager.check_all_filters(
+                    zone, current_price, current_time,
+                    current_volume, average_volume,
+                    is_body_displaced,
+                    reaction_window=reaction_window
+                )
+                
+                # If filters are pending, continue monitoring
+                if should_wait:
+                    continue
+                
+                # If all filters passed, enter trade
+                if all_passed:
+                    # Determine trade type for tagging
+                    trade_type = "proximal" if zone.get('is_proximal', False) else "zone_touch"
+                    enter_zone_rejection_trade(symbol, zone, current_price, body_high, body_low, trade_type)
+                    # Clear zone entry state so it can be traded again later
+                    zone_manager.clear_zone_entry(zone)
+                    filter_manager.clear_pending_checks(zone)
+                    break  # Only one trade at a time
+                else:
+                    # Filters failed, clear this zone
+                    trade_type = "proximal" if zone.get('is_proximal', False) else "zone_touch"
+                    logger.info(f"⛔ Trade skipped - filters failed for {zone['zone_type']} zone ({trade_type})")
+                    zone_manager.clear_zone_entry(zone)
+                    filter_manager.clear_pending_checks(zone)
+
+
+def enter_zone_rejection_trade(symbol: str, zone: Dict, current_price: float, 
+                               body_high: float, body_low: float, trade_type: str = "zone_touch") -> None:
+    """
+    Enter a trade based on zone rejection.
+    
+    Args:
+        symbol: Trading symbol
+        zone: The zone that was rejected
+        current_price: Current market price
+        body_high: High of the candle body
+        body_low: Low of the candle body
+        trade_type: Type of trade - "zone_touch" or "proximal" (for analysis)
+    """
+    global broker
+    
+    if broker is None:
+        logger.error("❌ Cannot enter trade - broker not initialized")
+        return
+    
+    # Check if we can trade (max trades per day, etc.)
+    if not can_enter_new_trade(symbol):
+        logger.info("⛔ Cannot enter trade - trading limits reached")
+        return
+    
+    # Determine trade direction
+    if zone['zone_type'] == 'supply':
+        # Supply zone rejection = SHORT
+        side = "short"
+        order_side = "SELL"
+        entry_price = current_price
+    else:  # demand
+        # Demand zone rejection = LONG
+        side = "long"
+        order_side = "BUY"
+        entry_price = current_price
+    
+    # Calculate stop loss and take profit from configuration (user configurable, symbol-specific)
+    tick_size = CONFIG.get("tick_size")
+    tick_value = CONFIG.get("tick_value")
+    stop_loss_ticks = CONFIG.get("stop_loss_ticks", ZONE_STOP_LOSS_TICKS_DEFAULT)
+    take_profit_ticks = CONFIG.get("take_profit_ticks", ZONE_PROFIT_TARGET_TICKS_DEFAULT)
+    
+    if tick_size is None or tick_size <= 0 or tick_value is None or tick_value <= 0:
+        logger.error(f"❌ Cannot enter trade - invalid tick_size ({tick_size}) or tick_value ({tick_value}) for symbol {symbol}")
+        return
+    
+    if side == "short":
+        stop_loss_price = entry_price + (stop_loss_ticks * tick_size)
+        take_profit_price = entry_price - (take_profit_ticks * tick_size)
+    else:  # long
+        stop_loss_price = entry_price - (stop_loss_ticks * tick_size)
+        take_profit_price = entry_price + (take_profit_ticks * tick_size)
+    
+    # Get quantity from config
+    quantity = CONFIG.get("max_contracts", 1)
+    
+    # Log trade type indicator
+    trade_type_indicator = "🎁 PROXIMAL" if trade_type == "proximal" else "✅ ZONE TOUCH"
+    
+    logger.info("=" * 80)
+    logger.info(f"🎯 ENTERING {side.upper()} TRADE - {zone['zone_type'].upper()} Zone Rejection [{trade_type_indicator}]")
+    logger.info(f"  Zone: {zone['zone_bottom']:.2f} - {zone['zone_top']:.2f} ({zone['zone_strength']})")
+    logger.info(f"  Entry: {entry_price:.2f}")
+    logger.info(f"  Stop Loss: {stop_loss_price:.2f} ({stop_loss_ticks} ticks)")
+    logger.info(f"  Take Profit: {take_profit_price:.2f} ({take_profit_ticks} ticks)")
+    logger.info(f"  Quantity: {quantity}")
+    logger.info(f"  Trade Type: {trade_type.upper()}")
+    logger.info("=" * 80)
+    
+    try:
+        # Place bracket order (entry + stop loss + take profit)
+        if hasattr(broker, 'place_bracket_order'):
+            order = broker.place_bracket_order(
+                symbol=symbol,
+                side=order_side,
+                quantity=quantity,
+                stop_loss=stop_loss_price,
+                take_profit=take_profit_price
+            )
+        else:
+            # Fallback: place market order and then protective stops
+            order = broker.place_market_order(symbol, order_side, quantity)
+            if order:
+                # Place stop loss
+                stop_side = "BUY" if side == "short" else "SELL"
+                broker.place_stop_order(symbol, stop_side, quantity, stop_loss_price)
+                # Place take profit (limit order)
+                broker.place_limit_order(symbol, stop_side, quantity, take_profit_price)
+        
+        if order:
+            logger.info(f"✅ Trade entered successfully - Order ID: {order.get('order_id', 'N/A')}")
+            
+            # Update position state
+            state[symbol]["position"] = {
+                "active": True,
+                "side": side,
+                "quantity": quantity,
+                "entry_price": entry_price,
+                "stop_loss": stop_loss_price,
+                "take_profit": take_profit_price,
+                "entry_time": datetime.now(pytz.timezone(CONFIG.get("timezone", "US/Eastern"))),
+                "zone_type": zone['zone_type'],
+                "zone_strength": zone['zone_strength'],
+                "trade_type": trade_type  # Tag: "zone_touch" or "proximal"
+            }
+            
+            # Save position state to disk
+            save_position_state(symbol)
+        else:
+            logger.error("❌ Failed to enter trade - order returned None")
+            
+    except Exception as e:
+        logger.error(f"❌ Error entering trade: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
+
+
+def can_enter_new_trade(symbol: str) -> bool:
+    """
+    Check if we can enter a new trade.
+    
+    Checks:
+    - Max trades per day not exceeded
+    - Daily loss limit not reached
+    - Within entry window
+    - Not in flatten mode
+    
+    Args:
+        symbol: Trading symbol
+        
+    Returns:
+        True if we can enter a new trade, False otherwise
+    """
+    # Check if trading is enabled
+    if not bot_status.get("trading_enabled", False):
+        return False
+    
+    # Check if in flatten mode
+    if bot_status.get("flatten_mode", False):
+        return False
+    
+    # Check max trades per day
+    if symbol in state:
+        session_stats = state[symbol].get("session_stats", {})
+        trades_today = len(session_stats.get("trades", []))
+        max_trades = CONFIG.get("max_trades_per_day", 10)
+        
+        if trades_today >= max_trades:
+            logger.info(f"⛔ Max trades per day reached ({trades_today}/{max_trades})")
+            return False
+        
+        # Check daily loss limit
+        total_pnl = session_stats.get("total_pnl", 0.0)
+        daily_loss_limit = CONFIG.get("daily_loss_limit", 500)
+        
+        if total_pnl <= -daily_loss_limit:
+            logger.info(f"⛔ Daily loss limit reached (${total_pnl:.2f})")
+            return False
+    
+    # Check if within entry window
+    tz = pytz.timezone(CONFIG.get("timezone", "US/Eastern"))
+    current_time = datetime.now(tz).time()
+    
+    # Parse entry window times
+    entry_start = CONFIG.get("entry_start_time", "18:00")
+    entry_end = CONFIG.get("entry_end_time", "16:00")
+    
+    # Convert to time objects
+    from datetime import time as dt_time
+    start_hour, start_min = map(int, entry_start.split(":"))
+    end_hour, end_min = map(int, entry_end.split(":"))
+    
+    start_time = dt_time(start_hour, start_min)
+    end_time = dt_time(end_hour, end_min)
+    
+    # Check if current time is within entry window
+    # Handle overnight window (e.g., 18:00 to 16:00 next day)
+    if start_time > end_time:
+        # Overnight window
+        in_window = current_time >= start_time or current_time <= end_time
+    else:
+        # Same-day window
+        in_window = start_time <= current_time <= end_time
+    
+    if not in_window:
+        return False
+    
+    return True
+
+
 def handle_tick_event(event) -> None:
     """Handle tick data event from event loop"""
-    global backtest_current_time
+    global backtest_current_time, zone_manager, rejection_detector, filter_manager
     
     # Extract data from Event object
     data = event.data if hasattr(event, 'data') else event
@@ -7499,6 +7893,10 @@ def handle_tick_event(event) -> None:
     
     # Update 15-minute bars
     update_15min_bar(symbol, price, volume, dt)
+    
+    # Execute zone-based trading logic
+    if zone_manager is not None and rejection_detector is not None and filter_manager is not None:
+        execute_zone_trading_logic(symbol, price, dt)
 
 
 def handle_time_check_event(data: Dict[str, Any]) -> None:
@@ -7977,7 +8375,7 @@ def send_heartbeat() -> None:
     
     Uses current_trading_symbol for symbol-specific session (multi-symbol support).
     """
-    global broker, current_trading_symbol
+    global broker, current_trading_symbol, zone_manager
     
     # Skip in backtest mode
     if is_backtest_mode():
@@ -8066,6 +8464,12 @@ def send_heartbeat() -> None:
         
         if response.status_code == 200:
             data = response.json()
+            
+            # Extract zones from heartbeat response and update zone manager
+            if "zones" in data and zone_manager is not None:
+                zones_data = data.get("zones", [])
+                if zones_data:
+                    zone_manager.update_zones_from_heartbeat(zones_data)
             
             # Check for license expiration FIRST (even with 200 status, data might indicate invalid)
             if "license_valid" in data and data["license_valid"] is False:

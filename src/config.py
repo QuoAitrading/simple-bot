@@ -274,6 +274,15 @@ class BotConfiguration:
     fixed_target_ticks: int = 12  # Fixed profit target in ticks (12 ticks = 3 points on ES = $150)
     use_fixed_ticks: bool = True  # When True, use fixed ticks instead of FVG-based stops
     
+    # Zone-Based Strategy Configuration - USER CONFIGURABLE VIA GUI
+    stop_loss_ticks: int = 6  # Stop loss in ticks (USER CONFIGURABLE via GUI)
+    take_profit_ticks: int = 12  # Take profit in ticks (USER CONFIGURABLE via GUI)
+    
+    # Proximal Zone Buffer Configuration - USER CONFIGURABLE VIA GUI (BONUS FEATURE)
+    use_proximal_buffer: bool = True  # Enable proximal buffer detection (USER CONFIGURABLE via GUI)
+    proximal_buffer_ticks: int = 2  # Buffer size in ticks (default: 2 ticks, USER CONFIGURABLE via GUI)
+    proximal_reaction_window: float = 5.0  # Tighter reaction window for proximal trades (seconds, INTERNAL)
+    
     # Instrument Specifications
     tick_size: float = 0.25
     tick_value: float = 12.50  # ES full contract: $12.50 per tick
@@ -328,7 +337,7 @@ class BotConfiguration:
     # - breakeven_buffer_ticks: 1 (entry + 1 tick offset)
     # - trailing_trigger_ticks: 15 (start trailing after 15 ticks profit)
     # - trailing_distance_ticks: 8 (trail 8 ticks behind peak)
-    # - max_hold_bars: 20 (time stop - user configurable via GUI)
+
     #
     # WHY TRAILING WORKS:
     # - Small reversal: Trail protects gains, locks in 16+ ticks
@@ -342,9 +351,7 @@ class BotConfiguration:
     trailing_stop_trigger_ticks: int = 15  # HARDCODED - Start trailing after 15 ticks
     trailing_stop_distance_ticks: int = 8  # HARDCODED - Trail 8 ticks behind peak
     
-    # Time-Based Exit (USER CONFIGURABLE via GUI checkbox)
-    time_stop_enabled: bool = False  # USER CONFIGURABLE - Exit after max_hold_bars if no resolution
-    max_hold_bars: int = 20  # HARDCODED - Time stop after 20 bars (20 min on 1-min chart)
+
     
     # Partial Exits - DISABLED (Trailing stop manages exits now)
     # Trailing stop handles all profit-taking, no need for partial exits
@@ -489,13 +496,18 @@ class BotConfiguration:
             "trailing_stop_distance_ticks": self.trailing_stop_distance_ticks,
             "trailing_distance_ticks": self.trailing_stop_distance_ticks,  # Alias
             
-            # Time Stop (USER CONFIGURABLE)
-            "time_stop_enabled": self.time_stop_enabled,
-            "max_hold_bars": self.max_hold_bars,
-            "time_stop_bars": self.max_hold_bars,  # Alias
             
             # Partial Exits DISABLED (trailing handles exits)
             "partial_exits_enabled": self.partial_exits_enabled,
+            
+            # Zone-Based Strategy Configuration (USER CONFIGURABLE via GUI)
+            "stop_loss_ticks": self.stop_loss_ticks,
+            "take_profit_ticks": self.take_profit_ticks,
+            
+            # Proximal Zone Buffer Configuration (USER CONFIGURABLE via GUI - BONUS FEATURE)
+            "use_proximal_buffer": self.use_proximal_buffer,
+            "proximal_buffer_ticks": self.proximal_buffer_ticks,
+            "proximal_reaction_window": self.proximal_reaction_window,
         }
 
 
@@ -583,9 +595,23 @@ def load_from_env() -> BotConfiguration:
     if os.getenv("BOT_SHADOW_MODE"):
         config.shadow_mode = os.getenv("BOT_SHADOW_MODE").lower() in ("true", "1", "yes")
     
-    # Time-Based Exit (USER CONFIGURABLE via GUI checkbox)
-    if os.getenv("BOT_TIME_EXIT_ENABLED"):
-        config.time_stop_enabled = os.getenv("BOT_TIME_EXIT_ENABLED").lower() in ("true", "1", "yes")
+    # Zone-Based Strategy Configuration (USER CONFIGURABLE via GUI)
+    if os.getenv("BOT_STOP_LOSS_TICKS"):
+        config.stop_loss_ticks = int(os.getenv("BOT_STOP_LOSS_TICKS"))
+    
+    if os.getenv("BOT_TAKE_PROFIT_TICKS"):
+        config.take_profit_ticks = int(os.getenv("BOT_TAKE_PROFIT_TICKS"))
+    
+    # Proximal Buffer Configuration (USER CONFIGURABLE via GUI - BONUS FEATURE)
+    if os.getenv("BOT_USE_PROXIMAL_BUFFER"):
+        config.use_proximal_buffer = os.getenv("BOT_USE_PROXIMAL_BUFFER").lower() in ("true", "1", "yes")
+    
+    if os.getenv("BOT_PROXIMAL_BUFFER_TICKS"):
+        config.proximal_buffer_ticks = int(os.getenv("BOT_PROXIMAL_BUFFER_TICKS"))
+    
+    if os.getenv("BOT_PROXIMAL_REACTION_WINDOW"):
+        config.proximal_reaction_window = float(os.getenv("BOT_PROXIMAL_REACTION_WINDOW"))
+    
     
     if os.getenv("BOT_ENVIRONMENT"):
         config.environment = os.getenv("BOT_ENVIRONMENT")
@@ -745,6 +771,10 @@ def load_config(environment: Optional[str] = None, backtest_mode: bool = False) 
         env_vars_set.add("dry_run")
     if os.getenv("BOT_SHADOW_MODE"):
         env_vars_set.add("shadow_mode")
+    if os.getenv("BOT_STOP_LOSS_TICKS"):
+        env_vars_set.add("stop_loss_ticks")
+    if os.getenv("BOT_TAKE_PROFIT_TICKS"):
+        env_vars_set.add("take_profit_ticks")
     if os.getenv("BOT_ENVIRONMENT"):
         env_vars_set.add("environment")
     if os.getenv("BOT_BROKER") or os.getenv("BROKER"):
