@@ -1,7 +1,0 @@
-Flask==3.0.0
-Flask-Cors==4.0.0
-azure-storage-blob==12.19.0
-psycopg2-binary==2.9.9
-gunicorn==21.2.0
-requests==2.32.4
-numpy==1.26.4

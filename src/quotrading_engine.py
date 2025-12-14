@@ -270,9 +270,6 @@ from event_loop import EventLoop, EventType, EventPriority, TimerManager
 from error_recovery import ErrorRecoveryManager, ErrorType as RecoveryErrorType
 from bid_ask_manager import BidAskManager, BidAskQuote
 from notifications import get_notifier
-from signal_confidence import SignalConfidenceRL
-# Legacy imports removed - BOS+FVG strategy doesn't use regime or capitulation detection
-
 # Conditionally import cloud API (only needed for live trading)
 try:
     from cloud_api import CloudAPIClient
@@ -280,9 +277,6 @@ try:
 except ImportError:
     CLOUD_API_AVAILABLE = False
     CloudAPIClient = None
-
-from bos_detector import BOSDetector
-from fvg_detector import FVGDetector
 
 # Conditionally import broker (only needed for live trading, not backtesting)
 try:
@@ -610,9 +604,6 @@ recovery_manager: Optional[ErrorRecoveryManager] = None
 # Global timer manager
 timer_manager: Optional[TimerManager] = None
 
-# Global RL brain for signal confidence learning (used in both live and backtest modes)
-rl_brain: Optional[SignalConfidenceRL] = None
-
 # Global cloud API client for reporting trade outcomes (data collection only)
 cloud_api_client: Optional[CloudAPIClient] = None
 
@@ -865,22 +856,13 @@ logger = setup_logging()
 
 async def get_ml_confidence_async(rl_state: Dict[str, Any], side: str) -> Tuple[bool, float, str]:
     """
-    Get RL decision from local RL brain for both live and backtest modes.
-    
-    LIVE MODE: Uses local rl_brain for confidence decisions (no cloud dependency)
-    BACKTEST MODE: Uses local rl_brain for learning and testing
+    Stub function - RL system has been removed.
+    Always returns default approval.
     
     Returns: (take_signal, confidence, reason)
     """
-    global rl_brain
-    
-    # Use local RL brain for all modes (live and backtest)
-    if rl_brain is not None:
-        return rl_brain.should_take_signal(rl_state)
-    
-    # Fallback if RL brain not initialized
-    logger.warning("RL brain not initialized - using default approval")
-    return True, 0.65, "No RL brain initialized - default approval"
+    # Default approval - no RL filtering
+    return True, 1.0, "RL system removed - default approval"
 
 
 def get_ml_confidence(rl_state: Dict[str, Any], side: str) -> Tuple[bool, float, str]:
@@ -902,38 +884,11 @@ async def save_trade_experience_async(
     execution_data: Dict[str, Any]
 ) -> None:
     """
-    Save trade outcome based on mode.
-    
-    LIVE MODE: Saves to cloud ONLY (reads local for pattern matching, but doesn't save local)
-    BACKTEST MODE: Saves to local RL brain only
-    SHADOW MODE: Does NOT send to cloud (signal-only mode)
-    AI MODE: Does NOT send to cloud (position management mode)
+    Stub function - RL system has been removed.
+    Trade outcome tracking is no longer active.
     """
-    global cloud_api_client, rl_brain
-    
-    # BACKTEST MODE: Save to local RL brain only
-    if is_backtest_mode() or CONFIG.get("backtest_mode", False):
-        if rl_brain is not None:
-            rl_brain.record_outcome(rl_state, True, pnl, duration_minutes, execution_data)
-        return
-    
-    # SHADOW MODE: Do NOT send data to cloud RL database
-    # This mode is for user experimentation and should not pollute the training data
-    if CONFIG.get("shadow_mode", False):
-        return
-    
-    # LIVE MODE: Report to cloud ONLY (don't save locally)
-    if cloud_api_client is None:
-        return
-    
-    try:
-        # Add side and price to state
-        state_with_context = rl_state.copy()
-        state_with_context['side'] = side.lower()
-        state_with_context['price'] = state.get("current_price", 0)
-        
-        # Convert duration to seconds
-        duration_seconds = duration_minutes * 60.0
+    # No-op - RL system removed
+    pass
         
         # Report to cloud in background (non-blocking) with execution_data
         loop = asyncio.get_event_loop()
@@ -2147,48 +2102,20 @@ def initialize_state(symbol: str) -> None:
         # Volume history
         "volume_history": deque(maxlen=CONFIG["max_bars_storage"]),
         
-        # BOS + FVG Strategy Components
-        "bos_detector": None,  # Will be initialized after symbol specs are known
-        "fvg_detector": None,  # Will be initialized after symbol specs are known
-        "current_bos_direction": None,  # 'bullish', 'bearish', or None
-        "active_fvgs": [],  # List of active FVG zones
-        # Legacy fields removed - BOS+FVG doesn't use capitulation
+        # Strategy components removed - undergoing refactoring
     }
-    
-    # Initialize BOS and FVG detectors with symbol-specific parameters
-    initialize_bos_fvg_detectors(symbol)
 
 
 def initialize_bos_fvg_detectors(symbol: str) -> None:
     """
-    Initialize BOS and FVG detectors for a symbol.
-    Uses symbol-specific tick size and values.
+    Stub function - BOS/FVG strategy has been removed.
+    Strategy components are being refactored.
     
     Args:
         symbol: Instrument symbol
     """
-    # Get symbol-specific parameters
-    from symbol_specs import SYMBOL_SPECS
-    if symbol in SYMBOL_SPECS:
-        spec = SYMBOL_SPECS[symbol]
-        tick_size = spec.tick_size
-        tick_value = spec.tick_value
-    else:
-        # Fallback to config defaults (usually ES)
-        tick_size = CONFIG.get("tick_size", 0.25)
-        tick_value = CONFIG.get("tick_value", 12.50)
-    
-    # Initialize BOS detector (5-bar swing lookback)
-    state[symbol]["bos_detector"] = BOSDetector(swing_lookback=5)
-    
-    # Initialize FVG detector with optimized BOS+FVG strategy parameters
-    state[symbol]["fvg_detector"] = FVGDetector(
-        tick_size=tick_size,
-        min_fvg_size_ticks=2,    # Minimum 2 ticks (catches more signals)
-        max_fvg_size_ticks=25,   # Maximum 25 ticks (increased from 20 - less restrictive)
-        fvg_expiry_minutes=75,   # 75 minute expiry (increased from 60 - gives FVGs more time)
-        max_active_fvgs=15       # Track up to 15 FVGs (increased from 10 - ES is very active)
-    )
+    # No-op - strategy removed
+    pass
     
 
 
@@ -2965,61 +2892,14 @@ def update_volume_average(symbol: str) -> None:
 
 def process_bos_fvg(symbol: str) -> None:
     """
-    Process BOS (Break of Structure) and FVG (Fair Value Gap) detection.
-    Called after each 1-minute bar is completed.
-    
-    This implements the BOS + FVG scalping strategy:
-    1. Detect swing highs/lows and BOS events
-    2. Detect new FVG patterns
-    3. Track FVG expirations (but NOT fills - fills are checked in signal logic)
+    Stub function - BOS/FVG strategy has been removed.
+    Strategy components are being refactored.
     
     Args:
         symbol: Instrument symbol
     """
-    bars = list(state[symbol]["bars_1min"])
-    bos_detector = state[symbol]["bos_detector"]
-    fvg_detector = state[symbol]["fvg_detector"]
-    
-    # Need detectors initialized and at least 3 bars for FVG
-    if bos_detector is None or fvg_detector is None:
-        if len(bars) >= 3:
-            # Always show initialization warnings (critical for debugging)
-            logger.warning(f"Pattern detectors not initialized for {symbol} - trading may not work properly")
-        return
-    
-    if len(bars) < 3:
-        return
-    
-    # Process BOS detection
-    bos_direction, bos_level = bos_detector.process_bar(bars)
-    if bos_direction:
-        state[symbol]["current_bos_direction"] = bos_direction
-        # Only log BOS detection in backtest mode to avoid exposing strategy
-        if is_backtest_mode():
-            logger.info(f"🔄 BOS DETECTED: {bos_direction.upper()} at ${bos_level:.2f}")
-    
-    # Detect new FVGs (but don't check fills here - that's done in signal checking)
-    current_bar = bars[-1]
-    if len(bars) >= 3:
-        new_fvg = fvg_detector.detect_fvg(bars[-3], bars[-2], bars[-1])
-        if new_fvg:
-            fvg_detector.active_fvgs.append(new_fvg)
-            # Only log FVG details in backtest mode to avoid exposing strategy
-            if is_backtest_mode():
-                logger.info(f"📊 FVG CREATED: {new_fvg['type'].upper()} | "
-                           f"Top: ${new_fvg['top']:.2f} | Bottom: ${new_fvg['bottom']:.2f} | "
-                           f"Size: {new_fvg['size_ticks']:.1f} ticks")
-    
-    # Clean up expired FVGs
-    current_time = current_bar.get('timestamp')
-    if current_time:
-        fvg_detector.remove_expired_fvgs(current_time)
-    
-    # Limit number of active FVGs
-    fvg_detector.limit_active_fvgs()
-    
-    # Update state with current FVG list
-    state[symbol]["active_fvgs"] = fvg_detector.active_fvgs
+    # No-op - strategy removed
+    pass
     
 
 
@@ -3409,14 +3289,8 @@ def validate_signal_requirements(symbol: str, bar_time: datetime) -> Tuple[bool,
 def check_long_signal_conditions(symbol: str, prev_bar: Dict[str, Any], 
                                  current_bar: Dict[str, Any]) -> bool:
     """
-    Check if long signal conditions are met - BOS + FVG SCALPING STRATEGY.
-    
-    ALL 5 CONDITIONS MUST BE TRUE:
-    1. Bullish BOS is active (most recent BOS was bullish)
-    2. Bullish FVG exists (gap between bar1.high and bar3.low, 2-20 ticks)
-    3. Price fills the FVG (current bar's low touches or goes into the FVG top)
-    4. FVG is not expired (created within last 60 minutes)
-    5. No position currently open (one trade at a time)
+    Stub function - BOS/FVG strategy has been removed.
+    Strategy components are being refactored.
     
     Args:
         symbol: Instrument symbol
@@ -3424,78 +3298,17 @@ def check_long_signal_conditions(symbol: str, prev_bar: Dict[str, Any],
         current_bar: Current 1-minute bar
     
     Returns:
-        True if ALL 5 conditions are met
+        False - no signals during refactoring
     """
-    bars = state[symbol]["bars_1min"]
-    bos_detector = state[symbol]["bos_detector"]
-    fvg_detector = state[symbol]["fvg_detector"]
-    
-    # Need detectors initialized
-    if bos_detector is None or fvg_detector is None:
-        return False
-    
-    # Need at least 21 bars for ATR calculation and BOS detection
-    if len(bars) < 21:
-        return False
-    
-    # Get current BOS direction
-    current_bos = bos_detector.get_current_trend()
-    
-    # CONDITION 1: Bullish BOS must be active
-    if current_bos != 'bullish':
-        state[symbol]["entry_details"] = {
-            "reason": f"No bullish BOS active (current: {current_bos})"
-        }
-        return False
-    
-    # CONDITION 2-4: Check for bullish FVG fills
-    unfilled_bullish_fvgs = fvg_detector.get_unfilled_fvgs('bullish')
-    
-    if not unfilled_bullish_fvgs:
-        state[symbol]["entry_details"] = {
-            "reason": "No unfilled bullish FVGs available"
-        }
-        return False
-    
-    # Check if any FVG is filled by current bar
-    # Note: We take the first filled FVG (FIFO order) as per BOS+FVG strategy
-    # This ensures consistent behavior and prevents over-trading
-    for fvg in unfilled_bullish_fvgs:
-        is_filled = fvg_detector.is_fvg_filled(fvg, current_bar)
-        if is_filled:
-            # Found a filled FVG - this is our entry signal
-            # Only log strategy details in backtest mode
-            if is_backtest_mode():
-                logger.info(f"🎯 LONG SIGNAL: Bullish pattern detected at ${fvg['top']:.2f}")
-            state[symbol]["entry_details"] = {
-                "fvg_id": fvg['id'],
-                "fvg_top": fvg['top'],
-                "fvg_bottom": fvg['bottom'],
-                "fvg_size_ticks": fvg['size_ticks'],
-                "entry_price": fvg['top'],  # Enter at FVG top
-                "bos_direction": 'bullish',
-                "reason": "Bullish pattern"
-            }
-            return True
-    
-    # No FVG was filled
-    state[symbol]["entry_details"] = {
-        "reason": f"Have {len(unfilled_bullish_fvgs)} bullish FVGs but none filled yet"
-    }
+    # No signals - strategy removed
     return False
 
 
 def check_short_signal_conditions(symbol: str, prev_bar: Dict[str, Any], 
                                   current_bar: Dict[str, Any]) -> bool:
     """
-    Check if short signal conditions are met - BOS + FVG SCALPING STRATEGY.
-    
-    ALL 5 CONDITIONS MUST BE TRUE:
-    1. Bearish BOS is active (most recent BOS was bearish)
-    2. Bearish FVG exists (gap between bar1.low and bar3.high, 2-20 ticks)
-    3. Price fills the FVG (current bar's high touches or goes into the FVG bottom)
-    4. FVG is not expired (created within last 60 minutes)
-    5. No position currently open (one trade at a time)
+    Stub function - BOS/FVG strategy has been removed.
+    Strategy components are being refactored.
     
     Args:
         symbol: Instrument symbol
@@ -3503,60 +3316,9 @@ def check_short_signal_conditions(symbol: str, prev_bar: Dict[str, Any],
         current_bar: Current 1-minute bar
     
     Returns:
-        True if ALL 5 conditions are met
+        False - no signals during refactoring
     """
-    bars = state[symbol]["bars_1min"]
-    bos_detector = state[symbol]["bos_detector"]
-    fvg_detector = state[symbol]["fvg_detector"]
-    
-    # Need detectors initialized
-    if bos_detector is None or fvg_detector is None:
-        return False
-    
-    # Need at least 21 bars for ATR calculation and BOS detection
-    if len(bars) < 21:
-        return False
-    
-    # Get current BOS direction
-    current_bos = bos_detector.get_current_trend()
-    
-    # CONDITION 1: Bearish BOS must be active
-    if current_bos != 'bearish':
-        state[symbol]["entry_details"] = {
-            "reason": f"No bearish BOS active (current: {current_bos})"
-        }
-        return False
-    
-    # CONDITION 2-4: Check for bearish FVG fills
-    unfilled_bearish_fvgs = fvg_detector.get_unfilled_fvgs('bearish')
-    
-    if not unfilled_bearish_fvgs:
-        state[symbol]["entry_details"] = {
-            "reason": "No unfilled bearish FVGs available"
-        }
-        return False
-    
-    # Check if any FVG is filled by current bar
-    # Note: We take the first filled FVG (FIFO order) as per BOS+FVG strategy
-    # This ensures consistent behavior and prevents over-trading
-    for fvg in unfilled_bearish_fvgs:
-        if fvg_detector.is_fvg_filled(fvg, current_bar):
-            # Found a filled FVG - this is our entry signal
-            state[symbol]["entry_details"] = {
-                "fvg_id": fvg['id'],
-                "fvg_top": fvg['top'],
-                "fvg_bottom": fvg['bottom'],
-                "fvg_size_ticks": fvg['size_ticks'],
-                "entry_price": fvg['bottom'],  # Enter at FVG bottom
-                "bos_direction": 'bearish',
-                "reason": "Bearish BOS + FVG fill"
-            }
-            return True
-    
-    # No FVG was filled
-    state[symbol]["entry_details"] = {
-        "reason": f"Have {len(unfilled_bearish_fvgs)} bearish FVGs but none filled yet"
-    }
+    # No signals - strategy removed
     return False
 
 
@@ -3732,110 +3494,22 @@ def get_volatility_regime(atr: float, symbol: str) -> str:
 
 def capture_market_state(symbol: str, current_price: float) -> Dict[str, Any]:
     """
-    Capture market state snapshot for BOS + FVG SCALPING pattern matching.
-    
-    SIMPLIFIED 15-FIELD STRUCTURE FOR BOS+FVG:
-    ==========================================
-    The 11 Pattern Matching Fields:
-    1. bos_direction - Current BOS trend ('bullish', 'bearish', or None)
-    2. fvg_size_ticks - Size of the FVG being traded in ticks
-    3. fvg_age_bars - How many bars since FVG was created
-    4. price_in_fvg_pct - How deep into the FVG price has penetrated (0-100%)
-    5. volume_ratio - Current volume vs 20-bar average
-    6. atr_ratio - Current volatility vs 20-bar average ATR
-    7. session - Trading session (overnight, asia, london, newyork, postmarket)
-    8. hour - Hour of day (for time-based patterns)
-    9. fvg_count_active - Number of active unfilled FVGs
-    10. swing_high - Most recent swing high price
-    11. swing_low - Most recent swing low price
-    
-    The 4 Metadata Fields:
-    12. symbol
-    13. timestamp
-    14. pnl (added later by record_outcome)
-    15. took_trade (added later by record_outcome)
-    
-    TOTAL: 15 fields for complete experience tracking.
-    All fields are used - 11 for pattern matching, 4 for metadata/outcomes.
-    
-    LEGACY FIELDS (not used in BOS+FVG):
-    - Old strategy fields like flush_size_ticks, flush_velocity, etc.
-    - RSI, VWAP distance, regime detection
+    Stub function - RL system and strategy have been removed.
+    Returns minimal state for compatibility.
     
     Args:
         symbol: Instrument symbol
         current_price: Current market price
     
     Returns:
-        Dictionary with 11 pattern matching + 2 metadata fields (pnl and took_trade added later)
+        Empty dictionary - RL removed
     """
-    # Get current time and session
-    current_time = get_current_time()
-    hour = current_time.hour
-    session = get_session_type(current_time)
-    
-    # Get tick size
-    tick_size = CONFIG.get("tick_size", 0.25)
-    
-    # Calculate volume_ratio (current volume vs 20-bar average)
-    bars_1min = state[symbol]["bars_1min"]
-    if len(bars_1min) >= 20:
-        recent_volumes = [bar.get("volume", 0) for bar in list(bars_1min)[-20:]]
-        avg_volume_20 = sum(recent_volumes) / len(recent_volumes) if recent_volumes else 1
-        current_bar = bars_1min[-1] if bars_1min else {"volume": 0}
-        volume_ratio = current_bar.get("volume", 0) / avg_volume_20 if avg_volume_20 > 0 else 1.0
-    else:
-        volume_ratio = 1.0
-    
-    # Calculate ATR ratio (current volatility vs 20-bar average)
-    atr_ratio = 1.0
-    if len(bars_1min) >= 21:  # Need 21 bars (1 for prev close + 20 for calculation)
-        bars_list = list(bars_1min)[-21:]
-        true_ranges = []
-        
-        for i in range(1, len(bars_list)):
-            high = bars_list[i].get("high", 0)
-            low = bars_list[i].get("low", 0)
-            prev_close = bars_list[i-1].get("close", 0)
-            
-            # True Range is max of: high-low, |high-prev_close|, |low-prev_close|
-            tr = max(
-                high - low,
-                abs(high - prev_close),
-                abs(low - prev_close)
-            )
-            true_ranges.append(tr)
-        
-        if true_ranges:
-            # Average True Range over 20 bars
-            avg_atr_20 = sum(true_ranges) / len(true_ranges)
-            # Current bar true range (most recent)
-            current_tr = true_ranges[-1] if true_ranges else 0
-            # ATR ratio: current volatility / average volatility
-            atr_ratio = current_tr / avg_atr_20 if avg_atr_20 > 0 else 1.0
-    
-    # Get BOS and FVG detector state
-    bos_detector = state[symbol].get("bos_detector")
-    fvg_detector = state[symbol].get("fvg_detector")
-    
-    # Initialize BOS/FVG-related fields
-    bos_direction = None
-    fvg_size_ticks = 0.0
-    fvg_age_bars = 0
-    price_in_fvg_pct = 0.0
-    fvg_count_active = 0
-    swing_high = current_price
-    swing_low = current_price
-    
-    # Get BOS direction
-    if bos_detector:
-        bos_direction = bos_detector.get_current_trend()
-        if bos_detector.last_swing_high:
-            swing_high = bos_detector.last_swing_high
-        if bos_detector.last_swing_low:
-            swing_low = bos_detector.last_swing_low
-    
-    # Get FVG information from entry_details if available
+    # Return empty dict - RL system removed
+    return {
+        "symbol": symbol,
+        "timestamp": datetime.now(pytz.UTC).isoformat(),
+        "price": current_price
+    }
     entry_details = state[symbol].get("entry_details", {})
     if entry_details and "fvg_size_ticks" in entry_details:
         fvg_size_ticks = entry_details.get("fvg_size_ticks", 0.0)
@@ -3997,9 +3671,6 @@ def check_for_signals(symbol: str) -> None:
     diagnostic_counter = state[symbol].get("diagnostic_counter", 0) + 1
     state[symbol]["diagnostic_counter"] = diagnostic_counter
     should_log_diagnostic = (diagnostic_counter % 30 == 0)
-    
-    # Declare global RL brain for both signal checks
-    global rl_brain
     
     # Check for long signal
     long_passed = check_long_signal_conditions(symbol, prev_bar, current_bar)
@@ -7961,7 +7632,7 @@ def main(symbol_override: str = None) -> None:
         symbol_override: Optional symbol to trade (overrides CONFIG["instrument"])
                         Used for multi-symbol bot instances
     """
-    global event_loop, timer_manager, bid_ask_manager, cloud_api_client, rl_brain, current_trading_symbol
+    global event_loop, timer_manager, bid_ask_manager, cloud_api_client, current_trading_symbol
     
     # CRITICAL: Determine trading symbol FIRST, before license validation
     # This enables symbol-specific sessions for multi-symbol support
@@ -8008,35 +7679,8 @@ def main(symbol_override: str = None) -> None:
     logger.info("=" * 80)
     logger.info("")
     
-    # Initialize local RL brain for LIVE and BACKTEST modes
-    # LIVE MODE: Reads from local symbol-specific folder for pattern matching, saves to cloud only
-    # BACKTEST MODE: Reads and saves to local symbol-specific folder
-    if is_backtest_mode() or CONFIG.get("backtest_mode", False):
-        pass
-    else:
-        # Use symbol-specific folder for experiences
-        signal_exp_file = str(get_data_file_path(f"experiences/{trading_symbol}/signal_experience.json"))
-        rl_brain = SignalConfidenceRL(
-            experience_file=signal_exp_file,
-            backtest_mode=False,  # Live mode
-            confidence_threshold=CONFIG.get("rl_confidence_threshold"),
-            exploration_rate=0.0,  # No exploration in live mode (pure exploitation)
-            min_exploration=0.0,
-            exploration_decay=0.995,
-            save_local=False  # Live mode: read local but save to cloud only
-        )
-        
-        # Initialize Cloud API Client for reporting trade outcomes to cloud
-        license_key = os.getenv("QUOTRADING_LICENSE_KEY")
-        if license_key:
-            cloud_api_url = "https://quotrading-flask-api.azurewebsites.net"
-            cloud_api_client = CloudAPIClient(
-                api_url=cloud_api_url,
-                license_key=license_key,
-                timeout=10
-            )
-        else:
-            logger.warning(f"No license key - cloud outcome reporting disabled")
+    # RL system and strategy components removed - undergoing refactoring
+    # Trading logic will be updated with new strategy
     
     # Symbol specifications - suppress detailed info, just essentials
     # (Tick value, slippage, etc. are technical details customers don't need)
