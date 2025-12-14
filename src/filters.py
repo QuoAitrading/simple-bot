@@ -9,6 +9,9 @@ import time
 
 logger = logging.getLogger(__name__)
 
+# Constants
+MIN_TIME_ELAPSED_SECONDS = 0.1  # Minimum time elapsed to avoid division by zero in velocity calculation
+
 
 class FilterManager:
     """
@@ -78,8 +81,8 @@ class FilterManager:
         time_elapsed = (current_time - entry_time).total_seconds()
         
         # Avoid division by zero
-        if time_elapsed < 0.1:
-            time_elapsed = 0.1
+        if time_elapsed < MIN_TIME_ELAPSED_SECONDS:
+            time_elapsed = MIN_TIME_ELAPSED_SECONDS
         
         velocity = ticks_moved / time_elapsed
         return velocity

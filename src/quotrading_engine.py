@@ -570,9 +570,13 @@ IDLE_STATUS_MESSAGE_INTERVAL = 300  # Show status message every 5 minutes (300 s
 # Regime Detection Constants
 DEFAULT_FALLBACK_ATR = 5.0  # Default ATR when calculation not possible (ES futures typical value)
 
-# Fixed Stop Loss and Profit Target Configuration
-FIXED_STOP_LOSS_TICKS = 12  # Fixed stop loss at 12 ticks for all symbols
-FIXED_PROFIT_TARGET_TICKS = 12  # Fixed profit target at 12 ticks for all symbols
+# Fixed Stop Loss and Profit Target Configuration (Zone-Based Strategy)
+ZONE_STOP_LOSS_TICKS = 6  # Stop loss at 6 ticks for zone rejection trades
+ZONE_PROFIT_TARGET_TICKS = 12  # Profit target at 12 ticks for zone rejection trades
+
+# Legacy Fixed Stop Loss and Profit Target Configuration
+FIXED_STOP_LOSS_TICKS = 12  # Fixed stop loss at 12 ticks for all symbols (legacy)
+FIXED_PROFIT_TARGET_TICKS = 12  # Fixed profit target at 12 ticks for all symbols (legacy)
 
 # Global broker instance (replaces sdk_client)
 broker: Optional[BrokerInterface] = None
@@ -7536,17 +7540,18 @@ def execute_zone_trading_logic(symbol: str, current_price: float, current_time: 
     low_price = current_bar["low"]
     current_volume = current_bar.get("volume", 0)
     
+    # Convert bars to list once for efficient iteration
+    bars_list = list(bars) if not isinstance(bars, list) else bars
+    
     # Calculate average volume for volume filter
-    volume_lookback = 30
+    volume_lookback = 30  # Should match FilterManager's volume_lookback
     average_volume = 0
     if len(bars) >= volume_lookback:
         # Get recent bars for volume calculation
-        bars_list = list(bars) if not isinstance(bars, list) else bars
         recent_volumes = [bar.get("volume", 0) for bar in bars_list[-volume_lookback:]]
         average_volume = sum(recent_volumes) / len(recent_volumes) if recent_volumes else 0
     elif len(bars) > 0:
         # Use what we have if less than lookback period
-        bars_list = list(bars) if not isinstance(bars, list) else bars
         recent_volumes = [bar.get("volume", 0) for bar in bars_list]
         average_volume = sum(recent_volumes) / len(recent_volumes) if recent_volumes else 0
     
@@ -7648,8 +7653,8 @@ def enter_zone_rejection_trade(symbol: str, zone: Dict, current_price: float,
     
     # Calculate stop loss and take profit
     tick_size = CONFIG.get("tick_size", 0.25)
-    stop_loss_ticks = 6
-    take_profit_ticks = 12
+    stop_loss_ticks = ZONE_STOP_LOSS_TICKS
+    take_profit_ticks = ZONE_PROFIT_TARGET_TICKS
     
     if side == "short":
         stop_loss_price = entry_price + (stop_loss_ticks * tick_size)
