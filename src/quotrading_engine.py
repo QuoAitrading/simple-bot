@@ -65,7 +65,7 @@ Friday Special Rules:
 For Multi-User Subscriptions:
 - All users see US Eastern times (CME standard)
 - Bot uses Eastern Time, can display in user's local timezone if needed
-- Each user gets their own position and market state
+- Each user gets their own position tracking and session state
 
 """
 
