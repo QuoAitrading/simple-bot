@@ -7365,8 +7365,12 @@ def main(symbol_override: str = None) -> None:
     
     # Initialize filter manager with symbol-specific tick_size (no ES-specific defaults)
     tick_size = CONFIG.get("tick_size")
-    if tick_size is None:
-        raise ValueError(f"tick_size not configured for symbol {trading_symbol}. Symbol specifications must be loaded.")
+    tick_value = CONFIG.get("tick_value")
+    
+    if tick_size is None or tick_size <= 0:
+        raise ValueError(f"Invalid tick_size for symbol {trading_symbol}. Symbol specifications must be loaded.")
+    if tick_value is None or tick_value <= 0:
+        raise ValueError(f"Invalid tick_value for symbol {trading_symbol}. Symbol specifications must be loaded.")
     
     filter_manager = FilterManager(
         velocity_threshold=5.0,  # ticks per second
@@ -7380,13 +7384,16 @@ def main(symbol_override: str = None) -> None:
     # Get stop loss and take profit from configuration (user configurable)
     zone_stop_loss_ticks = CONFIG.get("zone_stop_loss_ticks", ZONE_STOP_LOSS_TICKS_DEFAULT)
     zone_take_profit_ticks = CONFIG.get("zone_take_profit_ticks", ZONE_PROFIT_TARGET_TICKS_DEFAULT)
-    tick_value = CONFIG.get("tick_value")
+    
+    # Calculate dollar values for logging
+    stop_loss_dollars = zone_stop_loss_ticks * tick_value
+    take_profit_dollars = zone_take_profit_ticks * tick_value
     
     logger.info("🎯 Zone-Based Trading Strategy Initialized:")
     logger.info(f"  • Symbol: {trading_symbol}")
     logger.info(f"  • Tick Specs: tick_size={tick_size}, tick_value={tick_value}")
-    logger.info(f"  • Stop Loss: {zone_stop_loss_ticks} ticks ({zone_stop_loss_ticks * tick_size:.2f} points = ${zone_stop_loss_ticks * tick_size * (tick_value / tick_size):.2f})")
-    logger.info(f"  • Take Profit: {zone_take_profit_ticks} ticks ({zone_take_profit_ticks * tick_size:.2f} points = ${zone_take_profit_ticks * tick_size * (tick_value / tick_size):.2f})")
+    logger.info(f"  • Stop Loss: {zone_stop_loss_ticks} ticks ({zone_stop_loss_ticks * tick_size:.2f} points = ${stop_loss_dollars:.2f})")
+    logger.info(f"  • Take Profit: {zone_take_profit_ticks} ticks ({zone_take_profit_ticks * tick_size:.2f} points = ${take_profit_dollars:.2f})")
     logger.info(f"  • Velocity Filter: 5.0 ticks/sec (10s reaction window) - Symbol-agnostic")
     logger.info(f"  • Volume Filter: 2.0x average (10s reaction window) - Symbol-agnostic")
     logger.info(f"  • Time in Zone Limit: 45 seconds - Symbol-agnostic")
@@ -7669,8 +7676,8 @@ def enter_zone_rejection_trade(symbol: str, zone: Dict, current_price: float,
     stop_loss_ticks = CONFIG.get("zone_stop_loss_ticks", ZONE_STOP_LOSS_TICKS_DEFAULT)
     take_profit_ticks = CONFIG.get("zone_take_profit_ticks", ZONE_PROFIT_TARGET_TICKS_DEFAULT)
     
-    if tick_size is None or tick_value is None:
-        logger.error(f"❌ Cannot enter trade - tick_size or tick_value not configured for symbol {symbol}")
+    if tick_size is None or tick_size <= 0 or tick_value is None or tick_value <= 0:
+        logger.error(f"❌ Cannot enter trade - invalid tick_size ({tick_size}) or tick_value ({tick_value}) for symbol {symbol}")
         return
     
     if side == "short":
