@@ -1566,6 +1566,7 @@ class QuoTradingLauncher:
         slider_container.pack(fill=tk.X, padx=15, pady=(3, 0))
         
         # Create 3-position slider: 0=Conservative (left), 1=Moderate (center), 2=Aggressive (right)
+        # Adjusted sliderlength and padding to better center positions visually
         self.trading_style_slider = tk.Scale(
             slider_container,
             from_=0,
@@ -1579,13 +1580,13 @@ class QuoTradingLauncher:
             troughcolor=self.get_style_color(self.trading_style_var.get()),
             highlightthickness=0,
             bd=0,
-            length=500,
+            length=520,  # Increased from 500 to give more room
             showvalue=0,
-            sliderlength=25,
+            sliderlength=30,  # Increased from 25 to fill edge space better
             width=15,
             command=self.update_trading_style_display
         )
-        self.trading_style_slider.pack(fill=tk.X)
+        self.trading_style_slider.pack(fill=tk.X, padx=0)  # Removed extra padding
         
         # Trade details below slider - with emojis and colored text
         trade_details = tk.Frame(confidence_section, bg=self.colors['card'])
