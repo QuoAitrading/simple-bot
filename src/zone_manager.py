@@ -60,6 +60,47 @@ class ZoneManager:
         for idx, zone in enumerate(self.zones):
             logger.info(f"  Zone {idx+1}: {zone['zone_type'].upper()} {zone['zone_bottom']:.2f}-{zone['zone_top']:.2f} ({zone['zone_strength']})")
     
+    def add_zone(self, zone_type: str, top_price: float, bottom_price: float,
+                 strength: str = "medium", source: str = "manual") -> Dict:
+        """
+        Add a single zone to the manager.
+        
+        Used for real-time zone additions from WebSocket (TradingView indicators).
+        
+        Args:
+            zone_type: 'supply' or 'demand'
+            top_price: Top of the zone
+            bottom_price: Bottom of the zone
+            strength: Zone strength ('strong', 'medium', 'weak')
+            source: Source of zone ('tradingview', 'manual', etc.)
+        
+        Returns:
+            The created zone dict
+        """
+        zone_dict = {
+            'zone_top': float(top_price),
+            'zone_bottom': float(bottom_price),
+            'zone_type': zone_type.lower(),
+            'zone_strength': strength.lower(),
+            'dead': False,
+            'entry_time': None,
+            'entry_price': None,
+            'source': source
+        }
+        
+        # Check for duplicate zones (within 0.25 price tolerance)
+        for existing in self.zones:
+            if (existing['zone_type'] == zone_dict['zone_type'] and
+                abs(existing['zone_top'] - zone_dict['zone_top']) < 0.5 and
+                abs(existing['zone_bottom'] - zone_dict['zone_bottom']) < 0.5):
+                logger.debug(f"Zone already exists, skipping: {zone_type} {bottom_price:.2f}-{top_price:.2f}")
+                return existing
+        
+        self.zones.append(zone_dict)
+        logger.info(f"📍 Added zone: {zone_type.upper()} {bottom_price:.2f}-{top_price:.2f} ({strength}) from {source}")
+        
+        return zone_dict
+    
     def check_and_mark_dead_zones(self, current_price: float) -> None:
         """
         Check and mark zones as dead based on current price.

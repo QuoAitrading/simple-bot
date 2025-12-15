@@ -312,7 +312,7 @@ class TimerManager:
         self.running = False
         self.thread: Optional[threading.Thread] = None
         
-        logger.info("Timer manager initialized")
+        # Timer manager initialized silently - no log needed
     
     def start(self) -> None:
         """Start timer manager thread."""
@@ -323,7 +323,7 @@ class TimerManager:
         self.running = True
         self.thread = threading.Thread(target=self._run, daemon=True)
         self.thread.start()
-        logger.info("Timer manager started")
+        # Timer manager started silently - no log needed
     
     def stop(self) -> None:
         """Stop timer manager thread."""

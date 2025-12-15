@@ -1,9 +1,11 @@
 """QuoTrading Flask API.
 
 Simple, reliable API that works everywhere.
+Now with WebSocket support for real-time zone delivery.
 """
 from flask import Flask, request, jsonify, send_from_directory
 from flask_cors import CORS
+from flask_socketio import SocketIO, emit, join_room, leave_room
 import os
 import json
 import psycopg2
@@ -22,6 +24,10 @@ import requests
 import traceback
 
 app = Flask(__name__)
+
+# Initialize SocketIO for real-time zone delivery
+# async_mode='eventlet' for production, 'threading' for development
+socketio = SocketIO(app, cors_allowed_origins="*", async_mode='eventlet', logger=False, engineio_logger=False)
 
 # Security: Request size limit (prevent memory exhaustion attacks)
 app.config['MAX_CONTENT_LENGTH'] = 10 * 1024 * 1024  # 10MB max request size
@@ -71,6 +77,34 @@ WHOP_API_BASE_URL = "https://api.whop.com/api/v5"
 # When True, allows multiple bot instances per license key (one per symbol)
 # Each symbol gets its own session, preventing conflicts when trading ES, NQ, etc. simultaneously
 MULTI_SYMBOL_SESSIONS_ENABLED = True
+
+# SYMBOL GROUPS - Micro contracts share zones with their full-size equivalents
+# Key = symbol user might trade, Value = base symbol for zone lookup
+SYMBOL_GROUPS = {
+    # S&P 500 E-mini family
+    "ES": "ES",
+    "MES": "ES",
+    # Nasdaq E-mini family
+    "NQ": "NQ",
+    "MNQ": "NQ",
+    # Dow Jones E-mini family (future)
+    "YM": "YM",
+    "MYM": "YM",
+    # Crude Oil family (future)
+    "CL": "CL",
+    "MCL": "CL",
+    # Russell 2000 family (future)
+    "RTY": "RTY",
+    "M2K": "RTY",
+}
+
+def get_base_symbol(symbol: str) -> str:
+    """Get the base symbol for zone lookup. MES -> ES, MNQ -> NQ, etc."""
+    return SYMBOL_GROUPS.get(symbol.upper(), symbol.upper())
+
+# TradingView Webhook Configuration
+# Secret key to authenticate incoming TradingView webhooks (prevents unauthorized zone submissions)
+TV_WEBHOOK_SECRET = os.environ.get("TV_WEBHOOK_SECRET", "quotrading-tv-webhook-2025")
 
 # Email configuration (for SendGrid or SMTP)
 SENDGRID_API_KEY = os.environ.get("SENDGRID_API_KEY", "")
@@ -1338,6 +1372,192 @@ def load_experiences(symbol='ES'):
     """Deprecated no-op; kept temporarily for older clients."""
     return []
 
+
+# =============================================================================
+# ZONES TABLE & FUNCTIONS - TradingView Integration
+# =============================================================================
+
+def ensure_zones_table(conn):
+    """
+    Create the zones table if it doesn't exist.
+    Stores supply/demand zones from TradingView alerts.
+    """
+    try:
+        with conn.cursor() as cursor:
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS zones (
+                    id SERIAL PRIMARY KEY,
+                    base_symbol VARCHAR(10) NOT NULL,
+                    zone_type VARCHAR(10) NOT NULL,
+                    top_price DECIMAL(12, 4) NOT NULL,
+                    bottom_price DECIMAL(12, 4) NOT NULL,
+                    strength VARCHAR(10) DEFAULT 'MEDIUM',
+                    status VARCHAR(10) DEFAULT 'FRESH',
+                    retests INTEGER DEFAULT 0,
+                    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+                    expires_at TIMESTAMP WITH TIME ZONE DEFAULT (NOW() + INTERVAL '24 hours'),
+                    source VARCHAR(20) DEFAULT 'tradingview',
+                    metadata JSONB DEFAULT '{}'::jsonb
+                )
+            """)
+            # Index for fast lookups by symbol and active zones
+            cursor.execute("""
+                CREATE INDEX IF NOT EXISTS idx_zones_symbol_active 
+                ON zones (base_symbol, expires_at) 
+                WHERE status != 'MITIGATED'
+            """)
+            conn.commit()
+            logging.info("✅ Zones table ensured")
+    except Exception as e:
+        logging.error(f"Error creating zones table: {e}")
+        conn.rollback()
+
+
+def store_zone(conn, base_symbol: str, zone_type: str, top_price: float, bottom_price: float, 
+               strength: str = "MEDIUM", expires_hours: int = 24, metadata: dict = None):
+    """
+    Store a new zone in the database.
+    
+    Args:
+        base_symbol: Base symbol (ES, NQ, etc.)
+        zone_type: 'supply' or 'demand'
+        top_price: Top of zone
+        bottom_price: Bottom of zone
+        strength: Zone strength (STRONG, MEDIUM, WEAK)
+        expires_hours: Hours until zone expires (default 24)
+        metadata: Additional metadata dict
+    
+    Returns:
+        Zone ID if successful, None otherwise
+    """
+    try:
+        ensure_zones_table(conn)
+        with conn.cursor() as cursor:
+            cursor.execute("""
+                INSERT INTO zones (base_symbol, zone_type, top_price, bottom_price, strength, expires_at, metadata)
+                VALUES (%s, %s, %s, %s, %s, NOW() + make_interval(hours => %s), %s)
+                RETURNING id
+            """, (
+                base_symbol.upper(),
+                zone_type.lower(),
+                top_price,
+                bottom_price,
+                strength.upper(),
+                expires_hours,
+                json.dumps(metadata or {})
+            ))
+            zone_id = cursor.fetchone()[0]
+            conn.commit()
+            logging.info(f"✅ Stored zone {zone_id}: {zone_type.upper()} {base_symbol} [{bottom_price}-{top_price}]")
+            return zone_id
+    except Exception as e:
+        logging.error(f"Error storing zone: {e}")
+        conn.rollback()
+        return None
+
+
+def get_zones_for_symbol(symbol: str) -> list:
+    """
+    Get active zones for a symbol (including micro contract equivalents).
+    
+    Args:
+        symbol: Trading symbol (ES, MES, NQ, MNQ, etc.)
+    
+    Returns:
+        List of zone dicts with zone_type, top, bottom, strength, status
+    """
+    base_symbol = get_base_symbol(symbol)
+    zones = []
+    
+    conn = get_db_connection()
+    if not conn:
+        return zones
+    
+    try:
+        ensure_zones_table(conn)
+        with conn.cursor(cursor_factory=RealDictCursor) as cursor:
+            cursor.execute("""
+                SELECT 
+                    id,
+                    zone_type,
+                    top_price as top,
+                    bottom_price as bottom,
+                    strength,
+                    status,
+                    retests,
+                    created_at,
+                    expires_at
+                FROM zones
+                WHERE base_symbol = %s
+                AND status != 'MITIGATED'
+                AND expires_at > NOW()
+                ORDER BY created_at DESC
+                LIMIT 20
+            """, (base_symbol,))
+            
+            rows = cursor.fetchall()
+            for row in rows:
+                zones.append({
+                    "id": row["id"],
+                    "type": row["zone_type"],
+                    "top": float(row["top"]),
+                    "bottom": float(row["bottom"]),
+                    "strength": row["strength"],
+                    "status": row["status"],
+                    "retests": row["retests"],
+                    "created_at": format_datetime_utc(row["created_at"]),
+                    "expires_at": format_datetime_utc(row["expires_at"])
+                })
+    except Exception as e:
+        logging.error(f"Error getting zones for {symbol}: {e}")
+    finally:
+        return_connection(conn)
+    
+    return zones
+
+
+def mark_zone_mitigated(zone_id: int):
+    """Mark a zone as mitigated (price broke through it)."""
+    conn = get_db_connection()
+    if not conn:
+        return False
+    
+    try:
+        with conn.cursor() as cursor:
+            cursor.execute("""
+                UPDATE zones SET status = 'MITIGATED' WHERE id = %s
+            """, (zone_id,))
+            conn.commit()
+            return True
+    except Exception as e:
+        logging.error(f"Error marking zone mitigated: {e}")
+        return False
+    finally:
+        return_connection(conn)
+
+
+def increment_zone_retest(zone_id: int):
+    """Increment retest count for a zone."""
+    conn = get_db_connection()
+    if not conn:
+        return False
+    
+    try:
+        with conn.cursor() as cursor:
+            cursor.execute("""
+                UPDATE zones 
+                SET retests = retests + 1, 
+                    status = CASE WHEN retests = 0 THEN 'TESTED' ELSE status END
+                WHERE id = %s
+            """, (zone_id,))
+            conn.commit()
+            return True
+    except Exception as e:
+        logging.error(f"Error incrementing zone retest: {e}")
+        return False
+    finally:
+        return_connection(conn)
+
 @app.route('/api/hello', methods=['GET'])
 def hello():
     """Health check endpoint"""
@@ -1346,13 +1566,144 @@ def hello():
         "message": "✅ QuoTrading Cloud API - Data Collection Only",
         "endpoints": [
             "POST /api/heartbeat - Bot heartbeat (equity/PnL)",
-            "POST /api/zones/ingest - Ingest zones",
+            "POST /api/tv-webhook - TradingView zone alerts",
+            "GET /api/zones/<symbol> - Get active zones for symbol",
             "GET /api/profile - Get user profile and trading statistics",
             "GET /api/hello - Health check"
         ],
         "database_configured": bool(DB_PASSWORD),
         "note": "Bots make decisions locally"
     }), 200
+
+
+@app.route('/api/tv-webhook', methods=['POST'])
+def tradingview_webhook():
+    """
+    Receive zone alerts from TradingView PineScript indicator.
+    
+    TradingView sends JSON payload when alert triggers:
+    {
+        "secret": "quotrading-tv-webhook-2025",
+        "symbol": "ES",
+        "zone_type": "supply" or "demand",
+        "top": 6050.25,
+        "bottom": 6048.50,
+        "strength": "STRONG" or "MEDIUM" or "WEAK",
+        "timeframe": "5m" (optional)
+    }
+    """
+    try:
+        data = request.get_json()
+        
+        if not data:
+            return jsonify({"status": "error", "message": "No data received"}), 400
+        
+        # Authenticate webhook (prevent unauthorized submissions)
+        secret = data.get("secret", "")
+        if secret != TV_WEBHOOK_SECRET:
+            logging.warning(f"⚠️ Invalid TV webhook secret attempt")
+            return jsonify({"status": "error", "message": "Invalid secret"}), 403
+        
+        # Extract zone data
+        symbol = data.get("symbol", "").upper()
+        zone_type = data.get("zone_type", "").lower()
+        top_price = data.get("top")
+        bottom_price = data.get("bottom")
+        strength = data.get("strength", "MEDIUM").upper()
+        timeframe = data.get("timeframe", "")
+        
+        # Validation
+        if not symbol:
+            return jsonify({"status": "error", "message": "Symbol required"}), 400
+        if zone_type not in ["supply", "demand"]:
+            return jsonify({"status": "error", "message": "zone_type must be 'supply' or 'demand'"}), 400
+        if top_price is None or bottom_price is None:
+            return jsonify({"status": "error", "message": "top and bottom prices required"}), 400
+        if strength not in ["STRONG", "MEDIUM", "WEAK"]:
+            strength = "MEDIUM"
+        
+        # Get base symbol for storage (MES -> ES, MNQ -> NQ)
+        base_symbol = get_base_symbol(symbol)
+        
+        # Store the zone
+        conn = get_db_connection()
+        if not conn:
+            return jsonify({"status": "error", "message": "Database unavailable"}), 500
+        
+        try:
+            metadata = {
+                "source_symbol": symbol,
+                "timeframe": timeframe,
+                "received_at": datetime.now(timezone.utc).isoformat()
+            }
+            
+            zone_id = store_zone(
+                conn=conn,
+                base_symbol=base_symbol,
+                zone_type=zone_type,
+                top_price=float(top_price),
+                bottom_price=float(bottom_price),
+                strength=strength,
+                expires_hours=24,
+                metadata=metadata
+            )
+            
+            if zone_id:
+                logging.info(f"📊 TradingView Zone Received: {zone_type.upper()} {base_symbol} [{bottom_price}-{top_price}] strength={strength}")
+                
+                # REAL-TIME: Broadcast zone to all connected clients for this symbol
+                zone_data = {
+                    "id": zone_id,
+                    "type": zone_type,
+                    "top": float(top_price),
+                    "bottom": float(bottom_price),
+                    "strength": strength,
+                    "status": "FRESH",
+                    "retests": 0,
+                    "created_at": datetime.now(timezone.utc).isoformat() + "Z"
+                }
+                # Broadcast to base symbol room (ES users AND MES users get this)
+                socketio.emit('new_zone', zone_data, room=base_symbol)
+                logging.info(f"📡 Broadcasted zone to room: {base_symbol}")
+                
+                return jsonify({
+                    "status": "success",
+                    "message": f"Zone stored and broadcasted",
+                    "zone_id": zone_id,
+                    "base_symbol": base_symbol,
+                    "zone_type": zone_type,
+                    "broadcasted_to": base_symbol
+                }), 200
+            else:
+                return jsonify({"status": "error", "message": "Failed to store zone"}), 500
+                
+        finally:
+            return_connection(conn)
+            
+    except Exception as e:
+        logging.error(f"TradingView webhook error: {e}")
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+
+@app.route('/api/zones/<symbol>', methods=['GET'])
+def get_zones_endpoint(symbol):
+    """
+    Get active zones for a symbol.
+    MES gets ES zones, MNQ gets NQ zones (shared base symbol).
+    """
+    try:
+        zones = get_zones_for_symbol(symbol)
+        base_symbol = get_base_symbol(symbol)
+        return jsonify({
+            "status": "success",
+            "symbol": symbol.upper(),
+            "base_symbol": base_symbol,
+            "zones": zones,
+            "count": len(zones)
+        }), 200
+    except Exception as e:
+        logging.error(f"Error getting zones: {e}")
+        return jsonify({"status": "error", "message": str(e)}), 500
 
 @app.route('/api/validate-license', methods=['POST'])
 def validate_license_endpoint():
@@ -4868,5 +5219,77 @@ def handle_unexpected_error(error):
 if __name__ == '__main__':
     init_database_if_needed()
     port = int(os.environ.get('PORT', 5000))
-    app.run(host='0.0.0.0', port=port, debug=False)
+    # Use socketio.run for WebSocket support
+    socketio.run(app, host='0.0.0.0', port=port, debug=False)
 
+
+# =============================================================================
+# WEBSOCKET HANDLERS - Real-time Zone Delivery
+# =============================================================================
+
+@socketio.on('connect')
+def handle_connect():
+    """Client connected to WebSocket"""
+    logging.info(f"🔌 WebSocket client connected: {request.sid}")
+    emit('connected', {'message': 'Connected to QuoTrading Zone Server', 'sid': request.sid})
+
+
+@socketio.on('disconnect')
+def handle_disconnect():
+    """Client disconnected from WebSocket"""
+    logging.info(f"🔌 WebSocket client disconnected: {request.sid}")
+
+
+@socketio.on('subscribe')
+def handle_subscribe(data):
+    """
+    Client subscribes to zones for specific symbols.
+    
+    data: {
+        "symbols": ["ES", "NQ"],  # or ["MES"] which maps to ES room
+        "license_key": "optional for validation"
+    }
+    """
+    symbols = data.get('symbols', [])
+    if isinstance(symbols, str):
+        symbols = [symbols]
+    
+    rooms_joined = []
+    for symbol in symbols:
+        base_symbol = get_base_symbol(symbol)
+        join_room(base_symbol)
+        rooms_joined.append(base_symbol)
+        logging.info(f"📥 Client {request.sid} subscribed to {base_symbol} (from {symbol})")
+    
+    # Send current active zones for subscribed symbols
+    all_zones = {}
+    for base_symbol in set(rooms_joined):
+        zones = get_zones_for_symbol(base_symbol)
+        all_zones[base_symbol] = zones
+    
+    emit('subscribed', {
+        'message': f'Subscribed to zones for: {", ".join(set(rooms_joined))}',
+        'rooms': list(set(rooms_joined)),
+        'current_zones': all_zones
+    })
+
+
+@socketio.on('unsubscribe')
+def handle_unsubscribe(data):
+    """Client unsubscribes from zone updates for specific symbols."""
+    symbols = data.get('symbols', [])
+    if isinstance(symbols, str):
+        symbols = [symbols]
+    
+    for symbol in symbols:
+        base_symbol = get_base_symbol(symbol)
+        leave_room(base_symbol)
+        logging.info(f"📤 Client {request.sid} unsubscribed from {base_symbol}")
+    
+    emit('unsubscribed', {'message': f'Unsubscribed from: {", ".join(symbols)}'})
+
+
+@socketio.on('ping')
+def handle_ping():
+    """Keep-alive ping from client"""
+    emit('pong', {'timestamp': datetime.now(timezone.utc).isoformat()})

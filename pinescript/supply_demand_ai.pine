@@ -657,33 +657,22 @@ drawOrderBlocks(bool internal = false) =>
             b_ox.set_border_width(      internal ? 1 : 2)
             b_ox.set_bgcolor(           zoneColor)
             
-            // ===== ZONE LABEL WITH AGE =====
-            // Label ALL zones (swing and internal)
+            // ===== ZONE LABEL WITH ACTIONABLE INFO =====
+            // Show what traders actually need: Type, Strength, Fresh/Tested
             if barstate.islast
                 zoneMidPrice = math.avg(eachOrderBlock.barHigh, eachOrderBlock.barLow)
                 zoneLabel = isSupply ? "SUPPLY" : "DEMAND"
                 
-                // Calculate zone age in minutes
-                int zoneAgeMs = time - eachOrderBlock.barTime
-                int zoneAgeMins = zoneAgeMs / 60000
-                
-                // Format age label
-                string ageText = ""
-                if zoneAgeMins < 60
-                    ageText := str.tostring(zoneAgeMins) + "m"
-                else if zoneAgeMins < 120
-                    ageText := "1H"
-                else if zoneAgeMins < 240
-                    ageText := str.tostring(math.floor(zoneAgeMins / 60)) + "H"
-                else if zoneAgeMins < 480
-                    ageText := "4H"
-                else if zoneAgeMins < 1440
-                    ageText := str.tostring(math.floor(zoneAgeMins / 60)) + "H"
+                // Fresh vs Tested status - most important for trading decisions
+                string freshStatus = ""
+                if eachOrderBlock.retests == 0
+                    freshStatus := "Fresh"
+                else if eachOrderBlock.retests == 1
+                    freshStatus := "Tested"
                 else
-                    int days = math.floor(zoneAgeMins / 1440)
-                    ageText := str.tostring(days) + "D"
+                    freshStatus := "Tested " + str.tostring(eachOrderBlock.retests) + "x"
                 
-                labelText = zoneLabel + " • " + zoneStrength + " • " + ageText
+                labelText = zoneLabel + " • " + zoneStrength + " • " + freshStatus
                 labelColor = isSupply ? SUPPLY_PRIMARY : DEMAND_PRIMARY
                 // Position label at right edge of zone (current time) for visibility
                 label.new(chart.point.new(last_bar_time, na, zoneMidPrice), labelText, xloc.bar_time, color = color(na), textcolor = labelColor, style = label.style_label_left, size = size.small)

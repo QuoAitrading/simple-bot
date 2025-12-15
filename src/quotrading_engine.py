@@ -71,6 +71,22 @@ For Multi-User Subscriptions:
 
 import os
 import sys
+
+# =============================================================================
+# PATH SETUP: Enable running as standalone script or as part of package
+# =============================================================================
+# This fixes "ImportError: attempted relative import with no known parent package"
+# when running the script directly (e.g., `python quotrading_engine.py`)
+# =============================================================================
+if __name__ == "__main__" or __package__ is None or __package__ == "":
+    _current_dir = os.path.dirname(os.path.abspath(__file__))
+    _project_root = os.path.dirname(_current_dir)
+    if _project_root not in sys.path:
+        sys.path.insert(0, _project_root)
+    if _current_dir not in sys.path:
+        sys.path.insert(0, _current_dir)
+    __package__ = "src"
+
 import logging
 import argparse
 
@@ -245,7 +261,7 @@ def get_data_file_path(filename: str) -> 'Path':
     return file_path
 
 # Import new production modules
-from .config import load_config, BotConfiguration
+from .config import load_config, BotConfiguration, DEFAULT_MAX_STOP_LOSS_DOLLARS
 from .event_loop import EventLoop, EventType, EventPriority, TimerManager
 from .error_recovery import ErrorRecoveryManager, ErrorType as RecoveryErrorType
 from .bid_ask_manager import BidAskManager, BidAskQuote
@@ -255,6 +271,20 @@ from .notifications import get_notifier
 from .zone_manager import ZoneManager
 from .rejection_detector import RejectionDetector
 from .filters import FilterManager
+
+# Import zone WebSocket client for real-time TradingView zone delivery
+try:
+    from .zone_websocket_client import (
+        ZoneWebSocketClient, Zone, init_zone_client, shutdown_zone_client, get_zone_client
+    )
+    ZONE_WEBSOCKET_AVAILABLE = True
+except ImportError:
+    ZONE_WEBSOCKET_AVAILABLE = False
+    ZoneWebSocketClient = None
+    Zone = None
+    init_zone_client = None
+    shutdown_zone_client = None
+    get_zone_client = None
 
 # Cloud API is not used
 CLOUD_API_AVAILABLE = False
@@ -7351,6 +7381,35 @@ def main(symbol_override: str = None) -> None:
     global zone_manager, rejection_detector, filter_manager
     zone_manager = ZoneManager()
     
+    # Initialize real-time zone WebSocket client (receives zones from TradingView via Azure)
+    global zone_ws_client
+    zone_ws_client = None
+    if ZONE_WEBSOCKET_AVAILABLE:
+        def on_zone_received(zone):
+            """Callback when new zone received from TradingView via WebSocket."""
+            try:
+                # Add zone to zone_manager for trading decisions
+                zone_manager.add_zone(
+                    zone_type=zone.zone_type,  # 'supply' or 'demand'
+                    top_price=zone.top,
+                    bottom_price=zone.bottom,
+                    strength=zone.strength,
+                    source='tradingview'
+                )
+                logger.info(f"📡 Zone from TradingView added: {zone.zone_type.upper()} [{zone.bottom:.2f}-{zone.top:.2f}] {zone.strength}")
+            except Exception as e:
+                logger.error(f"Error adding TradingView zone: {e}")
+        
+        zone_ws_client = init_zone_client(
+            symbols=[trading_symbol],
+            on_zone_received=on_zone_received
+        )
+        if zone_ws_client:
+            logger.info(f"🔌 Zone WebSocket client connecting for {trading_symbol}...")
+    else:
+        logger.debug("Zone WebSocket client not available (python-socketio not installed)")
+
+    
     # Get symbol-specific tick specifications first
     tick_size = CONFIG.get("tick_size")
     tick_value = CONFIG.get("tick_value")
@@ -7439,9 +7498,7 @@ def main(symbol_override: str = None) -> None:
     # Phase 12: Record starting equity for drawdown monitoring
     bot_status["starting_equity"] = get_account_equity()
     
-    # Update header with broker connection status and starting equity
-    logger.info(f"✅ Broker Connected | Starting Equity: ${bot_status['starting_equity']:.2f}")
-    logger.info("")
+    # Starting equity recorded silently - broker connection already logged above
     
     # AI MODE: Clean startup - no "waiting for data" message
     # LIVE MODE: Show waiting for data message
@@ -8785,6 +8842,13 @@ def cleanup_on_shutdown() -> None:
             broker.disconnect()
         except Exception as e:
             cleanup_success = False
+    
+    # Shutdown zone WebSocket client
+    if ZONE_WEBSOCKET_AVAILABLE and shutdown_zone_client:
+        try:
+            shutdown_zone_client()
+        except Exception as e:
+            logger.debug(f"Error shutting down zone WebSocket: {e}")
     
     # Stop timer manager
     if timer_manager:
