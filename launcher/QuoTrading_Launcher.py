@@ -713,7 +713,7 @@ class QuoTradingLauncher:
         self.root.title("QuoTrading - Broker Setup")
         
         # Header - plain white text, NO rainbow in launcher GUI
-        header = self.create_header("Welcome to QuoTrading Professional Trading System", 
+        header = self.create_header("Welcome to QuoTrading AI", 
                                    "Select your account type and broker", 
                                    rainbow=False,
                                    rainbow_animated=False)
@@ -1356,33 +1356,6 @@ class QuoTradingLauncher:
             fg=self.colors['text_light']
         ).pack(anchor=tk.W, padx=(20, 0))
         
-        # Time-Based Exit Mode (USER CONFIGURABLE)
-        time_exit_frame = tk.Frame(modes_section, bg=self.colors['card'])
-        time_exit_frame.pack(fill=tk.X, pady=(0, 5))
-        
-        self.time_exit_var = tk.BooleanVar(value=self.config.get("time_exit_enabled", False))
-        
-        tk.Checkbutton(
-            time_exit_frame,
-            text="⏱️ Time-Based Exit",
-            variable=self.time_exit_var,
-            font=("Segoe UI", 8, "bold"),
-            bg=self.colors['card'],
-            fg=self.colors['text'],
-            selectcolor=self.colors['secondary'],
-            activebackground=self.colors['card'],
-            activeforeground=self.colors['success'],
-            cursor="hand2"
-        ).pack(anchor=tk.W)
-        
-        tk.Label(
-            time_exit_frame,
-            text="Exit trades after 20 bars if no resolution",
-            font=("Segoe UI", 7, "bold"),
-            bg=self.colors['card'],
-            fg=self.colors['text_light']
-        ).pack(anchor=tk.W, padx=(20, 0))
-        
         
         # Account Settings Row - COMPACT
         settings_row = tk.Frame(content, bg=self.colors['card'])
@@ -1565,69 +1538,55 @@ class QuoTradingLauncher:
         conf_header = tk.Frame(confidence_section, bg=self.colors['card'])
         conf_header.pack(fill=tk.X, pady=(0, 1))
         
-        # Title and description on same line
+        # Title - changed from "AI CONFIDENCE THRESHOLD" to "TRADING STYLE"
         tk.Label(
             conf_header,
-            text="AI CONFIDENCE THRESHOLD",
+            text="TRADING STYLE",
             font=("Segoe UI", 9, "bold"),
             bg=self.colors['card'],
             fg=self.colors['text']
         ).pack(side=tk.LEFT)
         
-        tk.Label(
-            conf_header,
-            text="  •  Higher = Fewer trades, safer  •  Lower = More trades, riskier",
-            font=("Segoe UI", 7, "bold"),
-            bg=self.colors['card'],
-            fg=self.colors['text_light']
-        ).pack(side=tk.LEFT, padx=(4, 0))
+        # Trading style variable: 0=Conservative, 1=Moderate, 2=Aggressive
+        # Default to Moderate (position 1)
+        self.trading_style_var = tk.IntVar(value=1)
         
-        # Current value display with trading style
-        self.confidence_var = tk.DoubleVar(value=self.config.get("confidence_threshold", 70.0))
-        
-        self.confidence_style_label = tk.Label(
+        # Current style display (no percentage, just the style name)
+        self.trading_style_label = tk.Label(
             conf_header,
-            text=self.get_trading_style(self.confidence_var.get()),
-            font=("Segoe UI", 7, "bold"),
-            bg=self.colors['card'],
-            fg=self.get_style_color(self.confidence_var.get())
-        )
-        self.confidence_style_label.pack(side=tk.RIGHT, padx=(0, 8))
-        
-        self.confidence_display = tk.Label(
-            conf_header,
-            text=f"{self.confidence_var.get():.0f}%",
+            text=self.get_trading_style(self.trading_style_var.get()),
             font=("Segoe UI", 11, "bold"),
             bg=self.colors['card'],
-            fg=self.get_style_color(self.confidence_var.get())
+            fg=self.get_style_color(self.trading_style_var.get())
         )
-        self.confidence_display.pack(side=tk.RIGHT)
+        self.trading_style_label.pack(side=tk.RIGHT, padx=(0, 8))
         
         # Slider container - simple and clean
         slider_container = tk.Frame(confidence_section, bg=self.colors['card'])
         slider_container.pack(fill=tk.X, padx=15, pady=(3, 0))
         
-        # Create slider with dynamic color
-        self.confidence_slider = tk.Scale(
+        # Create 3-position slider: 0=Conservative (left), 1=Moderate (center), 2=Aggressive (right)
+        # Adjusted sliderlength and padding to better center positions visually
+        self.trading_style_slider = tk.Scale(
             slider_container,
-            from_=10,
-            to=100,
-            resolution=5,
-            variable=self.confidence_var,
+            from_=0,
+            to=2,
+            resolution=1,  # Snap to discrete positions
+            variable=self.trading_style_var,
             orient=tk.HORIZONTAL,
-            bg=self.get_style_color(self.confidence_var.get()),
+            bg=self.get_style_color(self.trading_style_var.get()),
             fg=self.colors['text'],
-            activebackground=self.get_style_color(self.confidence_var.get()),
-            troughcolor=self.get_style_color(self.confidence_var.get()),
+            activebackground=self.get_style_color(self.trading_style_var.get()),
+            troughcolor=self.get_style_color(self.trading_style_var.get()),
             highlightthickness=0,
             bd=0,
-            length=500,
+            length=520,  # Increased from 500 to give more room
             showvalue=0,
-            sliderlength=25,
+            sliderlength=30,  # Increased from 25 to fill edge space better
             width=15,
-            command=self.update_confidence_display
+            command=self.update_trading_style_display
         )
-        self.confidence_slider.pack(fill=tk.X)
+        self.trading_style_slider.pack(fill=tk.X, padx=0)  # Removed extra padding
         
         # Trade details below slider - with emojis and colored text
         trade_details = tk.Frame(confidence_section, bg=self.colors['card'])
@@ -1638,7 +1597,7 @@ class QuoTradingLauncher:
         self.trade_info_frame.pack()
         
         # Initialize trade info display
-        self.update_trade_info(self.confidence_var.get())
+        self.update_trade_info(self.trading_style_var.get())
         
         # Summary display - COMPACT
         summary_frame = tk.Frame(content, bg=self.colors['card'])
@@ -2078,9 +2037,8 @@ class QuoTradingLauncher:
         self.config["max_loss_per_trade"] = max_loss_per_trade
         self.config["max_contracts"] = self.contracts_var.get()
         self.config["max_trades"] = self.trades_var.get()
-        self.config["confidence_threshold"] = self.confidence_var.get()
+        # Note: confidence_threshold removed - slider is aesthetic only
         self.config["shadow_mode"] = self.shadow_mode_var.get()
-        self.config["time_exit_enabled"] = self.time_exit_var.get()
         self.config["selected_account"] = self.account_dropdown_var.get()
         
         # Get selected account ID - parse from dropdown display format
@@ -2203,9 +2161,8 @@ class QuoTradingLauncher:
         account = self.account_dropdown_var.get()
         contracts = self.contracts_var.get()
         max_trades = self.trades_var.get()
-        confidence = self.confidence_var.get()
+        trading_style = self.get_trading_style(self.trading_style_var.get())
         shadow_mode = "ON" if self.shadow_mode_var.get() else "OFF"
-        time_exit = "ON" if self.time_exit_var.get() else "OFF"
         max_loss_per_trade = self.config.get("max_loss_per_trade", 200)
         
         settings_text = f"""
@@ -2216,9 +2173,8 @@ Contracts Per Trade: {contracts}
 Max Loss Per Trade: ${max_loss_per_trade}
 Daily Loss Limit: ${loss_limit}
 Max Trades/Day: {max_trades}
-Confidence Threshold: {confidence}%
+Trading Style: {trading_style}
 Shadow Mode: {shadow_mode}
-Time-Based Exit: {time_exit}
         """
         
         settings_label = tk.Label(
@@ -3455,17 +3411,13 @@ BOT_DAILY_LOSS_LIMIT={self.loss_entry.get()}
 BOT_MAX_LOSS_PER_TRADE={self.config.get("max_loss_per_trade", 200)}
 # Position closes automatically if a single trade loses this amount
 
-# AI/Confidence Settings
-BOT_CONFIDENCE_THRESHOLD={self.confidence_var.get()}
-# Bot only takes signals above this confidence threshold (user's minimum)
+# Trading Style (Conservative/Moderate/Aggressive)
+BOT_TRADING_STYLE={self.trading_style_var.get()}
+# 0=Conservative (main zones only), 1=Moderate (all features), 2=Aggressive (no filters on main zones)
 
 # Trading Mode (Shadow Trading / Shadow Mode)
 BOT_SHADOW_MODE={'true' if self.shadow_mode_var.get() else 'false'}
 # When true: Bot provides signals only, no automatic trade execution (manual trading)
-
-# Time-Based Exit (User Configurable)
-BOT_TIME_EXIT_ENABLED={'true' if self.time_exit_var.get() else 'false'}
-# When true: Exit trades after 20 bars (20 minutes) if no target/stop hit
 
 # Account Selection
 SELECTED_ACCOUNT={self.config.get("selected_account", "Default Account")}
@@ -3514,46 +3466,47 @@ BOT_LOG_LEVEL=INFO
         # Convert back to hex
         return f"#{r:02x}{g:02x}{b:02x}"
     
-    def get_trading_style(self, value):
-        """Get trading style name based on confidence value."""
-        if value <= 40:
-            return "⚡ VERY AGGRESSIVE"
-        elif value <= 60:
-            return "⚡ AGGRESSIVE"
-        elif value <= 75:
-            return "⚖️ BALANCED"
-        elif value <= 85:
-            return "🛡️ CONSERVATIVE"
-        else:
-            return "🛡️ VERY CONSERVATIVE"
+    def get_trading_style(self, position):
+        """Get trading style name based on slider position.
+        
+        Args:
+            position: 0=Conservative, 1=Moderate, 2=Aggressive
+        """
+        styles = {
+            0: "🛡️ CONSERVATIVE",
+            1: "⚖️ MODERATE",
+            2: "⚡ AGGRESSIVE"
+        }
+        return styles.get(int(position), "⚖️ MODERATE")
     
-    def get_style_color(self, value):
-        """Get color based on confidence value - matches threshold zones."""
-        if value <= 40:
-            return "#DC2626"  # Red - Aggressive zone
-        elif value <= 65:
-            return "#F59E0B"  # Orange - Moderate zone
-        elif value <= 85:
-            return "#10B981"  # Green - Balanced zone
-        else:
-            return "#3B82F6"  # Blue - Conservative zone
+    def get_style_color(self, position):
+        """Get color based on trading style position.
+        
+        Args:
+            position: 0=Conservative, 1=Moderate, 2=Aggressive
+        """
+        colors = {
+            0: "#10B981",  # Green - Conservative
+            1: "#F59E0B",  # Orange - Moderate
+            2: "#DC2626"   # Red - Aggressive
+        }
+        return colors.get(int(position), "#F59E0B")
     
-    def get_trade_info(self, value):
-        """Get trade activity information with color based on confidence value."""
-        if value <= 30:
-            return ("Maximum Trades", "Highest Activity", "Maximum Risk", "#DC2626")
-        elif value <= 40:
-            return ("Very High Trades", "Very Active", "High Risk", "#DC2626")
-        elif value <= 55:
-            return ("High Trade Volume", "Active Trading", "Elevated Risk", "#F59E0B")
-        elif value <= 65:
-            return ("Good Trade Volume", "Moderate Activity", "Balanced Risk", "#F59E0B")
-        elif value <= 75:
-            return ("Moderate Trades", "Selective", "Controlled Risk", "#10B981")
-        elif value <= 85:
-            return ("Fewer Trades", "Conservative", "Lower Risk", "#10B981")
-        else:
-            return ("Minimal Trades", "Very Conservative", "Lowest Risk", "#3B82F6")
+    def get_trade_info(self, position):
+        """Get trade activity information based on trading style.
+        
+        Args:
+            position: 0=Conservative, 1=Moderate, 2=Aggressive
+        
+        Returns:
+            Tuple of (trade_volume, activity_level, risk_level, color)
+        """
+        info = {
+            0: ("Fewer Trades", "Selective", "Lower Risk", "#10B981"),      # Conservative
+            1: ("Moderate Trades", "Balanced", "Balanced Risk", "#F59E0B"), # Moderate
+            2: ("High Trade Volume", "Very Active", "Higher Risk", "#DC2626")  # Aggressive
+        }
+        return info.get(int(position), info[1])
     
     def update_trade_info(self, value):
         """Update trade info labels with colored text."""
@@ -3593,27 +3546,27 @@ BOT_LOG_LEVEL=INFO
                 )
                 separator.pack(side=tk.LEFT, padx=6)
     
-    def update_confidence_display(self, value):
-        """Update confidence display when slider moves."""
-        conf_value = float(value)
+    def update_trading_style_display(self, value):
+        """Update trading style display when slider moves.
         
-        # Update percentage display
-        self.confidence_display.config(text=f"{conf_value:.0f}%")
+        Args:
+            value: Slider position (0, 1, or 2)
+        """
+        position = int(float(value))
         
         # Update style label
-        style_text = self.get_trading_style(conf_value)
-        self.confidence_style_label.config(text=style_text)
+        style_text = self.get_trading_style(position)
+        self.trading_style_label.config(text=style_text)
         
-        # Update colors to match threshold zone
-        color = self.get_style_color(conf_value)
-        self.confidence_display.config(fg=color)
-        self.confidence_style_label.config(fg=color)
+        # Update colors to match style
+        color = self.get_style_color(position)
+        self.trading_style_label.config(fg=color)
         
-        # Update slider thumb color to match zone (both when idle and when clicked)
-        self.confidence_slider.config(bg=color, activebackground=color, troughcolor=color)
+        # Update slider colors
+        self.trading_style_slider.config(bg=color, activebackground=color, troughcolor=color)
         
         # Update trade info with colored text
-        self.update_trade_info(conf_value)
+        self.update_trade_info(position)
     
     def check_account_lock(self, account_id):
         """Check if an account is already being traded in another instance.

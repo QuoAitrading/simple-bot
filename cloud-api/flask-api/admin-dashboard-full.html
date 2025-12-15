@@ -4,6 +4,22 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>QuoTrading Admin Control Center</title>
+    <!--
+    =============================================================================
+    LEGACY CODE WARNING
+    =============================================================================
+    This file contains legacy RL/ML-related code that is no longer supported:
+    - RL experiences table viewer (rl_experiences database table)
+    - ML confidence-based functions
+    - API calls to /api/admin/rl-experiences (non-existent endpoints)
+    - "Delete RL data" functionality
+    
+    These sections are obsolete and call non-existent API endpoints.
+    The bot now uses zone-based trading strategy with no RL/ML components.
+    
+    TODO: Remove all RL-related JavaScript functions and UI elements in future cleanup.
+    =============================================================================
+    -->
     <style>
         * {
             margin: 0;
@@ -1989,6 +2005,16 @@
             }
         }
 
+        // =============================================================================
+        // LEGACY RL/ML CODE - DEPRECATED AND NON-FUNCTIONAL
+        // =============================================================================
+        // The following functions reference rl_experiences table and ML/RL endpoints
+        // that no longer exist in the backend. These are kept for reference but
+        // should be removed in future cleanup.
+        // API calls to /api/admin/rl-experiences, /api/admin/database/rl_experiences
+        // all return 404 as these endpoints have been removed.
+        // =============================================================================
+
         async function loadRLStats() {
             try {
                 // Load recent experiences - the experience count is already displayed from loadStats()
@@ -3585,6 +3611,14 @@
                 </tr>
             `).join('');
         }
+
+        // =============================================================================
+        // LEGACY: RL Experiences Database Viewer - DEPRECATED
+        // =============================================================================
+        // This function attempts to load rl_experiences table data via
+        // /api/admin/database/rl_experiences endpoint which no longer exists.
+        // The bot now uses zone-based trading with no RL/ML components.
+        // =============================================================================
 
         async function loadRLExperiencesData() {
             try {

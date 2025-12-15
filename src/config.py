@@ -68,7 +68,6 @@ class BotConfiguration:
     # - max_contracts: Position size limit
     # - max_trades_per_day: Trade count limit
     # - daily_loss_limit: Daily loss cap
-    # - confidence_threshold: AI signal confidence filter
     # ==========================================================================
     
     # RSI calculation period (standard)
@@ -217,24 +216,24 @@ class BotConfiguration:
         # Those are user preferences that customers can configure themselves
         
         if logger:
-            logger.info("=" * 80)
-            logger.info(f"[AUTO-CONFIG] Configured for {account_label}")
-            logger.info("=" * 80)
-            logger.info(f"Account Type: {account_type}")
-            logger.info(f"Account Balance: ${account_balance:,.2f}")
-            logger.info("")
+            logger.debug("=" * 80)
+            logger.debug(f"[AUTO-CONFIG] Configured for {account_label}")
+            logger.debug("=" * 80)
+            logger.debug(f"Account Type: {account_type}")
+            logger.debug(f"Account Balance: ${account_balance:,.2f}")
+            logger.debug("")
             if self.auto_calculate_limits:
-                logger.info("Auto-Calculated Limits (Based on Account Balance):")
+                logger.debug("Auto-Calculated Limits (Based on Account Balance):")
             else:
-                logger.info(f"Manual Limits (Custom {self.daily_loss_percent}%):")
-            logger.info(f"  Daily Loss Limit: ${self.daily_loss_limit:,.2f} ({self.daily_loss_percent}% of balance)")
+                logger.debug(f"Manual Limits (Custom {self.daily_loss_percent}%):")
+            logger.debug(f"  Daily Loss Limit: ${self.daily_loss_limit:,.2f} ({self.daily_loss_percent}% of balance)")
             if self.auto_calculate_limits:
-                logger.info(f"  Profit Target: ${profit_target:,.2f} (6% target)")
-            logger.info("")
-            logger.info("User Configurable Settings (Not Changed):")
-            logger.info(f"  Max Contracts: {self.max_contracts}")
-            logger.info(f"  Max Trades/Day: {self.max_trades_per_day}")
-            logger.info("[SUCCESS] Risk limits applied successfully")
+                logger.debug(f"  Profit Target: ${profit_target:,.2f} (6% target)")
+            logger.debug("")
+            logger.debug("User Configurable Settings (Not Changed):")
+            logger.debug(f"  Max Contracts: {self.max_contracts}")
+            logger.debug(f"  Max Trades/Day: {self.max_trades_per_day}")
+            logger.debug("[SUCCESS] Risk limits applied successfully")
         
         return True
     
@@ -287,12 +286,13 @@ class BotConfiguration:
     tick_size: float = 0.25
     tick_value: float = 12.50  # ES full contract: $12.50 per tick
     
-    # Confidence Threshold (kept for future feature - GUI slider)
-    confidence_threshold: float = 50.0  # 0-100 scale, reserved for future use
-    
     # Operational Parameters
     shadow_mode: bool = False  # Signal-only mode - shows trading signals without executing trades (manual trading)
     max_bars_storage: int = 200
+    
+    # Trading Style - Controls zone filtering and proximity behavior
+    # 0 = Conservative (main zones only, no proximity), 1 = Moderate (all features), 2 = Aggressive (no filters on main zones)
+    trading_style: int = 1  # Default to Moderate
     
     # Bid/Ask Trading Strategy Parameters
     passive_order_timeout: int = 10  # Seconds to wait for passive order fill
@@ -477,9 +477,6 @@ class BotConfiguration:
             "max_stop_loss_dollars": self.max_stop_loss_dollars,
             "account_size": self.account_size,
             
-            # Confidence Threshold (kept for future feature)
-            "confidence_threshold": self.confidence_threshold,
-            
             # Operational Mode
             "shadow_mode": self.shadow_mode,
             "max_bars_storage": self.max_bars_storage,
@@ -581,11 +578,6 @@ def load_from_env() -> BotConfiguration:
                 logger = logging.getLogger(__name__)
                 logger.error(f"Invalid ACCOUNT_SIZE format: {account_size_str}. Using default: {config.account_size}")
     
-    # Confidence threshold from GUI (kept for future feature)
-    if os.getenv("BOT_CONFIDENCE_THRESHOLD"):
-        # GUI provides confidence as percentage (0-100)
-        config.confidence_threshold = float(os.getenv("BOT_CONFIDENCE_THRESHOLD"))
-    
     if os.getenv("BOT_TICK_SIZE"):
         config.tick_size = float(os.getenv("BOT_TICK_SIZE"))
     
@@ -594,6 +586,17 @@ def load_from_env() -> BotConfiguration:
     
     if os.getenv("BOT_SHADOW_MODE"):
         config.shadow_mode = os.getenv("BOT_SHADOW_MODE").lower() in ("true", "1", "yes")
+    
+    # Trading Style (0=Conservative, 1=Moderate, 2=Aggressive)
+    if os.getenv("BOT_TRADING_STYLE"):
+        try:
+            style_value = int(os.getenv("BOT_TRADING_STYLE"))
+            if 0 <= style_value <= 2:
+                config.trading_style = style_value
+            else:
+                logger.warning(f"Invalid BOT_TRADING_STYLE value: {style_value}. Using default (1=Moderate)")
+        except ValueError:
+            logger.warning(f"Invalid BOT_TRADING_STYLE format. Using default (1=Moderate)")
     
     # Zone-Based Strategy Configuration (USER CONFIGURABLE via GUI)
     if os.getenv("BOT_STOP_LOSS_TICKS"):
@@ -771,6 +774,8 @@ def load_config(environment: Optional[str] = None, backtest_mode: bool = False) 
         env_vars_set.add("dry_run")
     if os.getenv("BOT_SHADOW_MODE"):
         env_vars_set.add("shadow_mode")
+    if os.getenv("BOT_TRADING_STYLE"):
+        env_vars_set.add("trading_style")
     if os.getenv("BOT_STOP_LOSS_TICKS"):
         env_vars_set.add("stop_loss_ticks")
     if os.getenv("BOT_TAKE_PROFIT_TICKS"):

@@ -3687,7 +3687,7 @@ def validate_entry_price_still_valid(symbol: str, signal_price: float, side: str
     SIMPLIFIED: Check once and decide immediately - no waiting.
     
     If price moved away, skip the entry and let the next bar generate a new signal
-    if conditions persist. This keeps the bot responsive and lets the RL system
+    if conditions persist. This keeps the bot responsive and lets the system
     learn optimal entry timing patterns.
     
     Args:
@@ -7391,22 +7391,35 @@ def main(symbol_override: str = None) -> None:
     proximal_reaction_window = CONFIG.get("proximal_reaction_window", 5.0)
     buffer_size_price = proximal_buffer_ticks * tick_size
     
-    logger.info("🎯 Zone-Based Trading Strategy Initialized:")
-    logger.info(f"  • Symbol: {trading_symbol}")
-    logger.info(f"  • Tick Specs: tick_size={tick_size}, tick_value={tick_value}")
-    logger.info(f"  • Stop Loss: {stop_loss_ticks} ticks ({stop_loss_ticks * tick_size:.2f} points = ${stop_loss_dollars:.2f})")
-    logger.info(f"  • Take Profit: {take_profit_ticks} ticks ({take_profit_ticks * tick_size:.2f} points = ${take_profit_dollars:.2f})")
-    logger.info(f"  • Velocity Filter: 5.0 ticks/sec (10s reaction window) - Symbol-agnostic")
-    logger.info(f"  • Volume Filter: 2.0x average (10s reaction window) - Symbol-agnostic")
-    logger.info(f"  • Time in Zone Limit: 45 seconds - Symbol-agnostic")
-    if use_proximal_buffer:
-        logger.info(f"  • 🎁 BONUS: Proximal Buffer ENABLED - {proximal_buffer_ticks} ticks ({buffer_size_price:.2f} points)")
-        logger.info(f"  •   Proximal Reaction Window: {proximal_reaction_window}s (tighter for buffer trades)")
-    else:
-        logger.info(f"  • Proximal Buffer: DISABLED")
-    logger.info("")
+    logger.debug("🎯 Zone-Based Trading Strategy Initialized:")
+    logger.debug(f"  • Symbol: {trading_symbol}")
+    logger.debug(f"  • Tick Specs: tick_size={tick_size}, tick_value={tick_value}")
+    logger.debug(f"  • Stop Loss: {stop_loss_ticks} ticks ({stop_loss_ticks * tick_size:.2f} points = ${stop_loss_dollars:.2f})")
+    logger.debug(f"  • Take Profit: {take_profit_ticks} ticks ({take_profit_ticks * tick_size:.2f} points = ${take_profit_dollars:.2f})")
     
-    # RL system and strategy components removed - undergoing refactoring
+    # Log trading style configuration
+    trading_style = CONFIG.get("trading_style", 1)
+    style_names = {0: "🛡️ CONSERVATIVE", 1: "⚖️ MODERATE", 2: "⚡ AGGRESSIVE"}
+    style_name = style_names.get(trading_style, "⚖️ MODERATE")
+    logger.debug(f"  • Trading Style: {style_name}")
+    if trading_style == 0:
+        logger.debug(f"    ↳ Main zones only (no proximity buffer trades)")
+    elif trading_style == 1:
+        logger.debug(f"    ↳ All features enabled (filters + proximity buffer)")
+    elif trading_style == 2:
+        logger.debug(f"    ↳ No filters on main zones (instant execution on body out)")
+    
+    logger.debug(f"  • Velocity Filter: 5.0 ticks/sec (10s reaction window) - Symbol-agnostic")
+    logger.debug(f"  • Volume Filter: 2.0x average (10s reaction window) - Symbol-agnostic")
+    logger.debug(f"  • Time in Zone Limit: 45 seconds - Symbol-agnostic")
+    if use_proximal_buffer:
+        logger.debug(f"  • 🎁 BONUS: Proximal Buffer ENABLED - {proximal_buffer_ticks} ticks ({buffer_size_price:.2f} points)")
+        logger.debug(f"  •   Proximal Reaction Window: {proximal_reaction_window}s (tighter for buffer trades)")
+    else:
+        logger.debug(f"  • Proximal Buffer: DISABLED")
+    logger.debug("")
+    
+    # Legacy strategy components removed - system refactored to zone-based approach
     # Trading logic will be updated with new strategy
     
     # Symbol specifications - suppress detailed info, just essentials
@@ -7605,10 +7618,18 @@ def execute_zone_trading_logic(symbol: str, current_price: float, current_time: 
     # Get proximal reaction window for buffer trades
     proximal_reaction_window = CONFIG.get("proximal_reaction_window", 5.0)
     
+    # Get trading style configuration
+    # 0=Conservative (main zones only), 1=Moderate (all features), 2=Aggressive (no filters)
+    trading_style = CONFIG.get("trading_style", 1)
+    
     # Check each active zone
     for zone in active_zones:
         # Check if price has entered this zone (including proximal buffer)
         has_entered, is_proximal = rejection_detector.has_entered_zone(zone, high_price, low_price)
+        
+        # CONSERVATIVE MODE: Skip proximal zones (only trade main zones)
+        if trading_style == 0 and is_proximal:
+            continue  # Skip this zone if Conservative mode and it's a proximal entry
         
         # If price just entered, record entry and mark if proximal
         if has_entered and zone.get('entry_time') is None:
@@ -7619,38 +7640,51 @@ def execute_zone_trading_logic(symbol: str, current_price: float, current_time: 
         if has_entered:
             is_body_displaced = rejection_detector.is_body_displaced(zone, body_high, body_low)
             
-            # If body is displaced, run filters
+            # If body is displaced, check filters based on trading style
             if is_body_displaced:
-                # Use tighter reaction window for proximal trades
-                reaction_window = proximal_reaction_window if zone.get('is_proximal', False) else None
+                # AGGRESSIVE MODE: Skip filters for main zone entries (not proximal)
+                # Only proximal zones still get filtered in aggressive mode
+                skip_filters = (trading_style == 2 and not is_proximal)
                 
-                # Check all filters (with custom reaction window for proximal trades)
-                all_passed, should_wait, pending_filters = filter_manager.check_all_filters(
-                    zone, current_price, current_time,
-                    current_volume, average_volume,
-                    is_body_displaced,
-                    reaction_window=reaction_window
-                )
-                
-                # If filters are pending, continue monitoring
-                if should_wait:
-                    continue
-                
-                # If all filters passed, enter trade
-                if all_passed:
-                    # Determine trade type for tagging
-                    trade_type = "proximal" if zone.get('is_proximal', False) else "zone_touch"
+                if skip_filters:
+                    # Aggressive mode on main zone - take trade immediately
+                    trade_type = "zone_touch"
                     enter_zone_rejection_trade(symbol, zone, current_price, body_high, body_low, trade_type)
-                    # Clear zone entry state so it can be traded again later
                     zone_manager.clear_zone_entry(zone)
                     filter_manager.clear_pending_checks(zone)
                     break  # Only one trade at a time
                 else:
-                    # Filters failed, clear this zone
-                    trade_type = "proximal" if zone.get('is_proximal', False) else "zone_touch"
-                    logger.info(f"⛔ Trade skipped - filters failed for {zone['zone_type']} zone ({trade_type})")
-                    zone_manager.clear_zone_entry(zone)
-                    filter_manager.clear_pending_checks(zone)
+                    # Run filters (Moderate mode, Conservative mode, or Aggressive on proximal)
+                    # Use tighter reaction window for proximal trades
+                    reaction_window = proximal_reaction_window if zone.get('is_proximal', False) else None
+                    
+                    # Check all filters (with custom reaction window for proximal trades)
+                    all_passed, should_wait, pending_filters = filter_manager.check_all_filters(
+                        zone, current_price, current_time,
+                        current_volume, average_volume,
+                        is_body_displaced,
+                        reaction_window=reaction_window
+                    )
+                    
+                    # If filters are pending, continue monitoring
+                    if should_wait:
+                        continue
+                    
+                    # If all filters passed, enter trade
+                    if all_passed:
+                        # Determine trade type for tagging
+                        trade_type = "proximal" if zone.get('is_proximal', False) else "zone_touch"
+                        enter_zone_rejection_trade(symbol, zone, current_price, body_high, body_low, trade_type)
+                        # Clear zone entry state so it can be traded again later
+                        zone_manager.clear_zone_entry(zone)
+                        filter_manager.clear_pending_checks(zone)
+                        break  # Only one trade at a time
+                    else:
+                        # Filters failed, clear this zone
+                        trade_type = "proximal" if zone.get('is_proximal', False) else "zone_touch"
+                        logger.info(f"⛔ Trade skipped - filters failed for {zone['zone_type']} zone ({trade_type})")
+                        zone_manager.clear_zone_entry(zone)
+                        filter_manager.clear_pending_checks(zone)
 
 
 def enter_zone_rejection_trade(symbol: str, zone: Dict, current_price: float, 
