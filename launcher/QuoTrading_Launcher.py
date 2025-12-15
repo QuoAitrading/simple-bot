@@ -713,7 +713,7 @@ class QuoTradingLauncher:
         self.root.title("QuoTrading - Broker Setup")
         
         # Header - plain white text, NO rainbow in launcher GUI
-        header = self.create_header("Welcome to QuoTrading AI", 
+        header = self.create_header("QuoTrading AI", 
                                    "Select your account type and broker", 
                                    rainbow=False,
                                    rainbow_animated=False)

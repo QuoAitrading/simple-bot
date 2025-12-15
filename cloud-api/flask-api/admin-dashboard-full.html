@@ -1490,21 +1490,58 @@
         // Provide it via one of:
         // 1) URL:  ?admin_key=YOUR_KEY
         // 2) LocalStorage: localStorage.setItem('ADMIN_API_KEY','YOUR_KEY')
-        const ADMIN_KEY = new URLSearchParams(window.location.search).get('admin_key')
-            || localStorage.getItem('ADMIN_API_KEY')
-            || '';
+        //
+        // IMPORTANT: Treat this as a mutable runtime value (not const), because
+        // some flows prompt the user and then retry requests without a refresh.
+        let ADMIN_KEY = '';
+
+        function getAdminKeyFromUrlOrStorage() {
+            const params = new URLSearchParams(window.location.search);
+            return (params.get('admin_key') || params.get('license_key') || localStorage.getItem('ADMIN_API_KEY') || '').trim();
+        }
+
+        function setAdminKey(key) {
+            ADMIN_KEY = (key || '').trim();
+            try {
+                if (ADMIN_KEY) localStorage.setItem('ADMIN_API_KEY', ADMIN_KEY);
+            } catch {
+                // ignore storage failures (private mode, disabled, etc.)
+            }
+
+            const el = document.getElementById('adminKeyStatus');
+            if (el) el.textContent = ADMIN_KEY ? 'Admin key: set' : 'Admin key: missing';
+        }
+
+        // Initialize the key once on boot.
+        setAdminKey(getAdminKeyFromUrlOrStorage());
 
         // Back-compat alias (older code used API_KEY)
-        const API_KEY = ADMIN_KEY;
+        const API_KEY = () => ADMIN_KEY;
 
         let allUsers = [];
         let currentFilter = 'all';
 
         function requireAdminKey() {
+            // Re-check URL/storage in case user pasted a new URL or storage changed.
+            if (!ADMIN_KEY) setAdminKey(getAdminKeyFromUrlOrStorage());
             if (ADMIN_KEY && ADMIN_KEY.trim().length > 0) return true;
             console.error('Missing admin key. Provide ?admin_key=... or set localStorage ADMIN_API_KEY.');
             alert('Missing admin key.\n\nOpen this dashboard with:\n?admin_key=YOUR_ADMIN_KEY\n\nOr run in DevTools:\nlocalStorage.setItem(\'ADMIN_API_KEY\',\'YOUR_ADMIN_KEY\')\nthen refresh.');
             return false;
+        }
+
+        function showErrorToast(message) {
+            const box = document.getElementById('errorBox');
+            if (!box) return;
+            box.textContent = message;
+            box.style.display = 'block';
+        }
+
+        function clearErrorToast() {
+            const box = document.getElementById('errorBox');
+            if (!box) return;
+            box.textContent = '';
+            box.style.display = 'none';
         }
 
         async function apiFetch(path, { method = 'GET', headers = {}, body = undefined } = {}) {
@@ -1558,6 +1595,29 @@
         if (ADMIN_KEY) {
             loadDashboard();
         }
+
+        // Add a minimal auth/status banner + error box (non-breaking if UI changes).
+        window.addEventListener('DOMContentLoaded', () => {
+            const header = document.querySelector('.header') || document.body;
+            if (!document.getElementById('adminKeyStatus')) {
+                const banner = document.createElement('div');
+                banner.style.cssText = 'margin: 8px 0 0 0; display:flex; gap:12px; align-items:center; font-size: 12px; color:#5f6368;';
+                banner.innerHTML = `
+                    <span id="adminKeyStatus">Admin key: ${ADMIN_KEY ? 'set' : 'missing'}</span>
+                    <button id="setAdminKeyBtn" style="padding:6px 10px;border:1px solid #dadce0;background:#fff;border-radius:8px;cursor:pointer;">Set Key</button>
+                    <span id="errorBox" style="display:none; padding:6px 10px; border-radius:8px; background:#fce8e6; color:#b3261e; border:1px solid #fad2cf;"></span>
+                `;
+                header.appendChild(banner);
+                document.getElementById('setAdminKeyBtn').addEventListener('click', () => {
+                    const key = prompt('Enter admin key');
+                    if (key && key.trim()) {
+                        setAdminKey(key);
+                        clearErrorToast();
+                        loadDashboard();
+                    }
+                });
+            }
+        });
 
         // Auto-load RL experiences on RL tab
         let rlDataLoaded = false;
@@ -1784,15 +1844,23 @@
         }
 
         async function loadDashboard() {
-            await Promise.all([
-                loadStats(),
-                loadUsers(),
-                loadActivity(),
-                loadOnlineUsers()
-            ]);
+            try {
+                await Promise.all([
+                    loadStats(),
+                    loadUsers(),
+                    loadActivity(),
+                    loadOnlineUsers()
+                ]);
 
-            document.getElementById('lastUpdate').textContent =
-                'Updated ' + new Date().toLocaleString();
+                document.getElementById('lastUpdate').textContent =
+                    'Updated ' + new Date().toLocaleString();
+
+                clearErrorToast();
+            } catch (error) {
+                console.error('Dashboard load failed:', error);
+                showErrorToast(`Dashboard load failed: ${error?.message || error}`);
+                throw error;
+            }
         }
 
         async function loadStats() {
@@ -1812,6 +1880,7 @@
 
             } catch (error) {
                 console.error('Failed to load stats:', error);
+                showErrorToast(`Stats failed: ${error?.message || error}`);
             }
         }
 
@@ -1823,6 +1892,7 @@
                 renderUsers(allUsers);
             } catch (error) {
                 console.error('Failed to load users:', error);
+                showErrorToast(`Users failed: ${error?.message || error}`);
             }
         }
 
@@ -2597,14 +2667,14 @@
             const licenseKey = document.getElementById('testLicenseKey').value.trim();
             const resultDiv = document.getElementById('testResult');
 
-            if (!licenseKey) {
-                resultDiv.innerHTML = `
-                    <div style="background: #fef7e0; border: 1px solid #ea8600; color: #c17900; padding: 16px; border-radius: 8px;">
-                        ⚠️ Please enter a license key
-                    </div>
-                `;
+                const data = await apiFetch('/api/main', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ license_key: licenseKey })
+                });
                 resultDiv.style.display = 'block';
-                return;
+                console.error('License key test error:', error);
+                showErrorToast(`License test failed: ${error?.message || error}`);
             }
 
             resultDiv.innerHTML = `
@@ -2616,13 +2686,11 @@
             resultDiv.style.display = 'block';
 
             try {
-                const response = await fetch(`${API_URL}/api/main`, {
+                const data = await apiFetch('/api/main', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ license_key: licenseKey })
                 });
-
-                const data = await response.json();
 
                 if (data.license_valid) {
                     const expiresAt = data.license_expiration ? new Date(data.license_expiration).toLocaleDateString() : 'Never';
@@ -3259,11 +3327,11 @@
             // Chart loading functions
             async function loadChartData(endpoint) {
                 try {
-                    const response = await fetch(`${API_URL}/api/admin/charts/${endpoint}?admin_key=${API_KEY}`);
-                    if (!response.ok) throw new Error('Chart data fetch failed');
-                    return await response.json();
+                    // Use apiFetch so auth is always handled consistently.
+                    return await apiFetch(`/api/admin/charts/${encodeURIComponent(endpoint)}`);
                 } catch (error) {
                     console.error(`Chart data error for ${endpoint}:`, error);
+                    showErrorToast(`Charts failed: ${error?.message || error}`);
                     return null;
                 }
             }
@@ -3353,7 +3421,8 @@
                 document.getElementById('retentionResults').style.display = 'none';
 
                 try {
-                    let url = `${API_URL}/api/admin/reports/${reportType}`;
+                    // Use apiFetch so auth is consistent and failures are visible.
+                    let url = `/api/admin/reports/${encodeURIComponent(reportType)}`;
                     let params = [];
 
                     // Build query params based on report type
@@ -3389,13 +3458,7 @@
                         url += '?' + params.join('&');
                     }
 
-                    const response = await fetch(url, {
-                        headers: {
-                            'X-API-Key': ADMIN_API_KEY
-                        }
-                    });
-
-                    const data = await response.json();
+                    const data = await apiFetch(url);
                     currentReportData = data;
 
                     // Display results based on report type
@@ -3412,10 +3475,11 @@
                     // Show export button and results
                     document.getElementById('reportResults').style.display = 'block';
                     exportBtn.style.display = 'inline-block';
+                    clearErrorToast();
 
                 } catch (error) {
                     console.error('Report generation error:', error);
-                    alert('Error generating report. Please try again.');
+                    showErrorToast(`Report failed: ${error?.message || error}`);
                 } finally {
                     loadingIndicator.style.display = 'none';
                 }
@@ -3640,29 +3704,21 @@
                     console.log('Extending all licenses:', allLicenseKeys.length, 'users');
 
                     // Bulk extend all licenses
-                    const response = await fetch(`${API_URL}/api/admin/bulk/extend`, {
+                    const data = await apiFetch('/api/admin/bulk/extend', {
                         method: 'POST',
-                        headers: {
-                            'Content-Type': 'application/json',
-                            'X-Admin-API-Key': ADMIN_KEY
-                        },
+                        headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({
                             license_keys: allLicenseKeys,
                             days: parseInt(days)
                         })
                     });
-
-                    const data = await response.json();
                     console.log('Bulk extend response:', data);
 
-                    if (response.ok) {
-                        alert(`✅ SUCCESS\n\nExtended ${data.success} licenses by ${days} day(s)\nFailed: ${data.failed || 0}\n\n${data.errors && data.errors.length > 0 ? 'Errors:\n' + data.errors.join('\n') : ''}`);
-                        await loadDashboard(); // Refresh the dashboard
-                    } else {
-                        alert(`❌ Error: ${data.error || 'Unknown error'}`);
-                    }
+                    alert(`✅ SUCCESS\n\nExtended ${data.success} licenses by ${days} day(s)\nFailed: ${data.failed || 0}\n\n${data.errors && data.errors.length > 0 ? 'Errors:\n' + data.errors.join('\n') : ''}`);
+                    await loadDashboard(); // Refresh the dashboard
                 } catch (error) {
                     console.error('Extend all error:', error);
+                    showErrorToast(`Failed to extend licenses: ${error?.message || error}`);
                     alert(`❌ Failed to extend licenses: ${error.message}`);
                 }
             }
@@ -3692,27 +3748,19 @@
                     }
 
                     // Bulk extend all active licenses
-                    const response = await fetch(`${API_URL}/api/admin/bulk/extend`, {
+                    const data = await apiFetch('/api/admin/bulk/extend', {
                         method: 'POST',
-                        headers: {
-                            'Content-Type': 'application/json',
-                            'X-Admin-API-Key': ADMIN_KEY
-                        },
+                        headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({
                             license_keys: activeLicenseKeys,
                             days: parseInt(days)
                         })
                     });
 
-                    const data = await response.json();
-
-                    if (response.ok) {
-                        alert(`✅ SUCCESS\n\nExtended ${data.success} licenses by ${days} day(s)\nFailed: ${data.failed}\n\n${data.errors && data.errors.length > 0 ? 'Errors:\n' + data.errors.join('\n') : ''}`);
-                        loadDashboard(); // Refresh the dashboard
-                    } else {
-                        alert(`❌ Error: ${data.error}`);
-                    }
+                    alert(`✅ SUCCESS\n\nExtended ${data.success} licenses by ${days} day(s)\nFailed: ${data.failed}\n\n${data.errors && data.errors.length > 0 ? 'Errors:\n' + data.errors.join('\n') : ''}`);
+                    loadDashboard(); // Refresh the dashboard
                 } catch (error) {
+                    showErrorToast(`Failed to compensate users: ${error?.message || error}`);
                     alert(`❌ Failed to compensate users: ${error.message}`);
                 }
             }
@@ -4154,24 +4202,14 @@
                         return;
                     }
 
-                    // Delete data
-                    const deleteResponse = await fetch(`${API_URL}/api/admin/rl-experiences`, {
+                    // Delete data (use apiFetch so admin_key is always included)
+                    const deleteResult = await apiFetch('/api/admin/rl-experiences', {
                         method: 'DELETE',
-                        headers: {
-                            'Content-Type': 'application/json',
-                            // Server expects admin key in X-Admin-API-Key for admin operations
-                            'X-Admin-API-Key': ADMIN_KEY
-                        },
+                        headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({
                             symbol: symbolToDelete === 'all' ? null : symbolToDelete
                         })
                     });
-
-                    if (!deleteResponse.ok) {
-                        throw new Error('Failed to delete RL experiences');
-                    }
-
-                    const deleteResult = await deleteResponse.json();
 
                     alert(
                         `✅ SUCCESS!\n\n` +
@@ -4184,6 +4222,7 @@
 
                 } catch (error) {
                     console.error('Delete error:', error);
+                    showErrorToast(`Delete failed: ${error?.message || error}`);
                     alert(`Error deleting data: ${error.message}`);
                 }
             }
@@ -4244,23 +4283,12 @@
                         return;
                     }
 
-                    // Delete all RL experiences
-                    const deleteResponse = await fetch(`${API_URL}/api/admin/rl-experiences`, {
+                    // Delete all RL experiences (use apiFetch so admin_key is always included)
+                    const deleteResult = await apiFetch('/api/admin/rl-experiences', {
                         method: 'DELETE',
-                        headers: {
-                            'Content-Type': 'application/json',
-                            'X-API-Key': ADMIN_KEY
-                        },
-                        body: JSON.stringify({
-                            admin_key: ADMIN_KEY
-                        })
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ symbol: null })
                     });
-
-                    if (!deleteResponse.ok) {
-                        throw new Error('Failed to delete RL experiences');
-                    }
-
-                    const deleteResult = await deleteResponse.json();
 
                     // Show success message
                     alert(
@@ -4275,6 +4303,7 @@
 
                 } catch (error) {
                     console.error('Export & Clear error:', error);
+                    showErrorToast(`Export/Clear failed: ${error?.message || error}`);
                     alert(`Error: ${error.message}\n\nPlease check console for details.`);
                 }
             }
