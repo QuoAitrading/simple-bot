@@ -23,8 +23,21 @@ try:
     import socketio
     SOCKETIO_AVAILABLE = True
 except ImportError:
-    SOCKETIO_AVAILABLE = False
-    socketio = None
+    # Auto-install python-socketio if not available
+    import subprocess
+    import sys
+    print("📦 Installing python-socketio for real-time zones...")
+    try:
+        subprocess.check_call([sys.executable, "-m", "pip", "install", "python-socketio[client]", "-q"])
+        import socketio
+        SOCKETIO_AVAILABLE = True
+        print("✅ python-socketio installed successfully!")
+    except Exception as install_error:
+        print(f"⚠️ Could not install python-socketio: {install_error}")
+        print("   WebSocket zones will be disabled. Install manually with:")
+        print("   pip install python-socketio[client]")
+        SOCKETIO_AVAILABLE = False
+        socketio = None
 
 logger = logging.getLogger(__name__)
 
