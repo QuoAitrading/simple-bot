@@ -11,11 +11,14 @@ TRADING STRATEGIES (ACTIVE)
    - Builds opening range, waits for breakout and retest
    - Max 2 trades per session, stops after 2 losses or 1 win
 
-2. SUPERTREND (After 10:00 AM ET)
-   - Trend-following strategy using Supertrend indicator
-   - Uses trailing stop for profit protection
-   - **ADX filter active: Only trades when ADX > 25 (trending market)**
-   - Prevents false signals in choppy markets (ADX < 20)
+2. SUPERTREND (Anytime except ORB window)
+   - Multi-timeframe trend-following strategy
+   - Uses 1-min SuperTrend for execution timing
+   - Uses 5-min SuperTrend as trend filter (must align)
+   - Exits on flip but waits for pullback before re-entry
+   - ATR-based trailing stops for profit protection
+   - NO ADX requirements (trend validated by 5-min filter)
+   - NO time restrictions (can trade anytime except 9:30-10:00 AM)
 
 NOTE: Supply & Demand (S&D) strategy is DISABLED but code kept intact
       for future re-enablement. All S&D code remains in the codebase.
@@ -1992,10 +1995,12 @@ def initialize_state(symbol: str) -> None:
         
         # Bar storage
         "bars_1min": deque(maxlen=CONFIG.get("max_bars_storage", 200)),
+        "bars_5min": deque(maxlen=100),  # 5-minute bars for SuperTrend filter
         "bars_15min": deque(maxlen=100),
         
         # Current incomplete bars
         "current_1min_bar": None,
+        "current_5min_bar": None,
         "current_15min_bar": None,
         
         # VWAP calculation data
@@ -2503,6 +2508,49 @@ def update_15min_bar(symbol: str, price: float, volume: int, dt: datetime) -> No
         # Start new bar
         state[symbol]["current_15min_bar"] = {
             "timestamp": boundary_15min,
+            "open": price,
+            "high": price,
+            "low": price,
+            "close": price,
+            "volume": volume
+        }
+    else:
+        # Update current bar
+        current_bar["high"] = max(current_bar["high"], price)
+        current_bar["low"] = min(current_bar["low"], price)
+        current_bar["close"] = price
+        current_bar["volume"] += volume
+
+
+def update_5min_bar(symbol: str, price: float, volume: int, dt: datetime) -> None:
+    """
+    Update or create 5-minute bars for SuperTrend trend filter.
+    
+    Args:
+        symbol: Instrument symbol
+        price: Current price
+        volume: Current volume
+        dt: Current datetime
+    """
+    global supertrend_strategy
+    
+    # Get 5-minute boundary
+    minute = (dt.minute // 5) * 5
+    boundary_5min = dt.replace(minute=minute, second=0, microsecond=0)
+    
+    current_bar = state[symbol]["current_5min_bar"]
+    
+    if current_bar is None or current_bar["timestamp"] != boundary_5min:
+        # Finalize previous bar if exists
+        if current_bar is not None:
+            state[symbol]["bars_5min"].append(current_bar)
+            # Feed to SuperTrend strategy for 5-min calculations
+            if supertrend_strategy is not None and SUPERTREND_AVAILABLE:
+                supertrend_strategy.add_bar_5min(current_bar)
+        
+        # Start new bar
+        state[symbol]["current_5min_bar"] = {
+            "timestamp": boundary_5min,
             "open": price,
             "high": price,
             "low": price,
@@ -6601,7 +6649,7 @@ def check_safety_conditions(symbol: str) -> Tuple[bool, Optional[str]]:
             position = state[symbol]["position"]
             entry_price = position.get("entry_price", 0)
             side = position.get("side", "long")
-            current_price = state[symbol]["bars"][-1]["close"] if state[symbol]["bars"] else entry_price
+            current_price = state[symbol]["bars_1min"][-1]["close"] if state[symbol].get("bars_1min") else entry_price
             
             # Calculate current P&L for the position
             if side == "long":
@@ -7490,14 +7538,14 @@ def main(symbol_override: str = None) -> None:
     global orb_strategy
     if ORB_STRATEGY_AVAILABLE and init_orb_strategy:
         orb_strategy = init_orb_strategy(tick_size=tick_size, tick_value=tick_value)
-        logger.debug("📊 ORB Strategy initialized (9:30-10:00 ET window)")
+        logger.debug("📊 Morning session strategy initialized")
     
-    # Initialize Supertrend + ADX trend following strategy
-    # Used when ADX > 25 (strong trend), S&D used when ADX < 20 (choppy)
+    # Initialize Supertrend multi-timeframe trend following strategy
+    # Uses 1-min + 5-min SuperTrend alignment for trend confirmation
     global supertrend_strategy
     if SUPERTREND_AVAILABLE and init_supertrend_strategy:
         supertrend_strategy = init_supertrend_strategy(tick_size=tick_size, tick_value=tick_value)
-        logger.debug("📈 Supertrend Strategy initialized (ADX-based switching)")
+        logger.debug("📈 Primary strategy initialized")
     
     # Get stop loss and take profit from configuration (user configurable)
     stop_loss_ticks = CONFIG.get("stop_loss_ticks", ZONE_STOP_LOSS_TICKS_DEFAULT)
@@ -7737,11 +7785,11 @@ def execute_orb_trading_logic(symbol: str, current_price: float, current_time: d
                         broker.modify_stop_order(symbol, stop_side, position.get("quantity", 1), new_stop)
                         state[symbol]["position"]["stop_loss"] = new_stop
                         if profit_ticks < TRAIL_TRIGGER:
-                            logger.info(f"🔒 ORB stop locked at +3 ticks: ${new_stop:.2f}")
+                            logger.info(f"🔒 Stop locked at +3 ticks: ${new_stop:.2f}")
                         else:
-                            logger.info(f"📈 ORB trailing stop: ${current_stop:.2f} → ${new_stop:.2f}")
+                            logger.info(f"📈 Trailing stop: ${current_stop:.2f} → ${new_stop:.2f}")
                     except Exception as e:
-                        logger.debug(f"Could not update ORB stop: {e}")
+                        logger.debug(f"Could not update stop: {e}")
                 
                 # Check if stop was hit
                 stop_hit = False
@@ -7761,7 +7809,7 @@ def execute_orb_trading_logic(symbol: str, current_price: float, current_time: d
                 
                 if stop_hit or tp_hit:
                     reason = "Take Profit hit" if tp_hit else f"Stop hit at ${current_stop:.2f}"
-                    logger.info(f"🔄 ORB EXIT: {reason}")
+                    logger.info(f"🔄 EXIT: {reason}")
                     try:
                         exit_side = "SELL" if position_side == "long" else "BUY"
                         broker.place_market_order(symbol, exit_side, position.get("quantity", 1))
@@ -7771,19 +7819,19 @@ def execute_orb_trading_logic(symbol: str, current_price: float, current_time: d
                         pnl = (current_price - entry_price) if position_side == "long" else (entry_price - current_price)
                         is_win = pnl > 0
                         orb_strategy.record_trade_result(is_win)
-                        logger.info(f"{'✅' if is_win else '❌'} ORB closed: {'+' if pnl > 0 else ''}{pnl:.2f} pts ({pnl/tick_size:.0f} ticks)")
+                        logger.info(f"{'✅' if is_win else '❌'} Trade closed: {'+' if pnl > 0 else ''}{pnl:.2f} pts ({pnl/tick_size:.0f} ticks)")
                     except Exception as e:
-                        logger.error(f"Error closing ORB position: {e}")
+                        logger.error(f"Error closing position: {e}")
                     return
                         
             return
     
     # Skip if no bars yet
-    if symbol not in state or not state[symbol].get("bars"):
+    if symbol not in state or not state[symbol].get("bars_1min"):
         return
     
     # Get current bar data
-    bars = state[symbol]["bars"]
+    bars = state[symbol]["bars_1min"]
     if not bars:
         return
     
@@ -7862,13 +7910,13 @@ def enter_orb_trade(symbol: str, signal: Dict, current_price: float) -> None:
     try:
         logger.info(f"")
         logger.info(f"{'='*60}")
-        logger.info(f"📈 ORB TRADE SIGNAL: {direction.upper()}")
+        logger.info(f"📈 TRADE SIGNAL: {direction.upper()}")
         logger.info(f"{'='*60}")
         logger.info(f"  Entry: ${entry_price:.2f}")
         logger.info(f"  Stop Loss: ${stop_loss_price:.2f} ({stop_loss_ticks} ticks)")
         logger.info(f"  Take Profit: ${take_profit_price:.2f} ({take_profit_ticks} ticks)")
-        logger.info(f"  Reason: {signal.get('reason', 'ORB Retest')}")
-        logger.info(f"  ORH: ${signal.get('orh', 0):.2f}, ORL: ${signal.get('orl', 0):.2f}")
+        logger.info(f"  Reason: {signal.get('reason', 'Signal confirmation')}")
+        logger.info(f"  Range High: ${signal.get('orh', 0):.2f}, Range Low: ${signal.get('orl', 0):.2f}")
         logger.info(f"{'='*60}")
         
         # Place bracket order
@@ -7879,7 +7927,7 @@ def enter_orb_trade(symbol: str, signal: Dict, current_price: float) -> None:
             order_type="MARKET",
             stop_loss=stop_loss_price,
             take_profit=take_profit_price,
-            reason=f"ORB {direction.upper()}"
+            reason=f"Trade {direction.upper()}"
         )
         
         if order:
@@ -7898,15 +7946,15 @@ def enter_orb_trade(symbol: str, signal: Dict, current_price: float) -> None:
                 "orl": signal.get('orl')
             }
             
-            logger.info(f"✅ ORB trade entered: {direction.upper()} {max_contracts} @ ${entry_price:.2f}")
+            logger.info(f"✅ Trade entered: {direction.upper()} {max_contracts} @ ${entry_price:.2f}")
             
             # Save position state
             save_position_state(symbol)
         else:
-            logger.error("❌ Failed to enter ORB trade - order returned None")
+            logger.error("❌ Failed to enter trade - order returned None")
             
     except Exception as e:
-        logger.error(f"❌ Error entering ORB trade: {e}")
+        logger.error(f"❌ Error entering trade: {e}")
         import traceback
         logger.error(traceback.format_exc())
 
@@ -7915,14 +7963,16 @@ def execute_supertrend_trading_logic(symbol: str, current_price: float, current_
     """
     Execute Supertrend trend-following trading logic.
     
-    Called after 10:00 AM ET when ADX > 25 (strong trend detected).
-    ADX filter prevents false signals in choppy markets.
+    Called anytime (except ORB window) when 1-min and 5-min SuperTrend are aligned.
+    Multi-timeframe filter prevents false signals in choppy markets.
     
     Strategy:
-    1. Wait for Supertrend signal (trend flip)
-    2. Enter on signal
-    3. Trail stop using Supertrend line
-    4. Exit on opposite signal
+    1. Wait for 1-min SuperTrend flip
+    2. Confirm 5-min SuperTrend is aligned
+    3. Wait for pullback to SuperTrend line
+    4. Enter on continuation (body displacement)
+    5. Trail stop using ATR-based rules
+    6. Exit on SuperTrend flip (do NOT reverse immediately - wait for new pullback)
     
     Args:
         symbol: Trading symbol
@@ -8020,7 +8070,7 @@ def execute_supertrend_trading_logic(symbol: str, current_price: float, current_
                     reason = f"Stop hit at ${current_stop:.2f}"
                 
                 if should_exit:
-                    logger.info(f"🔄 Supertrend EXIT: {reason}")
+                    logger.info(f"🔄 EXIT: {reason}")
                     try:
                         exit_side = "SELL" if position_side == "long" else "BUY"
                         broker.place_market_order(symbol, exit_side, position.get("quantity", 1))
@@ -8030,7 +8080,7 @@ def execute_supertrend_trading_logic(symbol: str, current_price: float, current_
                         pnl = (current_price - entry_price) if position_side == "long" else (entry_price - current_price)
                         is_win = pnl > 0
                         supertrend_strategy.record_trade_result(is_win)
-                        logger.info(f"{'✅' if is_win else '❌'} Supertrend closed: {'+' if pnl > 0 else ''}{pnl:.2f} pts ({pnl/tick_size:.0f} ticks)")
+                        logger.info(f"{'✅' if is_win else '❌'} Trade closed: {'+' if pnl > 0 else ''}{pnl:.2f} pts ({pnl/tick_size:.0f} ticks)")
                     except Exception as e:
                         logger.error(f"Error closing position: {e}")
                     return
@@ -8038,18 +8088,18 @@ def execute_supertrend_trading_logic(symbol: str, current_price: float, current_
             return
     
     # Skip if no bars yet
-    if symbol not in state or not state[symbol].get("bars"):
+    if symbol not in state or not state[symbol].get("bars_1min"):
         return
     
     # Get current bar data
-    bars = state[symbol]["bars"]
+    bars = state[symbol]["bars_1min"]
     if not bars:
         return
     
     current_bar = bars[-1]
     
-    # Check for entry signal
-    signal = supertrend_strategy.check_entry_signal(current_bar, current_price)
+    # Check for entry signal (passes current_time for time window check)
+    signal = supertrend_strategy.check_entry_signal(current_bar, current_price, current_time)
     
     if signal:
         enter_supertrend_trade(symbol, signal, current_price)
@@ -8095,13 +8145,13 @@ def enter_supertrend_trade(symbol: str, signal: Dict, current_price: float) -> N
     try:
         logger.info(f"")
         logger.info(f"{'='*60}")
-        logger.info(f"📈 SUPERTREND TRADE: {direction.upper()}")
+        logger.info(f"📈 TRADE SIGNAL: {direction.upper()}")
         logger.info(f"{'='*60}")
         logger.info(f"  Entry: ${entry_price:.2f}")
         logger.info(f"  Stop Loss: ${stop_loss_price:.2f} ({stop_loss_ticks} ticks)")
-        logger.info(f"  Take Profit: NONE (trailing Supertrend line)")
-        logger.info(f"  ADX: {signal.get('adx', 0):.1f}")
-        logger.info(f"  Supertrend Line: ${supertrend_line:.2f}")
+        logger.info(f"  Take Profit: NONE (trailing stop)")
+        logger.info(f"  Signal Line: ${supertrend_line:.2f}")
+        logger.info(f"  Confirmation Line: ${signal.get('supertrend_5min_line', 0):.2f}")
         logger.info(f"{'='*60}")
         
         # Place market order with stop loss only (no take profit)
@@ -8127,18 +8177,18 @@ def enter_supertrend_trade(symbol: str, signal: Dict, current_price: float) -> N
                 "strategy": "Supertrend",
                 "entry_time": get_current_time(),
                 "supertrend_line": supertrend_line,
-                "initial_stop": stop_loss_price,  # Track initial stop
-                "adx": signal.get('adx')
+                "supertrend_5min_line": signal.get('supertrend_5min_line', 0),
+                "initial_stop": stop_loss_price  # Track initial stop
             }
             
-            logger.info(f"✅ Supertrend trade entered: {direction.upper()} {max_contracts} @ ${entry_price:.2f}")
-            logger.info(f"   Exit: Trailing Supertrend line (currently ${supertrend_line:.2f})")
+            logger.info(f"✅ Trade entered: {direction.upper()} {max_contracts} @ ${entry_price:.2f}")
+            logger.info(f"   Exit: Trailing stop (currently ${supertrend_line:.2f})")
             save_position_state(symbol)
         else:
-            logger.error("❌ Failed to enter Supertrend trade - order returned None")
+            logger.error("❌ Failed to enter trade - order returned None")
             
     except Exception as e:
-        logger.error(f"❌ Error entering Supertrend trade: {e}")
+        logger.error(f"❌ Error entering trade: {e}")
         import traceback
         logger.error(traceback.format_exc())
 
@@ -8173,11 +8223,11 @@ def execute_zone_trading_logic(symbol: str, current_price: float, current_time: 
         return
     
     # Skip if no bars yet (need open, high, low for candle)
-    if symbol not in state or not state[symbol].get("bars"):
+    if symbol not in state or not state[symbol].get("bars_1min"):
         return
     
     # Get current bar data (last 1-minute bar)
-    bars = state[symbol]["bars"]
+    bars = state[symbol]["bars_1min"]
     if not bars:
         return
     
@@ -8533,13 +8583,16 @@ def handle_tick_event(event) -> None:
     # Update 1-minute bars
     update_1min_bar(symbol, price, volume, dt)
     
+    # Update 5-minute bars (for SuperTrend filter)
+    update_5min_bar(symbol, price, volume, dt)
+    
     # Update 15-minute bars
     update_15min_bar(symbol, price, volume, dt)
     
-    # ===== STRATEGY SELECTION: ORB → Supertrend with ADX filter =====
+    # ===== STRATEGY SELECTION: ORB → Supertrend with Multi-TF Filter =====
     # Current Active Strategies:
     # 1. ORB (Opening Range Breakout): 9:30-10:00 AM ET
-    # 2. Supertrend: After 10:00 AM ET (only when ADX > 25 - trending market)
+    # 2. Supertrend: Anytime except ORB window (1-min + 5-min filter, no ADX)
     
     # IMPORTANT: Supply & Demand strategy is TEMPORARILY DISABLED
     # Code is kept intact below per user request - will be re-enabled in the future
@@ -8548,8 +8601,8 @@ def handle_tick_event(event) -> None:
     # Update Supertrend strategy with new bar data (even during ORB window)
     if supertrend_strategy is not None and SUPERTREND_AVAILABLE:
         supertrend_strategy.check_session_reset(dt)
-        # Feed bars to Supertrend for ADX/Supertrend calculations
-        bars = state[symbol].get("bars", [])
+        # Feed 1-min bars to Supertrend for calculations
+        bars = state[symbol].get("bars_1min", [])
         if bars:
             supertrend_strategy.add_bar(bars[-1])
     
@@ -8563,22 +8616,12 @@ def handle_tick_event(event) -> None:
             execute_orb_trading_logic(symbol, price, dt)
             return  # Don't execute other strategies during ORB window
     
-    # After ORB window: Use ADX to filter Supertrend trades
-    # Only trade when ADX > 25 (strong trend) to avoid false signals in choppy markets
+    # After ORB window: Use SuperTrend with multi-timeframe filter
+    # Only trade when 1-min and 5-min SuperTrend are aligned (same direction)
+    # SuperTrend can trade anytime (no time restrictions) except during ORB window
     if supertrend_strategy is not None and SUPERTREND_AVAILABLE:
-        market_condition = supertrend_strategy.get_market_condition()
-        
-        if market_condition == 'trending':
-            # ADX > 25: Use Supertrend (trending market - good signals)
-            execute_supertrend_trading_logic(symbol, price, dt)
-            return
-        
-        elif market_condition == 'unclear':
-            # ADX 20-25: No trade, wait for clarity
-            return
-        
-        # market_condition == 'choppy' (ADX < 20): Don't trade
-        # In choppy markets, Supertrend produces false signals - skip trading
+        # Execute SuperTrend trading logic (multi-TF filter handled inside)
+        execute_supertrend_trading_logic(symbol, price, dt)
         return
     
     # ===== SUPPLY & DEMAND STRATEGY - TEMPORARILY DISABLED =====
@@ -8616,9 +8659,9 @@ def handle_time_check_event(data: Dict[str, Any]) -> None:
                 
                 # Flatten any open positions
                 if state[symbol]["position"]["active"]:
-                    logger.critical(f"≡ƒöÆ Closing position at market close")
+                    logger.critical(f"🔄 Closing position at market close")
                     position = state[symbol]["position"]
-                    current_price = state[symbol]["bars"][-1]["close"] if state[symbol]["bars"] else None
+                    current_price = state[symbol]["bars_1min"][-1]["close"] if state[symbol].get("bars_1min") else None
                     
                     if current_price:
                         side = position["side"]
@@ -8646,9 +8689,9 @@ def handle_time_check_event(data: Dict[str, Any]) -> None:
                 
                 # Flatten any open positions
                 if state[symbol]["position"]["active"]:
-                    logger.critical(f"≡ƒöÆ Closing position at maintenance window")
+                    logger.critical(f"🔄 Closing position at maintenance window")
                     position = state[symbol]["position"]
-                    current_price = state[symbol]["bars"][-1]["close"] if state[symbol]["bars"] else None
+                    current_price = state[symbol]["bars_1min"][-1]["close"] if state[symbol].get("bars_1min") else None
                     
                     if current_price:
                         side = position["side"]

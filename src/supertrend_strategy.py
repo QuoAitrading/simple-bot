@@ -1,27 +1,30 @@
 """
-Supertrend + ADX Trend Following Strategy Module
+Supertrend Trend Following Strategy Module
 
-Simple, proven trend-following strategy that:
-- Uses Supertrend indicator for entry/exit signals
-- Uses ADX to filter out choppy markets (only trades when ADX > 25)
-- Holds positions as long as trend continues
-- Automatically adapts to any symbol via ATR
+Professional trend-following strategy using multi-timeframe SuperTrend:
+- 1-minute SuperTrend for execution timing
+- 5-minute SuperTrend as trend filter (must align with 1-min)
+- Trades anytime market is open (except ORB window 9:30-10:00 AM ET)
+- Exits on SuperTrend flip, waits for pullback before re-entry
+- ATR-based trailing stops (volatility-normalized)
 
 Strategy Flow:
-1. Check ADX > 25 (strong trend) before any trade
-2. Wait for Supertrend signal (trend flip)
-3. Enter on signal, hold until opposite signal
-4. Trail stop using Supertrend line
+1. Wait for 1-min SuperTrend flip
+2. Confirm 5-min SuperTrend is aligned (same direction)
+3. Wait for pullback to SuperTrend line
+4. Enter on continuation candle
+5. Trail stop using SuperTrend OR ATR
+6. Exit on flip or trailing stop hit
 
 Key Parameters:
 - ATR Period: 14 (standard)
 - Supertrend Multiplier: 3.0 (standard)
-- ADX Period: 14 (standard)
-- ADX Threshold: 25 (strong trend - filters false signals)
+- Multi-TF Filter: 1-min and 5-min must align
+- No time restrictions (trades anytime except ORB window)
 """
 
 import logging
-from datetime import datetime
+from datetime import datetime, time as datetime_time
 from typing import Dict, List, Optional, Tuple
 from dataclasses import dataclass, field
 from collections import deque
@@ -32,7 +35,7 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class SupertrendState:
-    """Tracks Supertrend strategy state."""
+    """Tracks Supertrend strategy state (1-minute timeframe)."""
     trend_direction: Optional[str] = None  # 'up' or 'down'
     supertrend_line: float = 0.0  # Current supertrend value
     upper_band: float = 0.0
@@ -40,29 +43,36 @@ class SupertrendState:
     prev_trend: Optional[str] = None  # Previous trend for signal detection
     signal_generated: bool = False  # True when a new signal is ready
     last_signal: Optional[str] = None  # 'long' or 'short'
+    last_flip_time: Optional[datetime] = None  # Timestamp of last flip
+    awaiting_pullback: bool = False  # True when waiting for pullback after flip
     trades_today: int = 0
     wins_today: int = 0
     losses_today: int = 0
     session_date: Optional[str] = None
 
 
+@dataclass
+class Supertrend5MinState:
+    """Tracks 5-minute Supertrend state (trend filter only)."""
+    trend_direction: Optional[str] = None  # 'up' or 'down'
+    supertrend_line: float = 0.0
+    upper_band: float = 0.0
+    lower_band: float = 0.0
+    prev_trend: Optional[str] = None
+
+
 class SupertrendStrategy:
     """
-    Supertrend + ADX Trend Following Strategy.
+    Multi-Timeframe Supertrend Trend Following Strategy.
     
-    Only trades when ADX indicates strong trend (> 25).
-    Uses Supertrend for entry/exit signals.
-    Holds until trend reverses.
+    Uses 1-min SuperTrend for execution and 5-min SuperTrend as trend filter.
+    Only trades when both timeframes align (same direction).
+    Trades anytime market is open (except during ORB window 9:30-10:00 AM ET).
     """
     
-    # Supertrend parameters
+    # Supertrend parameters (same for both timeframes)
     ATR_PERIOD = 14
     SUPERTREND_MULTIPLIER = 3.0
-    
-    # ADX parameters (used for filtering trades)
-    ADX_PERIOD = 14
-    ADX_TREND_THRESHOLD = 25  # Above this = trending, trade Supertrend signals
-    ADX_CHOP_THRESHOLD = 20   # Below this = choppy, skip trading (avoid false signals)
     
     def __init__(self, tick_size: float = 0.25, tick_value: float = 12.50):
         """
@@ -74,33 +84,50 @@ class SupertrendStrategy:
         """
         self.tick_size = tick_size
         self.tick_value = tick_value
+        
+        # 1-minute state (execution timeframe)
         self.state = SupertrendState()
+        
+        # 5-minute state (trend filter)
+        self.state_5min = Supertrend5MinState()
+        
         self.eastern_tz = pytz.timezone('US/Eastern')
         
-        # Price history for calculations (need enough for ATR + ADX)
+        # Price history for 1-min calculations
         self.bars: deque = deque(maxlen=100)
         
-        # Cached calculations
-        self.current_atr: float = 0.0
-        self.current_adx: float = 0.0
-        self.plus_di: float = 0.0
-        self.minus_di: float = 0.0
+        # Price history for 5-min calculations
+        self.bars_5min: deque = deque(maxlen=100)
         
-        # Track previous values for trend detection
+        # Cached ATR for 1-min
+        self.current_atr: float = 0.0
+        
+        # Cached ATR for 5-min
+        self.current_atr_5min: float = 0.0
+        
+        # Track previous values for trend detection (1-min)
         self.prev_supertrend: float = 0.0
         self.prev_close: float = 0.0
         
-        logger.info("Supertrend Strategy initialized")
+        # Track previous values for 5-min
+        self.prev_supertrend_5min: float = 0.0
+        self.prev_close_5min: float = 0.0
+        
+        logger.info("Trading strategy initialized")
     
     def reset_session(self) -> None:
         """Reset state for a new trading day."""
         self.state = SupertrendState()
+        self.state_5min = Supertrend5MinState()
         self.bars.clear()
+        self.bars_5min.clear()
         self.current_atr = 0.0
-        self.current_adx = 0.0
+        self.current_atr_5min = 0.0
         self.prev_supertrend = 0.0
         self.prev_close = 0.0
-        logger.info("🔄 Supertrend session reset")
+        self.prev_supertrend_5min = 0.0
+        self.prev_close_5min = 0.0
+        logger.info("🔄 Session reset")
     
     def check_session_reset(self, current_time: datetime) -> None:
         """Check if we need to reset for a new trading day."""
@@ -114,11 +141,11 @@ class SupertrendStrategy:
         if self.state.session_date != today_str:
             self.reset_session()
             self.state.session_date = today_str
-            logger.info(f"📅 New Supertrend session: {today_str}")
+            logger.info(f"📅 New session: {today_str}")
     
     def add_bar(self, bar: Dict) -> None:
         """
-        Add a new bar and update calculations.
+        Add a new 1-minute bar and update calculations.
         
         Only adds bar if it's a new bar (different timestamp than last).
         
@@ -135,7 +162,8 @@ class SupertrendStrategy:
                 self.bars[-1] = bar
                 # Recalculate Supertrend with updated bar
                 if self.current_atr > 0:
-                    self._calculate_supertrend(bar)
+                    self._calculate_supertrend(bar, self.state, self.current_atr, 
+                                               self.prev_supertrend, self.prev_close)
                 return
         
         # New bar - add to history
@@ -148,15 +176,49 @@ class SupertrendStrategy:
         # Update ATR
         self._calculate_atr()
         
-        # Update ADX (needs more bars)
-        if len(self.bars) >= self.ADX_PERIOD + 1:
-            self._calculate_adx()
-        
         # Update Supertrend
-        self._calculate_supertrend(bar)
+        self._calculate_supertrend(bar, self.state, self.current_atr, 
+                                   self.prev_supertrend, self.prev_close)
+    
+    def add_bar_5min(self, bar: Dict) -> None:
+        """
+        Add a new 5-minute bar and update 5-min SuperTrend filter.
+        
+        Only adds bar if it's a new bar (different timestamp than last).
+        
+        Args:
+            bar: OHLCV bar with 'open', 'high', 'low', 'close', 'volume', 'timestamp'
+        """
+        # Deduplicate: Only add if this is a new bar
+        bar_timestamp = bar.get('timestamp')
+        if self.bars_5min:
+            last_bar = self.bars_5min[-1]
+            last_timestamp = last_bar.get('timestamp')
+            if bar_timestamp == last_timestamp:
+                # Same bar, just update OHLC
+                self.bars_5min[-1] = bar
+                # Recalculate 5-min Supertrend with updated bar
+                if self.current_atr_5min > 0:
+                    self._calculate_supertrend(bar, self.state_5min, self.current_atr_5min,
+                                               self.prev_supertrend_5min, self.prev_close_5min, is_5min=True)
+                return
+        
+        # New bar - add to history
+        self.bars_5min.append(bar)
+        
+        # Need enough bars for calculations
+        if len(self.bars_5min) < self.ATR_PERIOD + 1:
+            return
+        
+        # Update 5-min ATR
+        self._calculate_atr_5min()
+        
+        # Update 5-min Supertrend
+        self._calculate_supertrend(bar, self.state_5min, self.current_atr_5min,
+                                   self.prev_supertrend_5min, self.prev_close_5min, is_5min=True)
     
     def _calculate_atr(self) -> None:
-        """Calculate Average True Range."""
+        """Calculate Average True Range for 1-minute bars."""
         if len(self.bars) < 2:
             return
         
@@ -182,93 +244,49 @@ class SupertrendStrategy:
                 atr = (atr * (self.ATR_PERIOD - 1) + true_ranges[i]) / self.ATR_PERIOD
             self.current_atr = atr
     
-    def _calculate_adx(self) -> None:
-        """
-        Calculate ADX (Average Directional Index).
-        
-        ADX measures trend strength:
-        - ADX > 25: Strong trend
-        - ADX < 20: Weak/no trend (choppy)
-        - ADX 20-25: Developing trend
-        """
-        if len(self.bars) < self.ADX_PERIOD + 1:
+    def _calculate_atr_5min(self) -> None:
+        """Calculate Average True Range for 5-minute bars."""
+        if len(self.bars_5min) < 2:
             return
         
-        bars_list = list(self.bars)
-        
-        # Calculate +DM, -DM, and TR for each bar
-        plus_dm_list = []
-        minus_dm_list = []
-        tr_list = []
+        true_ranges = []
+        bars_list = list(self.bars_5min)
         
         for i in range(1, len(bars_list)):
             high = bars_list[i]['high']
             low = bars_list[i]['low']
-            prev_high = bars_list[i-1]['high']
-            prev_low = bars_list[i-1]['low']
             prev_close = bars_list[i-1]['close']
             
-            # True Range
             tr = max(
                 high - low,
                 abs(high - prev_close),
                 abs(low - prev_close)
             )
-            tr_list.append(tr)
-            
-            # Directional Movement
-            plus_dm = high - prev_high if high - prev_high > prev_low - low else 0
-            minus_dm = prev_low - low if prev_low - low > high - prev_high else 0
-            
-            if plus_dm < 0:
-                plus_dm = 0
-            if minus_dm < 0:
-                minus_dm = 0
-            
-            plus_dm_list.append(plus_dm)
-            minus_dm_list.append(minus_dm)
+            true_ranges.append(tr)
         
-        if len(tr_list) < self.ADX_PERIOD:
-            return
-        
-        # Smooth the values using Wilder's method
-        def wilders_smooth(values, period):
-            if len(values) < period:
-                return 0
-            smoothed = sum(values[:period])
-            for i in range(period, len(values)):
-                smoothed = smoothed - (smoothed / period) + values[i]
-            return smoothed
-        
-        smoothed_tr = wilders_smooth(tr_list, self.ADX_PERIOD)
-        smoothed_plus_dm = wilders_smooth(plus_dm_list, self.ADX_PERIOD)
-        smoothed_minus_dm = wilders_smooth(minus_dm_list, self.ADX_PERIOD)
-        
-        if smoothed_tr == 0:
-            return
-        
-        # Calculate +DI and -DI
-        self.plus_di = 100 * smoothed_plus_dm / smoothed_tr
-        self.minus_di = 100 * smoothed_minus_dm / smoothed_tr
-        
-        # Calculate DX
-        di_sum = self.plus_di + self.minus_di
-        if di_sum == 0:
-            return
-        
-        dx = 100 * abs(self.plus_di - self.minus_di) / di_sum
-        
-        # For simplicity, use current DX as ADX (proper ADX would smooth DX)
-        # This is close enough for trend detection
-        self.current_adx = dx
+        if len(true_ranges) >= self.ATR_PERIOD:
+            # Use Wilder's smoothing
+            atr = sum(true_ranges[:self.ATR_PERIOD]) / self.ATR_PERIOD
+            for i in range(self.ATR_PERIOD, len(true_ranges)):
+                atr = (atr * (self.ATR_PERIOD - 1) + true_ranges[i]) / self.ATR_PERIOD
+            self.current_atr_5min = atr
     
-    def _calculate_supertrend(self, current_bar: Dict) -> None:
+    def _calculate_supertrend(self, current_bar: Dict, state, atr: float, 
+                              prev_supertrend: float, prev_close: float, is_5min: bool = False) -> None:
         """
-        Calculate Supertrend indicator.
+        Calculate Supertrend indicator for either 1-min or 5-min timeframe.
         
         Supertrend = ATR-based trailing stop that flips on trend change.
+        
+        Args:
+            current_bar: Current OHLCV bar
+            state: SupertrendState or Supertrend5MinState to update
+            atr: ATR value for this timeframe
+            prev_supertrend: Previous supertrend value
+            prev_close: Previous close price
+            is_5min: True if calculating 5-min SuperTrend
         """
-        if self.current_atr <= 0:
+        if atr <= 0:
             return
         
         high = current_bar['high']
@@ -278,146 +296,199 @@ class SupertrendStrategy:
         # Calculate basic bands
         hl2 = (high + low) / 2  # Median price
         
-        basic_upper = hl2 + (self.SUPERTREND_MULTIPLIER * self.current_atr)
-        basic_lower = hl2 - (self.SUPERTREND_MULTIPLIER * self.current_atr)
+        basic_upper = hl2 + (self.SUPERTREND_MULTIPLIER * atr)
+        basic_lower = hl2 - (self.SUPERTREND_MULTIPLIER * atr)
         
         # Final bands (use previous values if they're better)
-        if self.state.upper_band > 0:
+        if state.upper_band > 0:
             # Upper band can only go down (tighter stop)
-            if basic_upper < self.state.upper_band or self.prev_close > self.state.upper_band:
+            if basic_upper < state.upper_band or prev_close > state.upper_band:
                 final_upper = basic_upper
             else:
-                final_upper = self.state.upper_band
+                final_upper = state.upper_band
         else:
             final_upper = basic_upper
         
-        if self.state.lower_band > 0:
+        if state.lower_band > 0:
             # Lower band can only go up (tighter stop)
-            if basic_lower > self.state.lower_band or self.prev_close < self.state.lower_band:
+            if basic_lower > state.lower_band or prev_close < state.lower_band:
                 final_lower = basic_lower
             else:
-                final_lower = self.state.lower_band
+                final_lower = state.lower_band
         else:
             final_lower = basic_lower
         
         # Store previous state
-        self.state.prev_trend = self.state.trend_direction
-        self.prev_supertrend = self.state.supertrend_line
+        state.prev_trend = state.trend_direction
+        
+        # Update instance variables for 1-min tracking
+        if not is_5min:
+            self.prev_supertrend = state.supertrend_line
+        else:
+            self.prev_supertrend_5min = state.supertrend_line
         
         # Determine trend direction
-        if self.state.trend_direction is None:
+        if state.trend_direction is None:
             # Initial trend based on close vs bands
             if close > final_upper:
-                self.state.trend_direction = 'down'
+                state.trend_direction = 'down'
             else:
-                self.state.trend_direction = 'up'
+                state.trend_direction = 'up'
         else:
             # Trend flip logic
-            if self.state.trend_direction == 'up':
+            if state.trend_direction == 'up':
                 if close < final_lower:
-                    self.state.trend_direction = 'down'
+                    state.trend_direction = 'down'
             else:  # down
                 if close > final_upper:
-                    self.state.trend_direction = 'up'
+                    state.trend_direction = 'up'
         
         # Set supertrend line based on trend
-        if self.state.trend_direction == 'up':
-            self.state.supertrend_line = final_lower
+        if state.trend_direction == 'up':
+            state.supertrend_line = final_lower
         else:
-            self.state.supertrend_line = final_upper
+            state.supertrend_line = final_upper
         
         # Update bands
-        self.state.upper_band = final_upper
-        self.state.lower_band = final_lower
-        self.prev_close = close
+        state.upper_band = final_upper
+        state.lower_band = final_lower
         
-        # Check for signal (trend flip)
-        if self.state.prev_trend is not None and self.state.prev_trend != self.state.trend_direction:
-            self.state.signal_generated = True
-            if self.state.trend_direction == 'up':
-                self.state.last_signal = 'long'
-                logger.info(f"🟢 SUPERTREND FLIP → UP: Signal LONG at {close:.2f}")
+        # Update instance prev_close
+        if not is_5min:
+            self.prev_close = close
+        else:
+            self.prev_close_5min = close
+        
+        # Check for signal (trend flip) - only for 1-min timeframe
+        if not is_5min:
+            if state.prev_trend is not None and state.prev_trend != state.trend_direction:
+                state.signal_generated = True
+                state.awaiting_pullback = True  # Wait for pullback after flip
+                state.last_flip_time = datetime.now(self.eastern_tz)
+                if state.trend_direction == 'up':
+                    state.last_signal = 'long'
+                    logger.info(f"🟢 SIGNAL FLIP → UP at {close:.2f} (awaiting pullback)")
+                else:
+                    state.last_signal = 'short'
+                    logger.info(f"🔴 SIGNAL FLIP → DOWN at {close:.2f} (awaiting pullback)")
             else:
-                self.state.last_signal = 'short'
-                logger.info(f"🔴 SUPERTREND FLIP → DOWN: Signal SHORT at {close:.2f}")
-        else:
-            self.state.signal_generated = False
+                state.signal_generated = False
     
-    def should_use_supertrend(self) -> bool:
+    def timeframes_aligned(self) -> bool:
         """
-        Check if we should use Supertrend based on ADX.
+        Check if 1-min and 5-min SuperTrend directions are aligned.
         
         Returns:
-            True if ADX > 25 (trending market)
+            True if both timeframes have the same trend direction
         """
-        return self.current_adx > self.ADX_TREND_THRESHOLD
-    
-    def should_use_snd(self) -> bool:
-        """
-        Check if we should use S&D based on ADX.
+        if self.state.trend_direction is None or self.state_5min.trend_direction is None:
+            return False
         
-        Returns:
-            True if ADX < 20 (choppy market)
-        """
-        return self.current_adx < self.ADX_CHOP_THRESHOLD
+        return self.state.trend_direction == self.state_5min.trend_direction
     
-    def get_market_condition(self) -> str:
-        """
-        Get current market condition based on ADX.
-        
-        Returns:
-            'trending', 'choppy', or 'unclear'
-        """
-        if self.current_adx > self.ADX_TREND_THRESHOLD:
-            return 'trending'
-        elif self.current_adx < self.ADX_CHOP_THRESHOLD:
-            return 'choppy'
-        else:
-            return 'unclear'
-    
-    def check_entry_signal(self, current_bar: Dict, current_price: float) -> Optional[Dict]:
+    def check_entry_signal(self, current_bar: Dict, current_price: float, current_time: datetime) -> Optional[Dict]:
         """
         Check for Supertrend entry signal.
         
-        Only generates signal if:
-        1. ADX > 25 (strong trend - prevents false signals)
-        2. Supertrend just flipped
+        Entry requirements:
+        1. 1-min SuperTrend flipped
+        2. 5-min SuperTrend aligned with 1-min
+        3. Price pulled back to SuperTrend line (awaiting_pullback cleared)
         
+        No ADX requirements - trend is validated by 5-min filter.
+        No time restrictions - trades anytime except ORB window (handled in quotrading_engine.py).
         No trade limit - unlimited trades allowed.
         
         Args:
             current_bar: Current OHLCV bar
             current_price: Current market price
+            current_time: Current timestamp (not used, kept for compatibility)
             
         Returns:
             Signal dict or None
         """
-        # Must be trending (ADX > 25) to avoid false signals in choppy markets
-        if not self.should_use_supertrend():
+        # Log diagnostic: checking timeframe alignment
+        tf_aligned = self.timeframes_aligned()
+        logger.debug(f"{'✅' if tf_aligned else '❌'} Timeframe alignment: {'PASS' if tf_aligned else 'FAIL'}")
+        
+        # Must have both timeframes aligned (1-min and 5-min same direction)
+        if not tf_aligned:
             return None
         
-        # Must have a fresh signal
-        if not self.state.signal_generated:
+        # Log diagnostic: checking pullback status
+        has_pullback_signal = self.state.awaiting_pullback
+        logger.debug(f"{'✅' if has_pullback_signal else '❌'} Pullback signal active: {'YES' if has_pullback_signal else 'NO'}")
+        
+        # Check if we have a signal and awaiting pullback
+        if not has_pullback_signal:
             return None
         
-        # Clear the signal flag
-        self.state.signal_generated = False
+        # Check for pullback to SuperTrend line
+        if self.state.last_signal == 'long':
+            # For longs, wait for price to pull back toward the SuperTrend line
+            # Entry when price holds above SuperTrend (body displacement)
+            pullback_complete = current_price >= self.state.supertrend_line
+            logger.debug(f"{'✅' if pullback_complete else '❌'} Pullback complete (LONG): {'YES' if pullback_complete else 'NO'} (Price: {current_price:.2f}, Line: {self.state.supertrend_line:.2f})")
+            
+            if pullback_complete:
+                self.state.awaiting_pullback = False  # Pullback complete
+                signal = {
+                    'direction': 'long',
+                    'entry_price': current_price,
+                    'supertrend_line': self.state.supertrend_line,
+                    'supertrend_5min_line': self.state_5min.supertrend_line,
+                    'reason': f'Signal confirmed (multi-timeframe)'
+                }
+                
+                self.state.trades_today += 1
+                
+                # Log signal conditions met
+                logger.info(f"")
+                logger.info(f"{'='*60}")
+                logger.info(f"📊 SIGNAL CONDITIONS MET")
+                logger.info(f"{'='*60}")
+                logger.info(f"  ✅ Timeframe alignment: PASS")
+                logger.info(f"  ✅ Pullback signal: ACTIVE")
+                logger.info(f"  ✅ Price confirmation: PASS")
+                logger.info(f"  Direction: LONG")
+                logger.info(f"  Entry Price: ${current_price:.2f}")
+                logger.info(f"{'='*60}")
+                
+                return signal
         
-        # Build signal
-        signal = {
-            'direction': self.state.last_signal,
-            'entry_price': current_price,
-            'supertrend_line': self.state.supertrend_line,
-            'adx': self.current_adx,
-            'reason': f'Supertrend {self.state.last_signal.upper()} (ADX: {self.current_adx:.1f})'
-        }
+        elif self.state.last_signal == 'short':
+            # For shorts, wait for price to pull back toward the SuperTrend line
+            # Entry when price holds below SuperTrend (body displacement)
+            pullback_complete = current_price <= self.state.supertrend_line
+            logger.debug(f"{'✅' if pullback_complete else '❌'} Pullback complete (SHORT): {'YES' if pullback_complete else 'NO'} (Price: {current_price:.2f}, Line: {self.state.supertrend_line:.2f})")
+            
+            if pullback_complete:
+                self.state.awaiting_pullback = False  # Pullback complete
+                signal = {
+                    'direction': 'short',
+                    'entry_price': current_price,
+                    'supertrend_line': self.state.supertrend_line,
+                    'supertrend_5min_line': self.state_5min.supertrend_line,
+                    'reason': f'Signal confirmed (multi-timeframe)'
+                }
+                
+                self.state.trades_today += 1
+                
+                # Log signal conditions met
+                logger.info(f"")
+                logger.info(f"{'='*60}")
+                logger.info(f"📊 SIGNAL CONDITIONS MET")
+                logger.info(f"{'='*60}")
+                logger.info(f"  ✅ Timeframe alignment: PASS")
+                logger.info(f"  ✅ Pullback signal: ACTIVE")
+                logger.info(f"  ✅ Price confirmation: PASS")
+                logger.info(f"  Direction: SHORT")
+                logger.info(f"  Entry Price: ${current_price:.2f}")
+                logger.info(f"{'='*60}")
+                
+                return signal
         
-        self.state.trades_today += 1
-        
-        logger.info(f"📈 SUPERTREND SIGNAL: {signal['direction'].upper()} @ {current_price:.2f}")
-        logger.info(f"   ADX: {self.current_adx:.1f}, Supertrend: {self.state.supertrend_line:.2f}")
-        
-        return signal
+        return None
     
     def get_trailing_stop(self) -> float:
         """
@@ -449,16 +520,16 @@ class SupertrendStrategy:
         if position_side == 'long':
             # Exit long if trend flips down OR price breaks below supertrend
             if self.state.trend_direction == 'down':
-                return True, "Supertrend flipped DOWN"
+                return True, "Signal flipped DOWN"
             if current_price < self.state.supertrend_line:
-                return True, "Price broke below Supertrend"
+                return True, "Price broke below signal line"
         
         elif position_side == 'short':
             # Exit short if trend flips up OR price breaks above supertrend
             if self.state.trend_direction == 'up':
-                return True, "Supertrend flipped UP"
+                return True, "Signal flipped UP"
             if current_price > self.state.supertrend_line:
-                return True, "Price broke above Supertrend"
+                return True, "Price broke above signal line"
         
         return False, ""
     
@@ -466,27 +537,27 @@ class SupertrendStrategy:
         """Record the result of a trade."""
         if is_win:
             self.state.wins_today += 1
-            logger.info(f"✅ Supertrend trade WIN (total: {self.state.wins_today})")
+            logger.info(f"✅ Trade WIN (total: {self.state.wins_today})")
         else:
             self.state.losses_today += 1
-            logger.info(f"❌ Supertrend trade LOSS (total: {self.state.losses_today})")
+            logger.info(f"❌ Trade LOSS (total: {self.state.losses_today})")
     
     def get_status(self) -> Dict:
         """Get current strategy status."""
         return {
-            'trend_direction': self.state.trend_direction,
-            'supertrend_line': self.state.supertrend_line,
-            'atr': self.current_atr,
-            'adx': self.current_adx,
-            'plus_di': self.plus_di,
-            'minus_di': self.minus_di,
-            'market_condition': self.get_market_condition(),
-            'should_use_supertrend': self.should_use_supertrend(),
-            'should_use_snd': self.should_use_snd(),
+            'trend_direction_1min': self.state.trend_direction,
+            'trend_direction_5min': self.state_5min.trend_direction,
+            'supertrend_line_1min': self.state.supertrend_line,
+            'supertrend_line_5min': self.state_5min.supertrend_line,
+            'atr_1min': self.current_atr,
+            'atr_5min': self.current_atr_5min,
+            'timeframes_aligned': self.timeframes_aligned(),
+            'awaiting_pullback': self.state.awaiting_pullback,
             'trades_today': self.state.trades_today,
             'wins_today': self.state.wins_today,
             'losses_today': self.state.losses_today,
-            'bars_collected': len(self.bars)
+            'bars_collected_1min': len(self.bars),
+            'bars_collected_5min': len(self.bars_5min)
         }
 
 
