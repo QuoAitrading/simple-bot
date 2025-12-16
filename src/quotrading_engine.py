@@ -11,13 +11,14 @@ TRADING STRATEGIES (ACTIVE)
    - Builds opening range, waits for breakout and retest
    - Max 2 trades per session, stops after 2 losses or 1 win
 
-2. SUPERTREND (10:00-13:00 ET)
+2. SUPERTREND (Anytime except ORB window)
    - Multi-timeframe trend-following strategy
    - Uses 1-min SuperTrend for execution timing
    - Uses 5-min SuperTrend as trend filter (must align)
    - Exits on flip but waits for pullback before re-entry
    - ATR-based trailing stops for profit protection
    - NO ADX requirements (trend validated by 5-min filter)
+   - NO time restrictions (can trade anytime except 9:30-10:00 AM)
 
 NOTE: Supply & Demand (S&D) strategy is DISABLED but code kept intact
       for future re-enablement. All S&D code remains in the codebase.
@@ -7962,7 +7963,7 @@ def execute_supertrend_trading_logic(symbol: str, current_price: float, current_
     """
     Execute Supertrend trend-following trading logic.
     
-    Called during 10:00-13:00 ET when 1-min and 5-min SuperTrend are aligned.
+    Called anytime (except ORB window) when 1-min and 5-min SuperTrend are aligned.
     Multi-timeframe filter prevents false signals in choppy markets.
     
     Strategy:
@@ -8591,7 +8592,7 @@ def handle_tick_event(event) -> None:
     # ===== STRATEGY SELECTION: ORB → Supertrend with Multi-TF Filter =====
     # Current Active Strategies:
     # 1. ORB (Opening Range Breakout): 9:30-10:00 AM ET
-    # 2. Supertrend: 10:00-13:00 ET (1-min + 5-min filter, no ADX)
+    # 2. Supertrend: Anytime except ORB window (1-min + 5-min filter, no ADX)
     
     # IMPORTANT: Supply & Demand strategy is TEMPORARILY DISABLED
     # Code is kept intact below per user request - will be re-enabled in the future
@@ -8615,14 +8616,13 @@ def handle_tick_event(event) -> None:
             execute_orb_trading_logic(symbol, price, dt)
             return  # Don't execute other strategies during ORB window
     
-    # After ORB window: Use SuperTrend with multi-timeframe filter (10:00-13:00 ET)
+    # After ORB window: Use SuperTrend with multi-timeframe filter
     # Only trade when 1-min and 5-min SuperTrend are aligned (same direction)
+    # SuperTrend can trade anytime (no time restrictions) except during ORB window
     if supertrend_strategy is not None and SUPERTREND_AVAILABLE:
-        # Check if within trading window (10:00-13:00 ET)
-        if supertrend_strategy.is_trading_time(dt):
-            # Execute SuperTrend trading logic (time and TF filter handled inside)
-            execute_supertrend_trading_logic(symbol, price, dt)
-            return
+        # Execute SuperTrend trading logic (multi-TF filter handled inside)
+        execute_supertrend_trading_logic(symbol, price, dt)
+        return
     
     # ===== SUPPLY & DEMAND STRATEGY - TEMPORARILY DISABLED =====
     # IMPORTANT: Code kept intact per user request - DO NOT DELETE

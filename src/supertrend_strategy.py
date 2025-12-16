@@ -67,16 +67,12 @@ class SupertrendStrategy:
     
     Uses 1-min SuperTrend for execution and 5-min SuperTrend as trend filter.
     Only trades when both timeframes align (same direction).
-    Time window: 10:00-13:00 ET for optimal liquidity.
+    Trades anytime market is open (except during ORB window 9:30-10:00 AM ET).
     """
     
     # Supertrend parameters (same for both timeframes)
     ATR_PERIOD = 14
     SUPERTREND_MULTIPLIER = 3.0
-    
-    # Trading time window (ET)
-    TRADING_START = datetime_time(10, 0)   # 10:00 AM ET
-    TRADING_END = datetime_time(13, 0)     # 1:00 PM ET (13:00 military time)
     
     def __init__(self, tick_size: float = 0.25, tick_value: float = 12.50):
         """
@@ -378,27 +374,6 @@ class SupertrendStrategy:
             else:
                 state.signal_generated = False
     
-    def is_trading_time(self, current_time: datetime) -> bool:
-        """
-        Check if we're within the SuperTrend trading window (10:00-13:00 ET).
-        
-        Args:
-            current_time: Current datetime (timezone-aware)
-            
-        Returns:
-            True if within trading window
-        """
-        # Convert to Eastern
-        if current_time.tzinfo is None:
-            current_time = self.eastern_tz.localize(current_time)
-        else:
-            current_time = current_time.astimezone(self.eastern_tz)
-        
-        current_time_only = current_time.time()
-        
-        # Check if between 10:00 and 13:00 ET
-        return self.TRADING_START <= current_time_only < self.TRADING_END
-    
     def timeframes_aligned(self) -> bool:
         """
         Check if 1-min and 5-min SuperTrend directions are aligned.
@@ -416,26 +391,22 @@ class SupertrendStrategy:
         Check for Supertrend entry signal.
         
         Entry requirements:
-        1. Within trading window (10:00-13:00 ET)
-        2. 1-min SuperTrend flipped
-        3. 5-min SuperTrend aligned with 1-min
-        4. Price pulled back to SuperTrend line (awaiting_pullback cleared)
+        1. 1-min SuperTrend flipped
+        2. 5-min SuperTrend aligned with 1-min
+        3. Price pulled back to SuperTrend line (awaiting_pullback cleared)
         
         No ADX requirements - trend is validated by 5-min filter.
+        No time restrictions - trades anytime except ORB window (handled in quotrading_engine.py).
         No trade limit - unlimited trades allowed.
         
         Args:
             current_bar: Current OHLCV bar
             current_price: Current market price
-            current_time: Current timestamp
+            current_time: Current timestamp (not used, kept for compatibility)
             
         Returns:
             Signal dict or None
         """
-        # Must be within trading window (10:00-13:00 ET)
-        if not self.is_trading_time(current_time):
-            return None
-        
         # Must have both timeframes aligned (1-min and 5-min same direction)
         if not self.timeframes_aligned():
             return None
