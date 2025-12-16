@@ -4,7 +4,7 @@ Supertrend Trend Following Strategy Module
 Professional trend-following strategy using multi-timeframe SuperTrend:
 - 1-minute SuperTrend for execution timing
 - 5-minute SuperTrend as trend filter (must align with 1-min)
-- Trades only 10:00-13:00 ET (optimal liquidity/trend window)
+- Trades anytime market is open (except ORB window 9:30-10:00 AM ET)
 - Exits on SuperTrend flip, waits for pullback before re-entry
 - ATR-based trailing stops (volatility-normalized)
 
@@ -19,8 +19,8 @@ Strategy Flow:
 Key Parameters:
 - ATR Period: 14 (standard)
 - Supertrend Multiplier: 3.0 (standard)
-- Time Window: 10:00-13:00 ET
 - Multi-TF Filter: 1-min and 5-min must align
+- No time restrictions (trades anytime except ORB window)
 """
 
 import logging
