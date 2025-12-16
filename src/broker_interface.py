@@ -187,6 +187,33 @@ class BrokerInterface(ABC):
         """
         pass
     
+    def modify_stop_order(self, symbol: str, side: str, quantity: int, new_stop_price: float) -> bool:
+        """
+        Modify an existing stop order by canceling all stops and placing a new one.
+        
+        This is a convenience method for trailing stops. It cancels existing stop orders
+        and places a new stop at the specified price.
+        
+        Args:
+            symbol: Instrument symbol
+            side: Order side ("BUY" or "SELL")
+            quantity: Number of contracts
+            new_stop_price: New stop price
+        
+        Returns:
+            True if successful, False otherwise
+        """
+        try:
+            # Cancel all existing orders (including stops)
+            self.cancel_all_orders(symbol)
+            
+            # Place new stop order
+            result = self.place_stop_order(symbol, side, quantity, new_stop_price)
+            return result is not None
+        except Exception as e:
+            logger.debug(f"Error modifying stop order: {e}")
+            return False
+    
     @abstractmethod
     def subscribe_market_data(self, symbol: str, callback: Callable[[str, float, int, int], None]) -> None:
         """
