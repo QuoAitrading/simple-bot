@@ -2,11 +2,27 @@
 QuoTrading Bot - Automated Futures Trading Engine
 Event-driven trading bot for futures markets with risk management
 
-REFACTORING IN PROGRESS:
-Strategy components have been removed from the repository.
-Trading logic is being redesigned and will be implemented with new approach.
+========================================================================
+TRADING STRATEGIES (ACTIVE)
+========================================================================
 
-CORE FEATURES:
+1. ORB (Opening Range Breakout): 9:30-10:00 AM ET
+   - Trades the first 30 minutes of market open
+   - Builds opening range, waits for breakout and retest
+   - Max 2 trades per session, stops after 2 losses or 1 win
+
+2. SUPERTREND (After 10:00 AM ET)
+   - Trend-following strategy using Supertrend indicator
+   - Uses trailing stop for profit protection
+   - No ADX filter - active whenever ORB window closes
+
+NOTE: Supply & Demand (S&D) strategy is DISABLED but code kept intact
+      for future re-enablement. All S&D code remains in the codebase.
+
+========================================================================
+CORE FEATURES
+========================================================================
+
 - Real-time market data processing
 - Position and risk management
 - Order execution and monitoring
@@ -21,7 +37,7 @@ RISK MANAGEMENT:
 ORDER EXECUTION:
 - Market order entry
 - Automated stop loss placement
-- Profit target management
+- Profit target management (ORB) / Trailing stop (Supertrend)
 - Symbol-agnostic (works with ES, NQ, MES, MNQ, CL, GC, etc.)
 
 ========================================================================
@@ -7800,7 +7816,8 @@ def execute_supertrend_trading_logic(symbol: str, current_price: float, current_
     """
     Execute Supertrend trend-following trading logic.
     
-    Only called when ADX > 25 (strong trend detected).
+    Called after 10:00 AM ET (after ORB window closes).
+    No ADX filter - trades on all Supertrend signals.
     
     Strategy:
     1. Wait for Supertrend signal (trend flip)
@@ -8422,17 +8439,17 @@ def handle_tick_event(event) -> None:
     # Update 15-minute bars
     update_15min_bar(symbol, price, volume, dt)
     
-    # ===== STRATEGY SELECTION: ORB → Supertrend/S&D based on time and ADX =====
-    # 1. ORB (Opening Range Breakout): 9:30-10:00 ET
-    # 2. After 10:00 ET, use ADX to choose:
-    #    - ADX > 25: Supertrend (trending market)
-    #    - ADX < 20: S&D zones (choppy market)
-    #    - ADX 20-25: No trade (unclear)
+    # ===== STRATEGY SELECTION: ORB → Supertrend after 10 AM =====
+    # 1. ORB (Opening Range Breakout): 9:30-10:00 AM ET
+    # 2. After 10:00 AM: Supertrend ONLY (S&D strategy disabled)
+    
+    # NOTE: Supply & Demand strategy is DISABLED but code kept intact for future re-enablement
+    # To re-enable S&D: Uncomment the execute_zone_trading_logic call and restore ADX-based switching
     
     # Update Supertrend strategy with new bar data (even during ORB window)
     if supertrend_strategy is not None and SUPERTREND_AVAILABLE:
         supertrend_strategy.check_session_reset(dt)
-        # Feed bars to Supertrend for ADX/Supertrend calculations
+        # Feed bars to Supertrend for calculations
         bars = state[symbol].get("bars", [])
         if bars:
             supertrend_strategy.add_bar(bars[-1])
@@ -8441,30 +8458,26 @@ def handle_tick_event(event) -> None:
         # Check if we need to reset for a new day
         orb_strategy.check_session_reset(dt)
         
-        # Check if we're in ORB window (9:30-10:00 ET)
+        # Check if we're in ORB window (9:30-10:00 AM ET)
         if orb_strategy.is_orb_window(dt):
             # Execute ORB trading logic
             execute_orb_trading_logic(symbol, price, dt)
             return  # Don't execute other strategies during ORB window
     
-    # After ORB window: Use ADX to decide between Supertrend and S&D
+    # After ORB window (after 10:00 AM): Use Supertrend ONLY
+    # S&D strategy is DISABLED - no more ADX-based market condition switching
     if supertrend_strategy is not None and SUPERTREND_AVAILABLE:
-        market_condition = supertrend_strategy.get_market_condition()
-        
-        if market_condition == 'trending':
-            # ADX > 25: Use Supertrend (trend following)
-            execute_supertrend_trading_logic(symbol, price, dt)
-            return  # Don't also run S&D
-        
-        elif market_condition == 'unclear':
-            # ADX 20-25: No trade, wait for clarity
-            return
-        
-        # market_condition == 'choppy': Fall through to S&D
+        # Always use Supertrend after 10 AM (no ADX filter)
+        execute_supertrend_trading_logic(symbol, price, dt)
+        return
     
-    # Execute S&D zone-based trading logic (when ADX < 20 or Supertrend not available)
-    if zone_manager is not None and rejection_detector is not None and filter_manager is not None:
-        execute_zone_trading_logic(symbol, price, dt)
+    # ===== SUPPLY & DEMAND STRATEGY - DISABLED =====
+    # The S&D strategy code is kept intact below for future re-enablement
+    # To re-enable: Uncomment the following lines and restore ADX-based logic above
+    
+    # Execute S&D zone-based trading logic (DISABLED)
+    # if zone_manager is not None and rejection_detector is not None and filter_manager is not None:
+    #     execute_zone_trading_logic(symbol, price, dt)
 
 
 def handle_time_check_event(data: Dict[str, Any]) -> None:

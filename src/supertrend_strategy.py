@@ -379,10 +379,8 @@ class SupertrendStrategy:
         """
         Check for Supertrend entry signal.
         
-        Only generates signal if:
-        1. ADX > 25 (trending)
-        2. Supertrend just flipped
-        
+        Generates signal when Supertrend flips.
+        No ADX filter - trades on all Supertrend signals.
         No trade limit - unlimited trades allowed.
         
         Args:
@@ -392,9 +390,10 @@ class SupertrendStrategy:
         Returns:
             Signal dict or None
         """
-        # Must be trending
-        if not self.should_use_supertrend():
-            return None
+        # NOTE: ADX check removed - trades on all Supertrend signals
+        # To re-enable ADX filter: Uncomment the following lines
+        # if not self.should_use_supertrend():
+        #     return None
         
         # Must have a fresh signal
         if not self.state.signal_generated:
