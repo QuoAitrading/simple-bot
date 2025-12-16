@@ -7682,6 +7682,100 @@ def execute_orb_trading_logic(symbol: str, current_price: float, current_time: d
     if symbol in state:
         position = state[symbol].get("position", {})
         if position.get("active", False):
+            # Manage existing ORB position with trailing stop (same logic as Supertrend)
+            if position.get("strategy") == "ORB":
+                position_side = position.get("side")
+                entry_price = position.get("entry_price", 0)
+                current_stop = position.get("stop_loss", 0)
+                initial_stop = position.get("initial_stop", current_stop)
+                tick_size = CONFIG.get("tick_size", 0.25)
+                
+                # Calculate profit in ticks
+                if position_side == "long":
+                    profit_ticks = (current_price - entry_price) / tick_size
+                else:
+                    profit_ticks = (entry_price - current_price) / tick_size
+                
+                # ========== INDUSTRY STANDARD TRAILING STOP ==========
+                # 1. After 6 ticks profit: Move stop to breakeven
+                # 2. After 12 ticks profit: Trail 8 ticks behind price
+                # =====================================================
+                
+                BREAKEVEN_TRIGGER = 6   # Lock in profit after 6 ticks
+                BREAKEVEN_PROFIT = 3    # Lock in 3 ticks profit (not true breakeven)
+                TRAIL_TRIGGER = 12      # Start trailing after 12 ticks profit
+                TRAIL_DISTANCE = 8      # Trail 8 ticks behind price
+                
+                new_stop = None
+                
+                if profit_ticks >= TRAIL_TRIGGER:
+                    # Trail 8 ticks behind current price
+                    if position_side == "long":
+                        trail_stop = current_price - (TRAIL_DISTANCE * tick_size)
+                        if trail_stop > current_stop:
+                            new_stop = trail_stop
+                    else:  # short
+                        trail_stop = current_price + (TRAIL_DISTANCE * tick_size)
+                        if trail_stop < current_stop:
+                            new_stop = trail_stop
+                            
+                elif profit_ticks >= BREAKEVEN_TRIGGER:
+                    # Move to entry + 3 ticks (lock in profit)
+                    if position_side == "long":
+                        lock_price = entry_price + (BREAKEVEN_PROFIT * tick_size)
+                        if current_stop < lock_price:
+                            new_stop = lock_price
+                    else:  # short
+                        lock_price = entry_price - (BREAKEVEN_PROFIT * tick_size)
+                        if current_stop > lock_price:
+                            new_stop = lock_price
+                
+                # Update stop if it improved
+                if new_stop is not None and new_stop != current_stop:
+                    try:
+                        stop_side = "SELL" if position_side == "long" else "BUY"
+                        broker.modify_stop_order(symbol, stop_side, position.get("quantity", 1), new_stop)
+                        state[symbol]["position"]["stop_loss"] = new_stop
+                        if profit_ticks < TRAIL_TRIGGER:
+                            logger.info(f"🔒 ORB stop locked at +3 ticks: ${new_stop:.2f}")
+                        else:
+                            logger.info(f"📈 ORB trailing stop: ${current_stop:.2f} → ${new_stop:.2f}")
+                    except Exception as e:
+                        logger.debug(f"Could not update ORB stop: {e}")
+                
+                # Check if stop was hit
+                stop_hit = False
+                if position_side == "long" and current_price <= current_stop:
+                    stop_hit = True
+                elif position_side == "short" and current_price >= current_stop:
+                    stop_hit = True
+                
+                # Check if take profit was hit
+                take_profit = position.get("take_profit")
+                tp_hit = False
+                if take_profit:
+                    if position_side == "long" and current_price >= take_profit:
+                        tp_hit = True
+                    elif position_side == "short" and current_price <= take_profit:
+                        tp_hit = True
+                
+                if stop_hit or tp_hit:
+                    reason = "Take Profit hit" if tp_hit else f"Stop hit at ${current_stop:.2f}"
+                    logger.info(f"🔄 ORB EXIT: {reason}")
+                    try:
+                        exit_side = "SELL" if position_side == "long" else "BUY"
+                        broker.place_market_order(symbol, exit_side, position.get("quantity", 1))
+                        state[symbol]["position"]["active"] = False
+                        save_position_state(symbol)
+                        
+                        pnl = (current_price - entry_price) if position_side == "long" else (entry_price - current_price)
+                        is_win = pnl > 0
+                        orb_strategy.record_trade_result(is_win)
+                        logger.info(f"{'✅' if is_win else '❌'} ORB closed: {'+' if pnl > 0 else ''}{pnl:.2f} pts ({pnl/tick_size:.0f} ticks)")
+                    except Exception as e:
+                        logger.error(f"Error closing ORB position: {e}")
+                    return
+                        
             return
     
     # Skip if no bars yet
@@ -7799,6 +7893,7 @@ def enter_orb_trade(symbol: str, signal: Dict, current_price: float) -> None:
                 "take_profit": take_profit_price,
                 "strategy": "ORB",
                 "entry_time": get_current_time(),
+                "initial_stop": stop_loss_price,  # Track initial stop for trailing logic
                 "orh": signal.get('orh'),
                 "orl": signal.get('orl')
             }
