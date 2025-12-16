@@ -1158,8 +1158,9 @@ def check_azure_time_service() -> str:
             bot_status["azure_trading_state"] = None
             return None  # Signal to use local get_trading_state()
             
-    except Exception as e:
+    except Exception:
         # Non-critical - if cloud unreachable, fall back to local time
+        # Muted logging to avoid spam in production
         bot_status["azure_trading_state"] = None
         return None  # Signal to use local get_trading_state()
 
@@ -9263,10 +9264,10 @@ def send_heartbeat() -> None:
                 logger.critical("BOT SHUTDOWN - License validation failed")
                 sys.exit(1)  # Exit with error code
         else:
-            pass
+            pass  # Muted: Non-200 response from heartbeat (not critical)
     
-    except Exception as e:
-        pass
+    except Exception:
+        pass  # Muted: Heartbeat failed (non-critical, will retry)
 
 
 

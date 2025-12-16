@@ -7,7 +7,7 @@ Designed to work with any liquid market using volatility-normalized rules.
 Strategy Flow:
 1. 9:30-9:45 ET: Build the Opening Range (ORH/ORL)
 2. 9:45-10:00 ET: Wait for breakout + retest + entry
-3. 10:00 ET: ORB window closes, S&D takes over
+3. 10:00 ET: ORB window closes, Supertrend takes over
 
 Key Features:
 - ATR-based range validation (no hardcoded ticks/points)
@@ -72,7 +72,7 @@ class ORBStrategy:
     """
     Opening Range Breakout Strategy.
     
-    Runs during 9:30-10:00 ET, then hands off to S&D.
+    Runs during 9:30-10:00 ET, then hands off to Supertrend.
     Symbol-agnostic using ATR-based validation.
     """
     

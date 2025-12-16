@@ -1,23 +1,22 @@
 """
-Supertrend + ADX Trend Following Strategy Module
+Supertrend Trend Following Strategy Module
 
 Simple, proven trend-following strategy that:
 - Uses Supertrend indicator for entry/exit signals
-- Uses ADX to filter out choppy markets
 - Holds positions as long as trend continues
 - Automatically adapts to any symbol via ATR
+- Trades on all Supertrend signals (no ADX filter)
 
 Strategy Flow:
-1. Check ADX > 25 (strong trend) before any trade
-2. Wait for Supertrend signal (trend flip)
-3. Enter on signal, hold until opposite signal
-4. Trail stop using Supertrend line
+1. Wait for Supertrend signal (trend flip)
+2. Enter on signal
+3. Trail stop using Supertrend line
+4. Exit on opposite signal
 
 Key Parameters:
 - ATR Period: 14 (standard)
 - Supertrend Multiplier: 3.0 (standard)
-- ADX Period: 14 (standard)
-- ADX Threshold: 25 (strong trend)
+- ADX Period: 14 (for monitoring, not filtering)
 """
 
 import logging
@@ -48,9 +47,9 @@ class SupertrendState:
 
 class SupertrendStrategy:
     """
-    Supertrend + ADX Trend Following Strategy.
+    Supertrend Trend Following Strategy.
     
-    Only trades when ADX indicates strong trend (> 25).
+    Trades on all Supertrend signals (no ADX filter).
     Uses Supertrend for entry/exit signals.
     Holds until trend reverses.
     """
@@ -59,10 +58,10 @@ class SupertrendStrategy:
     ATR_PERIOD = 14
     SUPERTREND_MULTIPLIER = 3.0
     
-    # ADX parameters  
+    # ADX parameters (calculated for monitoring, not used for filtering)
     ADX_PERIOD = 14
-    ADX_TREND_THRESHOLD = 25  # Above this = trending, use Supertrend
-    ADX_CHOP_THRESHOLD = 20   # Below this = choppy, use S&D
+    ADX_TREND_THRESHOLD = 25  # Historical reference (not actively used)
+    ADX_CHOP_THRESHOLD = 20   # Historical reference (not actively used)
     
     def __init__(self, tick_size: float = 0.25, tick_value: float = 12.50):
         """
