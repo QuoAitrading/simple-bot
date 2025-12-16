@@ -272,6 +272,26 @@ from .zone_manager import ZoneManager
 from .rejection_detector import RejectionDetector
 from .filters import FilterManager
 
+# Import ORB (Opening Range Breakout) strategy for market open trading
+try:
+    from .orb_strategy import ORBStrategy, init_orb_strategy, get_orb_strategy
+    ORB_STRATEGY_AVAILABLE = True
+except ImportError:
+    ORB_STRATEGY_AVAILABLE = False
+    ORBStrategy = None
+    init_orb_strategy = None
+    get_orb_strategy = None
+
+# Import Supertrend + ADX trend following strategy
+try:
+    from .supertrend_strategy import SupertrendStrategy, init_supertrend_strategy, get_supertrend_strategy
+    SUPERTREND_AVAILABLE = True
+except ImportError:
+    SUPERTREND_AVAILABLE = False
+    SupertrendStrategy = None
+    init_supertrend_strategy = None
+    get_supertrend_strategy = None
+
 # Import zone WebSocket client for real-time TradingView zone delivery
 try:
     from .zone_websocket_client import (
@@ -632,6 +652,12 @@ rejection_detector = None
 
 # Global filter manager for trade validation
 filter_manager = None
+
+# Global ORB (Opening Range Breakout) strategy for market open trading (9:30-10:00 ET)
+orb_strategy = None
+
+# Global Supertrend + ADX strategy for trend following (when ADX > 25)
+supertrend_strategy = None
 
 # Global shutdown flag - when True, suppress all non-essential logging
 _shutdown_in_progress = False
@@ -1044,7 +1070,7 @@ def initialize_broker() -> None:
         return False
         raise RuntimeError("Broker connection failed")
     
-    logger.info("✅ Bot Ready - Connected to broker")
+    logger.debug("✅ Bot Ready - Connected to broker")
     
     # Send bot startup alert
     try:
@@ -7368,6 +7394,7 @@ def main(symbol_override: str = None) -> None:
     # Display GUI Settings in professional format
     logger.info("")
     logger.info("📋 Trading Configuration:")
+    logger.info(f"  • Trading Style: {CONFIG.get('trading_style', 'Moderate').title()}")
     logger.info(f"  • Max Contracts: {CONFIG['max_contracts']}")
     logger.info(f"  • Max Trades/Day: {CONFIG['max_trades_per_day']}")
     logger.info(f"  • Max Loss Per Trade: ${CONFIG.get('max_stop_loss_dollars', DEFAULT_MAX_STOP_LOSS_DOLLARS):.0f}")
@@ -7405,7 +7432,7 @@ def main(symbol_override: str = None) -> None:
             on_zone_received=on_zone_received
         )
         if zone_ws_client:
-            logger.info(f"🔌 Zone WebSocket client connecting for {trading_symbol}...")
+            logger.debug(f"Zone WebSocket client initialized for {trading_symbol}")
     else:
         logger.debug("Zone WebSocket client not available (python-socketio not installed)")
 
@@ -7437,6 +7464,20 @@ def main(symbol_override: str = None) -> None:
         time_in_zone_limit=45.0,  # seconds
         tick_size=tick_size  # Symbol-specific, NOT defaulted to ES
     )
+    
+    # Initialize ORB (Opening Range Breakout) strategy for market open
+    # ORB runs 9:30-10:00 ET, then S&D takes over for rest of day
+    global orb_strategy
+    if ORB_STRATEGY_AVAILABLE and init_orb_strategy:
+        orb_strategy = init_orb_strategy(tick_size=tick_size, tick_value=tick_value)
+        logger.debug("📊 ORB Strategy initialized (9:30-10:00 ET window)")
+    
+    # Initialize Supertrend + ADX trend following strategy
+    # Used when ADX > 25 (strong trend), S&D used when ADX < 20 (choppy)
+    global supertrend_strategy
+    if SUPERTREND_AVAILABLE and init_supertrend_strategy:
+        supertrend_strategy = init_supertrend_strategy(tick_size=tick_size, tick_value=tick_value)
+        logger.debug("📈 Supertrend Strategy initialized (ADX-based switching)")
     
     # Get stop loss and take profit from configuration (user configurable)
     stop_loss_ticks = CONFIG.get("stop_loss_ticks", ZONE_STOP_LOSS_TICKS_DEFAULT)
@@ -7591,6 +7632,400 @@ def main(symbol_override: str = None) -> None:
 # ============================================================================
 # EVENT HANDLERS
 # ============================================================================
+
+def execute_orb_trading_logic(symbol: str, current_price: float, current_time: datetime) -> None:
+    """
+    Execute Opening Range Breakout (ORB) trading logic.
+    
+    Active during 9:30-10:00 ET only (first 30 minutes of market open).
+    
+    Strategy Flow:
+    1. 9:30-9:45 ET: Build the Opening Range (track ORH/ORL)
+    2. 9:45-10:00 ET: Wait for breakout, then retest, then enter
+    3. After 10:00 ET: ORB window closes, hand off to S&D
+    
+    Args:
+        symbol: Trading symbol
+        current_price: Current market price
+        current_time: Current timestamp
+    """
+    global orb_strategy, broker
+    
+    if orb_strategy is None:
+        return
+    
+    # Skip if trading is disabled
+    if not bot_status.get("trading_enabled", False):
+        return
+    
+    # Skip if we already have an open position
+    if symbol in state:
+        position = state[symbol].get("position", {})
+        if position.get("active", False):
+            return
+    
+    # Skip if no bars yet
+    if symbol not in state or not state[symbol].get("bars"):
+        return
+    
+    # Get current bar data
+    bars = state[symbol]["bars"]
+    if not bars:
+        return
+    
+    current_bar = bars[-1]
+    
+    # Update ATR for range validation
+    atr = calculate_atr(symbol, period=14)
+    if atr is not None:
+        orb_strategy.set_atr(atr)
+    
+    # Phase 1: Range Building (9:30-9:45 ET)
+    if orb_strategy.is_range_building(current_time):
+        orb_strategy.update_opening_range(current_bar)
+        return
+    
+    # Phase 2: Finalize range if just exited building window
+    if not orb_strategy.state.opening_range.is_built:
+        if not orb_strategy.finalize_opening_range(current_time):
+            # Range invalid (too small/large) - skip ORB for today
+            return
+    
+    # Phase 3: Trading Logic (9:45-10:00 ET)
+    if not orb_strategy.can_trade():
+        return
+    
+    # Check for breakout (first clean break sets bias)
+    if not orb_strategy.state.breakout_confirmed:
+        orb_strategy.check_breakout(current_price)
+        return  # Wait for retest after breakout
+    
+    # Check for entry signal (retest + body displacement)
+    signal = orb_strategy.check_entry_signal(current_bar, current_price)
+    
+    if signal:
+        # Execute ORB trade
+        enter_orb_trade(symbol, signal, current_price)
+
+
+def enter_orb_trade(symbol: str, signal: Dict, current_price: float) -> None:
+    """
+    Enter an ORB trade with bracket order (stop loss + take profit).
+    
+    Args:
+        symbol: Trading symbol
+        signal: ORB signal dictionary with direction, entry_price, etc.
+        current_price: Current market price for entry
+    """
+    global broker, orb_strategy
+    
+    if broker is None:
+        logger.warning("Cannot enter ORB trade: Broker not initialized")
+        return
+    
+    direction = signal.get("direction")  # 'long' or 'short'
+    entry_price = current_price
+    
+    # Stop loss is GUI configurable, take profit is fixed at 12 ticks
+    stop_loss_ticks = CONFIG.get("stop_loss_ticks", 12)
+    take_profit_ticks = 12  # Fixed 12 ticks
+    
+    tick_size = CONFIG.get("tick_size", 0.25)
+    
+    # Calculate SL and TP prices
+    if direction == "long":
+        stop_loss_price = entry_price - (stop_loss_ticks * tick_size)
+        take_profit_price = entry_price + (take_profit_ticks * tick_size)
+        order_side = "BUY"
+    else:  # short
+        stop_loss_price = entry_price + (stop_loss_ticks * tick_size)
+        take_profit_price = entry_price - (take_profit_ticks * tick_size)
+        order_side = "SELL"
+    
+    # Get position sizing
+    max_contracts = CONFIG.get("max_contracts", 1)
+    
+    try:
+        logger.info(f"")
+        logger.info(f"{'='*60}")
+        logger.info(f"📈 ORB TRADE SIGNAL: {direction.upper()}")
+        logger.info(f"{'='*60}")
+        logger.info(f"  Entry: ${entry_price:.2f}")
+        logger.info(f"  Stop Loss: ${stop_loss_price:.2f} ({stop_loss_ticks} ticks)")
+        logger.info(f"  Take Profit: ${take_profit_price:.2f} ({take_profit_ticks} ticks)")
+        logger.info(f"  Reason: {signal.get('reason', 'ORB Retest')}")
+        logger.info(f"  ORH: ${signal.get('orh', 0):.2f}, ORL: ${signal.get('orl', 0):.2f}")
+        logger.info(f"{'='*60}")
+        
+        # Place bracket order
+        order = broker.place_bracket_order(
+            symbol=symbol,
+            side=order_side,
+            quantity=max_contracts,
+            order_type="MARKET",
+            stop_loss=stop_loss_price,
+            take_profit=take_profit_price,
+            reason=f"ORB {direction.upper()}"
+        )
+        
+        if order:
+            # Track position in bot state
+            state[symbol]["position"] = {
+                "active": True,
+                "side": direction,
+                "entry_price": entry_price,
+                "quantity": max_contracts,
+                "stop_loss": stop_loss_price,
+                "take_profit": take_profit_price,
+                "strategy": "ORB",
+                "entry_time": get_current_time(),
+                "orh": signal.get('orh'),
+                "orl": signal.get('orl')
+            }
+            
+            logger.info(f"✅ ORB trade entered: {direction.upper()} {max_contracts} @ ${entry_price:.2f}")
+            
+            # Save position state
+            save_position_state(symbol)
+        else:
+            logger.error("❌ Failed to enter ORB trade - order returned None")
+            
+    except Exception as e:
+        logger.error(f"❌ Error entering ORB trade: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
+
+
+def execute_supertrend_trading_logic(symbol: str, current_price: float, current_time: datetime) -> None:
+    """
+    Execute Supertrend trend-following trading logic.
+    
+    Only called when ADX > 25 (strong trend detected).
+    
+    Strategy:
+    1. Wait for Supertrend signal (trend flip)
+    2. Enter on signal
+    3. Trail stop using Supertrend line
+    4. Exit on opposite signal
+    
+    Args:
+        symbol: Trading symbol
+        current_price: Current market price
+        current_time: Current timestamp
+    """
+    global supertrend_strategy, broker
+    
+    if supertrend_strategy is None:
+        return
+    
+    # Skip if trading is disabled
+    if not bot_status.get("trading_enabled", False):
+        return
+    
+    # Skip if we already have an open position
+    if symbol in state:
+        position = state[symbol].get("position", {})
+        if position.get("active", False):
+            # Manage existing Supertrend position with trailing stop
+            if position.get("strategy") == "Supertrend":
+                position_side = position.get("side")
+                entry_price = position.get("entry_price", 0)
+                current_stop = position.get("stop_loss", 0)
+                initial_stop = position.get("initial_stop", current_stop)
+                tick_size = CONFIG.get("tick_size", 0.25)
+                
+                # Calculate profit in ticks
+                if position_side == "long":
+                    profit_ticks = (current_price - entry_price) / tick_size
+                else:
+                    profit_ticks = (entry_price - current_price) / tick_size
+                
+                # ========== INDUSTRY STANDARD TRAILING STOP ==========
+                # 1. After 6 ticks profit: Move stop to breakeven
+                # 2. After 12 ticks profit: Trail 8 ticks behind price
+                # =====================================================
+                
+                BREAKEVEN_TRIGGER = 6   # Lock in profit after 6 ticks
+                BREAKEVEN_PROFIT = 3    # Lock in 3 ticks profit (not true breakeven)
+                TRAIL_TRIGGER = 12      # Start trailing after 12 ticks profit
+                TRAIL_DISTANCE = 8      # Trail 8 ticks behind price
+                
+                new_stop = None
+                
+                if profit_ticks >= TRAIL_TRIGGER:
+                    # Trail 8 ticks behind current price
+                    if position_side == "long":
+                        trail_stop = current_price - (TRAIL_DISTANCE * tick_size)
+                        if trail_stop > current_stop:
+                            new_stop = trail_stop
+                    else:  # short
+                        trail_stop = current_price + (TRAIL_DISTANCE * tick_size)
+                        if trail_stop < current_stop:
+                            new_stop = trail_stop
+                            
+                elif profit_ticks >= BREAKEVEN_TRIGGER:
+                    # Move to entry + 3 ticks (lock in profit)
+                    if position_side == "long":
+                        lock_price = entry_price + (BREAKEVEN_PROFIT * tick_size)
+                        if current_stop < lock_price:
+                            new_stop = lock_price
+                    else:  # short
+                        lock_price = entry_price - (BREAKEVEN_PROFIT * tick_size)
+                        if current_stop > lock_price:
+                            new_stop = lock_price
+                
+                # Update stop if it improved
+                if new_stop is not None and new_stop != current_stop:
+                    try:
+                        stop_side = "SELL" if position_side == "long" else "BUY"
+                        broker.modify_stop_order(symbol, stop_side, position.get("quantity", 1), new_stop)
+                        state[symbol]["position"]["stop_loss"] = new_stop
+                        if profit_ticks < TRAIL_TRIGGER:
+                            logger.info(f"🔒 Stop locked at +3 ticks: ${new_stop:.2f}")
+                        else:
+                            logger.info(f"📈 Trailing stop: ${current_stop:.2f} → ${new_stop:.2f}")
+                    except Exception as e:
+                        logger.debug(f"Could not update stop: {e}")
+                
+                # Check if stop was hit
+                stop_hit = False
+                if position_side == "long" and current_price <= current_stop:
+                    stop_hit = True
+                elif position_side == "short" and current_price >= current_stop:
+                    stop_hit = True
+                
+                # Also check for Supertrend flip exit
+                should_exit, reason = supertrend_strategy.check_exit_signal(
+                    position_side, current_price
+                )
+                
+                if stop_hit:
+                    should_exit = True
+                    reason = f"Stop hit at ${current_stop:.2f}"
+                
+                if should_exit:
+                    logger.info(f"🔄 Supertrend EXIT: {reason}")
+                    try:
+                        exit_side = "SELL" if position_side == "long" else "BUY"
+                        broker.place_market_order(symbol, exit_side, position.get("quantity", 1))
+                        state[symbol]["position"]["active"] = False
+                        save_position_state(symbol)
+                        
+                        pnl = (current_price - entry_price) if position_side == "long" else (entry_price - current_price)
+                        is_win = pnl > 0
+                        supertrend_strategy.record_trade_result(is_win)
+                        logger.info(f"{'✅' if is_win else '❌'} Supertrend closed: {'+' if pnl > 0 else ''}{pnl:.2f} pts ({pnl/tick_size:.0f} ticks)")
+                    except Exception as e:
+                        logger.error(f"Error closing position: {e}")
+                    return
+                        
+            return
+    
+    # Skip if no bars yet
+    if symbol not in state or not state[symbol].get("bars"):
+        return
+    
+    # Get current bar data
+    bars = state[symbol]["bars"]
+    if not bars:
+        return
+    
+    current_bar = bars[-1]
+    
+    # Check for entry signal
+    signal = supertrend_strategy.check_entry_signal(current_bar, current_price)
+    
+    if signal:
+        enter_supertrend_trade(symbol, signal, current_price)
+
+
+def enter_supertrend_trade(symbol: str, signal: Dict, current_price: float) -> None:
+    """
+    Enter a Supertrend trade with stop loss only (no take profit).
+    
+    Supertrend uses trailing stop - exit when Supertrend flips or price crosses line.
+    
+    Args:
+        symbol: Trading symbol
+        signal: Supertrend signal dictionary
+        current_price: Current market price
+    """
+    global broker, supertrend_strategy
+    
+    if broker is None:
+        logger.warning("Cannot enter Supertrend trade: Broker not initialized")
+        return
+    
+    direction = signal.get("direction")
+    entry_price = current_price
+    
+    # Stop loss is GUI configurable - NO take profit for Supertrend (trailing stop)
+    stop_loss_ticks = CONFIG.get("stop_loss_ticks", 12)
+    tick_size = CONFIG.get("tick_size", 0.25)
+    
+    # Supertrend line will be used as trailing stop reference
+    supertrend_line = signal.get("supertrend_line", 0)
+    
+    # Calculate initial stop loss price (fixed at entry)
+    if direction == "long":
+        stop_loss_price = entry_price - (stop_loss_ticks * tick_size)
+        order_side = "BUY"
+    else:  # short
+        stop_loss_price = entry_price + (stop_loss_ticks * tick_size)
+        order_side = "SELL"
+    
+    max_contracts = CONFIG.get("max_contracts", 1)
+    
+    try:
+        logger.info(f"")
+        logger.info(f"{'='*60}")
+        logger.info(f"📈 SUPERTREND TRADE: {direction.upper()}")
+        logger.info(f"{'='*60}")
+        logger.info(f"  Entry: ${entry_price:.2f}")
+        logger.info(f"  Stop Loss: ${stop_loss_price:.2f} ({stop_loss_ticks} ticks)")
+        logger.info(f"  Take Profit: NONE (trailing Supertrend line)")
+        logger.info(f"  ADX: {signal.get('adx', 0):.1f}")
+        logger.info(f"  Supertrend Line: ${supertrend_line:.2f}")
+        logger.info(f"{'='*60}")
+        
+        # Place market order with stop loss only (no take profit)
+        # Use place_order_with_stop instead of bracket order
+        order = broker.place_market_order(
+            symbol=symbol,
+            side=order_side,
+            quantity=max_contracts
+        )
+        
+        if order:
+            # Place protective stop loss
+            stop_side = "SELL" if direction == "long" else "BUY"
+            broker.place_stop_order(symbol, stop_side, max_contracts, stop_loss_price)
+            
+            state[symbol]["position"] = {
+                "active": True,
+                "side": direction,
+                "entry_price": entry_price,
+                "quantity": max_contracts,
+                "stop_loss": stop_loss_price,
+                "take_profit": None,  # No take profit - trailing stop
+                "strategy": "Supertrend",
+                "entry_time": get_current_time(),
+                "supertrend_line": supertrend_line,
+                "initial_stop": stop_loss_price,  # Track initial stop
+                "adx": signal.get('adx')
+            }
+            
+            logger.info(f"✅ Supertrend trade entered: {direction.upper()} {max_contracts} @ ${entry_price:.2f}")
+            logger.info(f"   Exit: Trailing Supertrend line (currently ${supertrend_line:.2f})")
+            save_position_state(symbol)
+        else:
+            logger.error("❌ Failed to enter Supertrend trade - order returned None")
+            
+    except Exception as e:
+        logger.error(f"❌ Error entering Supertrend trade: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
+
 
 def execute_zone_trading_logic(symbol: str, current_price: float, current_time: datetime) -> None:
     """
@@ -7877,6 +8312,12 @@ def can_enter_new_trade(symbol: str) -> bool:
     Returns:
         True if we can enter a new trade, False otherwise
     """
+    # SAFETY: Check if connected to QuoTradingAI server
+    # Trading is blocked if not connected for safety
+    if zone_ws_client is not None and not zone_ws_client.is_connected:
+        logger.warning("⛔ Cannot trade: Not connected to QuoTradingAI server")
+        return False
+    
     # Check if trading is enabled
     if not bot_status.get("trading_enabled", False):
         return False
@@ -7981,7 +8422,47 @@ def handle_tick_event(event) -> None:
     # Update 15-minute bars
     update_15min_bar(symbol, price, volume, dt)
     
-    # Execute zone-based trading logic
+    # ===== STRATEGY SELECTION: ORB → Supertrend/S&D based on time and ADX =====
+    # 1. ORB (Opening Range Breakout): 9:30-10:00 ET
+    # 2. After 10:00 ET, use ADX to choose:
+    #    - ADX > 25: Supertrend (trending market)
+    #    - ADX < 20: S&D zones (choppy market)
+    #    - ADX 20-25: No trade (unclear)
+    
+    # Update Supertrend strategy with new bar data (even during ORB window)
+    if supertrend_strategy is not None and SUPERTREND_AVAILABLE:
+        supertrend_strategy.check_session_reset(dt)
+        # Feed bars to Supertrend for ADX/Supertrend calculations
+        bars = state[symbol].get("bars", [])
+        if bars:
+            supertrend_strategy.add_bar(bars[-1])
+    
+    if orb_strategy is not None and ORB_STRATEGY_AVAILABLE:
+        # Check if we need to reset for a new day
+        orb_strategy.check_session_reset(dt)
+        
+        # Check if we're in ORB window (9:30-10:00 ET)
+        if orb_strategy.is_orb_window(dt):
+            # Execute ORB trading logic
+            execute_orb_trading_logic(symbol, price, dt)
+            return  # Don't execute other strategies during ORB window
+    
+    # After ORB window: Use ADX to decide between Supertrend and S&D
+    if supertrend_strategy is not None and SUPERTREND_AVAILABLE:
+        market_condition = supertrend_strategy.get_market_condition()
+        
+        if market_condition == 'trending':
+            # ADX > 25: Use Supertrend (trend following)
+            execute_supertrend_trading_logic(symbol, price, dt)
+            return  # Don't also run S&D
+        
+        elif market_condition == 'unclear':
+            # ADX 20-25: No trade, wait for clarity
+            return
+        
+        # market_condition == 'choppy': Fall through to S&D
+    
+    # Execute S&D zone-based trading logic (when ADX < 20 or Supertrend not available)
     if zone_manager is not None and rejection_detector is not None and filter_manager is not None:
         execute_zone_trading_logic(symbol, price, dt)
 

@@ -1,4 +1,4 @@
-//@version=5
+//@version=6
 indicator('QuoTrading Professional Supply and Demand', 'QT S&D Pro', overlay = true, max_labels_count = 500, max_lines_count = 500, max_boxes_count = 500)
 //---------------------------------------------------------------------------------------------------------------------}
 //CONSTANTS & STRINGS & INPUTS
@@ -343,10 +343,10 @@ var initialTime                     = time
 if barstate.isfirst
     if showSwingOrderBlocksInput
         for index = 1 to swingOrderBlocksSizeInput
-            swingOrderBlocksBoxes.push(box.new(na,na,na,na,xloc = xloc.bar_time,extend = extend.right))
+            swingOrderBlocksBoxes.push(box.new(na,na,na,na,xloc = xloc.bar_time, extend = extend.none))
     if showInternalOrderBlocksInput
         for index = 1 to internalOrderBlocksSizeInput
-            internalOrderBlocksBoxes.push(box.new(na,na,na,na,xloc = xloc.bar_time,extend = extend.right))
+            internalOrderBlocksBoxes.push(box.new(na,na,na,na,xloc = xloc.bar_time, extend = extend.none))
 
 // ===== AUTO TIMEFRAME SCALING =====
 // Automatically adjust lookback periods for ALL TradingView timeframes
@@ -648,26 +648,14 @@ drawOrderBlocks(bool internal = false) =>
             b_ox.set_border_color(      borderColor)
             b_ox.set_border_width(      internal ? 1 : 2)
             b_ox.set_bgcolor(           zoneColor)
+            b_ox.set_extend(            extend.none)
             
-            // ===== ZONE LABEL WITH ACTIONABLE INFO =====
-            // Show what traders actually need: Type, Strength, Fresh/Tested
+            // ===== ZONE LABEL - STRENGTH ONLY =====
             if barstate.islast
                 zoneMidPrice = math.avg(eachOrderBlock.barHigh, eachOrderBlock.barLow)
-                zoneLabel = isSupply ? "SUPPLY" : "DEMAND"
-                
-                // Fresh vs Tested status - most important for trading decisions
-                string freshStatus = ""
-                if eachOrderBlock.retests == 0
-                    freshStatus := "Fresh"
-                else if eachOrderBlock.retests == 1
-                    freshStatus := "Tested"
-                else
-                    freshStatus := "Tested " + str.tostring(eachOrderBlock.retests) + "x"
-                
-                labelText = zoneLabel + " • " + zoneStrength + " • " + freshStatus
                 labelColor = isSupply ? SUPPLY_PRIMARY : DEMAND_PRIMARY
                 // Position label at right edge of zone (current time) for visibility
-                label.new(chart.point.new(last_bar_time, na, zoneMidPrice), labelText, xloc.bar_time, color = color(na), textcolor = labelColor, style = label.style_label_left, size = size.small)
+                label.new(chart.point.new(last_bar_time, na, zoneMidPrice), zoneStrength, xloc.bar_time, color = color(na), textcolor = labelColor, style = label.style_label_left, size = size.small)
 
 // @function            detect and draw structures, also detect and store order blocks
 // @param internal      true for internal structures or order blocks

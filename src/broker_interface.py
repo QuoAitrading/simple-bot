@@ -2245,7 +2245,7 @@ class BrokerSDKImplementation(BrokerInterface):
                             current_time = int(time.time() * 1000)
                             age_seconds = (current_time - last_valid_timestamp[0]) / 1000.0
                             if last_valid_timestamp[0] > 0 and age_seconds > 2.0:
-                                logger.warning(f"Quote feed stale - {age_seconds:.1f}s since last update")
+                                logger.debug(f"Quote feed stale - {age_seconds:.1f}s since last update")
                             last_valid_timestamp[0] = current_time
                             
                         except (ValueError, TypeError, AttributeError) as e:

@@ -29,6 +29,15 @@ app = Flask(__name__)
 # async_mode='eventlet' for production, 'threading' for development
 socketio = SocketIO(app, cors_allowed_origins="*", async_mode='eventlet', logger=False, engineio_logger=False)
 
+# WebSocket connection tracking for dashboard metrics
+websocket_stats = {
+    'connected_clients': {},  # sid -> {connected_at, symbols}
+    'total_connections': 0,
+    'total_zones_sent': 0,
+    'last_zone_sent': None,
+    'server_start_time': datetime.now(timezone.utc).isoformat()
+}
+
 # Security: Request size limit (prevent memory exhaustion attacks)
 app.config['MAX_CONTENT_LENGTH'] = 10 * 1024 * 1024  # 10MB max request size
 
@@ -5230,6 +5239,11 @@ if __name__ == '__main__':
 @socketio.on('connect')
 def handle_connect():
     """Client connected to WebSocket"""
+    websocket_stats['connected_clients'][request.sid] = {
+        'connected_at': datetime.now(timezone.utc).isoformat(),
+        'symbols': []
+    }
+    websocket_stats['total_connections'] += 1
     logging.info(f"🔌 WebSocket client connected: {request.sid}")
     emit('connected', {'message': 'Connected to QuoTrading Zone Server', 'sid': request.sid})
 
@@ -5237,6 +5251,8 @@ def handle_connect():
 @socketio.on('disconnect')
 def handle_disconnect():
     """Client disconnected from WebSocket"""
+    if request.sid in websocket_stats['connected_clients']:
+        del websocket_stats['connected_clients'][request.sid]
     logging.info(f"🔌 WebSocket client disconnected: {request.sid}")
 
 

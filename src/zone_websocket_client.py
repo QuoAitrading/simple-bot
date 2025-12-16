@@ -178,7 +178,7 @@ class ZoneWebSocketClient:
         self._stop_event.clear()
         self._thread = threading.Thread(target=self._run, daemon=True)
         self._thread.start()
-        logger.info(f"🔌 Zone WebSocket client started for symbols: {self.symbols}")
+        logger.debug(f"Zone WebSocket client started for symbols: {self.symbols}")
         return True
     
     def stop(self):
@@ -198,7 +198,7 @@ class ZoneWebSocketClient:
             self._thread.join(timeout=5)
         
         self.connected = False
-        logger.info("🔌 Zone WebSocket client stopped")
+        logger.debug("Zone WebSocket client stopped")
     
     def _run(self):
         """Background thread that maintains the WebSocket connection."""
@@ -215,7 +215,7 @@ class ZoneWebSocketClient:
             
             # Reconnect logic
             if not self._stop_event.is_set() and self.auto_reconnect:
-                logger.info(f"Reconnecting in {self.reconnect_delay}s...")
+                logger.debug(f"Reconnecting in {self.reconnect_delay}s...")
                 time.sleep(self.reconnect_delay)
     
     def _connect(self):
@@ -233,35 +233,35 @@ class ZoneWebSocketClient:
         @self._client.event
         def connect():
             self.connected = True
-            logger.info(f"✅ Connected to zone server: {self.server_url}")
+            logger.info("✅ Connected to QuoTradingAI server")
             # Subscribe to symbols
             self._subscribe_to_symbols()
         
         @self._client.event
         def disconnect():
             self.connected = False
-            logger.warning("❌ Disconnected from zone server")
+            logger.debug("Disconnected from zone server")
         
         @self._client.event
         def connect_error(data):
-            logger.error(f"Connection error: {data}")
+            logger.debug(f"Connection error: {data}")
             self.connected = False
         
         @self._client.on('connected')
         def on_connected(data):
-            logger.info(f"Server says: {data.get('message', 'connected')}")
+            logger.debug(f"Server connected")
         
         @self._client.on('subscribed')
         def on_subscribed(data):
             rooms = data.get('rooms', [])
             self.subscribed_rooms = rooms
-            logger.info(f"📥 Subscribed to zone rooms: {rooms}")
+            logger.debug(f"Subscribed to zone rooms: {rooms}")
             
             # Load current zones
             current_zones = data.get('current_zones', {})
             for symbol, zones in current_zones.items():
                 self.zones[symbol] = [Zone.from_dict(z) for z in zones]
-                logger.info(f"  📊 Loaded {len(zones)} existing zones for {symbol}")
+                logger.debug(f"Loaded {len(zones)} existing zones for {symbol}")
         
         @self._client.on('new_zone')
         def on_new_zone(data):
@@ -303,7 +303,7 @@ class ZoneWebSocketClient:
         
         # Connect to server
         try:
-            logger.info(f"🔌 Connecting to {self.server_url}...")
+            logger.debug(f"🔌 Connecting to {self.server_url}...")
             self._client.connect(
                 self.server_url,
                 transports=['websocket', 'polling'],
@@ -317,7 +317,7 @@ class ZoneWebSocketClient:
             self._client.wait()
             
         except Exception as e:
-            logger.error(f"Failed to connect: {e}")
+            logger.debug(f"Failed to connect: {e}")
             self.connected = False
     
     def _subscribe_to_symbols(self):
@@ -330,7 +330,7 @@ class ZoneWebSocketClient:
         
         try:
             self._client.emit('subscribe', {'symbols': base_symbols})
-            logger.info(f"📨 Sent subscription request for: {base_symbols}")
+            logger.debug(f"Sent subscription request for: {base_symbols}")
         except Exception as e:
             logger.error(f"Error subscribing: {e}")
     
