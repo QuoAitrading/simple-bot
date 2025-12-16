@@ -7540,12 +7540,12 @@ def main(symbol_override: str = None) -> None:
         orb_strategy = init_orb_strategy(tick_size=tick_size, tick_value=tick_value)
         logger.debug("📊 ORB Strategy initialized (9:30-10:00 ET window)")
     
-    # Initialize Supertrend + ADX trend following strategy
-    # Used when ADX > 25 (strong trend), S&D used when ADX < 20 (choppy)
+    # Initialize Supertrend multi-timeframe trend following strategy
+    # Uses 1-min + 5-min SuperTrend alignment for trend confirmation
     global supertrend_strategy
     if SUPERTREND_AVAILABLE and init_supertrend_strategy:
         supertrend_strategy = init_supertrend_strategy(tick_size=tick_size, tick_value=tick_value)
-        logger.debug("📈 Supertrend Strategy initialized (ADX-based switching)")
+        logger.debug("📈 Supertrend Strategy initialized (1-min + 5-min multi-TF filter)")
     
     # Get stop loss and take profit from configuration (user configurable)
     stop_loss_ticks = CONFIG.get("stop_loss_ticks", ZONE_STOP_LOSS_TICKS_DEFAULT)
@@ -8150,8 +8150,8 @@ def enter_supertrend_trade(symbol: str, signal: Dict, current_price: float) -> N
         logger.info(f"  Entry: ${entry_price:.2f}")
         logger.info(f"  Stop Loss: ${stop_loss_price:.2f} ({stop_loss_ticks} ticks)")
         logger.info(f"  Take Profit: NONE (trailing Supertrend line)")
-        logger.info(f"  ADX: {signal.get('adx', 0):.1f}")
-        logger.info(f"  Supertrend Line: ${supertrend_line:.2f}")
+        logger.info(f"  1-min Supertrend: ${supertrend_line:.2f}")
+        logger.info(f"  5-min Supertrend: ${signal.get('supertrend_5min_line', 0):.2f}")
         logger.info(f"{'='*60}")
         
         # Place market order with stop loss only (no take profit)
@@ -8177,8 +8177,8 @@ def enter_supertrend_trade(symbol: str, signal: Dict, current_price: float) -> N
                 "strategy": "Supertrend",
                 "entry_time": get_current_time(),
                 "supertrend_line": supertrend_line,
-                "initial_stop": stop_loss_price,  # Track initial stop
-                "adx": signal.get('adx')
+                "supertrend_5min_line": signal.get('supertrend_5min_line', 0),
+                "initial_stop": stop_loss_price  # Track initial stop
             }
             
             logger.info(f"✅ Supertrend trade entered: {direction.upper()} {max_contracts} @ ${entry_price:.2f}")
