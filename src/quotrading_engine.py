@@ -7538,14 +7538,14 @@ def main(symbol_override: str = None) -> None:
     global orb_strategy
     if ORB_STRATEGY_AVAILABLE and init_orb_strategy:
         orb_strategy = init_orb_strategy(tick_size=tick_size, tick_value=tick_value)
-        logger.debug("📊 ORB Strategy initialized (9:30-10:00 ET window)")
+        logger.debug("📊 Morning session strategy initialized")
     
     # Initialize Supertrend multi-timeframe trend following strategy
     # Uses 1-min + 5-min SuperTrend alignment for trend confirmation
     global supertrend_strategy
     if SUPERTREND_AVAILABLE and init_supertrend_strategy:
         supertrend_strategy = init_supertrend_strategy(tick_size=tick_size, tick_value=tick_value)
-        logger.debug("📈 Supertrend Strategy initialized (1-min + 5-min multi-TF filter)")
+        logger.debug("📈 Primary strategy initialized")
     
     # Get stop loss and take profit from configuration (user configurable)
     stop_loss_ticks = CONFIG.get("stop_loss_ticks", ZONE_STOP_LOSS_TICKS_DEFAULT)
@@ -7785,11 +7785,11 @@ def execute_orb_trading_logic(symbol: str, current_price: float, current_time: d
                         broker.modify_stop_order(symbol, stop_side, position.get("quantity", 1), new_stop)
                         state[symbol]["position"]["stop_loss"] = new_stop
                         if profit_ticks < TRAIL_TRIGGER:
-                            logger.info(f"🔒 ORB stop locked at +3 ticks: ${new_stop:.2f}")
+                            logger.info(f"🔒 Stop locked at +3 ticks: ${new_stop:.2f}")
                         else:
-                            logger.info(f"📈 ORB trailing stop: ${current_stop:.2f} → ${new_stop:.2f}")
+                            logger.info(f"📈 Trailing stop: ${current_stop:.2f} → ${new_stop:.2f}")
                     except Exception as e:
-                        logger.debug(f"Could not update ORB stop: {e}")
+                        logger.debug(f"Could not update stop: {e}")
                 
                 # Check if stop was hit
                 stop_hit = False
@@ -7809,7 +7809,7 @@ def execute_orb_trading_logic(symbol: str, current_price: float, current_time: d
                 
                 if stop_hit or tp_hit:
                     reason = "Take Profit hit" if tp_hit else f"Stop hit at ${current_stop:.2f}"
-                    logger.info(f"🔄 ORB EXIT: {reason}")
+                    logger.info(f"🔄 EXIT: {reason}")
                     try:
                         exit_side = "SELL" if position_side == "long" else "BUY"
                         broker.place_market_order(symbol, exit_side, position.get("quantity", 1))
@@ -7819,9 +7819,9 @@ def execute_orb_trading_logic(symbol: str, current_price: float, current_time: d
                         pnl = (current_price - entry_price) if position_side == "long" else (entry_price - current_price)
                         is_win = pnl > 0
                         orb_strategy.record_trade_result(is_win)
-                        logger.info(f"{'✅' if is_win else '❌'} ORB closed: {'+' if pnl > 0 else ''}{pnl:.2f} pts ({pnl/tick_size:.0f} ticks)")
+                        logger.info(f"{'✅' if is_win else '❌'} Trade closed: {'+' if pnl > 0 else ''}{pnl:.2f} pts ({pnl/tick_size:.0f} ticks)")
                     except Exception as e:
-                        logger.error(f"Error closing ORB position: {e}")
+                        logger.error(f"Error closing position: {e}")
                     return
                         
             return
@@ -7910,13 +7910,13 @@ def enter_orb_trade(symbol: str, signal: Dict, current_price: float) -> None:
     try:
         logger.info(f"")
         logger.info(f"{'='*60}")
-        logger.info(f"📈 ORB TRADE SIGNAL: {direction.upper()}")
+        logger.info(f"📈 TRADE SIGNAL: {direction.upper()}")
         logger.info(f"{'='*60}")
         logger.info(f"  Entry: ${entry_price:.2f}")
         logger.info(f"  Stop Loss: ${stop_loss_price:.2f} ({stop_loss_ticks} ticks)")
         logger.info(f"  Take Profit: ${take_profit_price:.2f} ({take_profit_ticks} ticks)")
-        logger.info(f"  Reason: {signal.get('reason', 'ORB Retest')}")
-        logger.info(f"  ORH: ${signal.get('orh', 0):.2f}, ORL: ${signal.get('orl', 0):.2f}")
+        logger.info(f"  Reason: {signal.get('reason', 'Signal confirmation')}")
+        logger.info(f"  Range High: ${signal.get('orh', 0):.2f}, Range Low: ${signal.get('orl', 0):.2f}")
         logger.info(f"{'='*60}")
         
         # Place bracket order
@@ -7927,7 +7927,7 @@ def enter_orb_trade(symbol: str, signal: Dict, current_price: float) -> None:
             order_type="MARKET",
             stop_loss=stop_loss_price,
             take_profit=take_profit_price,
-            reason=f"ORB {direction.upper()}"
+            reason=f"Trade {direction.upper()}"
         )
         
         if order:
@@ -7946,15 +7946,15 @@ def enter_orb_trade(symbol: str, signal: Dict, current_price: float) -> None:
                 "orl": signal.get('orl')
             }
             
-            logger.info(f"✅ ORB trade entered: {direction.upper()} {max_contracts} @ ${entry_price:.2f}")
+            logger.info(f"✅ Trade entered: {direction.upper()} {max_contracts} @ ${entry_price:.2f}")
             
             # Save position state
             save_position_state(symbol)
         else:
-            logger.error("❌ Failed to enter ORB trade - order returned None")
+            logger.error("❌ Failed to enter trade - order returned None")
             
     except Exception as e:
-        logger.error(f"❌ Error entering ORB trade: {e}")
+        logger.error(f"❌ Error entering trade: {e}")
         import traceback
         logger.error(traceback.format_exc())
 
@@ -8070,7 +8070,7 @@ def execute_supertrend_trading_logic(symbol: str, current_price: float, current_
                     reason = f"Stop hit at ${current_stop:.2f}"
                 
                 if should_exit:
-                    logger.info(f"🔄 Supertrend EXIT: {reason}")
+                    logger.info(f"🔄 EXIT: {reason}")
                     try:
                         exit_side = "SELL" if position_side == "long" else "BUY"
                         broker.place_market_order(symbol, exit_side, position.get("quantity", 1))
@@ -8080,7 +8080,7 @@ def execute_supertrend_trading_logic(symbol: str, current_price: float, current_
                         pnl = (current_price - entry_price) if position_side == "long" else (entry_price - current_price)
                         is_win = pnl > 0
                         supertrend_strategy.record_trade_result(is_win)
-                        logger.info(f"{'✅' if is_win else '❌'} Supertrend closed: {'+' if pnl > 0 else ''}{pnl:.2f} pts ({pnl/tick_size:.0f} ticks)")
+                        logger.info(f"{'✅' if is_win else '❌'} Trade closed: {'+' if pnl > 0 else ''}{pnl:.2f} pts ({pnl/tick_size:.0f} ticks)")
                     except Exception as e:
                         logger.error(f"Error closing position: {e}")
                     return
@@ -8145,13 +8145,13 @@ def enter_supertrend_trade(symbol: str, signal: Dict, current_price: float) -> N
     try:
         logger.info(f"")
         logger.info(f"{'='*60}")
-        logger.info(f"📈 SUPERTREND TRADE: {direction.upper()}")
+        logger.info(f"📈 TRADE SIGNAL: {direction.upper()}")
         logger.info(f"{'='*60}")
         logger.info(f"  Entry: ${entry_price:.2f}")
         logger.info(f"  Stop Loss: ${stop_loss_price:.2f} ({stop_loss_ticks} ticks)")
-        logger.info(f"  Take Profit: NONE (trailing Supertrend line)")
-        logger.info(f"  1-min Supertrend: ${supertrend_line:.2f}")
-        logger.info(f"  5-min Supertrend: ${signal.get('supertrend_5min_line', 0):.2f}")
+        logger.info(f"  Take Profit: NONE (trailing stop)")
+        logger.info(f"  Signal Line: ${supertrend_line:.2f}")
+        logger.info(f"  Confirmation Line: ${signal.get('supertrend_5min_line', 0):.2f}")
         logger.info(f"{'='*60}")
         
         # Place market order with stop loss only (no take profit)
@@ -8181,14 +8181,14 @@ def enter_supertrend_trade(symbol: str, signal: Dict, current_price: float) -> N
                 "initial_stop": stop_loss_price  # Track initial stop
             }
             
-            logger.info(f"✅ Supertrend trade entered: {direction.upper()} {max_contracts} @ ${entry_price:.2f}")
-            logger.info(f"   Exit: Trailing Supertrend line (currently ${supertrend_line:.2f})")
+            logger.info(f"✅ Trade entered: {direction.upper()} {max_contracts} @ ${entry_price:.2f}")
+            logger.info(f"   Exit: Trailing stop (currently ${supertrend_line:.2f})")
             save_position_state(symbol)
         else:
-            logger.error("❌ Failed to enter Supertrend trade - order returned None")
+            logger.error("❌ Failed to enter trade - order returned None")
             
     except Exception as e:
-        logger.error(f"❌ Error entering Supertrend trade: {e}")
+        logger.error(f"❌ Error entering trade: {e}")
         import traceback
         logger.error(traceback.format_exc())
 

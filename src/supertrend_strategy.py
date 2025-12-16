@@ -113,7 +113,7 @@ class SupertrendStrategy:
         self.prev_supertrend_5min: float = 0.0
         self.prev_close_5min: float = 0.0
         
-        logger.info("Supertrend Strategy initialized (1-min + 5-min filter, 10:00-13:00 ET)")
+        logger.info("Trading strategy initialized")
     
     def reset_session(self) -> None:
         """Reset state for a new trading day."""
@@ -127,7 +127,7 @@ class SupertrendStrategy:
         self.prev_close = 0.0
         self.prev_supertrend_5min = 0.0
         self.prev_close_5min = 0.0
-        logger.info("🔄 Supertrend session reset")
+        logger.info("🔄 Session reset")
     
     def check_session_reset(self, current_time: datetime) -> None:
         """Check if we need to reset for a new trading day."""
@@ -141,7 +141,7 @@ class SupertrendStrategy:
         if self.state.session_date != today_str:
             self.reset_session()
             self.state.session_date = today_str
-            logger.info(f"📅 New Supertrend session: {today_str}")
+            logger.info(f"📅 New session: {today_str}")
     
     def add_bar(self, bar: Dict) -> None:
         """
@@ -367,10 +367,10 @@ class SupertrendStrategy:
                 state.last_flip_time = datetime.now(self.eastern_tz)
                 if state.trend_direction == 'up':
                     state.last_signal = 'long'
-                    logger.info(f"🟢 SUPERTREND FLIP → UP at {close:.2f} (awaiting pullback)")
+                    logger.info(f"🟢 SIGNAL FLIP → UP at {close:.2f} (awaiting pullback)")
                 else:
                     state.last_signal = 'short'
-                    logger.info(f"🔴 SUPERTREND FLIP → DOWN at {close:.2f} (awaiting pullback)")
+                    logger.info(f"🔴 SIGNAL FLIP → DOWN at {close:.2f} (awaiting pullback)")
             else:
                 state.signal_generated = False
     
@@ -426,13 +426,13 @@ class SupertrendStrategy:
                     'entry_price': current_price,
                     'supertrend_line': self.state.supertrend_line,
                     'supertrend_5min_line': self.state_5min.supertrend_line,
-                    'reason': f'Supertrend LONG (1-min + 5-min aligned)'
+                    'reason': f'Signal confirmed (multi-timeframe)'
                 }
                 
                 self.state.trades_today += 1
                 
-                logger.info(f"📈 SUPERTREND ENTRY: LONG @ {current_price:.2f}")
-                logger.info(f"   1-min ST: {self.state.supertrend_line:.2f}, 5-min ST: {self.state_5min.supertrend_line:.2f}")
+                logger.info(f"📈 ENTRY CONFIRMED: LONG @ {current_price:.2f}")
+                logger.info(f"   Signal: {self.state.supertrend_line:.2f}, Confirmation: {self.state_5min.supertrend_line:.2f}")
                 
                 return signal
         
@@ -446,13 +446,13 @@ class SupertrendStrategy:
                     'entry_price': current_price,
                     'supertrend_line': self.state.supertrend_line,
                     'supertrend_5min_line': self.state_5min.supertrend_line,
-                    'reason': f'Supertrend SHORT (1-min + 5-min aligned)'
+                    'reason': f'Signal confirmed (multi-timeframe)'
                 }
                 
                 self.state.trades_today += 1
                 
-                logger.info(f"📉 SUPERTREND ENTRY: SHORT @ {current_price:.2f}")
-                logger.info(f"   1-min ST: {self.state.supertrend_line:.2f}, 5-min ST: {self.state_5min.supertrend_line:.2f}")
+                logger.info(f"📉 ENTRY CONFIRMED: SHORT @ {current_price:.2f}")
+                logger.info(f"   Signal: {self.state.supertrend_line:.2f}, Confirmation: {self.state_5min.supertrend_line:.2f}")
                 
                 return signal
         
@@ -488,16 +488,16 @@ class SupertrendStrategy:
         if position_side == 'long':
             # Exit long if trend flips down OR price breaks below supertrend
             if self.state.trend_direction == 'down':
-                return True, "Supertrend flipped DOWN"
+                return True, "Signal flipped DOWN"
             if current_price < self.state.supertrend_line:
-                return True, "Price broke below Supertrend"
+                return True, "Price broke below signal line"
         
         elif position_side == 'short':
             # Exit short if trend flips up OR price breaks above supertrend
             if self.state.trend_direction == 'up':
-                return True, "Supertrend flipped UP"
+                return True, "Signal flipped UP"
             if current_price > self.state.supertrend_line:
-                return True, "Price broke above Supertrend"
+                return True, "Price broke above signal line"
         
         return False, ""
     
@@ -505,10 +505,10 @@ class SupertrendStrategy:
         """Record the result of a trade."""
         if is_win:
             self.state.wins_today += 1
-            logger.info(f"✅ Supertrend trade WIN (total: {self.state.wins_today})")
+            logger.info(f"✅ Trade WIN (total: {self.state.wins_today})")
         else:
             self.state.losses_today += 1
-            logger.info(f"❌ Supertrend trade LOSS (total: {self.state.losses_today})")
+            logger.info(f"❌ Trade LOSS (total: {self.state.losses_today})")
     
     def get_status(self) -> Dict:
         """Get current strategy status."""
