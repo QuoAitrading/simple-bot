@@ -6648,7 +6648,7 @@ def check_safety_conditions(symbol: str) -> Tuple[bool, Optional[str]]:
             position = state[symbol]["position"]
             entry_price = position.get("entry_price", 0)
             side = position.get("side", "long")
-            current_price = state[symbol]["bars"][-1]["close"] if state[symbol]["bars"] else entry_price
+            current_price = state[symbol]["bars_1min"][-1]["close"] if state[symbol].get("bars_1min") else entry_price
             
             # Calculate current P&L for the position
             if side == "long":
@@ -8222,11 +8222,11 @@ def execute_zone_trading_logic(symbol: str, current_price: float, current_time: 
         return
     
     # Skip if no bars yet (need open, high, low for candle)
-    if symbol not in state or not state[symbol].get("bars"):
+    if symbol not in state or not state[symbol].get("bars_1min"):
         return
     
     # Get current bar data (last 1-minute bar)
-    bars = state[symbol]["bars"]
+    bars = state[symbol]["bars_1min"]
     if not bars:
         return
     
@@ -8659,9 +8659,9 @@ def handle_time_check_event(data: Dict[str, Any]) -> None:
                 
                 # Flatten any open positions
                 if state[symbol]["position"]["active"]:
-                    logger.critical(f"≡ƒöÆ Closing position at market close")
+                    logger.critical(f"🔄 Closing position at market close")
                     position = state[symbol]["position"]
-                    current_price = state[symbol]["bars"][-1]["close"] if state[symbol]["bars"] else None
+                    current_price = state[symbol]["bars_1min"][-1]["close"] if state[symbol].get("bars_1min") else None
                     
                     if current_price:
                         side = position["side"]
@@ -8689,9 +8689,9 @@ def handle_time_check_event(data: Dict[str, Any]) -> None:
                 
                 # Flatten any open positions
                 if state[symbol]["position"]["active"]:
-                    logger.critical(f"≡ƒöÆ Closing position at maintenance window")
+                    logger.critical(f"🔄 Closing position at maintenance window")
                     position = state[symbol]["position"]
-                    current_price = state[symbol]["bars"][-1]["close"] if state[symbol]["bars"] else None
+                    current_price = state[symbol]["bars_1min"][-1]["close"] if state[symbol].get("bars_1min") else None
                     
                     if current_price:
                         side = position["side"]
