@@ -390,7 +390,10 @@ class SupertrendStrategy:
         Returns:
             Signal dict or None
         """
-        # NOTE: ADX check removed - trades on all Supertrend signals
+        # IMPORTANT: ADX check temporarily removed per user request - DO NOT DELETE
+        # This commented code WILL BE RE-ENABLED in the future
+        # The check is being disabled to allow Supertrend to trade on all signals
+        # 
         # To re-enable ADX filter: Uncomment the following lines
         # if not self.should_use_supertrend():
         #     return None

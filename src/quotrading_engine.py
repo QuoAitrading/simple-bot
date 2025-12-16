@@ -8440,11 +8440,13 @@ def handle_tick_event(event) -> None:
     update_15min_bar(symbol, price, volume, dt)
     
     # ===== STRATEGY SELECTION: ORB → Supertrend after 10 AM =====
+    # Current Active Strategies:
     # 1. ORB (Opening Range Breakout): 9:30-10:00 AM ET
-    # 2. After 10:00 AM: Supertrend ONLY (S&D strategy disabled)
+    # 2. Supertrend: After 10:00 AM ET (no conditions)
     
-    # NOTE: Supply & Demand strategy is DISABLED but code kept intact for future re-enablement
-    # To re-enable S&D: Uncomment the execute_zone_trading_logic call and restore ADX-based switching
+    # IMPORTANT: Supply & Demand strategy is TEMPORARILY DISABLED
+    # Code is kept intact below per user request - will be re-enabled in the future
+    # DO NOT DELETE the S&D strategy code (execute_zone_trading_logic)
     
     # Update Supertrend strategy with new bar data (even during ORB window)
     if supertrend_strategy is not None and SUPERTREND_AVAILABLE:
@@ -8471,11 +8473,17 @@ def handle_tick_event(event) -> None:
         execute_supertrend_trading_logic(symbol, price, dt)
         return
     
-    # ===== SUPPLY & DEMAND STRATEGY - DISABLED =====
-    # The S&D strategy code is kept intact below for future re-enablement
-    # To re-enable: Uncomment the following lines and restore ADX-based logic above
+    # ===== SUPPLY & DEMAND STRATEGY - TEMPORARILY DISABLED =====
+    # IMPORTANT: Code kept intact per user request - DO NOT DELETE
+    # The S&D strategy is being temporarily disabled to test ORB + Supertrend only
+    # This code WILL BE RE-ENABLED in the future - kept commented for easy restoration
+    # 
+    # To re-enable S&D strategy:
+    # 1. Uncomment the execute_zone_trading_logic call below
+    # 2. Restore ADX-based switching logic in the "After ORB window" section above
+    # 3. Restore ADX check in supertrend_strategy.py check_entry_signal method
     
-    # Execute S&D zone-based trading logic (DISABLED)
+    # Execute S&D zone-based trading logic (TEMPORARILY DISABLED)
     # if zone_manager is not None and rejection_detector is not None and filter_manager is not None:
     #     execute_zone_trading_logic(symbol, price, dt)
 
