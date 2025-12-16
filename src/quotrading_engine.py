@@ -11,11 +11,13 @@ TRADING STRATEGIES (ACTIVE)
    - Builds opening range, waits for breakout and retest
    - Max 2 trades per session, stops after 2 losses or 1 win
 
-2. SUPERTREND (After 10:00 AM ET)
-   - Trend-following strategy using Supertrend indicator
-   - Uses trailing stop for profit protection
-   - **ADX filter active: Only trades when ADX > 25 (trending market)**
-   - Prevents false signals in choppy markets (ADX < 20)
+2. SUPERTREND (10:00-13:00 ET)
+   - Multi-timeframe trend-following strategy
+   - Uses 1-min SuperTrend for execution timing
+   - Uses 5-min SuperTrend as trend filter (must align)
+   - Exits on flip but waits for pullback before re-entry
+   - ATR-based trailing stops for profit protection
+   - NO ADX requirements (trend validated by 5-min filter)
 
 NOTE: Supply & Demand (S&D) strategy is DISABLED but code kept intact
       for future re-enablement. All S&D code remains in the codebase.
@@ -1992,10 +1994,12 @@ def initialize_state(symbol: str) -> None:
         
         # Bar storage
         "bars_1min": deque(maxlen=CONFIG.get("max_bars_storage", 200)),
+        "bars_5min": deque(maxlen=100),  # 5-minute bars for SuperTrend filter
         "bars_15min": deque(maxlen=100),
         
         # Current incomplete bars
         "current_1min_bar": None,
+        "current_5min_bar": None,
         "current_15min_bar": None,
         
         # VWAP calculation data
@@ -2503,6 +2507,49 @@ def update_15min_bar(symbol: str, price: float, volume: int, dt: datetime) -> No
         # Start new bar
         state[symbol]["current_15min_bar"] = {
             "timestamp": boundary_15min,
+            "open": price,
+            "high": price,
+            "low": price,
+            "close": price,
+            "volume": volume
+        }
+    else:
+        # Update current bar
+        current_bar["high"] = max(current_bar["high"], price)
+        current_bar["low"] = min(current_bar["low"], price)
+        current_bar["close"] = price
+        current_bar["volume"] += volume
+
+
+def update_5min_bar(symbol: str, price: float, volume: int, dt: datetime) -> None:
+    """
+    Update or create 5-minute bars for SuperTrend trend filter.
+    
+    Args:
+        symbol: Instrument symbol
+        price: Current price
+        volume: Current volume
+        dt: Current datetime
+    """
+    global supertrend_strategy
+    
+    # Get 5-minute boundary
+    minute = (dt.minute // 5) * 5
+    boundary_5min = dt.replace(minute=minute, second=0, microsecond=0)
+    
+    current_bar = state[symbol]["current_5min_bar"]
+    
+    if current_bar is None or current_bar["timestamp"] != boundary_5min:
+        # Finalize previous bar if exists
+        if current_bar is not None:
+            state[symbol]["bars_5min"].append(current_bar)
+            # Feed to SuperTrend strategy for 5-min calculations
+            if supertrend_strategy is not None and SUPERTREND_AVAILABLE:
+                supertrend_strategy.add_bar_5min(current_bar)
+        
+        # Start new bar
+        state[symbol]["current_5min_bar"] = {
+            "timestamp": boundary_5min,
             "open": price,
             "high": price,
             "low": price,
@@ -7779,11 +7826,11 @@ def execute_orb_trading_logic(symbol: str, current_price: float, current_time: d
             return
     
     # Skip if no bars yet
-    if symbol not in state or not state[symbol].get("bars"):
+    if symbol not in state or not state[symbol].get("bars_1min"):
         return
     
     # Get current bar data
-    bars = state[symbol]["bars"]
+    bars = state[symbol]["bars_1min"]
     if not bars:
         return
     
@@ -7915,14 +7962,16 @@ def execute_supertrend_trading_logic(symbol: str, current_price: float, current_
     """
     Execute Supertrend trend-following trading logic.
     
-    Called after 10:00 AM ET when ADX > 25 (strong trend detected).
-    ADX filter prevents false signals in choppy markets.
+    Called during 10:00-13:00 ET when 1-min and 5-min SuperTrend are aligned.
+    Multi-timeframe filter prevents false signals in choppy markets.
     
     Strategy:
-    1. Wait for Supertrend signal (trend flip)
-    2. Enter on signal
-    3. Trail stop using Supertrend line
-    4. Exit on opposite signal
+    1. Wait for 1-min SuperTrend flip
+    2. Confirm 5-min SuperTrend is aligned
+    3. Wait for pullback to SuperTrend line
+    4. Enter on continuation (body displacement)
+    5. Trail stop using ATR-based rules
+    6. Exit on SuperTrend flip (do NOT reverse immediately - wait for new pullback)
     
     Args:
         symbol: Trading symbol
@@ -8038,18 +8087,18 @@ def execute_supertrend_trading_logic(symbol: str, current_price: float, current_
             return
     
     # Skip if no bars yet
-    if symbol not in state or not state[symbol].get("bars"):
+    if symbol not in state or not state[symbol].get("bars_1min"):
         return
     
     # Get current bar data
-    bars = state[symbol]["bars"]
+    bars = state[symbol]["bars_1min"]
     if not bars:
         return
     
     current_bar = bars[-1]
     
-    # Check for entry signal
-    signal = supertrend_strategy.check_entry_signal(current_bar, current_price)
+    # Check for entry signal (passes current_time for time window check)
+    signal = supertrend_strategy.check_entry_signal(current_bar, current_price, current_time)
     
     if signal:
         enter_supertrend_trade(symbol, signal, current_price)
@@ -8533,13 +8582,16 @@ def handle_tick_event(event) -> None:
     # Update 1-minute bars
     update_1min_bar(symbol, price, volume, dt)
     
+    # Update 5-minute bars (for SuperTrend filter)
+    update_5min_bar(symbol, price, volume, dt)
+    
     # Update 15-minute bars
     update_15min_bar(symbol, price, volume, dt)
     
-    # ===== STRATEGY SELECTION: ORB → Supertrend with ADX filter =====
+    # ===== STRATEGY SELECTION: ORB → Supertrend with Multi-TF Filter =====
     # Current Active Strategies:
     # 1. ORB (Opening Range Breakout): 9:30-10:00 AM ET
-    # 2. Supertrend: After 10:00 AM ET (only when ADX > 25 - trending market)
+    # 2. Supertrend: 10:00-13:00 ET (1-min + 5-min filter, no ADX)
     
     # IMPORTANT: Supply & Demand strategy is TEMPORARILY DISABLED
     # Code is kept intact below per user request - will be re-enabled in the future
@@ -8548,8 +8600,8 @@ def handle_tick_event(event) -> None:
     # Update Supertrend strategy with new bar data (even during ORB window)
     if supertrend_strategy is not None and SUPERTREND_AVAILABLE:
         supertrend_strategy.check_session_reset(dt)
-        # Feed bars to Supertrend for ADX/Supertrend calculations
-        bars = state[symbol].get("bars", [])
+        # Feed 1-min bars to Supertrend for calculations
+        bars = state[symbol].get("bars_1min", [])
         if bars:
             supertrend_strategy.add_bar(bars[-1])
     
@@ -8563,23 +8615,14 @@ def handle_tick_event(event) -> None:
             execute_orb_trading_logic(symbol, price, dt)
             return  # Don't execute other strategies during ORB window
     
-    # After ORB window: Use ADX to filter Supertrend trades
-    # Only trade when ADX > 25 (strong trend) to avoid false signals in choppy markets
+    # After ORB window: Use SuperTrend with multi-timeframe filter (10:00-13:00 ET)
+    # Only trade when 1-min and 5-min SuperTrend are aligned (same direction)
     if supertrend_strategy is not None and SUPERTREND_AVAILABLE:
-        market_condition = supertrend_strategy.get_market_condition()
-        
-        if market_condition == 'trending':
-            # ADX > 25: Use Supertrend (trending market - good signals)
+        # Check if within trading window (10:00-13:00 ET)
+        if supertrend_strategy.is_trading_time(dt):
+            # Execute SuperTrend trading logic (time and TF filter handled inside)
             execute_supertrend_trading_logic(symbol, price, dt)
             return
-        
-        elif market_condition == 'unclear':
-            # ADX 20-25: No trade, wait for clarity
-            return
-        
-        # market_condition == 'choppy' (ADX < 20): Don't trade
-        # In choppy markets, Supertrend produces false signals - skip trading
-        return
     
     # ===== SUPPLY & DEMAND STRATEGY - TEMPORARILY DISABLED =====
     # IMPORTANT: Code kept intact per user request - DO NOT DELETE
