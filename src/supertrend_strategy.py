@@ -1,22 +1,23 @@
 """
-Supertrend Trend Following Strategy Module
+Supertrend + ADX Trend Following Strategy Module
 
 Simple, proven trend-following strategy that:
 - Uses Supertrend indicator for entry/exit signals
+- Uses ADX to filter out choppy markets (only trades when ADX > 25)
 - Holds positions as long as trend continues
 - Automatically adapts to any symbol via ATR
-- Trades on all Supertrend signals (no ADX filter)
 
 Strategy Flow:
-1. Wait for Supertrend signal (trend flip)
-2. Enter on signal
-3. Trail stop using Supertrend line
-4. Exit on opposite signal
+1. Check ADX > 25 (strong trend) before any trade
+2. Wait for Supertrend signal (trend flip)
+3. Enter on signal, hold until opposite signal
+4. Trail stop using Supertrend line
 
 Key Parameters:
 - ATR Period: 14 (standard)
 - Supertrend Multiplier: 3.0 (standard)
-- ADX Period: 14 (for monitoring, not filtering)
+- ADX Period: 14 (standard)
+- ADX Threshold: 25 (strong trend - filters false signals)
 """
 
 import logging
@@ -47,9 +48,9 @@ class SupertrendState:
 
 class SupertrendStrategy:
     """
-    Supertrend Trend Following Strategy.
+    Supertrend + ADX Trend Following Strategy.
     
-    Trades on all Supertrend signals (no ADX filter).
+    Only trades when ADX indicates strong trend (> 25).
     Uses Supertrend for entry/exit signals.
     Holds until trend reverses.
     """
@@ -58,10 +59,10 @@ class SupertrendStrategy:
     ATR_PERIOD = 14
     SUPERTREND_MULTIPLIER = 3.0
     
-    # ADX parameters (calculated for monitoring, not used for filtering)
+    # ADX parameters (used for filtering trades)
     ADX_PERIOD = 14
-    ADX_TREND_THRESHOLD = 25  # Historical reference (not actively used)
-    ADX_CHOP_THRESHOLD = 20   # Historical reference (not actively used)
+    ADX_TREND_THRESHOLD = 25  # Above this = trending, trade Supertrend signals
+    ADX_CHOP_THRESHOLD = 20   # Below this = choppy, skip trading (avoid false signals)
     
     def __init__(self, tick_size: float = 0.25, tick_value: float = 12.50):
         """
@@ -378,8 +379,10 @@ class SupertrendStrategy:
         """
         Check for Supertrend entry signal.
         
-        Generates signal when Supertrend flips.
-        No ADX filter - trades on all Supertrend signals.
+        Only generates signal if:
+        1. ADX > 25 (strong trend - prevents false signals)
+        2. Supertrend just flipped
+        
         No trade limit - unlimited trades allowed.
         
         Args:
@@ -389,13 +392,9 @@ class SupertrendStrategy:
         Returns:
             Signal dict or None
         """
-        # IMPORTANT: ADX check temporarily removed per user request - DO NOT DELETE
-        # This commented code WILL BE RE-ENABLED in the future
-        # The check is being disabled to allow Supertrend to trade on all signals
-        # 
-        # To re-enable ADX filter: Uncomment the following lines
-        # if not self.should_use_supertrend():
-        #     return None
+        # Must be trending (ADX > 25) to avoid false signals in choppy markets
+        if not self.should_use_supertrend():
+            return None
         
         # Must have a fresh signal
         if not self.state.signal_generated:

@@ -14,7 +14,8 @@ TRADING STRATEGIES (ACTIVE)
 2. SUPERTREND (After 10:00 AM ET)
    - Trend-following strategy using Supertrend indicator
    - Uses trailing stop for profit protection
-   - No ADX filter - active whenever ORB window closes
+   - **ADX filter active: Only trades when ADX > 25 (trending market)**
+   - Prevents false signals in choppy markets (ADX < 20)
 
 NOTE: Supply & Demand (S&D) strategy is DISABLED but code kept intact
       for future re-enablement. All S&D code remains in the codebase.
@@ -7817,8 +7818,8 @@ def execute_supertrend_trading_logic(symbol: str, current_price: float, current_
     """
     Execute Supertrend trend-following trading logic.
     
-    Called after 10:00 AM ET (after ORB window closes).
-    No ADX filter - trades on all Supertrend signals.
+    Called after 10:00 AM ET when ADX > 25 (strong trend detected).
+    ADX filter prevents false signals in choppy markets.
     
     Strategy:
     1. Wait for Supertrend signal (trend flip)
@@ -8440,10 +8441,10 @@ def handle_tick_event(event) -> None:
     # Update 15-minute bars
     update_15min_bar(symbol, price, volume, dt)
     
-    # ===== STRATEGY SELECTION: ORB → Supertrend after 10 AM =====
+    # ===== STRATEGY SELECTION: ORB → Supertrend with ADX filter =====
     # Current Active Strategies:
     # 1. ORB (Opening Range Breakout): 9:30-10:00 AM ET
-    # 2. Supertrend: After 10:00 AM ET (no conditions)
+    # 2. Supertrend: After 10:00 AM ET (only when ADX > 25 - trending market)
     
     # IMPORTANT: Supply & Demand strategy is TEMPORARILY DISABLED
     # Code is kept intact below per user request - will be re-enabled in the future
@@ -8452,7 +8453,7 @@ def handle_tick_event(event) -> None:
     # Update Supertrend strategy with new bar data (even during ORB window)
     if supertrend_strategy is not None and SUPERTREND_AVAILABLE:
         supertrend_strategy.check_session_reset(dt)
-        # Feed bars to Supertrend for calculations
+        # Feed bars to Supertrend for ADX/Supertrend calculations
         bars = state[symbol].get("bars", [])
         if bars:
             supertrend_strategy.add_bar(bars[-1])
@@ -8467,11 +8468,22 @@ def handle_tick_event(event) -> None:
             execute_orb_trading_logic(symbol, price, dt)
             return  # Don't execute other strategies during ORB window
     
-    # After ORB window (after 10:00 AM): Use Supertrend ONLY
-    # S&D strategy is DISABLED - no more ADX-based market condition switching
+    # After ORB window: Use ADX to filter Supertrend trades
+    # Only trade when ADX > 25 (strong trend) to avoid false signals in choppy markets
     if supertrend_strategy is not None and SUPERTREND_AVAILABLE:
-        # Always use Supertrend after 10 AM (no ADX filter)
-        execute_supertrend_trading_logic(symbol, price, dt)
+        market_condition = supertrend_strategy.get_market_condition()
+        
+        if market_condition == 'trending':
+            # ADX > 25: Use Supertrend (trending market - good signals)
+            execute_supertrend_trading_logic(symbol, price, dt)
+            return
+        
+        elif market_condition == 'unclear':
+            # ADX 20-25: No trade, wait for clarity
+            return
+        
+        # market_condition == 'choppy' (ADX < 20): Don't trade
+        # In choppy markets, Supertrend produces false signals - skip trading
         return
     
     # ===== SUPPLY & DEMAND STRATEGY - TEMPORARILY DISABLED =====
