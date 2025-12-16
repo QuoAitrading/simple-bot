@@ -2,11 +2,28 @@
 QuoTrading Bot - Automated Futures Trading Engine
 Event-driven trading bot for futures markets with risk management
 
-REFACTORING IN PROGRESS:
-Strategy components have been removed from the repository.
-Trading logic is being redesigned and will be implemented with new approach.
+========================================================================
+TRADING STRATEGIES (ACTIVE)
+========================================================================
 
-CORE FEATURES:
+1. ORB (Opening Range Breakout): 9:30-10:00 AM ET
+   - Trades the first 30 minutes of market open
+   - Builds opening range, waits for breakout and retest
+   - Max 2 trades per session, stops after 2 losses or 1 win
+
+2. SUPERTREND (After 10:00 AM ET)
+   - Trend-following strategy using Supertrend indicator
+   - Uses trailing stop for profit protection
+   - **ADX filter active: Only trades when ADX > 25 (trending market)**
+   - Prevents false signals in choppy markets (ADX < 20)
+
+NOTE: Supply & Demand (S&D) strategy is DISABLED but code kept intact
+      for future re-enablement. All S&D code remains in the codebase.
+
+========================================================================
+CORE FEATURES
+========================================================================
+
 - Real-time market data processing
 - Position and risk management
 - Order execution and monitoring
@@ -21,7 +38,7 @@ RISK MANAGEMENT:
 ORDER EXECUTION:
 - Market order entry
 - Automated stop loss placement
-- Profit target management
+- Profit target management (ORB) / Trailing stop (Supertrend)
 - Symbol-agnostic (works with ES, NQ, MES, MNQ, CL, GC, etc.)
 
 ========================================================================
@@ -1142,8 +1159,9 @@ def check_azure_time_service() -> str:
             bot_status["azure_trading_state"] = None
             return None  # Signal to use local get_trading_state()
             
-    except Exception as e:
+    except Exception:
         # Non-critical - if cloud unreachable, fall back to local time
+        # Muted logging to avoid spam in production
         bot_status["azure_trading_state"] = None
         return None  # Signal to use local get_trading_state()
 
@@ -7409,32 +7427,34 @@ def main(symbol_override: str = None) -> None:
     zone_manager = ZoneManager()
     
     # Initialize real-time zone WebSocket client (receives zones from TradingView via Azure)
+    # DISABLED: Not needed when S&D strategy is disabled - zones API server not required
     global zone_ws_client
     zone_ws_client = None
-    if ZONE_WEBSOCKET_AVAILABLE:
-        def on_zone_received(zone):
-            """Callback when new zone received from TradingView via WebSocket."""
-            try:
-                # Add zone to zone_manager for trading decisions
-                zone_manager.add_zone(
-                    zone_type=zone.zone_type,  # 'supply' or 'demand'
-                    top_price=zone.top,
-                    bottom_price=zone.bottom,
-                    strength=zone.strength,
-                    source='tradingview'
-                )
-                logger.info(f"📡 Zone from TradingView added: {zone.zone_type.upper()} [{zone.bottom:.2f}-{zone.top:.2f}] {zone.strength}")
-            except Exception as e:
-                logger.error(f"Error adding TradingView zone: {e}")
-        
-        zone_ws_client = init_zone_client(
-            symbols=[trading_symbol],
-            on_zone_received=on_zone_received
-        )
-        if zone_ws_client:
-            logger.debug(f"Zone WebSocket client initialized for {trading_symbol}")
-    else:
-        logger.debug("Zone WebSocket client not available (python-socketio not installed)")
+    # Uncomment to re-enable zone WebSocket when S&D strategy is active:
+    # if ZONE_WEBSOCKET_AVAILABLE:
+    #     def on_zone_received(zone):
+    #         """Callback when new zone received from TradingView via WebSocket."""
+    #         try:
+    #             # Add zone to zone_manager for trading decisions
+    #             zone_manager.add_zone(
+    #                 zone_type=zone.zone_type,  # 'supply' or 'demand'
+    #                 top_price=zone.top,
+    #                 bottom_price=zone.bottom,
+    #                 strength=zone.strength,
+    #                 source='tradingview'
+    #             )
+    #             logger.info(f"📡 Zone from TradingView added: {zone.zone_type.upper()} [{zone.bottom:.2f}-{zone.top:.2f}] {zone.strength}")
+    #         except Exception as e:
+    #             logger.error(f"Error adding TradingView zone: {e}")
+    #     
+    #     zone_ws_client = init_zone_client(
+    #         symbols=[trading_symbol],
+    #         on_zone_received=on_zone_received
+    #     )
+    #     if zone_ws_client:
+    #         logger.debug(f"Zone WebSocket client initialized for {trading_symbol}")
+    # else:
+    #     logger.debug("Zone WebSocket client not available (python-socketio not installed)")
 
     
     # Get symbol-specific tick specifications first
@@ -7662,6 +7682,100 @@ def execute_orb_trading_logic(symbol: str, current_price: float, current_time: d
     if symbol in state:
         position = state[symbol].get("position", {})
         if position.get("active", False):
+            # Manage existing ORB position with trailing stop (same logic as Supertrend)
+            if position.get("strategy") == "ORB":
+                position_side = position.get("side")
+                entry_price = position.get("entry_price", 0)
+                current_stop = position.get("stop_loss", 0)
+                initial_stop = position.get("initial_stop", current_stop)
+                tick_size = CONFIG.get("tick_size", 0.25)
+                
+                # Calculate profit in ticks
+                if position_side == "long":
+                    profit_ticks = (current_price - entry_price) / tick_size
+                else:
+                    profit_ticks = (entry_price - current_price) / tick_size
+                
+                # ========== INDUSTRY STANDARD TRAILING STOP ==========
+                # 1. After 6 ticks profit: Move stop to breakeven
+                # 2. After 12 ticks profit: Trail 8 ticks behind price
+                # =====================================================
+                
+                BREAKEVEN_TRIGGER = 6   # Lock in profit after 6 ticks
+                BREAKEVEN_PROFIT = 3    # Lock in 3 ticks profit (not true breakeven)
+                TRAIL_TRIGGER = 12      # Start trailing after 12 ticks profit
+                TRAIL_DISTANCE = 8      # Trail 8 ticks behind price
+                
+                new_stop = None
+                
+                if profit_ticks >= TRAIL_TRIGGER:
+                    # Trail 8 ticks behind current price
+                    if position_side == "long":
+                        trail_stop = current_price - (TRAIL_DISTANCE * tick_size)
+                        if trail_stop > current_stop:
+                            new_stop = trail_stop
+                    else:  # short
+                        trail_stop = current_price + (TRAIL_DISTANCE * tick_size)
+                        if trail_stop < current_stop:
+                            new_stop = trail_stop
+                            
+                elif profit_ticks >= BREAKEVEN_TRIGGER:
+                    # Move to entry + 3 ticks (lock in profit)
+                    if position_side == "long":
+                        lock_price = entry_price + (BREAKEVEN_PROFIT * tick_size)
+                        if current_stop < lock_price:
+                            new_stop = lock_price
+                    else:  # short
+                        lock_price = entry_price - (BREAKEVEN_PROFIT * tick_size)
+                        if current_stop > lock_price:
+                            new_stop = lock_price
+                
+                # Update stop if it improved
+                if new_stop is not None and new_stop != current_stop:
+                    try:
+                        stop_side = "SELL" if position_side == "long" else "BUY"
+                        broker.modify_stop_order(symbol, stop_side, position.get("quantity", 1), new_stop)
+                        state[symbol]["position"]["stop_loss"] = new_stop
+                        if profit_ticks < TRAIL_TRIGGER:
+                            logger.info(f"🔒 ORB stop locked at +3 ticks: ${new_stop:.2f}")
+                        else:
+                            logger.info(f"📈 ORB trailing stop: ${current_stop:.2f} → ${new_stop:.2f}")
+                    except Exception as e:
+                        logger.debug(f"Could not update ORB stop: {e}")
+                
+                # Check if stop was hit
+                stop_hit = False
+                if position_side == "long" and current_price <= current_stop:
+                    stop_hit = True
+                elif position_side == "short" and current_price >= current_stop:
+                    stop_hit = True
+                
+                # Check if take profit was hit
+                take_profit = position.get("take_profit")
+                tp_hit = False
+                if take_profit:
+                    if position_side == "long" and current_price >= take_profit:
+                        tp_hit = True
+                    elif position_side == "short" and current_price <= take_profit:
+                        tp_hit = True
+                
+                if stop_hit or tp_hit:
+                    reason = "Take Profit hit" if tp_hit else f"Stop hit at ${current_stop:.2f}"
+                    logger.info(f"🔄 ORB EXIT: {reason}")
+                    try:
+                        exit_side = "SELL" if position_side == "long" else "BUY"
+                        broker.place_market_order(symbol, exit_side, position.get("quantity", 1))
+                        state[symbol]["position"]["active"] = False
+                        save_position_state(symbol)
+                        
+                        pnl = (current_price - entry_price) if position_side == "long" else (entry_price - current_price)
+                        is_win = pnl > 0
+                        orb_strategy.record_trade_result(is_win)
+                        logger.info(f"{'✅' if is_win else '❌'} ORB closed: {'+' if pnl > 0 else ''}{pnl:.2f} pts ({pnl/tick_size:.0f} ticks)")
+                    except Exception as e:
+                        logger.error(f"Error closing ORB position: {e}")
+                    return
+                        
             return
     
     # Skip if no bars yet
@@ -7779,6 +7893,7 @@ def enter_orb_trade(symbol: str, signal: Dict, current_price: float) -> None:
                 "take_profit": take_profit_price,
                 "strategy": "ORB",
                 "entry_time": get_current_time(),
+                "initial_stop": stop_loss_price,  # Track initial stop for trailing logic
                 "orh": signal.get('orh'),
                 "orl": signal.get('orl')
             }
@@ -7800,7 +7915,8 @@ def execute_supertrend_trading_logic(symbol: str, current_price: float, current_
     """
     Execute Supertrend trend-following trading logic.
     
-    Only called when ADX > 25 (strong trend detected).
+    Called after 10:00 AM ET when ADX > 25 (strong trend detected).
+    ADX filter prevents false signals in choppy markets.
     
     Strategy:
     1. Wait for Supertrend signal (trend flip)
@@ -8312,11 +8428,9 @@ def can_enter_new_trade(symbol: str) -> bool:
     Returns:
         True if we can enter a new trade, False otherwise
     """
-    # SAFETY: Check if connected to QuoTradingAI server
-    # Trading is blocked if not connected for safety
-    if zone_ws_client is not None and not zone_ws_client.is_connected:
-        logger.warning("⛔ Cannot trade: Not connected to QuoTradingAI server")
-        return False
+    # NOTE: Zone WebSocket safety check removed since S&D strategy is disabled
+    # Original check: if zone_ws_client is not None and not zone_ws_client.is_connected
+    # This was only needed for S&D zone-based trading
     
     # Check if trading is enabled
     if not bot_status.get("trading_enabled", False):
@@ -8422,12 +8536,14 @@ def handle_tick_event(event) -> None:
     # Update 15-minute bars
     update_15min_bar(symbol, price, volume, dt)
     
-    # ===== STRATEGY SELECTION: ORB → Supertrend/S&D based on time and ADX =====
-    # 1. ORB (Opening Range Breakout): 9:30-10:00 ET
-    # 2. After 10:00 ET, use ADX to choose:
-    #    - ADX > 25: Supertrend (trending market)
-    #    - ADX < 20: S&D zones (choppy market)
-    #    - ADX 20-25: No trade (unclear)
+    # ===== STRATEGY SELECTION: ORB → Supertrend with ADX filter =====
+    # Current Active Strategies:
+    # 1. ORB (Opening Range Breakout): 9:30-10:00 AM ET
+    # 2. Supertrend: After 10:00 AM ET (only when ADX > 25 - trending market)
+    
+    # IMPORTANT: Supply & Demand strategy is TEMPORARILY DISABLED
+    # Code is kept intact below per user request - will be re-enabled in the future
+    # DO NOT DELETE the S&D strategy code (execute_zone_trading_logic)
     
     # Update Supertrend strategy with new bar data (even during ORB window)
     if supertrend_strategy is not None and SUPERTREND_AVAILABLE:
@@ -8441,30 +8557,43 @@ def handle_tick_event(event) -> None:
         # Check if we need to reset for a new day
         orb_strategy.check_session_reset(dt)
         
-        # Check if we're in ORB window (9:30-10:00 ET)
+        # Check if we're in ORB window (9:30-10:00 AM ET)
         if orb_strategy.is_orb_window(dt):
             # Execute ORB trading logic
             execute_orb_trading_logic(symbol, price, dt)
             return  # Don't execute other strategies during ORB window
     
-    # After ORB window: Use ADX to decide between Supertrend and S&D
+    # After ORB window: Use ADX to filter Supertrend trades
+    # Only trade when ADX > 25 (strong trend) to avoid false signals in choppy markets
     if supertrend_strategy is not None and SUPERTREND_AVAILABLE:
         market_condition = supertrend_strategy.get_market_condition()
         
         if market_condition == 'trending':
-            # ADX > 25: Use Supertrend (trend following)
+            # ADX > 25: Use Supertrend (trending market - good signals)
             execute_supertrend_trading_logic(symbol, price, dt)
-            return  # Don't also run S&D
+            return
         
         elif market_condition == 'unclear':
             # ADX 20-25: No trade, wait for clarity
             return
         
-        # market_condition == 'choppy': Fall through to S&D
+        # market_condition == 'choppy' (ADX < 20): Don't trade
+        # In choppy markets, Supertrend produces false signals - skip trading
+        return
     
-    # Execute S&D zone-based trading logic (when ADX < 20 or Supertrend not available)
-    if zone_manager is not None and rejection_detector is not None and filter_manager is not None:
-        execute_zone_trading_logic(symbol, price, dt)
+    # ===== SUPPLY & DEMAND STRATEGY - TEMPORARILY DISABLED =====
+    # IMPORTANT: Code kept intact per user request - DO NOT DELETE
+    # The S&D strategy is being temporarily disabled to test ORB + Supertrend only
+    # This code WILL BE RE-ENABLED in the future - kept commented for easy restoration
+    # 
+    # To re-enable S&D strategy:
+    # 1. Uncomment the execute_zone_trading_logic call below
+    # 2. Restore ADX-based switching logic in the "After ORB window" section above
+    # 3. Restore ADX check in supertrend_strategy.py check_entry_signal method
+    
+    # Execute S&D zone-based trading logic (TEMPORARILY DISABLED)
+    # if zone_manager is not None and rejection_detector is not None and filter_manager is not None:
+    #     execute_zone_trading_logic(symbol, price, dt)
 
 
 def handle_time_check_event(data: Dict[str, Any]) -> None:
@@ -9242,10 +9371,10 @@ def send_heartbeat() -> None:
                 logger.critical("BOT SHUTDOWN - License validation failed")
                 sys.exit(1)  # Exit with error code
         else:
-            pass
+            pass  # Muted: Non-200 response from heartbeat (not critical)
     
-    except Exception as e:
-        pass
+    except Exception:
+        pass  # Muted: Heartbeat failed (non-critical, will retry)
 
 
 
