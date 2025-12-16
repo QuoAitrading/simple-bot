@@ -345,10 +345,18 @@ class ORBStrategy:
         Returns:
             Trade signal dict or None
         """
-        if not self.can_trade():
+        # Log diagnostic: check if can trade
+        can_trade = self.can_trade()
+        logger.debug(f"{'✅' if can_trade else '❌'} Trading allowed: {'YES' if can_trade else 'NO'}")
+        
+        if not can_trade:
             return None
         
-        if not self.check_retest(current_bar):
+        # Log diagnostic: check retest
+        retest_valid = self.check_retest(current_bar)
+        logger.debug(f"{'✅' if retest_valid else '❌'} Retest valid: {'YES' if retest_valid else 'NO'}")
+        
+        if not retest_valid:
             return None
         
         orh = self.state.opening_range.orh
@@ -364,7 +372,10 @@ class ORBStrategy:
         
         if self.state.bias == 'long':
             # Long entry: body displaced above ORH
-            if body_low > orh:
+            body_displaced = body_low > orh
+            logger.debug(f"{'✅' if body_displaced else '❌'} Body displacement (LONG): {'YES' if body_displaced else 'NO'} (Body Low: {body_low:.2f}, ORH: {orh:.2f})")
+            
+            if body_displaced:
                 signal = {
                     'direction': 'long',
                     'entry_price': current_price,
@@ -372,11 +383,26 @@ class ORBStrategy:
                     'orh': orh,
                     'orl': orl
                 }
-                logger.info(f"📈 ORB LONG SIGNAL: Entry at {current_price:.2f}")
+                
+                # Log signal conditions met
+                logger.info(f"")
+                logger.info(f"{'='*60}")
+                logger.info(f"📊 SIGNAL CONDITIONS MET")
+                logger.info(f"{'='*60}")
+                logger.info(f"  ✅ Trading allowed: PASS")
+                logger.info(f"  ✅ Retest valid: PASS")
+                logger.info(f"  ✅ Body displacement: PASS")
+                logger.info(f"  Direction: LONG")
+                logger.info(f"  Entry Price: ${current_price:.2f}")
+                logger.info(f"  Range: ${orl:.2f} - ${orh:.2f}")
+                logger.info(f"{'='*60}")
         
         elif self.state.bias == 'short':
             # Short entry: body displaced below ORL
-            if body_high < orl:
+            body_displaced = body_high < orl
+            logger.debug(f"{'✅' if body_displaced else '❌'} Body displacement (SHORT): {'YES' if body_displaced else 'NO'} (Body High: {body_high:.2f}, ORL: {orl:.2f})")
+            
+            if body_displaced:
                 signal = {
                     'direction': 'short',
                     'entry_price': current_price,
@@ -384,7 +410,19 @@ class ORBStrategy:
                     'orh': orh,
                     'orl': orl
                 }
-                logger.info(f"📉 ORB SHORT SIGNAL: Entry at {current_price:.2f}")
+                
+                # Log signal conditions met
+                logger.info(f"")
+                logger.info(f"{'='*60}")
+                logger.info(f"📊 SIGNAL CONDITIONS MET")
+                logger.info(f"{'='*60}")
+                logger.info(f"  ✅ Trading allowed: PASS")
+                logger.info(f"  ✅ Retest valid: PASS")
+                logger.info(f"  ✅ Body displacement: PASS")
+                logger.info(f"  Direction: SHORT")
+                logger.info(f"  Entry Price: ${current_price:.2f}")
+                logger.info(f"  Range: ${orl:.2f} - ${orh:.2f}")
+                logger.info(f"{'='*60}")
         
         if signal:
             self.state.trades_today += 1

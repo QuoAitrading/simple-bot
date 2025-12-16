@@ -407,19 +407,30 @@ class SupertrendStrategy:
         Returns:
             Signal dict or None
         """
+        # Log diagnostic: checking timeframe alignment
+        tf_aligned = self.timeframes_aligned()
+        logger.debug(f"{'✅' if tf_aligned else '❌'} Timeframe alignment: {'PASS' if tf_aligned else 'FAIL'}")
+        
         # Must have both timeframes aligned (1-min and 5-min same direction)
-        if not self.timeframes_aligned():
+        if not tf_aligned:
             return None
         
+        # Log diagnostic: checking pullback status
+        has_pullback_signal = self.state.awaiting_pullback
+        logger.debug(f"{'✅' if has_pullback_signal else '❌'} Pullback signal active: {'YES' if has_pullback_signal else 'NO'}")
+        
         # Check if we have a signal and awaiting pullback
-        if not self.state.awaiting_pullback:
+        if not has_pullback_signal:
             return None
         
         # Check for pullback to SuperTrend line
         if self.state.last_signal == 'long':
             # For longs, wait for price to pull back toward the SuperTrend line
             # Entry when price holds above SuperTrend (body displacement)
-            if current_price >= self.state.supertrend_line:
+            pullback_complete = current_price >= self.state.supertrend_line
+            logger.debug(f"{'✅' if pullback_complete else '❌'} Pullback complete (LONG): {'YES' if pullback_complete else 'NO'} (Price: {current_price:.2f}, Line: {self.state.supertrend_line:.2f})")
+            
+            if pullback_complete:
                 self.state.awaiting_pullback = False  # Pullback complete
                 signal = {
                     'direction': 'long',
@@ -431,15 +442,27 @@ class SupertrendStrategy:
                 
                 self.state.trades_today += 1
                 
-                logger.info(f"📈 ENTRY CONFIRMED: LONG @ {current_price:.2f}")
-                logger.info(f"   Signal: {self.state.supertrend_line:.2f}, Confirmation: {self.state_5min.supertrend_line:.2f}")
+                # Log signal conditions met
+                logger.info(f"")
+                logger.info(f"{'='*60}")
+                logger.info(f"📊 SIGNAL CONDITIONS MET")
+                logger.info(f"{'='*60}")
+                logger.info(f"  ✅ Timeframe alignment: PASS")
+                logger.info(f"  ✅ Pullback signal: ACTIVE")
+                logger.info(f"  ✅ Price confirmation: PASS")
+                logger.info(f"  Direction: LONG")
+                logger.info(f"  Entry Price: ${current_price:.2f}")
+                logger.info(f"{'='*60}")
                 
                 return signal
         
         elif self.state.last_signal == 'short':
             # For shorts, wait for price to pull back toward the SuperTrend line
             # Entry when price holds below SuperTrend (body displacement)
-            if current_price <= self.state.supertrend_line:
+            pullback_complete = current_price <= self.state.supertrend_line
+            logger.debug(f"{'✅' if pullback_complete else '❌'} Pullback complete (SHORT): {'YES' if pullback_complete else 'NO'} (Price: {current_price:.2f}, Line: {self.state.supertrend_line:.2f})")
+            
+            if pullback_complete:
                 self.state.awaiting_pullback = False  # Pullback complete
                 signal = {
                     'direction': 'short',
@@ -451,8 +474,17 @@ class SupertrendStrategy:
                 
                 self.state.trades_today += 1
                 
-                logger.info(f"📉 ENTRY CONFIRMED: SHORT @ {current_price:.2f}")
-                logger.info(f"   Signal: {self.state.supertrend_line:.2f}, Confirmation: {self.state_5min.supertrend_line:.2f}")
+                # Log signal conditions met
+                logger.info(f"")
+                logger.info(f"{'='*60}")
+                logger.info(f"📊 SIGNAL CONDITIONS MET")
+                logger.info(f"{'='*60}")
+                logger.info(f"  ✅ Timeframe alignment: PASS")
+                logger.info(f"  ✅ Pullback signal: ACTIVE")
+                logger.info(f"  ✅ Price confirmation: PASS")
+                logger.info(f"  Direction: SHORT")
+                logger.info(f"  Entry Price: ${current_price:.2f}")
+                logger.info(f"{'='*60}")
                 
                 return signal
         
