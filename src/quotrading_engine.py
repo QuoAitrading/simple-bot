@@ -7427,32 +7427,34 @@ def main(symbol_override: str = None) -> None:
     zone_manager = ZoneManager()
     
     # Initialize real-time zone WebSocket client (receives zones from TradingView via Azure)
+    # DISABLED: Not needed when S&D strategy is disabled - zones API server not required
     global zone_ws_client
     zone_ws_client = None
-    if ZONE_WEBSOCKET_AVAILABLE:
-        def on_zone_received(zone):
-            """Callback when new zone received from TradingView via WebSocket."""
-            try:
-                # Add zone to zone_manager for trading decisions
-                zone_manager.add_zone(
-                    zone_type=zone.zone_type,  # 'supply' or 'demand'
-                    top_price=zone.top,
-                    bottom_price=zone.bottom,
-                    strength=zone.strength,
-                    source='tradingview'
-                )
-                logger.info(f"📡 Zone from TradingView added: {zone.zone_type.upper()} [{zone.bottom:.2f}-{zone.top:.2f}] {zone.strength}")
-            except Exception as e:
-                logger.error(f"Error adding TradingView zone: {e}")
-        
-        zone_ws_client = init_zone_client(
-            symbols=[trading_symbol],
-            on_zone_received=on_zone_received
-        )
-        if zone_ws_client:
-            logger.debug(f"Zone WebSocket client initialized for {trading_symbol}")
-    else:
-        logger.debug("Zone WebSocket client not available (python-socketio not installed)")
+    # Uncomment to re-enable zone WebSocket when S&D strategy is active:
+    # if ZONE_WEBSOCKET_AVAILABLE:
+    #     def on_zone_received(zone):
+    #         """Callback when new zone received from TradingView via WebSocket."""
+    #         try:
+    #             # Add zone to zone_manager for trading decisions
+    #             zone_manager.add_zone(
+    #                 zone_type=zone.zone_type,  # 'supply' or 'demand'
+    #                 top_price=zone.top,
+    #                 bottom_price=zone.bottom,
+    #                 strength=zone.strength,
+    #                 source='tradingview'
+    #             )
+    #             logger.info(f"📡 Zone from TradingView added: {zone.zone_type.upper()} [{zone.bottom:.2f}-{zone.top:.2f}] {zone.strength}")
+    #         except Exception as e:
+    #             logger.error(f"Error adding TradingView zone: {e}")
+    #     
+    #     zone_ws_client = init_zone_client(
+    #         symbols=[trading_symbol],
+    #         on_zone_received=on_zone_received
+    #     )
+    #     if zone_ws_client:
+    #         logger.debug(f"Zone WebSocket client initialized for {trading_symbol}")
+    # else:
+    #     logger.debug("Zone WebSocket client not available (python-socketio not installed)")
 
     
     # Get symbol-specific tick specifications first
@@ -8331,11 +8333,9 @@ def can_enter_new_trade(symbol: str) -> bool:
     Returns:
         True if we can enter a new trade, False otherwise
     """
-    # SAFETY: Check if connected to QuoTradingAI server
-    # Trading is blocked if not connected for safety
-    if zone_ws_client is not None and not zone_ws_client.is_connected:
-        logger.warning("⛔ Cannot trade: Not connected to QuoTradingAI server")
-        return False
+    # NOTE: Zone WebSocket safety check removed since S&D strategy is disabled
+    # Original check: if zone_ws_client is not None and not zone_ws_client.is_connected
+    # This was only needed for S&D zone-based trading
     
     # Check if trading is enabled
     if not bot_status.get("trading_enabled", False):
