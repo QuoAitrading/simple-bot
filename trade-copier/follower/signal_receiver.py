@@ -907,7 +907,7 @@ async def main():
         # Connect to WebSocket and wait
         try:
             await sio.connect(ws_url, namespaces=['/copier'])
-            print(f"   📡 Real-time signals enabled")
+            # Connection successful - waiting for signals silently
             
             # Keep connection alive until license expires or KeyboardInterrupt
             while not license_expired:
