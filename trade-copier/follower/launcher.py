@@ -438,7 +438,7 @@ class TradeCopierLauncher:
         threading.Thread(target=validate_thread, daemon=True).start()
     
     def setup_account_selection_screen(self):
-        """Screen 1: Select which accounts to copy to."""
+        """Screen 1: Select which accounts for AI trading."""
         for widget in self.root.winfo_children():
             widget.destroy()
         
@@ -451,7 +451,7 @@ class TradeCopierLauncher:
         main.pack(fill=tk.BOTH, expand=True)
         
         # Instructions
-        tk.Label(main, text="Select the accounts you want to copy trades to:",
+        tk.Label(main, text="Select the accounts for AI trading:",
                 font=("Segoe UI", 10), bg=self.colors['background'], fg=self.colors['text_light']).pack(pady=(0, 10))
         
         # Account checkboxes
