@@ -5318,6 +5318,7 @@ def handle_ping():
 # In-memory storage for connected followers
 _connected_followers = {}  # follower_key -> {name, account_ids, connected_at, last_heartbeat, copy_enabled, ...}
 _pending_signals = {}      # follower_key -> [list of pending signals]
+_copier_websocket_clients = {}  # sid -> {license_key, connected_at}
 
 
 @app.route('/copier/register', methods=['POST'])
@@ -5415,7 +5416,7 @@ def copier_broadcast():
     if not master_key or not signal:
         return jsonify({"error": "Missing master_key or signal"}), 400
     
-    # Add signal to all connected followers' queues
+    # Add signal to all connected followers' queues (for HTTP polling fallback)
     received_count = 0
     for follower_key, follower in _connected_followers.items():
         if follower.get('copy_enabled', True):
@@ -5424,9 +5425,15 @@ def copier_broadcast():
             _pending_signals[follower_key].append(signal)
             received_count += 1
     
-    logging.info(f"📤 Copier signal broadcast: {signal.get('action')} {signal.get('side')} {signal.get('quantity')} {signal.get('symbol')} → {received_count} followers")
+    # ALSO broadcast via WebSocket for instant delivery
+    websocket_count = len(_copier_websocket_clients)
+    if websocket_count > 0:
+        socketio.emit('trade_signal', signal, namespace='/copier')
+        logging.info(f"📡 WebSocket push to {websocket_count} clients")
     
-    return jsonify({"received_count": received_count})
+    logging.info(f"📤 Copier signal broadcast: {signal.get('action')} {signal.get('side')} {signal.get('quantity')} {signal.get('symbol')} → {received_count} HTTP + {websocket_count} WS")
+    
+    return jsonify({"received_count": received_count, "websocket_count": websocket_count})
 
 
 @app.route('/copier/poll', methods=['GET'])
@@ -5535,3 +5542,48 @@ def copier_validate_license():
         "message": message,
         "expiration_date": expiration_str
     })
+
+
+# ============================================
+# COPIER WEBSOCKET HANDLERS
+# Real-time signal push for instant trade execution
+# ============================================
+
+@socketio.on('connect', namespace='/copier')
+def copier_ws_connect():
+    """Handle copier WebSocket connection."""
+    sid = request.sid
+    _copier_websocket_clients[sid] = {
+        'connected_at': datetime.now(timezone.utc).isoformat(),
+        'license_key': None
+    }
+    logging.info(f"📡 Copier WS client connected: {sid} (Total: {len(_copier_websocket_clients)})")
+    emit('connected', {'status': 'ok', 'sid': sid})
+
+
+@socketio.on('disconnect', namespace='/copier')
+def copier_ws_disconnect():
+    """Handle copier WebSocket disconnection."""
+    sid = request.sid
+    if sid in _copier_websocket_clients:
+        del _copier_websocket_clients[sid]
+    logging.info(f"📡 Copier WS client disconnected: {sid} (Remaining: {len(_copier_websocket_clients)})")
+
+
+@socketio.on('subscribe', namespace='/copier')
+def copier_ws_subscribe(data):
+    """Follower subscribes to receive signals with their license key."""
+    sid = request.sid
+    license_key = data.get('license_key', '')
+    
+    if sid in _copier_websocket_clients:
+        _copier_websocket_clients[sid]['license_key'] = license_key
+    
+    logging.info(f"📡 Copier WS client subscribed: {sid}")
+    emit('subscribed', {'status': 'ok', 'message': 'Ready to receive trade signals'})
+
+
+@socketio.on('ping', namespace='/copier')
+def copier_ws_ping():
+    """Keep-alive ping from copier client."""
+    emit('pong', {'timestamp': datetime.now(timezone.utc).isoformat()})

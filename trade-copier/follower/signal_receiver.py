@@ -9,6 +9,7 @@ import logging
 from typing import Optional, Callable
 from datetime import datetime
 import json
+import socketio
 
 # CRITICAL: Suppress SDK logs BEFORE any SDK imports happen
 logging.getLogger('project_x_py').setLevel(logging.CRITICAL + 100)
@@ -695,214 +696,226 @@ async def main():
         status_thread = threading.Thread(target=status_updater, daemon=True)
         status_thread.start()
         
-        # Polling loop
-        while True:
-            # Check if license expired
-            if license_expired:
-                print("\n⏹️  Session stopped due to license expiration.")
-                break
+        # ===== WEBSOCKET-BASED SIGNAL RECEIVING =====
+        # Create async socketio client for instant signal delivery
+        sio = socketio.AsyncClient(
+            reconnection=True,
+            reconnection_attempts=0,  # Infinite retries
+            reconnection_delay=1,
+            reconnection_delay_max=10,
+            logger=False,
+            engineio_logger=False
+        )
+        
+        ws_connected = False
+        
+        # Convert HTTP URL to WebSocket URL
+        ws_url = api_url.replace('https://', 'wss://').replace('http://', 'ws://')
+        
+        @sio.event(namespace='/copier')
+        async def connect():
+            nonlocal ws_connected
+            ws_connected = True
+            print("   📡 WebSocket connected - instant signals enabled")
+            # Subscribe with license key
+            await sio.emit('subscribe', {'license_key': follower_key}, namespace='/copier')
+        
+        @sio.event(namespace='/copier')
+        async def disconnect():
+            nonlocal ws_connected
+            ws_connected = False
+            print("   ⚠️  WebSocket disconnected - reconnecting...")
+        
+        @sio.on('trade_signal', namespace='/copier')
+        async def on_trade_signal(signal):
+            """Handle incoming trade signal via WebSocket - execute locally"""
+            nonlocal broker, license_expired
             
+            if license_expired:
+                return
+                
+            timestamp = datetime.now().strftime("%H:%M:%S")
+            action = signal.get('action', 'UNKNOWN')
+            side = signal.get('side', '')
+            quantity = signal.get('quantity', 1)
+            symbol = signal.get('symbol', '')
+            
+            # AI-style messaging (no copy references)
+            print(f"\n[{timestamp}] 🧠 AI TRADE SIGNAL [WebSocket]")
+            print(f"   Action: {action} | {side} {quantity} {symbol}")
+            
+            # Sound alert
             try:
-                async with session.get(
-                    f"{api_url}/copier/poll",
-                    params={"follower_key": follower_key},
-                    timeout=aiohttp.ClientTimeout(total=5)  # Short timeout for fast cycles
-                ) as resp:
-                    if resp.status == 200:
-                        data = await resp.json()
-                        if data.get("signal"):
-                            signal = data["signal"]
-                            timestamp = datetime.now().strftime("%H:%M:%S")
-                            action = signal.get('action', 'UNKNOWN')
-                            side = signal.get('side', '')
-                            quantity = signal.get('quantity', 1)
-                            symbol = signal.get('symbol', '')
-                            
-                            # AI-style messaging (no copy references)
-                            print(f"\n[{timestamp}] 🧠 AI TRADE SIGNAL")
-                            print(f"   Action: {action} | {side} {quantity} {symbol}")
-                            
-                            # Sound alert
+                import winsound
+                winsound.Beep(800, 200)  # 800Hz for 200ms
+            except:
+                print("\a", end="")  # Terminal bell fallback
+            # Execute trade if broker is connected
+            if broker and broker.connected:
+                try:
+                    if action == "OPEN":
+                        # Open position
+                        print(f"   ⏳ AI executing {side} {quantity} {symbol}...")
+                        success = await broker.place_market_order(
+                            symbol=symbol,
+                            side=side.upper(),
+                            quantity=quantity
+                        )
+                        if success:
+                            # Success sound
                             try:
-                                import winsound
-                                winsound.Beep(800, 200)  # 800Hz for 200ms
+                                winsound.Beep(1000, 150)
+                                winsound.Beep(1200, 150)
                             except:
-                                print("\a", end="")  # Terminal bell fallback
+                                pass
+                            pos_side = 'LONG' if side.upper() == 'BUY' else 'SHORT'
+                            entry_price = signal.get('entry_price', 0)
+                            print(f"   ✅ FILLED: {side} {quantity} {symbol}")
+                            print(f"   📊 Position: {pos_side} {quantity} {symbol} @ ${entry_price:,.2f}")
                             
-                            # Execute trade if broker is connected
-                            if broker and broker.connected:
-                                try:
-                                    if action == "OPEN":
-                                        # Open position
-                                        print(f"   ⏳ AI executing {side} {quantity} {symbol}...")
-                                        success = await broker.place_market_order(
-                                            symbol=symbol,
-                                            side=side.upper(),
-                                            quantity=quantity
-                                        )
-                                        if success:
-                                            # Success sound
-                                            try:
-                                                winsound.Beep(1000, 150)
-                                                winsound.Beep(1200, 150)
-                                            except:
-                                                pass
-                                            pos_side = 'LONG' if side.upper() == 'BUY' else 'SHORT'
-                                            entry_price = signal.get('entry_price', 0)
-                                            print(f"   ✅ FILLED: {side} {quantity} {symbol}")
-                                            print(f"   📊 Position: {pos_side} {quantity} {symbol} @ ${entry_price:,.2f}")
-                                            
-                                            # Track trade, position, and entry price
-                                            _session_info["trades_executed"] += 1
-                                            _session_info["trades_logged"].append({
-                                                "time": timestamp,
-                                                "action": "OPEN",
-                                                "side": pos_side,
-                                                "qty": quantity,
-                                                "symbol": symbol,
-                                                "price": entry_price,
-                                                "pnl": None  # No PNL on open
-                                            })
-                                            _session_info["current_position"] = {
-                                                "symbol": symbol,
-                                                "side": pos_side,
-                                                "qty": quantity,
-                                                "entry_price": entry_price
-                                            }
-                                            _session_info["entry_prices"][symbol] = entry_price
-                                            
-                                            # Set stop loss if provided
-                                            stop_loss = signal.get('stop_loss')
-                                            if stop_loss:
-                                                close_side = "BUY" if side.upper() == "SELL" else "SELL"
-                                                await broker.place_stop_order(symbol, close_side, quantity, stop_loss)
-                                                print(f"   🛑 Stop loss: {stop_loss}")
-                                        else:
-                                            # Fail sound
-                                            try:
-                                                winsound.Beep(400, 300)
-                                            except:
-                                                pass
-                                            print(f"   ❌ Order failed - check broker connection")
-                                    
-                                    elif action == "CLOSE":
-                                        # Close position - reverse the side
-                                        close_side = "SELL" if side.upper() == "BUY" else "BUY"
-                                        print(f"   ⏳ AI closing {quantity} {symbol}...")
-                                        success = await broker.place_market_order(
-                                            symbol=symbol,
-                                            side=close_side,
-                                            quantity=quantity
-                                        )
-                                        if success:
-                                            try:
-                                                winsound.Beep(600, 100)
-                                                winsound.Beep(800, 100)
-                                            except:
-                                                pass
-                                            
-                                            # Calculate PNL
-                                            exit_price = signal.get('exit_price', 0)
-                                            entry_price = _session_info["entry_prices"].get(symbol, 0)
-                                            tick_value = 12.50 if 'ES' in symbol or 'MES' in symbol else 5.0  # NQ/MNQ = $5
-                                            pos = _session_info.get("current_position")
-                                            if pos and entry_price and exit_price:
-                                                if pos["side"] == "LONG":
-                                                    pnl = (exit_price - entry_price) * quantity * tick_value
-                                                else:
-                                                    pnl = (entry_price - exit_price) * quantity * tick_value
-                                                _session_info["session_pnl"] += pnl
-                                                pnl_str = f"+${pnl:,.2f}" if pnl >= 0 else f"-${abs(pnl):,.2f}"
-                                                print(f"   ✅ CLOSED: {quantity} {symbol} @ ${exit_price:,.2f}")
-                                                print(f"   💰 Trade PNL: {pnl_str}")
-                                            else:
-                                                pnl = 0
-                                                print(f"   ✅ CLOSED: {quantity} {symbol}")
-                                            print(f"   📊 Session PNL: ${_session_info['session_pnl']:,.2f}")
-                                            
-                                            # Track trade with PNL
-                                            _session_info["trades_executed"] += 1
-                                            _session_info["trades_logged"].append({
-                                                "time": timestamp,
-                                                "action": "CLOSE",
-                                                "side": close_side,
-                                                "qty": quantity,
-                                                "symbol": symbol,
-                                                "price": exit_price,
-                                                "pnl": pnl
-                                            })
-                                        else:
-                                            print(f"   ❌ Close failed!")
-                                    
-                                    elif action == "FLATTEN":
-                                        # Flatten all positions in symbol
-                                        print(f"   ⏳ AI flattening all {symbol} positions...")
-                                        success = await broker.flatten_position(symbol)
-                                        if success:
-                                            try:
-                                                winsound.Beep(600, 100)
-                                                winsound.Beep(500, 100)
-                                                winsound.Beep(400, 100)
-                                            except:
-                                                pass
-                                            
-                                            # Calculate PNL
-                                            exit_price = signal.get('exit_price', 0)
-                                            entry_price = _session_info["entry_prices"].get(symbol, 0)
-                                            tick_value = 12.50 if 'ES' in symbol or 'MES' in symbol else 5.0
-                                            pos = _session_info.get("current_position")
-                                            pnl = 0
-                                            if pos and entry_price and exit_price:
-                                                qty = pos.get("qty", 1)
-                                                if pos["side"] == "LONG":
-                                                    pnl = (exit_price - entry_price) * qty * tick_value
-                                                else:
-                                                    pnl = (entry_price - exit_price) * qty * tick_value
-                                                _session_info["session_pnl"] += pnl
-                                                pnl_str = f"+${pnl:,.2f}" if pnl >= 0 else f"-${abs(pnl):,.2f}"
-                                                print(f"   ✅ FLAT: All {symbol} @ ${exit_price:,.2f}")
-                                                print(f"   💰 Trade PNL: {pnl_str}")
-                                            else:
-                                                print(f"   ✅ FLAT: All {symbol} positions closed")
-                                            print(f"   📊 Session PNL: ${_session_info['session_pnl']:,.2f}")
-                                            
-                                            # Track trade and clear position
-                                            _session_info["trades_executed"] += 1
-                                            _session_info["trades_logged"].append({
-                                                "time": timestamp,
-                                                "action": "FLATTEN",
-                                                "side": "-",
-                                                "qty": pos.get("qty", 0) if pos else 0,
-                                                "symbol": symbol,
-                                                "price": exit_price,
-                                                "pnl": pnl
-                                            })
-                                            _session_info["current_position"] = None
-                                            _session_info["entry_prices"].pop(symbol, None)
-                                        else:
-                                            print(f"   ❌ Flatten failed!")
-                                    
-                                    else:
-                                        print(f"   ⚠️ Unknown action: {action}")
-                                        
-                                except Exception as exec_e:
-                                    print(f"   ❌ Execution error: {exec_e}")
+                            # Track trade, position, and entry price
+                            _session_info["trades_executed"] += 1
+                            _session_info["trades_logged"].append({
+                                "time": timestamp,
+                                "action": "OPEN",
+                                "side": pos_side,
+                                "qty": quantity,
+                                "symbol": symbol,
+                                "price": entry_price,
+                                "pnl": None
+                            })
+                            _session_info["current_position"] = {
+                                "symbol": symbol,
+                                "side": pos_side,
+                                "qty": quantity,
+                                "entry_price": entry_price
+                            }
+                            _session_info["entry_prices"][symbol] = entry_price
+                            
+                            # Set stop loss if provided
+                            stop_loss = signal.get('stop_loss')
+                            if stop_loss:
+                                close_side = "BUY" if side.upper() == "SELL" else "SELL"
+                                await broker.place_stop_order(symbol, close_side, quantity, stop_loss)
+                                print(f"   🛑 Stop loss: {stop_loss}")
+                        else:
+                            try:
+                                winsound.Beep(400, 300)
+                            except:
+                                pass
+                            print(f"   ❌ Order failed - check broker connection")
+                    
+                    elif action == "CLOSE":
+                        close_side = "SELL" if side.upper() == "BUY" else "BUY"
+                        print(f"   ⏳ AI closing {quantity} {symbol}...")
+                        success = await broker.place_market_order(
+                            symbol=symbol,
+                            side=close_side,
+                            quantity=quantity
+                        )
+                        if success:
+                            try:
+                                winsound.Beep(600, 100)
+                                winsound.Beep(800, 100)
+                            except:
+                                pass
+                            
+                            exit_price = signal.get('exit_price', 0)
+                            entry_price = _session_info["entry_prices"].get(symbol, 0)
+                            tick_value = 12.50 if 'ES' in symbol or 'MES' in symbol else 5.0
+                            pos = _session_info.get("current_position")
+                            pnl = 0
+                            if pos and entry_price and exit_price:
+                                if pos["side"] == "LONG":
+                                    pnl = (exit_price - entry_price) * quantity * tick_value
+                                else:
+                                    pnl = (entry_price - exit_price) * quantity * tick_value
+                                _session_info["session_pnl"] += pnl
+                                pnl_str = f"+${pnl:,.2f}" if pnl >= 0 else f"-${abs(pnl):,.2f}"
+                                print(f"   ✅ CLOSED: {quantity} {symbol} @ ${exit_price:,.2f}")
+                                print(f"   💰 Trade PNL: {pnl_str}")
                             else:
-                                print(f"   ⚠️ Broker not connected - Signal logged only")
-                                
-                    elif resp.status == 204:
-                        # No signals, continue
-                        pass
+                                print(f"   ✅ CLOSED: {quantity} {symbol}")
+                            print(f"   📊 Session PNL: ${_session_info['session_pnl']:,.2f}")
+                            
+                            _session_info["trades_executed"] += 1
+                            _session_info["trades_logged"].append({
+                                "time": timestamp,
+                                "action": "CLOSE",
+                                "side": close_side,
+                                "qty": quantity,
+                                "symbol": symbol,
+                                "price": exit_price,
+                                "pnl": pnl
+                            })
+                        else:
+                            print(f"   ❌ Close failed!")
+                    
+                    elif action == "FLATTEN":
+                        print(f"   ⏳ AI flattening all {symbol} positions...")
+                        success = await broker.flatten_position(symbol)
+                        if success:
+                            try:
+                                winsound.Beep(600, 100)
+                                winsound.Beep(500, 100)
+                                winsound.Beep(400, 100)
+                            except:
+                                pass
+                            
+                            exit_price = signal.get('exit_price', 0)
+                            entry_price = _session_info["entry_prices"].get(symbol, 0)
+                            tick_value = 12.50 if 'ES' in symbol or 'MES' in symbol else 5.0
+                            pos = _session_info.get("current_position")
+                            pnl = 0
+                            if pos and entry_price and exit_price:
+                                qty = pos.get("qty", 1)
+                                if pos["side"] == "LONG":
+                                    pnl = (exit_price - entry_price) * qty * tick_value
+                                else:
+                                    pnl = (entry_price - exit_price) * qty * tick_value
+                                _session_info["session_pnl"] += pnl
+                                pnl_str = f"+${pnl:,.2f}" if pnl >= 0 else f"-${abs(pnl):,.2f}"
+                                print(f"   ✅ FLAT: All {symbol} @ ${exit_price:,.2f}")
+                                print(f"   💰 Trade PNL: {pnl_str}")
+                            else:
+                                print(f"   ✅ FLAT: All {symbol} positions closed")
+                            print(f"   📊 Session PNL: ${_session_info['session_pnl']:,.2f}")
+                            
+                            _session_info["trades_executed"] += 1
+                            _session_info["trades_logged"].append({
+                                "time": timestamp,
+                                "action": "FLATTEN",
+                                "side": "-",
+                                "qty": pos.get("qty", 0) if pos else 0,
+                                "symbol": symbol,
+                                "price": exit_price,
+                                "pnl": pnl
+                            })
+                            _session_info["current_position"] = None
+                            _session_info["entry_prices"].pop(symbol, None)
+                        else:
+                            print(f"   ❌ Flatten failed!")
+                    
                     else:
-                        await asyncio.sleep(5)
-            except asyncio.TimeoutError:
-                continue
-            except KeyboardInterrupt:
-                status_running = False
-                break
-            except Exception as e:
-                print(f"\n[Error] {e}")
-                await asyncio.sleep(5)
+                        print(f"   ⚠️ Unknown action: {action}")
+                        
+                except Exception as exec_e:
+                    print(f"   ❌ Execution error: {exec_e}")
+            else:
+                print(f"   ⚠️ Broker not connected - Signal logged only")
+        
+        # Connect to WebSocket and wait
+        try:
+            await sio.connect(ws_url, namespaces=['/copier'])
+            print(f"✅ WebSocket connected to server")
+            
+            # Keep connection alive until license expires or KeyboardInterrupt
+            while not license_expired:
+                await asyncio.sleep(1)
+                
+        except Exception as ws_error:
+            print(f"⚠️  WebSocket connection failed: {ws_error}")
+            print("   Signals will not be received - please restart")
 
 
 THANK_YOU_MESSAGE = "Thanks for using QuoTrading AI"
