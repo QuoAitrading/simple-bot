@@ -418,6 +418,7 @@ async def main():
     import platform
     device_info = f"{uuid.getnode()}-{platform.node()}-{platform.system()}"
     device_fingerprint = hashlib.sha256(device_info.encode()).hexdigest()[:32]
+    _session_info["device_fingerprint"] = device_fingerprint
     
     # Connect to broker for trade execution (silently)
     broker = None
@@ -647,7 +648,7 @@ async def main():
                             
                             # Send heartbeat to keep session lock alive (60 sec timeout, refresh every 20 sec)
                             requests.post(
-                                f"{api_url.replace('/copier', '')}/api/heartbeat",
+                                f"{api_url}/api/heartbeat",
                                 json={
                                     "license_key": follower_key,
                                     "device_fingerprint": device_fingerprint,
@@ -797,17 +798,23 @@ def cleanup_session():
     # Clear screen for clean exit
     print("\033[2J\033[H", end="")  # Clear screen and move cursor to top
     
-    # Unregister from API
+    # Release session via API
     if _session_info["api_url"] and _session_info["follower_key"]:
         try:
             import requests
-            requests.post(
-                f"{_session_info['api_url']}/copier/unregister",
-                json={"follower_key": _session_info["follower_key"]},
-                timeout=3
+            resp = requests.post(
+                f"{_session_info['api_url']}/api/session/release",
+                json={
+                    "license_key": _session_info["follower_key"],
+                    "device_fingerprint": _session_info.get("device_fingerprint", ""),
+                    "symbol": "COPIER"
+                },
+                timeout=5
             )
-        except:
-            pass  # Best effort
+            if resp.status_code == 200:
+                print("✅ Session released")
+        except Exception as e:
+            print(f"⚠️  Could not release session: {e}")
 
 
 def display_animated_thank_you(duration=10.0, fps=15):
