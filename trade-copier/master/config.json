@@ -1,10 +1,9 @@
 {
     "api_url": "https://quotrading-flask-api.azurewebsites.net",
-    "master_key": "YOUR_MASTER_KEY",
+    "master_key": "C63W-L241-FVJ9-LGIR",
     "broker": {
-        "username": "YOUR_EMAIL@gmail.com",
-        "api_token": "YOUR_API_TOKEN"
+        "username": "lorenzod1823@gmail.com",
+        "api_token": "psCdvt+Y5nU2p17z2DM2RZc9x62mBGhXic0KsHoYUdI="
     },
-    "dashboard_port": 3000,
-    "copy_enabled": true
+    "poll_interval": 0.1
 }

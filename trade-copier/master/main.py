@@ -30,13 +30,13 @@ logger = logging.getLogger(__name__)
 def print_header():
     """Print startup header"""
     print("""
-╔══════════════════════════════════════════════════════════════╗
-║                                                              ║
-║      🎯  TRADE COPIER - MASTER SYSTEM                       ║
-║                                                              ║
-║      You trade. Followers copy. Automatically.              ║
-║                                                              ║
-╚══════════════════════════════════════════════════════════════╝
+╔═══════════════════════════════════════════════════════════════════╗
+║                                                                   ║
+║      🎯  QuoTrading AI - Master Trading System                   ║
+║                                                                   ║
+║      Your trades are broadcast to AI-connected accounts          ║
+║                                                                   ║
+╚═══════════════════════════════════════════════════════════════════╝
 """)
 
 
@@ -117,12 +117,11 @@ async def main():
     print(f"""
 ✅ Master system running!
    
-   Connected followers: {len(followers)}
+   Connected AI accounts: {len(followers)}
    
-   🎯 Your trades will be copied to all connected followers in real-time.
+   🎯 Your trades will be broadcast to all connected accounts instantly.
    
    Open your trading platform and trade normally.
-   Every trade you make will be broadcast instantly.
    
    Press Ctrl+C to stop.
 """)
