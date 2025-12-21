@@ -39,8 +39,10 @@ _session_info = {
     "status_running": True,  # Controls background thread
     "start_time": None,
     "trades_executed": 0,
-    "trades_logged": [],  # List of trade dicts
-    "current_position": None,  # {"symbol": "MES", "side": "LONG", "qty": 1}
+    "trades_logged": [],  # List of trade dicts with PNL
+    "current_position": None,  # {"symbol": "MES", "side": "LONG", "qty": 1, "entry_price": 6100}
+    "entry_prices": {},  # {"MES": 6100.25} - track entry for PNL calc
+    "session_pnl": 0.0,  # Running total PNL
 }
 
 
@@ -746,23 +748,28 @@ async def main():
                                             except:
                                                 pass
                                             pos_side = 'LONG' if side.upper() == 'BUY' else 'SHORT'
+                                            entry_price = signal.get('entry_price', 0)
                                             print(f"   ✅ FILLED: {side} {quantity} {symbol}")
-                                            print(f"   📊 Position: {pos_side} {quantity} {symbol}")
+                                            print(f"   📊 Position: {pos_side} {quantity} {symbol} @ ${entry_price:,.2f}")
                                             
-                                            # Track trade and position
+                                            # Track trade, position, and entry price
                                             _session_info["trades_executed"] += 1
                                             _session_info["trades_logged"].append({
                                                 "time": timestamp,
                                                 "action": "OPEN",
-                                                "side": side,
+                                                "side": pos_side,
                                                 "qty": quantity,
-                                                "symbol": symbol
+                                                "symbol": symbol,
+                                                "price": entry_price,
+                                                "pnl": None  # No PNL on open
                                             })
                                             _session_info["current_position"] = {
                                                 "symbol": symbol,
                                                 "side": pos_side,
-                                                "qty": quantity
+                                                "qty": quantity,
+                                                "entry_price": entry_price
                                             }
+                                            _session_info["entry_prices"][symbol] = entry_price
                                             
                                             # Set stop loss if provided
                                             stop_loss = signal.get('stop_loss')
@@ -793,17 +800,36 @@ async def main():
                                                 winsound.Beep(800, 100)
                                             except:
                                                 pass
-                                            print(f"   ✅ CLOSED: {quantity} {symbol}")
-                                            print(f"   📊 Position reduced")
                                             
-                                            # Track trade
+                                            # Calculate PNL
+                                            exit_price = signal.get('exit_price', 0)
+                                            entry_price = _session_info["entry_prices"].get(symbol, 0)
+                                            tick_value = 12.50 if 'ES' in symbol or 'MES' in symbol else 5.0  # NQ/MNQ = $5
+                                            pos = _session_info.get("current_position")
+                                            if pos and entry_price and exit_price:
+                                                if pos["side"] == "LONG":
+                                                    pnl = (exit_price - entry_price) * quantity * tick_value
+                                                else:
+                                                    pnl = (entry_price - exit_price) * quantity * tick_value
+                                                _session_info["session_pnl"] += pnl
+                                                pnl_str = f"+${pnl:,.2f}" if pnl >= 0 else f"-${abs(pnl):,.2f}"
+                                                print(f"   ✅ CLOSED: {quantity} {symbol} @ ${exit_price:,.2f}")
+                                                print(f"   💰 Trade PNL: {pnl_str}")
+                                            else:
+                                                pnl = 0
+                                                print(f"   ✅ CLOSED: {quantity} {symbol}")
+                                            print(f"   📊 Session PNL: ${_session_info['session_pnl']:,.2f}")
+                                            
+                                            # Track trade with PNL
                                             _session_info["trades_executed"] += 1
                                             _session_info["trades_logged"].append({
                                                 "time": timestamp,
                                                 "action": "CLOSE",
                                                 "side": close_side,
                                                 "qty": quantity,
-                                                "symbol": symbol
+                                                "symbol": symbol,
+                                                "price": exit_price,
+                                                "pnl": pnl
                                             })
                                         else:
                                             print(f"   ❌ Close failed!")
@@ -819,8 +845,26 @@ async def main():
                                                 winsound.Beep(400, 100)
                                             except:
                                                 pass
-                                            print(f"   ✅ FLAT: All {symbol} positions closed")
-                                            print(f"   📊 Position: FLAT")
+                                            
+                                            # Calculate PNL
+                                            exit_price = signal.get('exit_price', 0)
+                                            entry_price = _session_info["entry_prices"].get(symbol, 0)
+                                            tick_value = 12.50 if 'ES' in symbol or 'MES' in symbol else 5.0
+                                            pos = _session_info.get("current_position")
+                                            pnl = 0
+                                            if pos and entry_price and exit_price:
+                                                qty = pos.get("qty", 1)
+                                                if pos["side"] == "LONG":
+                                                    pnl = (exit_price - entry_price) * qty * tick_value
+                                                else:
+                                                    pnl = (entry_price - exit_price) * qty * tick_value
+                                                _session_info["session_pnl"] += pnl
+                                                pnl_str = f"+${pnl:,.2f}" if pnl >= 0 else f"-${abs(pnl):,.2f}"
+                                                print(f"   ✅ FLAT: All {symbol} @ ${exit_price:,.2f}")
+                                                print(f"   💰 Trade PNL: {pnl_str}")
+                                            else:
+                                                print(f"   ✅ FLAT: All {symbol} positions closed")
+                                            print(f"   📊 Session PNL: ${_session_info['session_pnl']:,.2f}")
                                             
                                             # Track trade and clear position
                                             _session_info["trades_executed"] += 1
@@ -828,10 +872,13 @@ async def main():
                                                 "time": timestamp,
                                                 "action": "FLATTEN",
                                                 "side": "-",
-                                                "qty": 0,
-                                                "symbol": symbol
+                                                "qty": pos.get("qty", 0) if pos else 0,
+                                                "symbol": symbol,
+                                                "price": exit_price,
+                                                "pnl": pnl
                                             })
                                             _session_info["current_position"] = None
+                                            _session_info["entry_prices"].pop(symbol, None)
                                         else:
                                             print(f"   ❌ Flatten failed!")
                                     
@@ -898,19 +945,35 @@ def cleanup_session():
     trades = _session_info.get("trades_executed", 0)
     print(f"📈 Trades Executed: {trades}")
     
+    # Session PNL
+    session_pnl = _session_info.get("session_pnl", 0)
+    if session_pnl >= 0:
+        print(f"💰 Session PNL: +${session_pnl:,.2f}")
+    else:
+        print(f"💰 Session PNL: -${abs(session_pnl):,.2f}")
+    
     # Current position
     pos = _session_info.get("current_position")
     if pos:
-        print(f"📊 Final Position: {pos['side']} {pos['qty']} {pos['symbol']}")
+        entry = pos.get('entry_price', 0)
+        print(f"📊 Final Position: {pos['side']} {pos['qty']} {pos['symbol']} @ ${entry:,.2f}")
     else:
         print(f"📊 Final Position: FLAT")
     
-    # Trade log
+    # Trade log with PNL
     trade_log = _session_info.get("trades_logged", [])
     if trade_log:
         print(f"\n📝 Trade Log:")
         for t_entry in trade_log[-10:]:  # Show last 10 trades
-            print(f"   [{t_entry['time']}] {t_entry['action']} {t_entry['side']} {t_entry['qty']} {t_entry['symbol']}")
+            pnl = t_entry.get('pnl')
+            price = t_entry.get('price', 0)
+            if t_entry['action'] == 'OPEN':
+                print(f"   [{t_entry['time']}] OPEN {t_entry['side']} {t_entry['qty']} {t_entry['symbol']} @ ${price:,.2f}")
+            elif pnl is not None and pnl != 0:
+                pnl_str = f"+${pnl:,.2f}" if pnl >= 0 else f"-${abs(pnl):,.2f}"
+                print(f"   [{t_entry['time']}] {t_entry['action']} {t_entry['symbol']} → {pnl_str}")
+            else:
+                print(f"   [{t_entry['time']}] {t_entry['action']} {t_entry['symbol']}")
     
     print("\n" + "=" * 60)
     
