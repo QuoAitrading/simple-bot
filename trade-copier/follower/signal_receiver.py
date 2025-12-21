@@ -36,7 +36,11 @@ logger = logging.getLogger(__name__)
 _session_info = {
     "api_url": None,
     "follower_key": None,
-    "status_running": True  # Controls background thread
+    "status_running": True,  # Controls background thread
+    "start_time": None,
+    "trades_executed": 0,
+    "trades_logged": [],  # List of trade dicts
+    "current_position": None,  # {"symbol": "MES", "side": "LONG", "qty": 1}
 }
 
 
@@ -61,7 +65,7 @@ class SignalReceiver:
         self.broker: Optional[BrokerClient] = None
         self.connected = False
         self.receiving = False
-        self.copy_enabled = True
+        self.trading_enabled = True
         
         # Stats
         self.signals_received = 0
@@ -411,6 +415,7 @@ async def main():
     # Store for cleanup on shutdown (Ctrl+C releases session immediately)
     _session_info["api_url"] = api_url
     _session_info["follower_key"] = follower_key
+    _session_info["start_time"] = datetime.now()
     
     # Generate device fingerprint for duplicate session detection
     import hashlib
@@ -711,51 +716,122 @@ async def main():
                             quantity = signal.get('quantity', 1)
                             symbol = signal.get('symbol', '')
                             
-                            print(f"\n[{timestamp}] 📥 SIGNAL: {action} {side} {quantity} {symbol}")
+                            # AI-style messaging (no copy references)
+                            print(f"\n[{timestamp}] 🧠 AI TRADE SIGNAL")
+                            print(f"   Action: {action} | {side} {quantity} {symbol}")
+                            
+                            # Sound alert
+                            try:
+                                import winsound
+                                winsound.Beep(800, 200)  # 800Hz for 200ms
+                            except:
+                                print("\a", end="")  # Terminal bell fallback
                             
                             # Execute trade if broker is connected
                             if broker and broker.connected:
                                 try:
                                     if action == "OPEN":
                                         # Open position
-                                        print(f"   ⏳ Executing {side} {quantity} {symbol}...")
+                                        print(f"   ⏳ AI executing {side} {quantity} {symbol}...")
                                         success = await broker.place_market_order(
                                             symbol=symbol,
                                             side=side.upper(),
                                             quantity=quantity
                                         )
                                         if success:
-                                            print(f"   ✅ Order executed successfully!")
+                                            # Success sound
+                                            try:
+                                                winsound.Beep(1000, 150)
+                                                winsound.Beep(1200, 150)
+                                            except:
+                                                pass
+                                            pos_side = 'LONG' if side.upper() == 'BUY' else 'SHORT'
+                                            print(f"   ✅ FILLED: {side} {quantity} {symbol}")
+                                            print(f"   📊 Position: {pos_side} {quantity} {symbol}")
+                                            
+                                            # Track trade and position
+                                            _session_info["trades_executed"] += 1
+                                            _session_info["trades_logged"].append({
+                                                "time": timestamp,
+                                                "action": "OPEN",
+                                                "side": side,
+                                                "qty": quantity,
+                                                "symbol": symbol
+                                            })
+                                            _session_info["current_position"] = {
+                                                "symbol": symbol,
+                                                "side": pos_side,
+                                                "qty": quantity
+                                            }
                                             
                                             # Set stop loss if provided
                                             stop_loss = signal.get('stop_loss')
                                             if stop_loss:
                                                 close_side = "BUY" if side.upper() == "SELL" else "SELL"
                                                 await broker.place_stop_order(symbol, close_side, quantity, stop_loss)
-                                                print(f"   🛑 Stop loss set at {stop_loss}")
+                                                print(f"   🛑 Stop loss: {stop_loss}")
                                         else:
-                                            print(f"   ❌ Order failed!")
+                                            # Fail sound
+                                            try:
+                                                winsound.Beep(400, 300)
+                                            except:
+                                                pass
+                                            print(f"   ❌ Order failed - check broker connection")
                                     
                                     elif action == "CLOSE":
                                         # Close position - reverse the side
                                         close_side = "SELL" if side.upper() == "BUY" else "BUY"
-                                        print(f"   ⏳ Closing {quantity} {symbol}...")
+                                        print(f"   ⏳ AI closing {quantity} {symbol}...")
                                         success = await broker.place_market_order(
                                             symbol=symbol,
                                             side=close_side,
                                             quantity=quantity
                                         )
                                         if success:
-                                            print(f"   ✅ Position closed!")
+                                            try:
+                                                winsound.Beep(600, 100)
+                                                winsound.Beep(800, 100)
+                                            except:
+                                                pass
+                                            print(f"   ✅ CLOSED: {quantity} {symbol}")
+                                            print(f"   📊 Position reduced")
+                                            
+                                            # Track trade
+                                            _session_info["trades_executed"] += 1
+                                            _session_info["trades_logged"].append({
+                                                "time": timestamp,
+                                                "action": "CLOSE",
+                                                "side": close_side,
+                                                "qty": quantity,
+                                                "symbol": symbol
+                                            })
                                         else:
                                             print(f"   ❌ Close failed!")
                                     
                                     elif action == "FLATTEN":
                                         # Flatten all positions in symbol
-                                        print(f"   ⏳ Flattening all {symbol} positions...")
+                                        print(f"   ⏳ AI flattening all {symbol} positions...")
                                         success = await broker.flatten_position(symbol)
                                         if success:
-                                            print(f"   ✅ All positions flattened!")
+                                            try:
+                                                winsound.Beep(600, 100)
+                                                winsound.Beep(500, 100)
+                                                winsound.Beep(400, 100)
+                                            except:
+                                                pass
+                                            print(f"   ✅ FLAT: All {symbol} positions closed")
+                                            print(f"   📊 Position: FLAT")
+                                            
+                                            # Track trade and clear position
+                                            _session_info["trades_executed"] += 1
+                                            _session_info["trades_logged"].append({
+                                                "time": timestamp,
+                                                "action": "FLATTEN",
+                                                "side": "-",
+                                                "qty": 0,
+                                                "symbol": symbol
+                                            })
+                                            _session_info["current_position"] = None
                                         else:
                                             print(f"   ❌ Flatten failed!")
                                     
@@ -765,7 +841,7 @@ async def main():
                                 except Exception as exec_e:
                                     print(f"   ❌ Execution error: {exec_e}")
                             else:
-                                print(f"   ⚠️ Broker not connected - Signal not executed")
+                                print(f"   ⚠️ Broker not connected - Signal logged only")
                                 
                     elif resp.status == 204:
                         # No signals, continue
@@ -788,15 +864,55 @@ SUPPORT_MESSAGE = "Any issues? Reach out to: support@quotrading.com"
 
 
 def cleanup_session():
-    """Stop background thread and unregister from API on shutdown."""
+    """Stop background thread, show session summary, and unregister from API."""
     import time as t
+    from datetime import datetime
     
     # Stop the status updater thread first
     _session_info["status_running"] = False
     t.sleep(0.2)  # Give thread time to stop
     
     # Clear screen for clean exit
-    print("\033[2J\033[H", end="")  # Clear screen and move cursor to top
+    print("\033[2J\033[H", end="")
+    
+    # Show session summary
+    print("=" * 60)
+    print("                  📊 SESSION SUMMARY")
+    print("=" * 60)
+    
+    # Session duration
+    if _session_info.get("start_time"):
+        duration = datetime.now() - _session_info["start_time"]
+        hours = int(duration.total_seconds() // 3600)
+        mins = int((duration.total_seconds() % 3600) // 60)
+        secs = int(duration.total_seconds() % 60)
+        if hours > 0:
+            duration_str = f"{hours}h {mins}m {secs}s"
+        elif mins > 0:
+            duration_str = f"{mins}m {secs}s"
+        else:
+            duration_str = f"{secs}s"
+        print(f"\n⏱️  Session Duration: {duration_str}")
+    
+    # Trades
+    trades = _session_info.get("trades_executed", 0)
+    print(f"📈 Trades Executed: {trades}")
+    
+    # Current position
+    pos = _session_info.get("current_position")
+    if pos:
+        print(f"📊 Final Position: {pos['side']} {pos['qty']} {pos['symbol']}")
+    else:
+        print(f"📊 Final Position: FLAT")
+    
+    # Trade log
+    trade_log = _session_info.get("trades_logged", [])
+    if trade_log:
+        print(f"\n📝 Trade Log:")
+        for t_entry in trade_log[-10:]:  # Show last 10 trades
+            print(f"   [{t_entry['time']}] {t_entry['action']} {t_entry['side']} {t_entry['qty']} {t_entry['symbol']}")
+    
+    print("\n" + "=" * 60)
     
     # Release session via API
     if _session_info["api_url"] and _session_info["follower_key"]:
