@@ -716,7 +716,7 @@ async def main():
         async def connect():
             nonlocal ws_connected
             ws_connected = True
-            print("   📡 WebSocket connected - instant signals enabled")
+            # Connection confirmed via event handler
             # Subscribe with license key
             await sio.emit('subscribe', {'license_key': follower_key}, namespace='/copier')
         
@@ -907,7 +907,7 @@ async def main():
         # Connect to WebSocket and wait
         try:
             await sio.connect(ws_url, namespaces=['/copier'])
-            print(f"✅ WebSocket connected to server")
+            print(f"   📡 Real-time signals enabled")
             
             # Keep connection alive until license expires or KeyboardInterrupt
             while not license_expired:
