@@ -5309,3 +5309,229 @@ def handle_unsubscribe(data):
 def handle_ping():
     """Keep-alive ping from client"""
     emit('pong', {'timestamp': datetime.now(timezone.utc).isoformat()})
+
+
+# ============================================
+# TRADE COPIER API ENDPOINTS
+# ============================================
+
+# In-memory storage for connected followers
+_connected_followers = {}  # follower_key -> {name, account_ids, connected_at, last_heartbeat, copy_enabled, ...}
+_pending_signals = {}      # follower_key -> [list of pending signals]
+
+
+@app.route('/copier/register', methods=['POST'])
+def copier_register():
+    """Follower registers with the relay server."""
+    data = request.get_json()
+    follower_key = data.get('follower_key')
+    follower_name = data.get('follower_name', 'Unknown')
+    account_ids = data.get('account_ids', [])
+    device_fingerprint = data.get('device_fingerprint', '')
+    
+    if not follower_key:
+        return jsonify({"error": "Missing follower_key"}), 400
+    
+    # Check for duplicate session - same license already running on different device
+    if follower_key in _connected_followers:
+        existing = _connected_followers[follower_key]
+        existing_device = existing.get('device_fingerprint', '')
+        last_heartbeat_str = existing.get('last_heartbeat', '')
+        
+        # Check if session is still active (heartbeat within last 60 seconds)
+        if last_heartbeat_str:
+            try:
+                last_hb = datetime.fromisoformat(last_heartbeat_str.replace('Z', '+00:00'))
+                now = datetime.now(timezone.utc)
+                time_since = (now - last_hb).total_seconds()
+                
+                # If active and different device, block
+                if time_since < 60 and existing_device and existing_device != device_fingerprint:
+                    logging.warning(f"🚫 Duplicate copier session blocked: {follower_key[:8]}... already active on another device")
+                    return jsonify({
+                        "error": "License already in use on another device",
+                        "message": "This license is currently active on another device. Please close that session first."
+                    }), 409
+            except:
+                pass
+    
+    now = datetime.now(timezone.utc).isoformat()
+    
+    _connected_followers[follower_key] = {
+        'name': follower_name,
+        'account_ids': account_ids,
+        'device_fingerprint': device_fingerprint,
+        'connected_at': now,
+        'last_heartbeat': now,
+        'copy_enabled': True,
+        'signals_received': 0,
+        'signals_executed': 0
+    }
+    
+    if follower_key not in _pending_signals:
+        _pending_signals[follower_key] = []
+    
+    logging.info(f"✅ Copier follower registered: {follower_name} ({follower_key[:8]}...) - {len(account_ids)} accounts")
+    
+    return jsonify({"status": "registered", "follower_key": follower_key})
+
+
+@app.route('/copier/heartbeat', methods=['POST'])
+def copier_heartbeat():
+    """Follower sends heartbeat to stay connected."""
+    data = request.get_json()
+    follower_key = data.get('follower_key')
+    
+    if follower_key in _connected_followers:
+        _connected_followers[follower_key]['last_heartbeat'] = datetime.now(timezone.utc).isoformat()
+        return jsonify({"status": "ok"})
+    
+    return jsonify({"error": "Not registered"}), 401
+
+
+@app.route('/copier/unregister', methods=['POST'])
+def copier_unregister():
+    """Follower disconnects from relay server."""
+    data = request.get_json()
+    follower_key = data.get('follower_key')
+    
+    if follower_key in _connected_followers:
+        name = _connected_followers[follower_key].get('name', 'Unknown')
+        del _connected_followers[follower_key]
+        if follower_key in _pending_signals:
+            del _pending_signals[follower_key]
+        logging.info(f"🔌 Copier follower unregistered: {name}")
+    
+    return jsonify({"status": "unregistered"})
+
+
+@app.route('/copier/broadcast', methods=['POST'])
+def copier_broadcast():
+    """Master broadcasts a signal to all connected followers."""
+    data = request.get_json()
+    master_key = data.get('master_key')
+    signal = data.get('signal')
+    
+    if not master_key or not signal:
+        return jsonify({"error": "Missing master_key or signal"}), 400
+    
+    # Add signal to all connected followers' queues
+    received_count = 0
+    for follower_key, follower in _connected_followers.items():
+        if follower.get('copy_enabled', True):
+            if follower_key not in _pending_signals:
+                _pending_signals[follower_key] = []
+            _pending_signals[follower_key].append(signal)
+            received_count += 1
+    
+    logging.info(f"📤 Copier signal broadcast: {signal.get('action')} {signal.get('side')} {signal.get('quantity')} {signal.get('symbol')} → {received_count} followers")
+    
+    return jsonify({"received_count": received_count})
+
+
+@app.route('/copier/poll', methods=['GET'])
+def copier_poll():
+    """Follower polls for new signals."""
+    follower_key = request.args.get('follower_key')
+    
+    if not follower_key or follower_key not in _connected_followers:
+        return jsonify({"error": "Not registered"}), 401
+    
+    # Update heartbeat
+    _connected_followers[follower_key]['last_heartbeat'] = datetime.now(timezone.utc).isoformat()
+    
+    # Check for pending signals
+    if follower_key in _pending_signals and _pending_signals[follower_key]:
+        signal = _pending_signals[follower_key].pop(0)
+        _connected_followers[follower_key]['signals_received'] = \
+            _connected_followers[follower_key].get('signals_received', 0) + 1
+        return jsonify({"signal": signal})
+    
+    # No signals
+    return '', 204
+
+
+@app.route('/copier/report', methods=['POST'])
+def copier_report():
+    """Follower reports successful signal execution."""
+    data = request.get_json()
+    follower_key = data.get('follower_key')
+    status = data.get('status')
+    
+    if follower_key in _connected_followers and status == 'executed':
+        _connected_followers[follower_key]['signals_executed'] = \
+            _connected_followers[follower_key].get('signals_executed', 0) + 1
+    
+    return jsonify({"status": "reported"})
+
+
+@app.route('/copier/followers', methods=['GET'])
+def copier_followers():
+    """Get list of connected followers (for master dashboard)."""
+    followers = []
+    for follower_key, follower in _connected_followers.items():
+        followers.append({
+            'client_id': follower_key,
+            'name': follower['name'],
+            'account_ids': follower.get('account_ids', []),
+            'connected_at': follower['connected_at'],
+            'last_heartbeat': follower['last_heartbeat'],
+            'copy_enabled': follower.get('copy_enabled', True),
+            'signals_received': follower.get('signals_received', 0),
+            'signals_executed': follower.get('signals_executed', 0)
+        })
+    
+    return jsonify({"followers": followers})
+
+
+@app.route('/copier/toggle_follower', methods=['POST'])
+def copier_toggle_follower():
+    """Toggle copy on/off for a specific follower."""
+    data = request.get_json()
+    follower_key = data.get('follower_key')
+    
+    if follower_key in _connected_followers:
+        _connected_followers[follower_key]['copy_enabled'] = \
+            not _connected_followers[follower_key].get('copy_enabled', True)
+        return jsonify({
+            "follower_key": follower_key,
+            "copy_enabled": _connected_followers[follower_key]['copy_enabled']
+        })
+    
+    return jsonify({"error": "Follower not found"}), 404
+
+
+@app.route('/copier/status', methods=['GET'])
+def copier_status():
+    """Get overall copier system status."""
+    return jsonify({
+        "active_followers": len(_connected_followers),
+        "total_pending_signals": sum(len(s) for s in _pending_signals.values()),
+        "server_time": datetime.now(timezone.utc).isoformat()
+    })
+
+
+@app.route('/copier/validate-license', methods=['POST'])
+def copier_validate_license():
+    """Validate license and return expiration for copier clients."""
+    data = request.get_json()
+    license_key = data.get('license_key', '')
+    
+    if not license_key:
+        return jsonify({"valid": False, "error": "Missing license_key"}), 400
+    
+    is_valid, message, expiration = validate_license(license_key)
+    
+    # Format expiration as ISO string
+    expiration_str = None
+    if expiration:
+        if hasattr(expiration, 'isoformat'):
+            expiration_str = expiration.isoformat()
+        else:
+            expiration_str = str(expiration)
+    
+    return jsonify({
+        "valid": is_valid,
+        "message": message,
+        "expiration_date": expiration_str
+    })

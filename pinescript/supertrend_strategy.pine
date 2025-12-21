@@ -1,0 +1,235 @@
+// ============================================================================
+// QuoTrading Supertrend Strategy - Pine Script v5
+// ============================================================================
+// Multi-Timeframe Supertrend with ADX Filter
+// 
+// Logic:
+// - 15-min Supertrend determines BIAS (long/short only)
+// - 1-min Supertrend for entry timing
+// - ADX >= 20 filter (skip choppy markets)
+// - Wait 2 bars after 15m flip
+// - Strong candle confirmation (body >= 40% of range)
+// - Trailing stop: Breakeven at 6 ticks, Trail 7 ticks after 12
+// ============================================================================
+
+//@version=5
+strategy("QuoTrading Supertrend MTF", overlay=true, default_qty_type=strategy.fixed, default_qty_value=1, initial_capital=50000, commission_type=strategy.commission.per_order, commission_value=2.5)
+
+// ============================================================================
+// INPUTS
+// ============================================================================
+// Supertrend Settings
+atr_period = input.int(14, "ATR Period", minval=1)
+st_multiplier = input.float(3.0, "Supertrend Multiplier", minval=0.5, step=0.1)
+
+// ADX Settings
+adx_period = input.int(14, "ADX Period", minval=1)
+adx_threshold = input.int(20, "ADX Minimum Threshold", minval=5, maxval=50)
+
+// Entry Filters
+bars_after_flip = input.int(2, "Bars to Wait After Flip", minval=0, maxval=10)
+min_body_ratio = input.float(0.40, "Min Candle Body Ratio", minval=0.1, maxval=1.0, step=0.05)
+
+// Risk Management (in ticks - adjust for your instrument)
+tick_size = input.float(0.25, "Tick Size", step=0.01)
+breakeven_trigger_ticks = input.int(6, "Breakeven Trigger (ticks)", minval=1)
+breakeven_offset_ticks = input.int(3, "Breakeven Offset (ticks)", minval=0)
+trail_trigger_ticks = input.int(12, "Trail Start Trigger (ticks)", minval=1)
+trail_distance_ticks = input.int(7, "Trail Distance (ticks)", minval=1)
+initial_stop_ticks = input.int(12, "Initial Stop Loss (ticks)", minval=1)
+
+// Time Filter (Eastern Time - adjust for your timezone)
+use_time_filter = input.bool(true, "Use Time Filter")
+start_hour = input.int(6, "Start Hour (ET)", minval=0, maxval=23)
+end_hour = input.int(16, "End Hour (ET)", minval=0, maxval=23)
+
+// ============================================================================
+// SUPERTREND CALCULATION (Current Timeframe)
+// ============================================================================
+[supertrend, direction] = ta.supertrend(st_multiplier, atr_period)
+
+// Color based on direction
+st_color = direction < 0 ? color.green : color.red
+plot(supertrend, "Supertrend", color=st_color, linewidth=2)
+
+// ============================================================================
+// 15-MINUTE SUPERTREND (Higher Timeframe for BIAS)
+// ============================================================================
+[supertrend_15m, direction_15m] = request.security(syminfo.tickerid, "15", ta.supertrend(st_multiplier, atr_period))
+
+// Bias from 15-min
+bias_long = direction_15m < 0
+bias_short = direction_15m > 0
+
+// Detect 15-min flip
+direction_15m_prev = request.security(syminfo.tickerid, "15", direction_15m[1])
+flip_15m = direction_15m != direction_15m_prev
+
+// Count bars since flip
+var int bars_since_flip = 0
+if flip_15m
+    bars_since_flip := 0
+else
+    bars_since_flip := bars_since_flip + 1
+
+// ============================================================================
+// ADX CALCULATION
+// ============================================================================
+[diplus, diminus, adx] = ta.dmi(adx_period, adx_period)
+adx_ok = adx >= adx_threshold
+
+// Plot ADX status
+bgcolor(adx_ok ? na : color.new(color.red, 95), title="ADX Below Threshold")
+
+// ============================================================================
+// CANDLE STRENGTH CHECK
+// ============================================================================
+candle_range = high - low
+candle_body = math.abs(close - open)
+body_ratio = candle_range > 0 ? candle_body / candle_range : 0
+strong_candle = body_ratio >= min_body_ratio
+
+// ============================================================================
+// TIME FILTER
+// ============================================================================
+current_hour = hour(time, "America/New_York")
+in_trading_hours = not use_time_filter or (current_hour >= start_hour and current_hour < end_hour)
+
+// ============================================================================
+// ENTRY CONDITIONS
+// ============================================================================
+// 1-min aligned with bias
+aligned_long = direction < 0 and bias_long
+aligned_short = direction > 0 and bias_short
+
+// Price above/below 15m supertrend
+price_above_st = close > supertrend_15m
+price_below_st = close < supertrend_15m
+
+// Candle not too big (< 2x ATR)
+atr_val = ta.atr(atr_period)
+candle_not_exhausted = candle_range < 2 * atr_val
+
+// All conditions for entry
+long_entry = aligned_long and price_above_st and adx_ok and bars_since_flip >= bars_after_flip and strong_candle and candle_not_exhausted and in_trading_hours
+short_entry = aligned_short and price_below_st and adx_ok and bars_since_flip >= bars_after_flip and strong_candle and candle_not_exhausted and in_trading_hours
+
+// ============================================================================
+// POSITION TRACKING & TRAILING STOP
+// ============================================================================
+var float entry_price = na
+var float current_stop = na
+var bool in_position = false
+var int position_direction = 0  // 1 = long, -1 = short
+
+// Calculate profit in ticks
+profit_ticks = position_direction == 1 ? (close - entry_price) / tick_size : (entry_price - close) / tick_size
+
+// Trailing stop logic
+calc_trailing_stop(is_long, entry_px, current_stop_px, current_px) =>
+    profit = is_long ? (current_px - entry_px) / tick_size : (entry_px - current_px) / tick_size
+    new_stop = current_stop_px
+    
+    if profit >= trail_trigger_ticks
+        // Trail mode
+        if is_long
+            trail_stop = current_px - (trail_distance_ticks * tick_size)
+            new_stop := math.max(current_stop_px, trail_stop)
+        else
+            trail_stop = current_px + (trail_distance_ticks * tick_size)
+            new_stop := math.min(current_stop_px, trail_stop)
+    else if profit >= breakeven_trigger_ticks
+        // Breakeven mode
+        if is_long
+            lock_price = entry_px + (breakeven_offset_ticks * tick_size)
+            new_stop := math.max(current_stop_px, lock_price)
+        else
+            lock_price = entry_px - (breakeven_offset_ticks * tick_size)
+            new_stop := math.min(current_stop_px, lock_price)
+    
+    new_stop
+
+// ============================================================================
+// STRATEGY EXECUTION
+// ============================================================================
+// Entry
+if long_entry and not in_position
+    entry_price := close
+    current_stop := close - (initial_stop_ticks * tick_size)
+    in_position := true
+    position_direction := 1
+    strategy.entry("Long", strategy.long)
+    strategy.exit("Long Exit", "Long", stop=current_stop)
+
+if short_entry and not in_position
+    entry_price := close
+    current_stop := close + (initial_stop_ticks * tick_size)
+    in_position := true
+    position_direction := -1
+    strategy.entry("Short", strategy.short)
+    strategy.exit("Short Exit", "Short", stop=current_stop)
+
+// Update trailing stop
+if in_position
+    new_stop = calc_trailing_stop(position_direction == 1, entry_price, current_stop, close)
+    if new_stop != current_stop
+        current_stop := new_stop
+        if position_direction == 1
+            strategy.exit("Long Exit", "Long", stop=current_stop)
+        else
+            strategy.exit("Short Exit", "Short", stop=current_stop)
+
+// Exit on 15m bias flip
+if in_position
+    if position_direction == 1 and bias_short
+        strategy.close("Long", comment="15m Bias Flip")
+        in_position := false
+        position_direction := 0
+    if position_direction == -1 and bias_long
+        strategy.close("Short", comment="15m Bias Flip")
+        in_position := false
+        position_direction := 0
+
+// Reset on strategy close
+if strategy.position_size == 0
+    in_position := false
+    position_direction := 0
+
+// ============================================================================
+// VISUAL SIGNALS
+// ============================================================================
+plotshape(long_entry and not in_position[1], "Long Entry", shape.triangleup, location.belowbar, color.green, size=size.small)
+plotshape(short_entry and not in_position[1], "Short Entry", shape.triangledown, location.abovebar, color.red, size=size.small)
+
+// Plot current stop level when in position
+plot(in_position ? current_stop : na, "Trailing Stop", color=color.orange, style=plot.style_linebr, linewidth=1)
+
+// ============================================================================
+// INFO TABLE
+// ============================================================================
+var table info_table = table.new(position.top_right, 2, 8, bgcolor=color.new(color.black, 80))
+
+if barstate.islast
+    table.cell(info_table, 0, 0, "15m Bias", text_color=color.white)
+    table.cell(info_table, 1, 0, bias_long ? "LONG 🟢" : bias_short ? "SHORT 🔴" : "NONE", text_color=bias_long ? color.green : color.red)
+    
+    table.cell(info_table, 0, 1, "1m Direction", text_color=color.white)
+    table.cell(info_table, 1, 1, direction < 0 ? "UP" : "DOWN", text_color=direction < 0 ? color.green : color.red)
+    
+    table.cell(info_table, 0, 2, "ADX", text_color=color.white)
+    table.cell(info_table, 1, 2, str.tostring(adx, "#.0") + (adx_ok ? " ✅" : " ❌"), text_color=adx_ok ? color.green : color.red)
+    
+    table.cell(info_table, 0, 3, "Bars Since Flip", text_color=color.white)
+    table.cell(info_table, 1, 3, str.tostring(bars_since_flip) + (bars_since_flip >= bars_after_flip ? " ✅" : " ⏳"), text_color=bars_since_flip >= bars_after_flip ? color.green : color.yellow)
+    
+    table.cell(info_table, 0, 4, "Candle Body", text_color=color.white)
+    table.cell(info_table, 1, 4, str.tostring(body_ratio * 100, "#") + "%" + (strong_candle ? " ✅" : " ❌"), text_color=strong_candle ? color.green : color.red)
+    
+    table.cell(info_table, 0, 5, "Position", text_color=color.white)
+    table.cell(info_table, 1, 5, in_position ? (position_direction == 1 ? "LONG" : "SHORT") : "FLAT", text_color=in_position ? color.blue : color.gray)
+    
+    table.cell(info_table, 0, 6, "Profit (ticks)", text_color=color.white)
+    table.cell(info_table, 1, 6, in_position ? str.tostring(profit_ticks, "#.0") : "N/A", text_color=profit_ticks > 0 ? color.green : color.red)
+    
+    table.cell(info_table, 0, 7, "Stop", text_color=color.white)
+    table.cell(info_table, 1, 7, in_position ? str.tostring(current_stop, "#.##") : "N/A", text_color=color.orange)

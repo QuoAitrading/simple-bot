@@ -1,8 +1,8 @@
 {
   "license_type": "STANDARD",
   "license_expiration": "2026-01-05T06:42:39.468219",
-  "days_until_expiration": 20,
-  "hours_until_expiration": 500.17202903611116,
+  "days_until_expiration": 16,
+  "hours_until_expiration": 400.78381722,
   "topstep_starting_balances": {
     "14797846": 18.64,
     "14955666": 49980.26,
@@ -10,19 +10,19 @@
   },
   "broker_type": "Prop Firm",
   "broker": "TopStep",
-  "account_size": 149940.0,
+  "account_size": 150771.0,
   "broker_validated": true,
   "accounts": [
     {
       "id": "150KTC-V2-439793-24199277",
       "name": "150KTC-V2-439793-24199277",
-      "balance": 149940.4,
-      "equity": 149940.4,
+      "balance": 150771.33,
+      "equity": 150771.33,
       "starting_balance": 150671.7,
       "type": "prop_firm"
     }
   ],
-  "fetched_account_balance": 149940.4,
+  "fetched_account_balance": 150771.33,
   "fetched_account_type": "prop_firm",
   "broker_token": "51g0wn1GjicXbwg/oh4DDKWSqRraRLGXWtfgc5MVMNM=",
   "broker_username": "dominicankevin@gmail.com",
@@ -30,7 +30,7 @@
   "remember_credentials": true,
   "theme": "dark",
   "symbols": [
-    "ES"
+    "MES"
   ],
   "instrument": "MES",
   "daily_loss_limit": 1000.0,
@@ -38,7 +38,7 @@
   "max_contracts": 1,
   "max_trades": 20,
   "shadow_mode": false,
-  "selected_account": "150KTC-V2-439793-24199277 - $149,940.40",
+  "selected_account": "150KTC-V2-439793-24199277 - $150,771.33",
   "selected_account_id": "150KTC-V2-439793-24199277",
   "alerts_enabled": false,
   "time_exit_enabled": false

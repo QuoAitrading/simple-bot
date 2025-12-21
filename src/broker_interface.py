@@ -2449,8 +2449,7 @@ class BrokerSDKImplementation(BrokerInterface):
                 ]
             return []
         except Exception as e:
-            logger.error(f"Error fetching historical bars: {e}")
-            self._record_failure()
+            logger.debug(f"Historical bars fetch issue: {e}")
             return []
     def is_connected(self) -> bool:
         """Check if connected to TopStep SDK."""

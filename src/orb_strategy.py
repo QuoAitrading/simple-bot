@@ -106,7 +106,7 @@ class ORBStrategy:
         # ATR storage (populated from main engine)
         self.current_atr: float = 0.0
         
-        logger.info("ORB Strategy initialized")
+        logger.debug("Strategy module initialized")
     
     def is_orb_window(self, current_time: datetime) -> bool:
         """
@@ -153,7 +153,7 @@ class ORBStrategy:
         """Reset ORB state for a new session."""
         self.state = ORBState()
         self._last_bar_timestamp = None  # Reset bar tracking
-        logger.info("🔄 ORB session reset")
+        logger.debug("Morning session reset")
     
     def check_session_reset(self, current_time: datetime) -> None:
         """
@@ -174,7 +174,7 @@ class ORBStrategy:
             # New day - reset session
             self.reset_session()
             self.state.session_date = today_str
-            logger.info(f"📅 New ORB session started: {today_str}")
+            logger.debug(f"Morning session started: {today_str}")
     
     def update_opening_range(self, bar: Dict) -> None:
         """
@@ -228,31 +228,14 @@ class ORBStrategy:
         self.state.opening_range.is_built = True
         self.state.opening_range.build_end = current_time
         
-        # Validate range size using ATR
         range_size = self.state.opening_range.range_size
-        
-        if self.current_atr <= 0:
-            logger.warning("⚠️ ATR not available for ORB validation")
-            return False
-        
-        atr_ratio = range_size / self.current_atr
         
         logger.info(f"📏 Opening Range finalized:")
         logger.info(f"   ORH: {self.state.opening_range.orh:.2f}")
         logger.info(f"   ORL: {self.state.opening_range.orl:.2f}")
-        logger.info(f"   Range: {range_size:.2f} ({atr_ratio:.2f}x ATR)")
+        logger.info(f"   Range: {range_size:.2f} points")
         
-        # Validate ATR ratio
-        if atr_ratio < self.MIN_ATR_RATIO:
-            logger.info(f"❌ ORB range too small: {atr_ratio:.2f} < {self.MIN_ATR_RATIO}")
-            self.state.session_active = False
-            return False
-        
-        if atr_ratio > self.MAX_ATR_RATIO:
-            logger.info(f"❌ ORB range too large: {atr_ratio:.2f} > {self.MAX_ATR_RATIO}")
-            self.state.session_active = False
-            return False
-        
+        # Range is valid - no ATR filter (was too restrictive for NQ)
         logger.info(f"✅ ORB range valid - session active")
         self.state.session_active = True
         return True

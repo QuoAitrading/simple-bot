@@ -1,0 +1,21 @@
+{
+  "master_api_url": "https://quotrading-flask-api.azurewebsites.net",
+  "follower_key": "YOUR_FOLLOWER_KEY",
+  "follower_name": "My Account",
+  "broker": "TopStep",
+  "copy_enabled": true,
+  "broker_type": "Prop Firm",
+  "broker_username": "lorenzod1823@gmail.com",
+  "broker_token": "psCdvt+Y5nU2p17z2DM2RZc9x62mBGhXic0KsHoYUdI=",
+  "quotrading_api_key": "C63W-L241-FVJ9-LGIR",
+  "remember_credentials": true,
+  "selected_account_ids": [
+    "15680795"
+  ],
+  "selected_account_names": [
+    "150KTC-V2-449300-84957229"
+  ],
+  "selected_account_balances": [
+    151506.17
+  ]
+}

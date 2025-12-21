@@ -412,25 +412,74 @@ CONFIG: Dict[str, Any] = _bot_config.to_dict()
 # Auto-load symbol specifications if available (for multi-symbol support)
 SYMBOL_SPEC = None
 try:
-    from symbol_specs import get_symbol_spec
-    SYMBOL_SPEC = get_symbol_spec(CONFIG["instrument"])
+    from .symbol_specs import get_symbol_spec
+    instrument = CONFIG.get("instrument", "ES")
+    SYMBOL_SPEC = get_symbol_spec(instrument)
     
-    # Override config with symbol-specific values if not explicitly set by user
-    if not os.getenv("BOT_TICK_VALUE"):
+    # Override config with symbol-specific values
+    if SYMBOL_SPEC:
         CONFIG["tick_value"] = SYMBOL_SPEC.tick_value
         _bot_config.tick_value = SYMBOL_SPEC.tick_value
-    
-    if not os.getenv("BOT_TICK_SIZE"):
+        
         CONFIG["tick_size"] = SYMBOL_SPEC.tick_size
         _bot_config.tick_size = SYMBOL_SPEC.tick_size
-    
-    if not os.getenv("BOT_SLIPPAGE_TICKS"):
+        
         CONFIG["slippage_ticks"] = SYMBOL_SPEC.typical_slippage_ticks
         _bot_config.slippage_ticks = SYMBOL_SPEC.typical_slippage_ticks
     
-except Exception as e:
+except Exception:
     # Symbol specs not available - will use defaults from config
     pass
+
+
+def reload_symbol_specs(instrument: str = None) -> bool:
+    """
+    Reload symbol specifications for a given instrument.
+    Call this after the instrument is set to ensure correct tick values.
+    
+    Args:
+        instrument: Trading symbol (e.g., "ES", "MES", "NQ")
+        
+    Returns:
+        True if specs loaded successfully
+    """
+    global SYMBOL_SPEC, CONFIG, _bot_config
+    
+    if instrument is None:
+        instrument = CONFIG.get("instrument", "ES")
+    
+    # Normalize instrument name (strip broker prefixes like F.US.)
+    if instrument.startswith("F.US."):
+        # TopStep format - extract base symbol
+        parts = instrument.split(".")
+        if len(parts) >= 3:
+            code = parts[2]
+            # Map TopStep codes to symbols
+            code_map = {
+                "EP": "ES", "MESEP": "MES",
+                "NP": "NQ", "MNQEP": "MNQ",
+                "YM": "YM", "RTY": "RTY",
+                "CL": "CL", "GC": "GC"
+            }
+            instrument = code_map.get(code, "ES")
+    
+    try:
+        from .symbol_specs import get_symbol_spec
+        spec = get_symbol_spec(instrument)
+        
+        if spec:
+            SYMBOL_SPEC = spec
+            CONFIG["tick_value"] = spec.tick_value
+            CONFIG["tick_size"] = spec.tick_size
+            _bot_config.tick_value = spec.tick_value
+            _bot_config.tick_size = spec.tick_size
+            
+            logger.info(f"📊 Loaded specs for {instrument}: tick_value=${spec.tick_value}, tick_size={spec.tick_size}")
+            return True
+    except Exception as e:
+        logger.warning(f"Could not load symbol specs for {instrument}: {e}")
+    
+    return False
 
 
 def get_symbol_tick_specs(symbol: str) -> Tuple[float, float]:
@@ -748,6 +797,85 @@ def clear_flatten_flags() -> None:
     bot_status["flatten_in_progress"] = False
     bot_status["flatten_in_progress_since"] = None
     bot_status["flatten_in_progress_symbol"] = None
+
+
+# =============================================================================
+# TRADE COPIER BROADCAST - Send signals to all connected followers
+# =============================================================================
+
+def broadcast_to_followers(action: str, symbol: str, side: str = None, quantity: int = 1,
+                          entry_price: float = None, stop_loss: float = None, 
+                          take_profit: float = None, exit_price: float = None) -> bool:
+    """
+    Broadcast a trade signal to all connected copy trade followers.
+    Called after any trade action (open, close, flatten, modify SL/TP).
+    
+    Args:
+        action: 'OPEN', 'CLOSE', or 'FLATTEN'
+        symbol: Trading symbol (e.g., 'MES')
+        side: 'BUY' or 'SELL' (required for OPEN/CLOSE)
+        quantity: Number of contracts
+        entry_price: Entry price (for OPEN)
+        stop_loss: Stop loss price
+        take_profit: Take profit price
+        exit_price: Exit price (for CLOSE)
+        
+    Returns:
+        True if broadcast sent successfully
+    """
+    # Skip in backtest mode
+    if is_backtest_mode():
+        return True
+    
+    try:
+        import requests
+        import threading
+        
+        api_url = os.getenv("QUOTRADING_API_URL", "https://quotrading-flask-api.azurewebsites.net")
+        license_key = os.getenv("QUOTRADING_LICENSE_KEY")
+        
+        if not license_key:
+            return False
+        
+        # Build signal payload
+        signal = {
+            "action": action,
+            "symbol": symbol,
+            "side": side,
+            "quantity": quantity,
+            "timestamp": datetime.now(pytz.timezone('US/Eastern')).isoformat()
+        }
+        
+        if entry_price:
+            signal["entry_price"] = entry_price
+        if stop_loss:
+            signal["stop_loss"] = stop_loss
+        if take_profit:
+            signal["take_profit"] = take_profit
+        if exit_price:
+            signal["exit_price"] = exit_price
+        
+        # Send in background thread to avoid blocking trade execution
+        def send_broadcast():
+            try:
+                requests.post(
+                    f"{api_url}/copier/broadcast",
+                    json={
+                        "master_key": license_key,
+                        "signal": signal
+                    },
+                    timeout=5
+                )
+            except:
+                pass  # Don't log errors - silent broadcast
+        
+        thread = threading.Thread(target=send_broadcast, daemon=True)
+        thread.start()
+        
+        return True
+        
+    except Exception:
+        return False
 
 
 def set_flatten_flags(symbol: str) -> None:
@@ -1941,29 +2069,67 @@ def fetch_historical_bars(symbol: str, timeframe: int, count: int) -> List[Dict[
     Returns:
         List of bar dictionaries with OHLCV data
     """
-    
+    import time
     
     if broker is None:
-        logger.error("Broker not initialized")
         return []
     
-    try:
-        # Fetch through broker interface
-        breaker = recovery_manager.get_circuit_breaker("market_data")
-        success, bars = breaker.call(broker.fetch_historical_bars, symbol, f"{timeframe}m", count)
+    # Retry up to 3 times with increasing waits
+    for attempt in range(3):
+        # Check if broker is connected
+        if not getattr(broker, 'connected', False):
+            time.sleep(3)  # Wait for connection
+            continue
         
-        if success and bars:
-            return bars
-        else:
-            logger.warning("Failed to fetch historical bars")
-            return []
-    except Exception as e:
-        logger.error(f"Error fetching historical bars: {e}")
-        action = recovery_manager.handle_error(
-            RecoveryErrorType.SDK_CRASH,
-            {"error": str(e), "function": "fetch_historical_bars"}
-        )
-        return []
+        try:
+            # Fetch through broker interface
+            bars = broker.fetch_historical_bars(symbol, f"{timeframe}m", count)
+            
+            if bars and len(bars) > 0:
+                logger.debug(f"Loaded {len(bars)} historical bars")
+                return bars
+            else:
+                time.sleep(2)  # Wait and retry
+                
+        except Exception as e:
+            logger.debug(f"Attempt {attempt+1}/3: {e}")
+            time.sleep(3)  # Wait longer on error
+    
+    return []  # Silent failure - will warm up from live data
+
+
+def warmup_supertrend_strategy(symbol: str) -> bool:
+    """
+    Warm up the Supertrend strategy by loading historical 15-min bars.
+    
+    This should be called after broker connection, before trading starts.
+    Loads 30 bars of 15-min data for instant strategy readiness.
+    
+    Args:
+        symbol: Trading symbol
+        
+    Returns:
+        True if warmup successful, False otherwise
+    """
+    global supertrend_strategy
+    
+    if supertrend_strategy is None:
+        return False
+    
+    # Fetch 30 bars of 15-min historical data (about 7.5 hours)
+    bars = fetch_historical_bars(symbol, 15, 30)
+    
+    if not bars:
+        logger.debug("Historical bars not available - will warm up from live data")
+        return False
+    
+    # Load into strategy
+    success = supertrend_strategy.load_historical_15min(bars)
+    
+    if not success:
+        logger.debug("Warmup deferred - will use live data")
+    
+    return success
 
 
 # ============================================================================
@@ -2172,7 +2338,7 @@ def save_position_state(symbol: str) -> None:
             "side": position["side"],
             "quantity": position["quantity"],
             "entry_price": position["entry_price"],
-            "stop_price": position["stop_price"],
+            "stop_price": position.get("stop_loss", position.get("stop_price", 0)),
             "entry_time": position["entry_time"].isoformat() if position.get("entry_time") else None,
             "order_id": position.get("order_id"),
             # REMOVED: stop_order_id tracking (not needed for recovery)
@@ -2247,8 +2413,29 @@ def load_position_state(symbol: str) -> bool:
         
         if broker_position != expected:
             logger.error(f"  MISMATCH: Broker={broker_position}, Saved={expected}")
-            logger.error("  Cannot restore - position state is stale or incorrect")
+            logger.error("  Clearing stale saved state - trade was closed externally")
             logger.warning(SEPARATOR_LINE)
+            
+            # CRITICAL: Clear the stale saved state file so we don't keep trying to restore
+            try:
+                # Use same path as load function
+                account_id = os.getenv('SELECTED_ACCOUNT_ID', 'default')
+                state_file = get_data_file_path(f"data/bot_state_{account_id}.json")
+                if state_file.exists():
+                    # Clear the file by setting active to False
+                    with open(state_file, "r") as f:
+                        saved = json.load(f)
+                    saved["active"] = False
+                    with open(state_file, "w") as f:
+                        json.dump(saved, f)
+                    logger.info(f"  Cleared stale position state from {state_file.name}")
+            except Exception as e:
+                logger.warning(f"  Could not clear saved state: {e}")
+            
+            # Also mark position as inactive in memory
+            if symbol in state:
+                state[symbol]["position"]["active"] = False
+            
             return False
         
         # Broker confirms - restore the position state
@@ -2544,9 +2731,8 @@ def update_5min_bar(symbol: str, price: float, volume: int, dt: datetime) -> Non
         # Finalize previous bar if exists
         if current_bar is not None:
             state[symbol]["bars_5min"].append(current_bar)
-            # Feed to SuperTrend strategy for 5-min calculations
-            if supertrend_strategy is not None and SUPERTREND_AVAILABLE:
-                supertrend_strategy.add_bar_5min(current_bar)
+            # Note: New Supertrend strategy builds 15-min internally from 1-min bars
+            # No need to feed 5-min bars separately
         
         # Start new bar
         state[symbol]["current_5min_bar"] = {
@@ -4350,7 +4536,8 @@ def check_stop_hit(symbol: str, current_bar: Dict[str, Any], position: Dict[str,
         Tuple of (stop_hit, stop_price)
     """
     side = position["side"]
-    stop_price = position["stop_price"]
+    # Support both field names for compatibility
+    stop_price = position.get("stop_price") or position.get("stop_loss", 0)
     
     if side == "long":
         if current_bar["low"] <= stop_price:
@@ -5234,7 +5421,7 @@ def check_exit_conditions(symbol: str) -> None:
     bar_time = current_bar["timestamp"]
     side = position["side"]
     entry_price = position["entry_price"]
-    stop_price = position["stop_price"]
+    stop_price = position.get("stop_loss", position.get("stop_price", 0))
     current_price = current_bar["close"]
     
     # CRITICAL: Update price extremes on EVERY bar for accurate MFE/MAE tracking
@@ -6550,15 +6737,23 @@ def check_trade_limits(current_time: datetime) -> Tuple[bool, Optional[str]]:
                 bot_status["stop_reason"] = "weekend"
             return False, "Weekend - market closed (opens 6:00 PM ET)"
     
-    # Check for futures maintenance window (5:00-6:00 PM ET Monday-Friday)
+    # Check for NEW TRADE cutoff (4:00 PM ET Mon-Fri)
+    # Can still MANAGE existing positions until 4:45 PM, but no NEW entries after 4:00 PM
     if eastern_time.weekday() < 5:  # Monday through Friday only
-        maintenance_start = datetime_time(16, 45)  # 4:45 PM ET - Futures maintenance
-        maintenance_end = datetime_time(18, 0)    # 6:00 PM ET
+        new_trade_cutoff = datetime_time(16, 0)  # 4:00 PM ET - no new trades
+        maintenance_start = datetime_time(16, 45)  # 4:45 PM ET - flatten all
+        maintenance_end = datetime_time(18, 0)    # 6:00 PM ET - market reopens
+        
+        # 4:00-4:45 PM: No new trades, but can manage existing positions
+        if new_trade_cutoff <= eastern_time.time() < maintenance_start:
+            return False, "Entry cutoff (4:00 PM ET) - no new trades until 6:00 PM"
+        
+        # 4:45-6:00 PM: Full maintenance - flatten and stop
         if maintenance_start <= eastern_time.time() < maintenance_end:
             if bot_status["trading_enabled"]:
                 bot_status["trading_enabled"] = False
                 bot_status["stop_reason"] = "maintenance"
-            return False, "Maintenance window (5:00-6:00 PM ET)"
+            return False, "Maintenance window (4:45-6:00 PM ET)"
     
     # Re-enable trading after maintenance/weekend
     if not bot_status["trading_enabled"]:
@@ -6695,7 +6890,7 @@ def check_safety_conditions(symbol: str) -> Tuple[bool, Optional[str]]:
 
 def check_no_overnight_positions(symbol: str) -> None:
     """
-    Critical safety check - ensure NO positions past 4:45 PM ET (forced flatten time).
+    Critical safety check - ensure NO positions during maintenance window (4:45-6:00 PM ET).
     This prevents gap risk and prop firm evaluation issues.
     
     Args:
@@ -6706,11 +6901,17 @@ def check_no_overnight_positions(symbol: str) -> None:
     
     eastern_tz = pytz.timezone('US/Eastern')
     current_time = datetime.now(eastern_tz)
+    current_time_only = current_time.time()
     
-    # Critical: If it's past 4:45 PM ET and we still have a position, this is a SERIOUS ERROR
-    if current_time.time() >= CONFIG["shutdown_time"]:
+    # Define maintenance window
+    maintenance_start = datetime_time(16, 45)  # 4:45 PM ET
+    maintenance_end = datetime_time(18, 0)     # 6:00 PM ET
+    
+    # Critical: If it's during maintenance window and we still have a position, this is a SERIOUS ERROR
+    # After 6:00 PM, market is open again so positions are fine
+    if maintenance_start <= current_time_only < maintenance_end:
         logger.critical("=" * 70)
-        logger.critical("CRITICAL ERROR: POSITION DETECTED PAST 4:45 PM ET")
+        logger.critical("CRITICAL ERROR: POSITION DETECTED DURING MAINTENANCE (4:45-6:00 PM ET)")
         logger.critical("OVERNIGHT POSITION RISK - IMMEDIATE EMERGENCY CLOSE REQUIRED")
         logger.critical("=" * 70)
         logger.critical(f"Position: {state[symbol]['position']['side']} "
@@ -7422,7 +7623,7 @@ def main(symbol_override: str = None) -> None:
         symbol_override: Optional symbol to trade (overrides CONFIG["instrument"])
                         Used for multi-symbol bot instances
     """
-    global event_loop, timer_manager, bid_ask_manager, cloud_api_client, current_trading_symbol
+    global event_loop, timer_manager, bid_ask_manager, cloud_api_client, current_trading_symbol, supertrend_strategy
     
     # CRITICAL: Determine trading symbol FIRST, before license validation
     # This enables symbol-specific sessions for multi-symbol support
@@ -7603,6 +7804,19 @@ def main(symbol_override: str = None) -> None:
     
     # Initialize broker (replaces initialize_sdk)
     initialize_broker()
+    
+    # Initialize Supertrend strategy BEFORE warmup
+    if SUPERTREND_AVAILABLE and init_supertrend_strategy is not None:
+        supertrend_strategy = init_supertrend_strategy(
+            tick_size=tick_size,
+            tick_value=tick_value,
+            stop_loss_ticks=int(CONFIG.get("max_stop_loss_dollars", 150) / tick_value)
+        )
+    
+    # Warm up Supertrend strategy with historical 15-min bars
+    # This provides instant bias detection instead of waiting for bars to build
+    if SUPERTREND_AVAILABLE and supertrend_strategy is not None:
+        warmup_supertrend_strategy(trading_symbol)
     
     # Phase 12: Record starting equity for drawdown monitoring
     bot_status["starting_equity"] = get_account_equity()
@@ -7984,21 +8198,34 @@ def execute_supertrend_trading_logic(symbol: str, current_price: float, current_
     if supertrend_strategy is None:
         return
     
-    # Skip if trading is disabled
-    if not bot_status.get("trading_enabled", False):
-        return
+    # FIRST: Manage existing positions (MUST happen even if trading disabled!)
+    # Position management (trailing stops) should ALWAYS run for active positions
     
-    # Skip if we already have an open position
+    # Debug: Log state check (only once per minute to avoid spam)
+    import time
+    current_minute = int(time.time() / 60)
+    if not hasattr(execute_supertrend_trading_logic, '_last_debug_minute'):
+        execute_supertrend_trading_logic._last_debug_minute = 0
+    
+    if current_minute != execute_supertrend_trading_logic._last_debug_minute:
+        execute_supertrend_trading_logic._last_debug_minute = current_minute
+        in_state = symbol in state
+        position = state.get(symbol, {}).get("position", {}) if in_state else {}
+        is_active = position.get("active", False)
+        is_supertrend = position.get("strategy") == "Supertrend"
+        logger.debug(f"🔍 Position check: symbol={symbol} in_state={in_state} active={is_active} strategy={position.get('strategy')}")
+    
     if symbol in state:
         position = state[symbol].get("position", {})
-        if position.get("active", False):
-            # Manage existing Supertrend position with trailing stop
-            if position.get("strategy") == "Supertrend":
+        if position.get("active", False) and position.get("strategy") == "Supertrend":
+            try:
                 position_side = position.get("side")
                 entry_price = position.get("entry_price", 0)
                 current_stop = position.get("stop_loss", 0)
                 initial_stop = position.get("initial_stop", current_stop)
-                tick_size = CONFIG.get("tick_size", 0.25)
+                
+                # Get tick specs for THIS symbol (handles MES, ES, NQ, etc.)
+                tick_size, tick_value = get_symbol_tick_specs(symbol)
                 
                 # Calculate profit in ticks
                 if position_side == "long":
@@ -8006,20 +8233,30 @@ def execute_supertrend_trading_logic(symbol: str, current_price: float, current_
                 else:
                     profit_ticks = (entry_price - current_price) / tick_size
                 
-                # ========== INDUSTRY STANDARD TRAILING STOP ==========
-                # 1. After 6 ticks profit: Move stop to breakeven
-                # 2. After 12 ticks profit: Trail 8 ticks behind price
-                # =====================================================
+                # ========== TRAILING STOP RULES ==========
+                # 1. After 8 ticks profit: Lock in 4 ticks
+                # 2. After 12 ticks profit: Trail 7 ticks behind
+                # ==========================================
                 
-                BREAKEVEN_TRIGGER = 6   # Lock in profit after 6 ticks
-                BREAKEVEN_PROFIT = 3    # Lock in 3 ticks profit (not true breakeven)
+                BREAKEVEN_TRIGGER = 8   # Lock in profit after 8 ticks
+                BREAKEVEN_PROFIT = 4    # Lock in 4 ticks profit
                 TRAIL_TRIGGER = 12      # Start trailing after 12 ticks profit
-                TRAIL_DISTANCE = 8      # Trail 8 ticks behind price
+                TRAIL_DISTANCE = 7      # Trail 7 ticks behind price
                 
                 new_stop = None
                 
+                # Log profit tracking (every 30 seconds to reduce spam)
+                import time
+                current_30sec = int(time.time() / 30)
+                if not hasattr(execute_supertrend_trading_logic, '_last_log_30sec'):
+                    execute_supertrend_trading_logic._last_log_30sec = 0
+                
+                if current_30sec != execute_supertrend_trading_logic._last_log_30sec:
+                    execute_supertrend_trading_logic._last_log_30sec = current_30sec
+                    logger.info(f"📊 Position: {position_side.upper()} | Entry=${entry_price:.2f} | Price=${current_price:.2f} | Profit={profit_ticks:.1f} ticks | Stop=${current_stop:.2f}")
+            
                 if profit_ticks >= TRAIL_TRIGGER:
-                    # Trail 8 ticks behind current price
+                    # Trail 7 ticks behind current price
                     if position_side == "long":
                         trail_stop = current_price - (TRAIL_DISTANCE * tick_size)
                         if trail_stop > current_stop:
@@ -8030,7 +8267,7 @@ def execute_supertrend_trading_logic(symbol: str, current_price: float, current_
                             new_stop = trail_stop
                             
                 elif profit_ticks >= BREAKEVEN_TRIGGER:
-                    # Move to entry + 3 ticks (lock in profit)
+                    # Move to entry + 4 ticks (lock in profit)
                     if position_side == "long":
                         lock_price = entry_price + (BREAKEVEN_PROFIT * tick_size)
                         if current_stop < lock_price:
@@ -8043,15 +8280,17 @@ def execute_supertrend_trading_logic(symbol: str, current_price: float, current_
                 # Update stop if it improved
                 if new_stop is not None and new_stop != current_stop:
                     try:
-                        stop_side = "SELL" if position_side == "long" else "BUY"
-                        broker.modify_stop_order(symbol, stop_side, position.get("quantity", 1), new_stop)
+                        if broker is not None:
+                            stop_side = "SELL" if position_side == "long" else "BUY"
+                            broker.modify_stop_order(symbol, stop_side, position.get("quantity", 1), new_stop)
                         state[symbol]["position"]["stop_loss"] = new_stop
+                        state[symbol]["position"]["stop_price"] = new_stop  # Alias
                         if profit_ticks < TRAIL_TRIGGER:
-                            logger.info(f"🔒 Stop locked at +3 ticks: ${new_stop:.2f}")
+                            logger.info(f"🔒 Stop locked at +4 ticks: ${new_stop:.2f}")
                         else:
                             logger.info(f"📈 Trailing stop: ${current_stop:.2f} → ${new_stop:.2f}")
                     except Exception as e:
-                        logger.debug(f"Could not update stop: {e}")
+                        logger.warning(f"Could not update stop: {e}")
                 
                 # Check if stop was hit
                 stop_hit = False
@@ -8061,9 +8300,12 @@ def execute_supertrend_trading_logic(symbol: str, current_price: float, current_
                     stop_hit = True
                 
                 # Also check for Supertrend flip exit
-                should_exit, reason = supertrend_strategy.check_exit_signal(
-                    position_side, current_price
-                )
+                try:
+                    should_exit, reason = supertrend_strategy.check_exit_signal(current_price)
+                except Exception as e:
+                    logger.error(f"Error checking exit signal: {e}")
+                    should_exit = False
+                    reason = ""
                 
                 if stop_hit:
                     should_exit = True
@@ -8072,20 +8314,32 @@ def execute_supertrend_trading_logic(symbol: str, current_price: float, current_
                 if should_exit:
                     logger.info(f"🔄 EXIT: {reason}")
                     try:
-                        exit_side = "SELL" if position_side == "long" else "BUY"
-                        broker.place_market_order(symbol, exit_side, position.get("quantity", 1))
+                        if broker is not None:
+                            exit_side = "SELL" if position_side == "long" else "BUY"
+                            broker.place_market_order(symbol, exit_side, position.get("quantity", 1))
                         state[symbol]["position"]["active"] = False
                         save_position_state(symbol)
                         
                         pnl = (current_price - entry_price) if position_side == "long" else (entry_price - current_price)
                         is_win = pnl > 0
-                        supertrend_strategy.record_trade_result(is_win)
+                        supertrend_strategy.record_trade_exit(is_win)
                         logger.info(f"{'✅' if is_win else '❌'} Trade closed: {'+' if pnl > 0 else ''}{pnl:.2f} pts ({pnl/tick_size:.0f} ticks)")
                     except Exception as e:
                         logger.error(f"Error closing position: {e}")
+                        import traceback
+                        logger.error(traceback.format_exc())
                     return
-                        
-            return
+                    
+            except Exception as e:
+                logger.error(f"❌ Position management error: {e}")
+                import traceback
+                logger.error(traceback.format_exc())
+            
+            return  # Position managed, don't look for new entries
+    
+    # SECOND: Check if trading is enabled before looking for new entries
+    if not bot_status.get("trading_enabled", False):
+        return
     
     # Skip if no bars yet
     if symbol not in state or not state[symbol].get("bars_1min"):
@@ -8098,11 +8352,16 @@ def execute_supertrend_trading_logic(symbol: str, current_price: float, current_
     
     current_bar = bars[-1]
     
-    # Check for entry signal (passes current_time for time window check)
-    signal = supertrend_strategy.check_entry_signal(current_bar, current_price, current_time)
+    # CRITICAL: Feed the bar into the strategy to update Supertrend calculations
+    # This updates 1-min Supertrend, aggregates to 15-min, and updates bias
+    supertrend_strategy.add_bar_1min(current_bar)
+    
+    # Check for entry signal (new API: 2 args only)
+    signal = supertrend_strategy.check_entry_signal(current_bar, current_price)
     
     if signal:
-        enter_supertrend_trade(symbol, signal, current_price)
+        # Use async wrapper to prevent broker calls from freezing the bot
+        enter_supertrend_trade_async(symbol, signal, current_price)
 
 
 def enter_supertrend_trade(symbol: str, signal: Dict, current_price: float) -> None:
@@ -8119,20 +8378,39 @@ def enter_supertrend_trade(symbol: str, signal: Dict, current_price: float) -> N
     global broker, supertrend_strategy
     
     if broker is None:
-        logger.warning("Cannot enter Supertrend trade: Broker not initialized")
+        logger.warning("Cannot enter trade: Broker not initialized")
+        return
+    
+    # SAFETY CHECKS - Check limits before entering
+    is_safe, reason = check_safety_conditions(symbol)
+    if not is_safe:
+        logger.info(f"Trade blocked: {reason}")
+        return
+    
+    # Check max trades per day (from user's GUI config)
+    max_trades = CONFIG.get("max_trades_per_day", 999)
+    trades_today = state[symbol].get("trades_today", 0)
+    if trades_today >= max_trades:
+        logger.info(f"Max trades reached ({trades_today}/{max_trades})")
         return
     
     direction = signal.get("direction")
     entry_price = current_price
     
-    # Stop loss is GUI configurable - NO take profit for Supertrend (trailing stop)
-    stop_loss_ticks = CONFIG.get("stop_loss_ticks", 12)
-    tick_size = CONFIG.get("tick_size", 0.25)
+    # Get symbol-specific tick values (MES=$1.25, ES=$12.50, etc.)
+    tick_size, tick_value = get_symbol_tick_specs(symbol)
+    max_stop_dollars = CONFIG.get("max_stop_loss_dollars", 150)  # Default $150
     
-    # Supertrend line will be used as trailing stop reference
-    supertrend_line = signal.get("supertrend_line", 0)
+    # Convert dollars to ticks: $150 / $1.25 = 120 ticks for MES
+    stop_loss_ticks = int(max_stop_dollars / tick_value)
+    if stop_loss_ticks < 1:
+        stop_loss_ticks = 12  # Safety fallback
     
-    # Calculate initial stop loss price (fixed at entry)
+    # Supertrend lines for trailing
+    supertrend_1min = signal.get("supertrend_1min", 0)
+    supertrend_15min = signal.get("supertrend_15min", 0)
+    
+    # Calculate initial stop loss price
     if direction == "long":
         stop_loss_price = entry_price - (stop_loss_ticks * tick_size)
         order_side = "BUY"
@@ -8148,14 +8426,13 @@ def enter_supertrend_trade(symbol: str, signal: Dict, current_price: float) -> N
         logger.info(f"📈 TRADE SIGNAL: {direction.upper()}")
         logger.info(f"{'='*60}")
         logger.info(f"  Entry: ${entry_price:.2f}")
-        logger.info(f"  Stop Loss: ${stop_loss_price:.2f} ({stop_loss_ticks} ticks)")
+        logger.info(f"  Stop Loss: ${stop_loss_price:.2f} ({stop_loss_ticks} ticks / ${max_stop_dollars:.0f})")
         logger.info(f"  Take Profit: NONE (trailing stop)")
-        logger.info(f"  Signal Line: ${supertrend_line:.2f}")
-        logger.info(f"  Confirmation Line: ${signal.get('supertrend_5min_line', 0):.2f}")
+        logger.info(f"  1min ST Line: ${supertrend_1min:.2f}")
+        logger.info(f"  15min ST Line: ${supertrend_15min:.2f}")
         logger.info(f"{'='*60}")
         
         # Place market order with stop loss only (no take profit)
-        # Use place_order_with_stop instead of bracket order
         order = broker.place_market_order(
             symbol=symbol,
             side=order_side,
@@ -8173,17 +8450,31 @@ def enter_supertrend_trade(symbol: str, signal: Dict, current_price: float) -> N
                 "entry_price": entry_price,
                 "quantity": max_contracts,
                 "stop_loss": stop_loss_price,
+                "stop_price": stop_loss_price,  # Alias for compatibility
                 "take_profit": None,  # No take profit - trailing stop
                 "strategy": "Supertrend",
                 "entry_time": get_current_time(),
-                "supertrend_line": supertrend_line,
-                "supertrend_5min_line": signal.get('supertrend_5min_line', 0),
-                "initial_stop": stop_loss_price  # Track initial stop
+                "supertrend_1min": supertrend_1min,
+                "supertrend_15min": supertrend_15min,
+                "initial_stop": stop_loss_price,
+                "highest_price_reached": entry_price,  # For MFE/MAE tracking
+                "lowest_price_reached": entry_price,   # For MFE/MAE tracking
+                # Required fields for exit management functions
+                "breakeven_active": False,
+                "trailing_active": False,
+                "partial_exits": 0,
+                "original_quantity": max_contracts
             }
             
+            # Record trade in strategy state
+            supertrend_strategy.record_trade_entry(direction, entry_price, stop_loss_price)
+            
             logger.info(f"✅ Trade entered: {direction.upper()} {max_contracts} @ ${entry_price:.2f}")
-            logger.info(f"   Exit: Trailing stop (currently ${supertrend_line:.2f})")
-            save_position_state(symbol)
+            logger.info(f"   Exit: Trailing stop or 15min flip")
+            
+            # Save state in background to avoid blocking
+            import threading
+            threading.Thread(target=save_position_state, args=(symbol,), daemon=True).start()
         else:
             logger.error("❌ Failed to enter trade - order returned None")
             
@@ -8191,6 +8482,29 @@ def enter_supertrend_trade(symbol: str, signal: Dict, current_price: float) -> N
         logger.error(f"❌ Error entering trade: {e}")
         import traceback
         logger.error(traceback.format_exc())
+
+
+def enter_supertrend_trade_async(symbol: str, signal: Dict, current_price: float) -> None:
+    """
+    Wrapper to run trade entry in a background thread with timeout.
+    Prevents freezing the main event loop if broker is slow.
+    """
+    import threading
+    
+    def run_with_timeout():
+        try:
+            enter_supertrend_trade(symbol, signal, current_price)
+        except Exception as e:
+            logger.error(f"❌ Trade entry thread error: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
+    
+    # Run in background thread with timeout
+    thread = threading.Thread(target=run_with_timeout, daemon=True)
+    thread.start()
+    
+    # Don't wait for it - let it run in background
+    # The position will be saved and managed on next tick
 
 
 def execute_zone_trading_logic(symbol: str, current_price: float, current_time: datetime) -> None:
@@ -8600,15 +8914,18 @@ def handle_tick_event(event) -> None:
     
     # Update Supertrend strategy with new bar data (even during ORB window)
     if supertrend_strategy is not None and SUPERTREND_AVAILABLE:
-        supertrend_strategy.check_session_reset(dt)
+        # Use CURRENT wall-clock time for session reset, NOT tick timestamp
+        # Tick timestamps can be stale/historical and shouldn't trigger resets
+        current_wall_time = get_current_time()
+        supertrend_strategy.check_session_reset(current_wall_time)
         # Feed 1-min bars to Supertrend for calculations
         bars = state[symbol].get("bars_1min", [])
         if bars:
-            supertrend_strategy.add_bar(bars[-1])
+            supertrend_strategy.add_bar_1min(bars[-1])
     
     if orb_strategy is not None and ORB_STRATEGY_AVAILABLE:
-        # Check if we need to reset for a new day
-        orb_strategy.check_session_reset(dt)
+        # Check if we need to reset for a new day (use wall clock time)
+        orb_strategy.check_session_reset(get_current_time())
         
         # Check if we're in ORB window (9:30-10:00 AM ET)
         if orb_strategy.is_orb_window(dt):

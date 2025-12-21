@@ -1,0 +1,10 @@
+{
+    "api_url": "https://quotrading-flask-api.azurewebsites.net",
+    "master_key": "YOUR_MASTER_KEY",
+    "broker": {
+        "username": "YOUR_EMAIL@gmail.com",
+        "api_token": "YOUR_API_TOKEN"
+    },
+    "dashboard_port": 3000,
+    "copy_enabled": true
+}
