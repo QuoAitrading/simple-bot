@@ -175,17 +175,15 @@ class MasterLauncher:
                 bg=self.colors['grid_header'], fg=self.colors['text'],
                 padx=10, pady=8).pack(side=tk.LEFT, fill=tk.X, expand=True)
         
-        # Entry variables - Master Key is now OPTIONAL (auto-generated if not provided)
-        self.master_key_var = tk.StringVar(value=self.config.get('master_key', ''))
+        # Entry variables - Master Key auto-generated (not shown to user)
         self.username_var = tk.StringVar(value=self.config.get('broker', {}).get('username', ''))
         self.api_token_var = tk.StringVar(value=self.config.get('broker', {}).get('api_token', ''))
         
-        # Rows - Master Key is optional now
-        self.create_table_row(table_frame, "Master Key (Optional)", self.master_key_var)
+        # Rows - Only broker credentials (Master Key auto-generated behind the scenes)
         self.create_table_row(table_frame, "Broker Username/Email", self.username_var)
         self.create_table_row(table_frame, "API Token", self.api_token_var, show='*')
         
-        # Help text - updated to reflect optional master key
+        # Help text - only broker credentials needed
         help_frame = tk.Frame(main, bg='white')
         help_frame.pack(fill=tk.X, pady=15)
         
@@ -193,7 +191,7 @@ class MasterLauncher:
                 font=("Segoe UI", 9),
                 bg='white', fg=self.colors['text_light']).pack(anchor='w')
         
-        tk.Label(help_frame, text="   Master Key is optional - will be auto-generated from your broker credentials",
+        tk.Label(help_frame, text="   Only broker credentials needed - authentication handled automatically",
                 font=("Segoe UI", 9),
                 bg='white', fg=self.colors['text_light']).pack(anchor='w')
         
@@ -272,7 +270,7 @@ class MasterLauncher:
     
     def save_and_start(self):
         """Save settings and start dashboard"""
-        # Validate - only broker credentials are required now
+        # Validate - only broker credentials are required
         if not self.username_var.get().strip():
             messagebox.showerror("Error", "Please enter your Broker Username/Email")
             return
@@ -280,15 +278,11 @@ class MasterLauncher:
             messagebox.showerror("Error", "Please enter your API Token")
             return
         
-        # Auto-generate master_key from broker credentials if not provided
-        master_key = self.master_key_var.get().strip()
-        if not master_key:
-            # Generate a cryptographically secure random key
-            # Include username for uniqueness but use secure random for unpredictability
-            username_hash = hashlib.sha256(self.username_var.get().strip().encode()).hexdigest()[:16]
-            random_component = secrets.token_hex(16)
-            master_key = f"{username_hash}{random_component}"[:32]
-            print(f"✨ Auto-generated secure Master Key: {master_key}")
+        # Auto-generate master_key silently from broker credentials
+        # User doesn't need to see or know about this - it's just for API authentication
+        username_hash = hashlib.sha256(self.username_var.get().strip().encode()).hexdigest()[:16]
+        random_component = secrets.token_hex(16)
+        master_key = f"{username_hash}{random_component}"[:32]
         
         # Save config
         self.config['master_key'] = master_key
@@ -502,7 +496,7 @@ class MasterLauncher:
         footer.pack_propagate(False)
         
         self.status_label = tk.Label(footer, 
-            text=f"● Master Key: {self.config.get('master_key', 'Not set')[:12]}...",
+            text=f"● Broker: {self.config.get('broker', {}).get('username', 'Not configured')[:30]}",
             font=("Segoe UI", 9),
             bg=self.colors['grid_header'], fg=self.colors['text_light'])
         self.status_label.pack(side=tk.LEFT, padx=20, pady=8)
