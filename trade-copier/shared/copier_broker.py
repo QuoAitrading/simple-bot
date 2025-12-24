@@ -104,6 +104,7 @@ class CopierBroker:
                 print("❌ CopierBroker connection failed: Could not get account ID")
                 return False
             
+            # Create TradingSuite - will raise exception on failure
             realtime_client = ProjectXRealtimeClient(jwt_token=jwt_token, account_id=self.account_id)
             suppress_sdk_logs()
             self.trading_suite = TradingSuite(
@@ -112,12 +113,6 @@ class CopierBroker:
                 config=TradingSuiteConfig(instrument="MES")
             )
             suppress_sdk_logs()
-            
-            if not self.trading_suite:
-                sys.stdout = old_stdout
-                sys.stderr = old_stderr
-                print("❌ CopierBroker connection failed: Could not create TradingSuite")
-                return False
             
             self.connected = True
             
