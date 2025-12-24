@@ -103,10 +103,12 @@ async def main():
     await broadcaster.start()
     
     # Create and start position monitor
+    copy_enabled = config.get('copy_enabled', True)
     monitor = PositionMonitor(
         broker=broker,
         broadcaster=broadcaster,
-        poll_interval=config.get('poll_interval', 0.5)
+        poll_interval=config.get('poll_interval', 0.5),
+        get_copy_enabled=lambda: copy_enabled
     )
     await monitor.start()
     
