@@ -173,21 +173,25 @@ class MasterLauncher:
                 bg=self.colors['grid_header'], fg=self.colors['text'],
                 padx=10, pady=8).pack(side=tk.LEFT, fill=tk.X, expand=True)
         
-        # Entry variables
+        # Entry variables - Master Key is now OPTIONAL (auto-generated if not provided)
         self.master_key_var = tk.StringVar(value=self.config.get('master_key', ''))
         self.username_var = tk.StringVar(value=self.config.get('broker', {}).get('username', ''))
         self.api_token_var = tk.StringVar(value=self.config.get('broker', {}).get('api_token', ''))
         
-        # Rows
-        self.create_table_row(table_frame, "Master Key (License)", self.master_key_var)
+        # Rows - Master Key is optional now
+        self.create_table_row(table_frame, "Master Key (Optional)", self.master_key_var)
         self.create_table_row(table_frame, "Broker Username/Email", self.username_var)
         self.create_table_row(table_frame, "API Token", self.api_token_var, show='*')
         
-        # Help text
+        # Help text - updated to reflect optional master key
         help_frame = tk.Frame(main, bg='white')
         help_frame.pack(fill=tk.X, pady=15)
         
         tk.Label(help_frame, text="ℹ️ Your API token can be found in ProjectX / Broker settings",
+                font=("Segoe UI", 9),
+                bg='white', fg=self.colors['text_light']).pack(anchor='w')
+        
+        tk.Label(help_frame, text="   Master Key is optional - will be auto-generated from your broker credentials",
                 font=("Segoe UI", 9),
                 bg='white', fg=self.colors['text_light']).pack(anchor='w')
         
@@ -266,10 +270,7 @@ class MasterLauncher:
     
     def save_and_start(self):
         """Save settings and start dashboard"""
-        # Validate
-        if not self.master_key_var.get().strip():
-            messagebox.showerror("Error", "Please enter your Master Key (License)")
-            return
+        # Validate - only broker credentials are required now
         if not self.username_var.get().strip():
             messagebox.showerror("Error", "Please enter your Broker Username/Email")
             return
@@ -277,8 +278,17 @@ class MasterLauncher:
             messagebox.showerror("Error", "Please enter your API Token")
             return
         
+        # Auto-generate master_key from broker credentials if not provided
+        master_key = self.master_key_var.get().strip()
+        if not master_key:
+            import hashlib
+            # Generate a unique key from username and timestamp
+            unique_str = f"{self.username_var.get().strip()}-master-{datetime.now().isoformat()}"
+            master_key = hashlib.sha256(unique_str.encode()).hexdigest()[:32]
+            print(f"✨ Auto-generated Master Key: {master_key}")
+        
         # Save config
-        self.config['master_key'] = self.master_key_var.get().strip()
+        self.config['master_key'] = master_key
         self.config['account_type'] = self.account_type_var.get()
         self.config['broker_name'] = self.broker_var.get()
         self.config['broker'] = {
@@ -495,7 +505,7 @@ class MasterLauncher:
         self.status_label.pack(side=tk.LEFT, padx=20, pady=8)
         
         self.connection_label = tk.Label(footer, 
-            text="📡 Signals ON | Monitoring every 500ms",
+            text="📡 Signals ON | Ultra-fast monitoring (100ms)",
             font=("Segoe UI", 9),
             bg=self.colors['grid_header'], fg=self.colors['text_light'])
         self.connection_label.pack(side=tk.RIGHT, padx=20, pady=8)
@@ -541,7 +551,7 @@ class MasterLauncher:
         try:
             if hasattr(self, 'connection_label'):
                 if self.copy_enabled:
-                    self.connection_label.config(text="📡 Signals ON | Monitoring every 500ms")
+                    self.connection_label.config(text="📡 Signals ON | Ultra-fast monitoring (100ms)")
                 else:
                     self.connection_label.config(text="⛔ Signals OFF | Solo trading mode")
         except:
@@ -753,8 +763,8 @@ class MasterLauncher:
                 
                 if connected:
                     self.broker_connected = True
-                    self.root.after(0, lambda: self.update_broker_status("✅ Connected - Monitoring"))
-                    print("📡 Position monitoring started - checking every 500ms")
+                    self.root.after(0, lambda: self.update_broker_status("✅ Connected - Ultra-fast"))
+                    print("📡 Position monitoring started - checking every 100ms (ULTRA-FAST)")
                     
                     # Start position monitoring loop
                     self.position_monitor_running = True
@@ -763,18 +773,18 @@ class MasterLauncher:
                         try:
                             positions = loop.run_until_complete(self.broker.get_positions())
                             poll_count += 1
-                            # Only log every 60 polls (30 seconds) unless position exists
-                            if positions or poll_count % 60 == 0:
-                                if poll_count % 60 == 0:
+                            # Only log every 100 polls (10 seconds at 100ms) unless position exists
+                            if positions or poll_count % 100 == 0:
+                                if poll_count % 100 == 0:
                                     print(f"📊 Still monitoring... (Poll #{poll_count}, {len(positions)} position(s))")
                                 elif positions:
                                     for p in positions:
                                         print(f"   🎯 {p['symbol']}: {p['quantity']} contracts")
                             self.check_position_change(positions, loop)
                         except Exception as e:
-                            if poll_count % 60 == 0:
+                            if poll_count % 100 == 0:
                                 print(f"❌ Position poll error: {e}")
-                        time.sleep(0.5)  # Check every 500ms for fast detection
+                        time.sleep(0.1)  # Check every 100ms for ULTRA-FAST detection
                 else:
                     self.root.after(0, lambda: self.update_broker_status("❌ Connection failed"))
                 
