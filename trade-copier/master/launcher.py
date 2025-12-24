@@ -875,7 +875,8 @@ class MasterLauncher:
         """Send signal to all connected followers via API - only if copy enabled"""
         # Check if copy is enabled - don't broadcast if disabled
         if not self.copy_enabled:
-            print(f"⛔ Signal NOT broadcast (copy disabled): {signal.get('action')} {signal.get('side', '')} {signal.get('quantity', '')} {signal.get('symbol', '')}")
+            msg = f"⛔ Signal NOT broadcast (copy disabled): {signal.get('action')} {signal.get('side', '')} {signal.get('quantity', '')} {signal.get('symbol', '')}"
+            self.root.after(0, lambda: self.add_trade_log(msg))
             return
         
         try:
@@ -891,9 +892,11 @@ class MasterLauncher:
             if resp.status_code == 200:
                 data = resp.json()
                 count = data.get('received_count', 0) + data.get('websocket_count', 0)
-                print(f"📡 Signal sent to {count} followers")
+                msg = f"📡 Signal sent to {count} followers"
+                self.root.after(0, lambda: self.add_trade_log(msg))
         except Exception as e:
-            print(f"❌ Broadcast error: {e}")
+            msg = f"❌ Broadcast error: {e}"
+            self.root.after(0, lambda: self.add_trade_log(msg))
     
     def add_trade_log(self, message):
         """Add message to trade log (for future UI element)"""
