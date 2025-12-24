@@ -12,6 +12,8 @@ import sys
 import threading
 import time
 import requests
+import hashlib
+import secrets
 from datetime import datetime
 
 # Config
@@ -281,11 +283,12 @@ class MasterLauncher:
         # Auto-generate master_key from broker credentials if not provided
         master_key = self.master_key_var.get().strip()
         if not master_key:
-            import hashlib
-            # Generate a unique key from username and timestamp
-            unique_str = f"{self.username_var.get().strip()}-master-{datetime.now().isoformat()}"
-            master_key = hashlib.sha256(unique_str.encode()).hexdigest()[:32]
-            print(f"✨ Auto-generated Master Key: {master_key}")
+            # Generate a cryptographically secure random key
+            # Include username for uniqueness but use secure random for unpredictability
+            username_hash = hashlib.sha256(self.username_var.get().strip().encode()).hexdigest()[:16]
+            random_component = secrets.token_hex(16)
+            master_key = f"{username_hash}{random_component}"[:32]
+            print(f"✨ Auto-generated secure Master Key: {master_key}")
         
         # Save config
         self.config['master_key'] = master_key
@@ -784,6 +787,9 @@ class MasterLauncher:
                         except Exception as e:
                             if poll_count % 100 == 0:
                                 print(f"❌ Position poll error: {e}")
+                        # Ultra-fast 100ms polling for lowest latency
+                        # This provides near-instant signal delivery but increases CPU/API usage
+                        # For less aggressive polling, change to 0.5 (500ms) or 1.0 (1 second)
                         time.sleep(0.1)  # Check every 100ms for ULTRA-FAST detection
                 else:
                     self.root.after(0, lambda: self.update_broker_status("❌ Connection failed"))
