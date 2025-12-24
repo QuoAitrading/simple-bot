@@ -12,6 +12,8 @@ import sys
 import threading
 import time
 import requests
+import hashlib
+import secrets
 from datetime import datetime
 
 # Config
@@ -54,6 +56,7 @@ class MasterLauncher:
         self.running = False
         self.followers = []
         self.trade_log = []
+        self.copy_enabled = True  # Global toggle for signal broadcasting
         
         # Broker/Position tracking for auto-broadcast
         self.broker = None
@@ -172,21 +175,23 @@ class MasterLauncher:
                 bg=self.colors['grid_header'], fg=self.colors['text'],
                 padx=10, pady=8).pack(side=tk.LEFT, fill=tk.X, expand=True)
         
-        # Entry variables
-        self.master_key_var = tk.StringVar(value=self.config.get('master_key', ''))
+        # Entry variables - Master Key auto-generated (not shown to user)
         self.username_var = tk.StringVar(value=self.config.get('broker', {}).get('username', ''))
         self.api_token_var = tk.StringVar(value=self.config.get('broker', {}).get('api_token', ''))
         
-        # Rows
-        self.create_table_row(table_frame, "Master Key (License)", self.master_key_var)
+        # Rows - Only broker credentials (Master Key auto-generated behind the scenes)
         self.create_table_row(table_frame, "Broker Username/Email", self.username_var)
         self.create_table_row(table_frame, "API Token", self.api_token_var, show='*')
         
-        # Help text
+        # Help text - only broker credentials needed
         help_frame = tk.Frame(main, bg='white')
         help_frame.pack(fill=tk.X, pady=15)
         
         tk.Label(help_frame, text="ℹ️ Your API token can be found in ProjectX / Broker settings",
+                font=("Segoe UI", 9),
+                bg='white', fg=self.colors['text_light']).pack(anchor='w')
+        
+        tk.Label(help_frame, text="   Only broker credentials needed - authentication handled automatically",
                 font=("Segoe UI", 9),
                 bg='white', fg=self.colors['text_light']).pack(anchor='w')
         
@@ -265,10 +270,7 @@ class MasterLauncher:
     
     def save_and_start(self):
         """Save settings and start dashboard"""
-        # Validate
-        if not self.master_key_var.get().strip():
-            messagebox.showerror("Error", "Please enter your Master Key (License)")
-            return
+        # Validate - only broker credentials are required
         if not self.username_var.get().strip():
             messagebox.showerror("Error", "Please enter your Broker Username/Email")
             return
@@ -276,8 +278,14 @@ class MasterLauncher:
             messagebox.showerror("Error", "Please enter your API Token")
             return
         
+        # Auto-generate master_key silently from broker credentials
+        # User doesn't need to see or know about this - it's just for API authentication
+        username_hash = hashlib.sha256(self.username_var.get().strip().encode()).hexdigest()[:16]
+        random_component = secrets.token_hex(16)
+        master_key = f"{username_hash}{random_component}"[:32]
+        
         # Save config
-        self.config['master_key'] = self.master_key_var.get().strip()
+        self.config['master_key'] = master_key
         self.config['account_type'] = self.account_type_var.get()
         self.config['broker_name'] = self.broker_var.get()
         self.config['broker'] = {
@@ -319,6 +327,16 @@ class MasterLauncher:
         # Right side - Buttons
         header_right = tk.Frame(header, bg=self.colors['header_bg'])
         header_right.pack(side=tk.RIGHT, padx=20, pady=10)
+        
+        # Copy Toggle Button - Prominent position
+        self.copy_toggle_btn = tk.Button(header_right, text="📡 SIGNALS: ON",
+                               font=("Segoe UI", 10, "bold"),
+                               bg='#00cc6a', fg='white',
+                               activebackground='#00aa55',
+                               relief=tk.FLAT, padx=20, pady=5,
+                               cursor='hand2',
+                               command=self.toggle_copy_enabled)
+        self.copy_toggle_btn.pack(side=tk.LEFT, padx=10)
         
         self.last_update_label = tk.Label(header_right, text="Last update: --",
             font=("Segoe UI", 9),
@@ -478,13 +496,13 @@ class MasterLauncher:
         footer.pack_propagate(False)
         
         self.status_label = tk.Label(footer, 
-            text=f"● Master Key: {self.config.get('master_key', 'Not set')[:12]}...",
+            text=f"● Broker: {self.config.get('broker', {}).get('username', 'Not configured')[:30]}",
             font=("Segoe UI", 9),
             bg=self.colors['grid_header'], fg=self.colors['text_light'])
         self.status_label.pack(side=tk.LEFT, padx=20, pady=8)
         
         self.connection_label = tk.Label(footer, 
-            text="Auto-broadcast ON | Monitoring every 500ms",
+            text="📡 Signals ON | Ultra-fast monitoring (100ms)",
             font=("Segoe UI", 9),
             bg=self.colors['grid_header'], fg=self.colors['text_light'])
         self.connection_label.pack(side=tk.RIGHT, padx=20, pady=8)
@@ -499,6 +517,42 @@ class MasterLauncher:
         """Manual refresh button handler"""
         self.refresh_followers()
         self.last_update_label.config(text=f"Last update: {datetime.now().strftime('%H:%M:%S')}")
+    
+    def toggle_copy_enabled(self):
+        """Toggle the global copy enabled/disabled state"""
+        self.copy_enabled = not self.copy_enabled
+        
+        if self.copy_enabled:
+            self.copy_toggle_btn.config(
+                text="📡 SIGNALS: ON",
+                bg='#00cc6a',
+                activebackground='#00aa55'
+            )
+            status_msg = "✅ Signal broadcasting ENABLED - Your trades will be copied"
+        else:
+            self.copy_toggle_btn.config(
+                text="📡 SIGNALS: OFF",
+                bg='#cc0000',
+                activebackground='#aa0000'
+            )
+            status_msg = "⛔ Signal broadcasting DISABLED - Trading solo (no copying)"
+        
+        # Update status label
+        self.update_copy_status_label()
+        print(f"\n{'='*60}")
+        print(status_msg)
+        print(f"{'='*60}\n")
+    
+    def update_copy_status_label(self):
+        """Update the footer status label with copy state"""
+        try:
+            if hasattr(self, 'connection_label'):
+                if self.copy_enabled:
+                    self.connection_label.config(text="📡 Signals ON | Ultra-fast monitoring (100ms)")
+                else:
+                    self.connection_label.config(text="⛔ Signals OFF | Solo trading mode")
+        except:
+            pass
     
     def start_polling(self):
         """Start background thread to poll for followers - FAST for real-time monitoring"""
@@ -706,8 +760,8 @@ class MasterLauncher:
                 
                 if connected:
                     self.broker_connected = True
-                    self.root.after(0, lambda: self.update_broker_status("✅ Connected - Monitoring"))
-                    print("📡 Position monitoring started - checking every 500ms")
+                    self.root.after(0, lambda: self.update_broker_status("✅ Connected - Ultra-fast"))
+                    print("📡 Position monitoring started - checking every 100ms (ULTRA-FAST)")
                     
                     # Start position monitoring loop
                     self.position_monitor_running = True
@@ -716,18 +770,21 @@ class MasterLauncher:
                         try:
                             positions = loop.run_until_complete(self.broker.get_positions())
                             poll_count += 1
-                            # Only log every 60 polls (30 seconds) unless position exists
-                            if positions or poll_count % 60 == 0:
-                                if poll_count % 60 == 0:
+                            # Only log every 100 polls (10 seconds at 100ms) unless position exists
+                            if positions or poll_count % 100 == 0:
+                                if poll_count % 100 == 0:
                                     print(f"📊 Still monitoring... (Poll #{poll_count}, {len(positions)} position(s))")
                                 elif positions:
                                     for p in positions:
                                         print(f"   🎯 {p['symbol']}: {p['quantity']} contracts")
                             self.check_position_change(positions, loop)
                         except Exception as e:
-                            if poll_count % 60 == 0:
+                            if poll_count % 100 == 0:
                                 print(f"❌ Position poll error: {e}")
-                        time.sleep(0.5)  # Check every 500ms for fast detection
+                        # Ultra-fast 100ms polling for lowest latency
+                        # This provides near-instant signal delivery but increases CPU/API usage
+                        # For less aggressive polling, change to 0.5 (500ms) or 1.0 (1 second)
+                        time.sleep(0.1)  # Check every 100ms for ULTRA-FAST detection
                 else:
                     self.root.after(0, lambda: self.update_broker_status("❌ Connection failed"))
                 
@@ -825,7 +882,13 @@ class MasterLauncher:
                             self.add_trade_log(f"📤 BROADCAST: {a} {s} {d} {sym}"))
     
     def broadcast_signal(self, signal):
-        """Send signal to all connected followers via API"""
+        """Send signal to all connected followers via API - only if copy enabled"""
+        # Check if copy is enabled - don't broadcast if disabled
+        if not self.copy_enabled:
+            msg = f"⛔ Signal NOT broadcast (copy disabled): {signal.get('action')} {signal.get('side', '')} {signal.get('quantity', '')} {signal.get('symbol', '')}"
+            self.root.after(0, lambda: self.add_trade_log(msg))
+            return
+        
         try:
             master_key = self.config.get('master_key', '')
             resp = requests.post(
@@ -839,9 +902,11 @@ class MasterLauncher:
             if resp.status_code == 200:
                 data = resp.json()
                 count = data.get('received_count', 0) + data.get('websocket_count', 0)
-                print(f"📡 Signal sent to {count} followers")
+                msg = f"📡 Signal sent to {count} followers"
+                self.root.after(0, lambda: self.add_trade_log(msg))
         except Exception as e:
-            print(f"❌ Broadcast error: {e}")
+            msg = f"❌ Broadcast error: {e}"
+            self.root.after(0, lambda: self.add_trade_log(msg))
     
     def add_trade_log(self, message):
         """Add message to trade log (for future UI element)"""

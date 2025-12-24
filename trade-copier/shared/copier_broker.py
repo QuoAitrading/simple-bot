@@ -92,22 +92,33 @@ class CopierBroker:
             jwt_token = self.sdk_client.get_session_token()
             suppress_sdk_logs()
             
-            if jwt_token and self.account_id:
-                realtime_client = ProjectXRealtimeClient(jwt_token=jwt_token, account_id=self.account_id)
-                suppress_sdk_logs()
-                self.trading_suite = TradingSuite(
-                    client=self.sdk_client,
-                    realtime_client=realtime_client,
-                    config=TradingSuiteConfig(instrument="MES")
-                )
-                suppress_sdk_logs()
+            if not jwt_token:
+                sys.stdout = old_stdout
+                sys.stderr = old_stderr
+                print("❌ CopierBroker connection failed: Could not get JWT token")
+                return False
+                
+            if not self.account_id:
+                sys.stdout = old_stdout
+                sys.stderr = old_stderr
+                print("❌ CopierBroker connection failed: Could not get account ID")
+                return False
+            
+            # Create TradingSuite - will raise exception on failure
+            realtime_client = ProjectXRealtimeClient(jwt_token=jwt_token, account_id=self.account_id)
+            suppress_sdk_logs()
+            self.trading_suite = TradingSuite(
+                client=self.sdk_client,
+                realtime_client=realtime_client,
+                config=TradingSuiteConfig(instrument="MES")
+            )
+            suppress_sdk_logs()
             
             self.connected = True
             
             # Restore output
             sys.stdout = old_stdout
             sys.stderr = old_stderr
-            print("✅ CopierBroker connected successfully")
             return True
             
         except Exception as e:
@@ -142,8 +153,13 @@ class CopierBroker:
     
     async def place_market_order(self, symbol: str, side: str, quantity: int) -> bool:
         """Place a market order using TradingSuite."""
-        if not self.connected or not self.trading_suite:
-            logger.error("Not connected or no trading_suite")
+        if not self.connected:
+            logger.error("Broker not connected - call connect() first")
+            print("❌ Broker not connected - call connect() first")
+            return False
+        if not self.trading_suite:
+            logger.error("TradingSuite not initialized - broker connection incomplete")
+            print("❌ TradingSuite not initialized - broker connection incomplete")
             return False
             
         try:
@@ -177,7 +193,11 @@ class CopierBroker:
     
     async def place_stop_order(self, symbol: str, side: str, quantity: int, stop_price: float) -> bool:
         """Place a stop loss order using TradingSuite."""
-        if not self.connected or not self.trading_suite:
+        if not self.connected:
+            logger.error("Broker not connected - call connect() first")
+            return False
+        if not self.trading_suite:
+            logger.error("TradingSuite not initialized - broker connection incomplete")
             return False
             
         try:

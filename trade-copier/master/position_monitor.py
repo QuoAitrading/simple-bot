@@ -32,16 +32,18 @@ class PositionMonitor:
     When you manually trade, it detects the change and broadcasts to followers.
     """
     
-    def __init__(self, broker, broadcaster, poll_interval: float = 0.5):
+    def __init__(self, broker, broadcaster, poll_interval: float = 0.5, get_copy_enabled=None):
         """
         Args:
             broker: Connected broker instance (your master account)
             broadcaster: SignalBroadcaster to send signals to followers
             poll_interval: How often to check for position changes (seconds)
+            get_copy_enabled: Callable that returns True if copy is enabled
         """
         self.broker = broker
         self.broadcaster = broadcaster
         self.poll_interval = poll_interval
+        self.get_copy_enabled = get_copy_enabled or (lambda: True)
         
         # Track known positions
         self.known_positions: Dict[str, Position] = {}
@@ -136,6 +138,12 @@ class PositionMonitor:
         
     async def _check_for_changes(self, current: Dict[str, Position]):
         """Check for position changes and broadcast"""
+        
+        # Check if copy is enabled - don't broadcast if disabled
+        if not self.get_copy_enabled():
+            # Still update known positions but don't broadcast
+            self.known_positions = current
+            return
         
         # Check for new positions (OPEN signals)
         for symbol, pos in current.items():
