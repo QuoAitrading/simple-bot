@@ -77,27 +77,31 @@ class SignalBroadcaster:
             
         self.signal_history.append(signal)
         
-        # Send to API relay endpoint
-        try:
-            async with self.session.post(
-                f"{self.api_url}/copier/broadcast",
-                json={
-                    "master_key": self.master_key,
-                    "signal": signal.to_dict()
-                },
-                timeout=aiohttp.ClientTimeout(total=5)
-            ) as resp:
-                if resp.status == 200:
-                    data = await resp.json()
-                    received_count = data.get("received_count", 0)
-                    logger.info(f"📤 Signal broadcast: {signal.action} {signal.side} {signal.quantity} {signal.symbol} → {received_count} followers")
-                    return received_count
-                else:
-                    logger.error(f"❌ Broadcast failed: {resp.status}")
-                    return 0
-        except Exception as e:
-            logger.error(f"❌ Broadcast error: {e}")
-            return 0
+        # Send to API relay endpoint with retry
+        for attempt in range(3):
+            try:
+                async with self.session.post(
+                    f"{self.api_url}/copier/broadcast",
+                    json={
+                        "master_key": self.master_key,
+                        "signal": signal.to_dict()
+                    },
+                    timeout=aiohttp.ClientTimeout(total=5)
+                ) as resp:
+                    if resp.status == 200:
+                        data = await resp.json()
+                        received_count = data.get("received_count", 0)
+                        logger.info(f"📤 Signal broadcast: {signal.action} {signal.side} {signal.quantity} {signal.symbol} → {received_count} followers")
+                        return received_count
+                    else:
+                        logger.warning(f"⚠️ Broadcast failed (attempt {attempt+1}/3): {resp.status}")
+                        await asyncio.sleep(0.5)
+            except Exception as e:
+                logger.warning(f"⚠️ Broadcast error (attempt {attempt+1}/3): {e}")
+                await asyncio.sleep(0.5)
+        
+        logger.error("❌ Signal broadcast failed after 3 attempts")
+        return 0
     
     async def refresh_followers(self) -> List[ConnectedFollower]:
         """Get list of currently connected followers from server"""

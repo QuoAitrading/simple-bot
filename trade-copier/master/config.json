@@ -1,9 +1,11 @@
 {
-    "api_url": "https://quotrading-flask-api.azurewebsites.net",
-    "master_key": "C63W-L241-FVJ9-LGIR",
-    "broker": {
-        "username": "lorenzod1823@gmail.com",
-        "api_token": "psCdvt+Y5nU2p17z2DM2RZc9x62mBGhXic0KsHoYUdI="
-    },
-    "poll_interval": 0.1
+  "api_url": "https://quotrading-flask-api.azurewebsites.net",
+  "master_key": "C63W-L241-FVJ9-LGIR",
+  "broker": {
+    "username": "lorenzod1823@gmail.com",
+    "api_token": "psCdvt+Y5nU2p17z2DM2RZc9x62mBGhXic0KsHoYUdI="
+  },
+  "poll_interval": 0.1,
+  "account_type": "Prop Firm",
+  "broker_name": "TopStep"
 }

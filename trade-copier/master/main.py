@@ -14,7 +14,7 @@ from datetime import datetime
 # Add parent to path for imports
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from shared.broker_client import BrokerClient
+from shared.copier_broker import CopierBroker
 from signal_broadcaster import SignalBroadcaster
 from position_monitor import PositionMonitor
 
@@ -81,10 +81,9 @@ async def main():
         return
     
     # Create broker client (your master account)
-    broker = BrokerClient(
+    broker = CopierBroker(
         username=config['broker']['username'],
-        api_token=config['broker']['api_token'],
-        name="Master Account"
+        api_token=config['broker']['api_token']
     )
     
     # Create signal broadcaster

@@ -85,13 +85,15 @@ class CopierBroker:
                 return False
             
             self.account_balance = float(getattr(account, 'balance', getattr(account, 'equity', 0)))
+            self.account_id = str(getattr(account, 'id', getattr(account, 'account_id', '')))
             
-            # Initialize TradingSuite
+            # Create TradingSuite - required for order placement
+            # Uses MES as default but can place orders on any symbol via contract_id
             jwt_token = self.sdk_client.get_session_token()
-            account_id = str(getattr(account, 'id', getattr(account, 'account_id', '')))
+            suppress_sdk_logs()
             
-            if jwt_token and account_id:
-                realtime_client = ProjectXRealtimeClient(jwt_token=jwt_token, account_id=account_id)
+            if jwt_token and self.account_id:
+                realtime_client = ProjectXRealtimeClient(jwt_token=jwt_token, account_id=self.account_id)
                 suppress_sdk_logs()
                 self.trading_suite = TradingSuite(
                     client=self.sdk_client,
@@ -105,11 +107,15 @@ class CopierBroker:
             # Restore output
             sys.stdout = old_stdout
             sys.stderr = old_stderr
+            print("✅ CopierBroker connected successfully")
             return True
             
         except Exception as e:
             sys.stdout = old_stdout
             sys.stderr = old_stderr
+            print(f"❌ CopierBroker connection failed: {e}")
+            import traceback
+            traceback.print_exc()
             return False
     
     async def disconnect(self):
@@ -135,30 +141,42 @@ class CopierBroker:
         return None
     
     async def place_market_order(self, symbol: str, side: str, quantity: int) -> bool:
-        """Place a market order."""
+        """Place a market order using TradingSuite."""
         if not self.connected or not self.trading_suite:
+            logger.error("Not connected or no trading_suite")
             return False
             
         try:
             contract_id = await self.get_contract_id(symbol)
             if not contract_id:
+                logger.error(f"Could not find contract for {symbol}")
                 return False
             
-            from project_x_py import Side
-            order_side = Side.BUY if side.upper() == "BUY" else Side.SELL
+            # Import OrderSide enum
+            from project_x_py import OrderSide
+            order_side = OrderSide.BUY if side.upper() == "BUY" else OrderSide.SELL
             
+            # Place order via TradingSuite (like main bot does)
             order = await self.trading_suite.orders.place_market_order(
                 contract_id=contract_id,
                 side=order_side,
                 size=quantity
             )
-            return order is not None
+            
+            # Check for success
+            if order:
+                if hasattr(order, 'success') and order.success:
+                    return True
+                elif hasattr(order, 'order') and order.order:
+                    return True
+            return False
             
         except Exception as e:
+            logger.error(f"Order error: {e}")
             return False
     
     async def place_stop_order(self, symbol: str, side: str, quantity: int, stop_price: float) -> bool:
-        """Place a stop loss order."""
+        """Place a stop loss order using TradingSuite."""
         if not self.connected or not self.trading_suite:
             return False
             
@@ -167,8 +185,8 @@ class CopierBroker:
             if not contract_id:
                 return False
                 
-            from project_x_py import Side
-            order_side = Side.BUY if side.upper() == "BUY" else Side.SELL
+            from project_x_py import OrderSide
+            order_side = OrderSide.BUY if side.upper() == "BUY" else OrderSide.SELL
             
             order = await self.trading_suite.orders.place_stop_order(
                 contract_id=contract_id,
@@ -177,36 +195,63 @@ class CopierBroker:
                 stop_price=stop_price
             )
             return order is not None
-        except:
+        except Exception as e:
+            logger.error(f"Stop order error: {e}")
             return False
     
     async def flatten_position(self, symbol: str) -> bool:
-        """Flatten all positions."""
-        if not self.connected or not self.trading_suite:
+        """Flatten position by closing with opposite order."""
+        if not self.connected or not self.sdk_client:
             return False
             
         try:
-            await self.trading_suite.positions.flatten()
-            return True
+            # Get current position
+            positions = await self.get_positions()
+            for pos in positions:
+                if pos.get('symbol', '').upper() == symbol.upper():
+                    qty = pos.get('quantity', 0)
+                    if qty != 0:
+                        # Place opposite order to flatten
+                        side = "SELL" if qty > 0 else "BUY"
+                        return await self.place_market_order(symbol, side, abs(qty))
+            return True  # No position to flatten
         except:
             return False
     
     async def get_positions(self) -> list:
-        """Get all open positions."""
+        """Get all open positions using new SDK method."""
         if not self.connected or not self.sdk_client:
             return []
             
         try:
-            positions = self.sdk_client.get_positions()
+            # Use the new method (not deprecated get_positions)
+            positions = await self.sdk_client.search_open_positions()
+            
+            if not positions:
+                return []
+                
             result = []
             for pos in positions:
-                qty = getattr(pos, 'quantity', 0)
-                if qty != 0:
+                # SDK uses 'size' and 'is_long' in newer versions
+                size = getattr(pos, 'size', getattr(pos, 'quantity', 0))
+                is_long = getattr(pos, 'is_long', True)
+                
+                # Get symbol from contract info
+                symbol = getattr(pos, 'symbol', '')
+                if not symbol:
+                    # Try to get from contract_id
+                    contract_id = getattr(pos, 'contract_id', '')
+                    symbol = contract_id  # Use contract_id as fallback
+                
+                if size != 0:
+                    # Return signed quantity (positive for long, negative for short)
+                    qty = int(size) if is_long else -int(size)
                     result.append({
-                        'symbol': getattr(pos, 'symbol', ''),
+                        'symbol': symbol,
                         'quantity': qty,
-                        'entry_price': getattr(pos, 'average_price', 0)
+                        'entry_price': getattr(pos, 'average_price', getattr(pos, 'avg_price', 0))
                     })
             return result
-        except:
+        except Exception as e:
+            logger.error(f"Get positions error: {e}")
             return []

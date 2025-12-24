@@ -29,7 +29,7 @@ import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from shared.signal_protocol import TradeSignal
-from shared.broker_client import BrokerClient
+from shared.copier_broker import CopierBroker
 
 logger = logging.getLogger(__name__)
 
@@ -78,7 +78,7 @@ class SignalReceiver:
         # Callback
         self.on_signal: Optional[Callable[[TradeSignal], None]] = None
         
-    async def connect(self, broker: BrokerClient) -> bool:
+    async def connect(self, broker: 'CopierBroker') -> bool:
         """
         Connect to the relay server and register as a follower
         
@@ -432,8 +432,7 @@ async def main():
     broker = None
     broker_balance = None
     try:
-        # Use standalone copier broker - no main bot dependencies
-        from shared.copier_broker import CopierBroker
+        # Broker already imported at top level
         
         broker_username = config.get('broker_username', '')
         broker_token = config.get('broker_token', '')
@@ -663,6 +662,21 @@ async def main():
                                     "symbol": "COPIER",
                                     "status": "online",
                                     "metadata": {"client": "copier_signal_receiver"}
+                                },
+                                timeout=5
+                            )
+                            
+                            # Send dashboard heartbeat with position status
+                            pos_data = _session_info.get('current_position')
+                            requests.post(
+                                f"{api_url}/copier/heartbeat",
+                                json={
+                                    "follower_key": follower_key,
+                                    "current_position": pos_data if pos_data and pos_data.get('quantity', 0) > 0 else None,
+                                    "metadata": {
+                                        "trades_executed": _session_info.get('trades_executed', 0),
+                                        "session_pnl": _session_info.get('session_pnl', 0.0)
+                                    }
                                 },
                                 timeout=5
                             )

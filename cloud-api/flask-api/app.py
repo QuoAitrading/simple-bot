@@ -5385,6 +5385,15 @@ def copier_heartbeat():
     
     if follower_key in _connected_followers:
         _connected_followers[follower_key]['last_heartbeat'] = datetime.now(timezone.utc).isoformat()
+        
+        # Store extra metadata if provided
+        if 'metadata' in data:
+            _connected_followers[follower_key]['metadata'] = data['metadata']
+            
+        # Store position data if provided
+        if 'current_position' in data:
+            _connected_followers[follower_key]['current_position'] = data['current_position']
+            
         return jsonify({"status": "ok"})
     
     return jsonify({"error": "Not registered"}), 401
@@ -5465,9 +5474,21 @@ def copier_report():
     follower_key = data.get('follower_key')
     status = data.get('status')
     
-    if follower_key in _connected_followers and status == 'executed':
-        _connected_followers[follower_key]['signals_executed'] = \
-            _connected_followers[follower_key].get('signals_executed', 0) + 1
+    if follower_key in _connected_followers:
+        if status == 'executed':
+            _connected_followers[follower_key]['signals_executed'] = \
+                _connected_followers[follower_key].get('signals_executed', 0) + 1
+        
+        # Store extra metadata if provided
+        if 'metadata' in data:
+            _connected_followers[follower_key]['metadata'] = data['metadata']
+        
+        # Store position data if provided
+        current_position = data.get('current_position')
+        if current_position:
+            _connected_followers[follower_key]['current_position'] = current_position
+        
+        return jsonify({"status": "ok"})
     
     return jsonify({"status": "reported"})
 
@@ -5485,7 +5506,8 @@ def copier_followers():
             'last_heartbeat': follower['last_heartbeat'],
             'copy_enabled': follower.get('copy_enabled', True),
             'signals_received': follower.get('signals_received', 0),
-            'signals_executed': follower.get('signals_executed', 0)
+            'signals_executed': follower.get('signals_executed', 0),
+            'current_position': follower.get('current_position')
         })
     
     return jsonify({"followers": followers})

@@ -383,43 +383,50 @@ class TradeCopierLauncher:
                 # Heartbeat failed - log but don't block startup
                 pass
             
-            # Step 2: Connect to TopStep using the same broker interface as main bot
+            # Step 2: Connect to TopStep using standalone CopierBroker (no main bot dependencies)
             self.root.after(0, lambda: self.update_loading("Connecting to broker..."))
             
             try:
-                # Import TopStepBroker from main bot's src folder
-                import sys
-                from pathlib import Path
-                src_path = Path(__file__).parent.parent.parent / "src"
-                if str(src_path) not in sys.path:
-                    sys.path.insert(0, str(src_path))
+                # Import CopierBroker from shared folder (standalone, no instrument needed)
+                from shared.copier_broker import CopierBroker
                 
-                from broker_interface import TopStepBroker
+                # Connect using the copier broker wrapper
+                self.broker = CopierBroker(username=username, api_token=token)
                 
-                # Connect using the broker wrapper (handles all SDK complexity)
-                self.broker = TopStepBroker(api_token=token, username=username)
-                connected = self.broker.connect()
+                # Run async connect in thread
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                connected = loop.run_until_complete(self.broker.connect())
+                loop.close()
                 
                 if not connected:
                     self.root.after(0, self.hide_loading)
                     self.root.after(0, lambda: messagebox.showerror("Connection Failed", "Could not connect to TopStep. Check credentials."))
                     return
                 
-                # Get account info
-                account_info = self.broker.sdk_client.account_info
-                
-                if account_info:
-                    account_name = getattr(account_info, 'name', 'TopStep Account')
-                    current_balance = float(getattr(account_info, 'balance', 0))
+                # Get account info from SDK client
+                if self.broker.sdk_client:
+                    account_info = self.broker.sdk_client.get_account_info()
                     
-                    self.accounts = [{
-                        "id": str(getattr(account_info, 'id', 'MAIN')),
-                        "name": account_name,
-                        "balance": current_balance,
-                        "status": "connected"
-                    }]
+                    if account_info:
+                        account_name = getattr(account_info, 'name', 'TopStep Account')
+                        current_balance = self.broker.account_balance
+                        
+                        self.accounts = [{
+                            "id": str(getattr(account_info, 'id', 'MAIN')),
+                            "name": account_name,
+                            "balance": current_balance,
+                            "status": "connected"
+                        }]
+                    else:
+                        # Fallback
+                        self.accounts = [{
+                            "id": "TOPSTEP_MAIN",
+                            "name": f"TopStep ({username})",
+                            "balance": self.broker.account_balance,
+                            "status": "connected"
+                        }]
                 else:
-                    # Fallback
                     self.accounts = [{
                         "id": "TOPSTEP_MAIN",
                         "name": f"TopStep ({username})",
