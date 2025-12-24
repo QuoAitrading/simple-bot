@@ -119,7 +119,6 @@ class CopierBroker:
             # Restore output
             sys.stdout = old_stdout
             sys.stderr = old_stderr
-            print("✅ CopierBroker connected successfully")
             return True
             
         except Exception as e:

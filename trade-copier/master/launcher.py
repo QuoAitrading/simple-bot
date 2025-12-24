@@ -54,6 +54,7 @@ class MasterLauncher:
         self.running = False
         self.followers = []
         self.trade_log = []
+        self.copy_enabled = True  # Global toggle for signal broadcasting
         
         # Broker/Position tracking for auto-broadcast
         self.broker = None
@@ -320,6 +321,16 @@ class MasterLauncher:
         header_right = tk.Frame(header, bg=self.colors['header_bg'])
         header_right.pack(side=tk.RIGHT, padx=20, pady=10)
         
+        # Copy Toggle Button - Prominent position
+        self.copy_toggle_btn = tk.Button(header_right, text="📡 SIGNALS: ON",
+                               font=("Segoe UI", 10, "bold"),
+                               bg='#00cc6a', fg='white',
+                               activebackground='#00aa55',
+                               relief=tk.FLAT, padx=20, pady=5,
+                               cursor='hand2',
+                               command=self.toggle_copy_enabled)
+        self.copy_toggle_btn.pack(side=tk.LEFT, padx=10)
+        
         self.last_update_label = tk.Label(header_right, text="Last update: --",
             font=("Segoe UI", 9),
             bg=self.colors['header_bg'], fg='#b3d4fc')
@@ -484,7 +495,7 @@ class MasterLauncher:
         self.status_label.pack(side=tk.LEFT, padx=20, pady=8)
         
         self.connection_label = tk.Label(footer, 
-            text="Auto-broadcast ON | Monitoring every 500ms",
+            text="📡 Signals ON | Monitoring every 500ms",
             font=("Segoe UI", 9),
             bg=self.colors['grid_header'], fg=self.colors['text_light'])
         self.connection_label.pack(side=tk.RIGHT, padx=20, pady=8)
@@ -499,6 +510,42 @@ class MasterLauncher:
         """Manual refresh button handler"""
         self.refresh_followers()
         self.last_update_label.config(text=f"Last update: {datetime.now().strftime('%H:%M:%S')}")
+    
+    def toggle_copy_enabled(self):
+        """Toggle the global copy enabled/disabled state"""
+        self.copy_enabled = not self.copy_enabled
+        
+        if self.copy_enabled:
+            self.copy_toggle_btn.config(
+                text="📡 SIGNALS: ON",
+                bg='#00cc6a',
+                activebackground='#00aa55'
+            )
+            status_msg = "✅ Signal broadcasting ENABLED - Your trades will be copied"
+        else:
+            self.copy_toggle_btn.config(
+                text="📡 SIGNALS: OFF",
+                bg='#cc0000',
+                activebackground='#aa0000'
+            )
+            status_msg = "⛔ Signal broadcasting DISABLED - Trading solo (no copying)"
+        
+        # Update status label
+        self.update_copy_status_label()
+        print(f"\n{'='*60}")
+        print(status_msg)
+        print(f"{'='*60}\n")
+    
+    def update_copy_status_label(self):
+        """Update the footer status label with copy state"""
+        try:
+            if hasattr(self, 'connection_label'):
+                if self.copy_enabled:
+                    self.connection_label.config(text="📡 Signals ON | Monitoring every 500ms")
+                else:
+                    self.connection_label.config(text="⛔ Signals OFF | Solo trading mode")
+        except:
+            pass
     
     def start_polling(self):
         """Start background thread to poll for followers - FAST for real-time monitoring"""
@@ -825,7 +872,12 @@ class MasterLauncher:
                             self.add_trade_log(f"📤 BROADCAST: {a} {s} {d} {sym}"))
     
     def broadcast_signal(self, signal):
-        """Send signal to all connected followers via API"""
+        """Send signal to all connected followers via API - only if copy enabled"""
+        # Check if copy is enabled - don't broadcast if disabled
+        if not self.copy_enabled:
+            print(f"⛔ Signal NOT broadcast (copy disabled): {signal.get('action')} {signal.get('side', '')} {signal.get('quantity', '')} {signal.get('symbol', '')}")
+            return
+        
         try:
             master_key = self.config.get('master_key', '')
             resp = requests.post(
