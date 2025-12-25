@@ -27,7 +27,7 @@ class MasterLauncher:
     
     def __init__(self):
         self.root = tk.Tk()
-        self.root.title("📊 QuoTrading AI - Master Dashboard")
+        self.root.title("📊 QuoTrading AI - Admin & Trade Copy Dashboard")
         self.root.geometry("1100x700")
         self.root.resizable(True, True)
         self.root.minsize(900, 600)
@@ -321,7 +321,7 @@ class MasterLauncher:
                 font=("Segoe UI", 14, "bold"), 
                 bg=self.colors['header_bg'], fg='white').pack(side=tk.LEFT)
         
-        tk.Label(header_left, text="  Master Dashboard", 
+        tk.Label(header_left, text="  Admin & Trade Copy Dashboard", 
                 font=("Segoe UI", 14), 
                 bg=self.colors['header_bg'], fg='white').pack(side=tk.LEFT)
         
@@ -506,6 +506,22 @@ class MasterLauncher:
         self.notebook.add(admin_tab, text='👥 Admin')
         
         self.setup_admin_tab(admin_tab)
+        
+        # ═══════════════════════════════════════════════════════════════════
+        # TAB 3: ZONES - Supply/Demand Zones
+        # ═══════════════════════════════════════════════════════════════════
+        zones_tab = tk.Frame(self.notebook, bg='white')
+        self.notebook.add(zones_tab, text='🧩 Zones')
+        
+        self.setup_zones_tab(zones_tab)
+        
+        # ═══════════════════════════════════════════════════════════════════
+        # TAB 4: HEALTH - System Health
+        # ═══════════════════════════════════════════════════════════════════
+        health_tab = tk.Frame(self.notebook, bg='white')
+        self.notebook.add(health_tab, text='💚 Health')
+        
+        self.setup_health_tab(health_tab)
         
         # ═══════════════════════════════════════════════════════════════════
         # FOOTER - Status bar
@@ -1194,6 +1210,306 @@ class MasterLauncher:
         timestamp = datetime.now().strftime("%H:%M:%S")
         self.trade_log.append(f"[{timestamp}] {message}")
         print(f"[{timestamp}] {message}")  # Also print to console
+    
+    def setup_zones_tab(self, parent):
+        """Setup the zones tab with supply/demand zones"""
+        # Zones header
+        zones_header = tk.Frame(parent, bg='white')
+        zones_header.pack(fill=tk.X, padx=20, pady=15)
+        
+        tk.Label(zones_header, text="🧩 Real-Time Zones", 
+                font=("Segoe UI", 14, "bold"),
+                bg='white', fg=self.colors['text']).pack(side=tk.LEFT)
+        
+        tk.Label(zones_header, text="(Supply/Demand zones from TradingView)", 
+                font=("Segoe UI", 10),
+                bg='white', fg=self.colors['text_light']).pack(side=tk.LEFT, padx=10)
+        
+        # Refresh button
+        tk.Button(zones_header, text="🔄 Refresh Zones",
+                font=("Segoe UI", 10),
+                bg=self.colors['accent'], fg='white',
+                activebackground='#1557b0',
+                relief=tk.FLAT, padx=15, pady=5,
+                cursor='hand2',
+                command=self.refresh_zones).pack(side=tk.RIGHT)
+        
+        # Zones stats
+        zones_stats = tk.Frame(parent, bg='white')
+        zones_stats.pack(fill=tk.X, padx=20, pady=(0, 15))
+        
+        self.zones_total_label = tk.Label(zones_stats, text="Total Zones: 0", 
+                font=("Segoe UI", 11), bg='white', fg=self.colors['text'])
+        self.zones_total_label.pack(side=tk.LEFT, padx=(0, 20))
+        
+        self.zones_supply_label = tk.Label(zones_stats, text="Supply: 0", 
+                font=("Segoe UI", 11), bg='white', fg=self.colors['error'])
+        self.zones_supply_label.pack(side=tk.LEFT, padx=(0, 20))
+        
+        self.zones_demand_label = tk.Label(zones_stats, text="Demand: 0", 
+                font=("Segoe UI", 11), bg='white', fg=self.colors['success'])
+        self.zones_demand_label.pack(side=tk.LEFT)
+        
+        # Zones table
+        zones_table_frame = tk.Frame(parent, bg='white')
+        zones_table_frame.pack(fill=tk.BOTH, expand=True, padx=20, pady=(0, 20))
+        
+        # Create zones tree
+        zones_columns = ('symbol', 'type', 'top', 'bottom', 'strength', 'status', 'created')
+        self.zones_tree = ttk.Treeview(zones_table_frame, columns=zones_columns, show='headings',
+                                       style="Spreadsheet.Treeview")
+        
+        # Define columns
+        self.zones_tree.heading('symbol', text='Symbol')
+        self.zones_tree.heading('type', text='Type')
+        self.zones_tree.heading('top', text='Top')
+        self.zones_tree.heading('bottom', text='Bottom')
+        self.zones_tree.heading('strength', text='Strength')
+        self.zones_tree.heading('status', text='Status')
+        self.zones_tree.heading('created', text='Created')
+        
+        # Column widths
+        self.zones_tree.column('symbol', width=80, minwidth=60)
+        self.zones_tree.column('type', width=100, minwidth=80)
+        self.zones_tree.column('top', width=100, minwidth=80)
+        self.zones_tree.column('bottom', width=100, minwidth=80)
+        self.zones_tree.column('strength', width=100, minwidth=80)
+        self.zones_tree.column('status', width=100, minwidth=80)
+        self.zones_tree.column('created', width=150, minwidth=100)
+        
+        # Scrollbar
+        zones_scrollbar = ttk.Scrollbar(zones_table_frame, orient=tk.VERTICAL, command=self.zones_tree.yview)
+        self.zones_tree.configure(yscrollcommand=zones_scrollbar.set)
+        
+        # Pack zones table
+        self.zones_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        zones_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        
+        # Configure row tags
+        self.zones_tree.tag_configure('supply', background='#fce8e6')
+        self.zones_tree.tag_configure('demand', background='#e6f4ea')
+        
+        # Initial load
+        self.refresh_zones()
+    
+    def refresh_zones(self):
+        """Refresh zones from API"""
+        try:
+            # Fetch zones for ES and NQ
+            es_resp = requests.get(f"{CLOUD_API_BASE_URL}/api/zones/ES", timeout=5)
+            nq_resp = requests.get(f"{CLOUD_API_BASE_URL}/api/zones/NQ", timeout=5)
+            
+            es_zones = es_resp.json().get('zones', []) if es_resp.status_code == 200 else []
+            nq_zones = nq_resp.json().get('zones', []) if nq_resp.status_code == 200 else []
+            
+            all_zones = []
+            for zone in es_zones:
+                zone['symbol'] = 'ES'
+                all_zones.append(zone)
+            for zone in nq_zones:
+                zone['symbol'] = 'NQ'
+                all_zones.append(zone)
+            
+            self.root.after(0, lambda: self.update_zones_ui(all_zones))
+        except Exception as e:
+            print(f"Error fetching zones: {e}")
+    
+    def update_zones_ui(self, zones):
+        """Update the zones table"""
+        try:
+            if not self.root.winfo_exists():
+                return
+            
+            # Clear existing items
+            for item in self.zones_tree.get_children():
+                self.zones_tree.delete(item)
+            
+            # Count stats
+            total = len(zones)
+            supply = sum(1 for z in zones if z.get('type', '').lower() == 'supply')
+            demand = sum(1 for z in zones if z.get('type', '').lower() == 'demand')
+            
+            # Update stats
+            self.zones_total_label.config(text=f"Total Zones: {total}")
+            self.zones_supply_label.config(text=f"Supply: {supply}")
+            self.zones_demand_label.config(text=f"Demand: {demand}")
+            
+            if not zones:
+                self.zones_tree.insert('', 'end', values=(
+                    'No zones', '', '', '', '', '', ''
+                ))
+                return
+            
+            # Add each zone
+            for zone in zones:
+                symbol = zone.get('symbol', 'N/A')
+                zone_type = zone.get('type', 'supply').upper()
+                top = f"${zone.get('top', 0):.2f}"
+                bottom = f"${zone.get('bottom', 0):.2f}"
+                strength = zone.get('strength', 'MEDIUM')
+                status = zone.get('status', 'FRESH')
+                created = zone.get('created_at', 'N/A')
+                
+                # Format created date
+                if created and created != 'N/A':
+                    try:
+                        created_date = datetime.fromisoformat(created.replace('Z', '+00:00'))
+                        created = created_date.strftime('%Y-%m-%d %H:%M')
+                    except:
+                        pass
+                
+                # Determine tag
+                tag = 'supply' if zone_type == 'SUPPLY' else 'demand'
+                
+                self.zones_tree.insert('', 'end', values=(
+                    symbol,
+                    zone_type,
+                    top,
+                    bottom,
+                    strength,
+                    status,
+                    created
+                ), tags=(tag,))
+                
+        except tk.TclError:
+            return
+        except Exception as e:
+            print(f"Error updating zones UI: {e}")
+    
+    def setup_health_tab(self, parent):
+        """Setup the health tab with system health monitoring"""
+        # Health header
+        health_header = tk.Frame(parent, bg='white')
+        health_header.pack(fill=tk.X, padx=20, pady=15)
+        
+        tk.Label(health_header, text="💚 System Health", 
+                font=("Segoe UI", 14, "bold"),
+                bg='white', fg=self.colors['text']).pack(side=tk.LEFT)
+        
+        tk.Label(health_header, text="(API, Database, Email, Services)", 
+                font=("Segoe UI", 10),
+                bg='white', fg=self.colors['text_light']).pack(side=tk.LEFT, padx=10)
+        
+        # Refresh button
+        tk.Button(health_header, text="🔄 Check Health",
+                font=("Segoe UI", 10),
+                bg=self.colors['accent'], fg='white',
+                activebackground='#1557b0',
+                relief=tk.FLAT, padx=15, pady=5,
+                cursor='hand2',
+                command=self.refresh_health).pack(side=tk.RIGHT)
+        
+        # Health content
+        health_content = tk.Frame(parent, bg='white')
+        health_content.pack(fill=tk.BOTH, expand=True, padx=40, pady=20)
+        
+        # Overall status card
+        overall_card = tk.Frame(health_content, bg=self.colors['grid_header'], padx=20, pady=20)
+        overall_card.pack(fill=tk.X, pady=(0, 20))
+        
+        tk.Label(overall_card, text="Overall Status", 
+                font=("Segoe UI", 12, "bold"),
+                bg=self.colors['grid_header'], fg=self.colors['text']).pack(anchor='w')
+        
+        self.overall_health_label = tk.Label(overall_card, text="● Healthy", 
+                font=("Segoe UI", 18, "bold"),
+                bg=self.colors['grid_header'], fg=self.colors['success'])
+        self.overall_health_label.pack(anchor='w', pady=(10, 0))
+        
+        # Individual services
+        services_frame = tk.Frame(health_content, bg='white')
+        services_frame.pack(fill=tk.BOTH, expand=True)
+        
+        # Create health indicators for each service
+        self.health_indicators = {}
+        
+        services = [
+            ('flask_server', 'Flask Server'),
+            ('database', 'PostgreSQL Database'),
+            ('email_service', 'Email Service'),
+            ('whop_api', 'Whop API')
+        ]
+        
+        for service_id, service_name in services:
+            service_card = tk.Frame(services_frame, bg='white', pady=10)
+            service_card.pack(fill=tk.X)
+            
+            label_frame = tk.Frame(service_card, bg='white')
+            label_frame.pack(side=tk.LEFT, fill=tk.X, expand=True)
+            
+            tk.Label(label_frame, text=service_name, 
+                    font=("Segoe UI", 11, "bold"),
+                    bg='white', fg=self.colors['text']).pack(anchor='w')
+            
+            status_label = tk.Label(label_frame, text="● Checking...", 
+                    font=("Segoe UI", 10),
+                    bg='white', fg=self.colors['text_light'])
+            status_label.pack(anchor='w')
+            
+            self.health_indicators[service_id] = status_label
+            
+            # Separator
+            tk.Frame(services_frame, bg=self.colors['grid_border'], height=1).pack(fill=tk.X, pady=5)
+        
+        # Initial load
+        self.refresh_health()
+    
+    def refresh_health(self):
+        """Refresh health status from API"""
+        try:
+            admin_key = self.config.get('master_key', '')
+            resp = requests.get(
+                f"{CLOUD_API_BASE_URL}/api/admin/system-health",
+                params={'admin_key': admin_key},
+                timeout=10
+            )
+            
+            if resp.status_code == 200:
+                health_data = resp.json()
+                self.root.after(0, lambda: self.update_health_ui(health_data))
+        except Exception as e:
+            print(f"Error fetching health: {e}")
+    
+    def update_health_ui(self, health_data):
+        """Update the health UI"""
+        try:
+            if not self.root.winfo_exists():
+                return
+            
+            # Update overall status
+            overall_status = health_data.get('overall_status', 'unknown')
+            if overall_status == 'healthy':
+                self.overall_health_label.config(text="● Healthy", fg=self.colors['success'])
+            elif overall_status == 'degraded':
+                self.overall_health_label.config(text="⚠ Degraded", fg=self.colors['warning'])
+            else:
+                self.overall_health_label.config(text="✗ Unhealthy", fg=self.colors['error'])
+            
+            # Update individual services
+            services = ['flask_server', 'database', 'email_service', 'whop_api']
+            for service in services:
+                if service in self.health_indicators and service in health_data:
+                    service_data = health_data[service]
+                    status = service_data.get('status', 'unknown')
+                    response_time = service_data.get('response_time_ms', 0)
+                    error = service_data.get('error')
+                    
+                    if status == 'healthy':
+                        text = f"● Healthy ({response_time:.0f}ms)"
+                        color = self.colors['success']
+                    elif status == 'degraded':
+                        text = f"⚠ Degraded ({response_time:.0f}ms)"
+                        color = self.colors['warning']
+                    else:
+                        text = f"✗ Unhealthy"
+                        if error:
+                            text += f" - {error}"
+                        color = self.colors['error']
+                    
+                    self.health_indicators[service].config(text=text, fg=color)
+        
+        except Exception as e:
+            print(f"Error updating health UI: {e}")
     
     def run(self):
         """Start the launcher"""
