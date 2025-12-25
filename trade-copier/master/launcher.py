@@ -796,23 +796,99 @@ class MasterLauncher:
     def suspend_user(self, email):
         """Suspend a user"""
         if messagebox.askyesno("Confirm", f"Suspend user {email}?"):
-            # TODO: Implement API call to suspend user
-            messagebox.showinfo("Success", f"User {email} suspended")
-            self.refresh_admin_users()
+            try:
+                admin_key = self.config.get('master_key', '')
+                # Get license key for this email from the tree
+                license_key = None
+                for item in self.admin_users_tree.get_children():
+                    values = self.admin_users_tree.item(item)['values']
+                    if values[0] == email:
+                        # Extract full license key from display (remove ...)
+                        license_key = values[1].replace('...', '')
+                        break
+                
+                if not license_key:
+                    messagebox.showerror("Error", "Could not find license key for user")
+                    return
+                
+                # Call API to suspend user
+                resp = requests.put(
+                    f"{CLOUD_API_BASE_URL}/api/admin/suspend-license/{license_key}",
+                    params={'license_key': admin_key},
+                    timeout=10
+                )
+                
+                if resp.status_code == 200:
+                    messagebox.showinfo("Success", f"User {email} suspended")
+                    self.refresh_admin_users()
+                else:
+                    messagebox.showerror("Error", f"Failed to suspend user: {resp.text}")
+            except Exception as e:
+                messagebox.showerror("Error", f"Failed to suspend user: {e}")
     
     def activate_user(self, email):
         """Activate a user"""
         if messagebox.askyesno("Confirm", f"Activate user {email}?"):
-            # TODO: Implement API call to activate user
-            messagebox.showinfo("Success", f"User {email} activated")
-            self.refresh_admin_users()
+            try:
+                admin_key = self.config.get('master_key', '')
+                # Get license key for this email from the tree
+                license_key = None
+                for item in self.admin_users_tree.get_children():
+                    values = self.admin_users_tree.item(item)['values']
+                    if values[0] == email:
+                        license_key = values[1].replace('...', '')
+                        break
+                
+                if not license_key:
+                    messagebox.showerror("Error", "Could not find license key for user")
+                    return
+                
+                # Call API to activate user
+                resp = requests.put(
+                    f"{CLOUD_API_BASE_URL}/api/admin/activate-license/{license_key}",
+                    params={'license_key': admin_key},
+                    timeout=10
+                )
+                
+                if resp.status_code == 200:
+                    messagebox.showinfo("Success", f"User {email} activated")
+                    self.refresh_admin_users()
+                else:
+                    messagebox.showerror("Error", f"Failed to activate user: {resp.text}")
+            except Exception as e:
+                messagebox.showerror("Error", f"Failed to activate user: {e}")
     
     def extend_license(self, email):
         """Extend user license by 30 days"""
         if messagebox.askyesno("Confirm", f"Extend license for {email} by 30 days?"):
-            # TODO: Implement API call to extend license
-            messagebox.showinfo("Success", f"License extended for {email}")
-            self.refresh_admin_users()
+            try:
+                admin_key = self.config.get('master_key', '')
+                # Get license key for this email from the tree
+                license_key = None
+                for item in self.admin_users_tree.get_children():
+                    values = self.admin_users_tree.item(item)['values']
+                    if values[0] == email:
+                        license_key = values[1].replace('...', '')
+                        break
+                
+                if not license_key:
+                    messagebox.showerror("Error", "Could not find license key for user")
+                    return
+                
+                # Call API to extend license
+                resp = requests.put(
+                    f"{CLOUD_API_BASE_URL}/api/admin/extend-license/{license_key}",
+                    params={'license_key': admin_key, 'days': 30},
+                    timeout=10
+                )
+                
+                if resp.status_code == 200:
+                    messagebox.showinfo("Success", f"License extended for {email}")
+                    self.refresh_admin_users()
+                else:
+                    messagebox.showerror("Error", f"Failed to extend license: {resp.text}")
+            except Exception as e:
+                messagebox.showerror("Error", f"Failed to extend license: {e}")
     
     
     def toggle_copy_enabled(self):
@@ -1460,7 +1536,7 @@ class MasterLauncher:
             admin_key = self.config.get('master_key', '')
             resp = requests.get(
                 f"{CLOUD_API_BASE_URL}/api/admin/system-health",
-                params={'admin_key': admin_key},
+                params={'license_key': admin_key},
                 timeout=10
             )
             
