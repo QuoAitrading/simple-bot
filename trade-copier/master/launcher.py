@@ -58,6 +58,7 @@ class MasterLauncher:
         self.followers = []
         self.trade_log = []
         self.copy_enabled = True  # Global toggle for signal broadcasting
+        self.admin_users_data = {}  # Store full user data including license keys
         
         # Broker/Position tracking for auto-broadcast
         self.broker = None
@@ -661,6 +662,9 @@ class MasterLauncher:
             for item in self.admin_users_tree.get_children():
                 self.admin_users_tree.delete(item)
             
+            # Store user data for later reference (full license keys)
+            self.admin_users_data = {}
+            
             # Count stats
             total = len(users)
             active = sum(1 for u in users if u.get('license_status', '').upper() == 'ACTIVE')
@@ -680,10 +684,19 @@ class MasterLauncher:
             # Add each user
             for user in users:
                 email = user.get('email', 'N/A')
-                license_key = user.get('license_key', '')[:20] + '...' if len(user.get('license_key', '')) > 20 else user.get('license_key', '')
+                full_license_key = user.get('license_key', '')
+                license_key_display = full_license_key[:20] + '...' if len(full_license_key) > 20 else full_license_key
                 status = user.get('license_status', 'UNKNOWN').upper()
                 license_type = user.get('license_type', 'UNKNOWN')
                 expiration = user.get('license_expiration', 'N/A')
+                
+                # Store full user data including full license key
+                self.admin_users_data[email] = {
+                    'license_key': full_license_key,
+                    'status': status,
+                    'license_type': license_type,
+                    'expiration': expiration
+                }
                 
                 # Format expiration date
                 if expiration and expiration != 'N/A':
@@ -701,7 +714,7 @@ class MasterLauncher:
                 
                 self.admin_users_tree.insert('', 'end', values=(
                     email,
-                    license_key,
+                    license_key_display,
                     status,
                     license_type,
                     expiration,
@@ -790,18 +803,13 @@ class MasterLauncher:
         if messagebox.askyesno("Confirm", f"Suspend user {email}?"):
             try:
                 admin_key = self.config.get('master_key', '')
-                # Get license key for this email from the tree
-                license_key = None
-                for item in self.admin_users_tree.get_children():
-                    values = self.admin_users_tree.item(item)['values']
-                    if values[0] == email:
-                        # Extract full license key from display (remove ...)
-                        license_key = values[1].replace('...', '')
-                        break
                 
-                if not license_key:
+                # Get full license key from stored data
+                if not hasattr(self, 'admin_users_data') or email not in self.admin_users_data:
                     messagebox.showerror("Error", "Could not find license key for user")
                     return
+                
+                license_key = self.admin_users_data[email]['license_key']
                 
                 # Call API to suspend user
                 resp = requests.put(
@@ -823,17 +831,13 @@ class MasterLauncher:
         if messagebox.askyesno("Confirm", f"Activate user {email}?"):
             try:
                 admin_key = self.config.get('master_key', '')
-                # Get license key for this email from the tree
-                license_key = None
-                for item in self.admin_users_tree.get_children():
-                    values = self.admin_users_tree.item(item)['values']
-                    if values[0] == email:
-                        license_key = values[1].replace('...', '')
-                        break
                 
-                if not license_key:
+                # Get full license key from stored data
+                if not hasattr(self, 'admin_users_data') or email not in self.admin_users_data:
                     messagebox.showerror("Error", "Could not find license key for user")
                     return
+                
+                license_key = self.admin_users_data[email]['license_key']
                 
                 # Call API to activate user
                 resp = requests.put(
@@ -855,17 +859,13 @@ class MasterLauncher:
         if messagebox.askyesno("Confirm", f"Extend license for {email} by 30 days?"):
             try:
                 admin_key = self.config.get('master_key', '')
-                # Get license key for this email from the tree
-                license_key = None
-                for item in self.admin_users_tree.get_children():
-                    values = self.admin_users_tree.item(item)['values']
-                    if values[0] == email:
-                        license_key = values[1].replace('...', '')
-                        break
                 
-                if not license_key:
+                # Get full license key from stored data
+                if not hasattr(self, 'admin_users_data') or email not in self.admin_users_data:
                     messagebox.showerror("Error", "Could not find license key for user")
                     return
+                
+                license_key = self.admin_users_data[email]['license_key']
                 
                 # Call API to extend license
                 resp = requests.put(
