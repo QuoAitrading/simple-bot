@@ -1,6 +1,6 @@
 # QuoTrading AI - Unified Admin & Trade Copy Dashboard
 
-This is the **unified dashboard** that combines admin functionality with trade copy monitoring in a single local GUI application.
+This is the **unified dashboard** that combines admin functionality with trade copy monitoring in a single local GUI application. **All data is fetched from your cloud server** - this is just a local interface to manage your cloud-based trading system.
 
 ## Features
 
@@ -12,20 +12,13 @@ This is the **unified dashboard** that combines admin functionality with trade c
 - **Ultra-fast monitoring** - 100ms position polling for instant signal delivery
 
 ### 👥 Admin Tab
-- **User management** - View all registered users (Active, Suspended, Expired)
+- **User management** - View all registered users from cloud server (Active, Suspended, Expired)
 - **License operations**:
   - Suspend users
   - Activate users
   - Extend licenses (30 days)
 - **User statistics** - Total users, active count, suspended count
 - **Double-click actions** - Quick access to user operations
-
-### 🧩 Zones Tab
-- **Supply/Demand zones** from TradingView alerts
-- **Real-time zone updates** - Automatically refreshed
-- **Zone statistics** - Total zones, supply vs demand counts
-- **Multi-symbol support** - ES, NQ, and more
-- **Zone details** - Type, top/bottom prices, strength, status
 
 ### 💚 Health Tab
 - **System health monitoring**:
@@ -71,23 +64,33 @@ The launcher automatically generates a `config.json` file with your settings:
 
 **Note**: The `master_key` is automatically generated from your broker credentials for API authentication. You don't need to manually configure it.
 
+## Cloud Server Connection
+
+**Important**: This dashboard is a **local GUI interface** that connects to your **cloud server** at `https://quotrading-flask-api.azurewebsites.net`. 
+
+- All user data is fetched from your cloud database
+- All admin operations (suspend, activate, extend) are performed on the cloud server
+- Trade signals are broadcast through the cloud API
+- System health monitoring checks your cloud services
+
+This is **NOT** a standalone application - it requires your cloud server to be running and accessible.
+
 ## Features Previously in Cloud Admin Dashboard
 
 All features from the cloud-based admin dashboard (`cloud-api/flask-api/admin-dashboard-full.html`) are now available in this local GUI:
 
-- ✅ User management (suspend, activate, extend)
-- ✅ Real-time zones monitoring
-- ✅ System health checks
-- ✅ Trade copy monitoring
-- ✅ Live follower tracking
+- ✅ User management (suspend, activate, extend) - operates on cloud database
+- ✅ System health checks - monitors cloud services
+- ✅ Trade copy monitoring - tracks cloud-connected followers
+- ✅ Live follower tracking - real-time data from cloud
 
 ## Benefits of Unified Dashboard
 
-1. **Single Application** - No need to run separate admin dashboard in cloud
-2. **Faster Access** - Local GUI is more responsive than web interface
+1. **Single Application** - No need to open web browser for admin tasks
+2. **Faster Access** - Local GUI with cloud data
 3. **Integrated Workflow** - Manage users and monitor trades in one place
-4. **Secure** - Admin features run locally, not exposed via web
-5. **Offline Capable** - Most features work without internet connection
+4. **Better UX** - Native desktop interface
+5. **Still Cloud-Connected** - All data from your cloud server
 
 ## Keyboard Shortcuts
 
@@ -100,16 +103,17 @@ All features from the cloud-based admin dashboard (`cloud-api/flask-api/admin-da
 ### Can't see admin features?
 - Ensure you have valid admin credentials configured
 - The `master_key` in config.json must be valid
+- Verify internet connection to cloud server
 
-### Zones tab shows "No zones"?
-- Check that TradingView alerts are configured
-- Verify webhook URL points to your API server
-- Check zones API endpoint is accessible
+### Can't see users?
+- Check internet connection
+- Verify cloud API server is running at https://quotrading-flask-api.azurewebsites.net
+- Ensure `master_key` has admin permissions
 
 ### Health tab shows unhealthy services?
 - Verify internet connection
-- Check API server is running
-- Ensure database credentials are correct
+- Check API server is running on cloud
+- Ensure database credentials are correct on cloud server
 
 ## Migration from Cloud Admin Dashboard
 

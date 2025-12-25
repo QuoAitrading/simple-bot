@@ -2,7 +2,7 @@
 
 ## What Was Done
 
-The cloud-based admin dashboard has been successfully merged into the master copier dashboard, creating a **unified local GUI application** that combines all admin features with trade copy functionality.
+The cloud-based admin dashboard has been successfully merged into the master copier dashboard, creating a **unified local GUI application** that combines all admin features with trade copy functionality. **Important**: This is a local interface that connects to your cloud server - all data comes from the cloud.
 
 ## Before & After
 
@@ -11,47 +11,41 @@ The cloud-based admin dashboard has been successfully merged into the master cop
   - Cloud admin dashboard (HTML at `/cloud-api/flask-api/admin-dashboard-full.html`)
   - Local master copier dashboard (Tkinter GUI)
 - Admin features only accessible via web browser
-- Needed to run cloud API server for admin access
+- Needed to open browser to manage users
 
 ### After
 - **Single unified dashboard**:
   - All admin features in local GUI
   - Trade copy + admin in one application
-  - No need for separate cloud dashboard
-- Faster, more secure, better UX
+  - Still connects to cloud server for all data
+- Faster access, better UX, native desktop interface
 
 ## New Dashboard Structure
 
-The unified dashboard has **4 tabs**:
+The unified dashboard has **3 tabs**:
 
 ### 1. 📡 Trade Copy Tab
-- Monitor all connected followers in real-time
+- Monitor all connected followers in real-time (from cloud)
 - View positions, signals, and copy status
 - Global enable/disable for signal broadcasting
 - Ultra-fast 100ms position polling
 
 ### 2. 👥 Admin Tab
-- View all registered users (Active, Suspended, Expired)
-- User operations:
+- View all registered users from cloud database (Active, Suspended, Expired)
+- User operations (performed on cloud server):
   - Suspend users
   - Activate users
   - Extend licenses by 30 days
 - User statistics dashboard
 - Double-click any user for quick actions
 
-### 3. 🧩 Zones Tab
-- View supply/demand zones from TradingView
-- Real-time zone updates
-- Multi-symbol support (ES, NQ, etc.)
-- Zone statistics and details
-
-### 4. 💚 Health Tab
-- System health monitoring
+### 3. 💚 Health Tab
+- System health monitoring (cloud services)
 - Service status checks:
-  - Flask Server
-  - PostgreSQL Database
-  - Email Service
-  - Whop API
+  - Flask Server (cloud)
+  - PostgreSQL Database (cloud)
+  - Email Service (cloud)
+  - Whop API (cloud)
 - Response time tracking
 - Error diagnostics
 
@@ -70,40 +64,44 @@ The unified dashboard has **4 tabs**:
 
 3. **Navigate tabs**:
    - Click on any tab to switch views
-   - All tabs auto-refresh their data
+   - All tabs fetch data from cloud server
    - Use the 🔄 Refresh button for manual updates
+
+## Cloud Server Connection
+
+**Critical**: This dashboard connects to `https://quotrading-flask-api.azurewebsites.net`
+
+All operations are performed on your cloud server:
+- User management operations
+- Follower data fetching
+- Health monitoring
+- Trade signal broadcasting
 
 ## API Endpoints Used
 
 The dashboard connects to your cloud API for:
 - `/copier/followers` - Get connected followers
-- `/api/admin/list-licenses` - Get all users
+- `/api/admin/list-licenses` - Get all users from cloud database
 - `/api/admin/suspend-license/{key}` - Suspend user
 - `/api/admin/activate-license/{key}` - Activate user
 - `/api/admin/extend-license/{key}` - Extend license
-- `/api/zones/ES` and `/api/zones/NQ` - Get zones
 - `/api/admin/system-health` - Get system health
 
 ## Features Migrated from Cloud Dashboard
 
 ✅ **User Management**
-- View all users
+- View all users from cloud
 - Filter by status
-- Suspend/activate operations
-- License extensions
-
-✅ **Zones Monitoring**
-- Real-time zones from TradingView
-- Supply/demand zone visualization
-- Zone statistics
+- Suspend/activate operations (on cloud)
+- License extensions (on cloud)
 
 ✅ **System Health**
-- Service status monitoring
+- Service status monitoring (cloud services)
 - Response time tracking
 - Error diagnostics
 
 ✅ **Trade Copy (Already Existed)**
-- Follower monitoring
+- Follower monitoring (from cloud)
 - Position tracking
 - Signal broadcasting
 
@@ -128,22 +126,16 @@ The cloud admin dashboard (`/cloud-api/flask-api/admin-dashboard-full.html`) sti
 
 ### Issue: "Admin tab shows no users"
 **Solution**: 
-1. Check internet connection
-2. Verify API server is running
+1. Check internet connection to cloud server
+2. Verify cloud API server is running at https://quotrading-flask-api.azurewebsites.net
 3. Ensure `master_key` has admin permissions
-
-### Issue: "Zones tab shows 'No zones'"
-**Solution**:
-1. Check TradingView webhook is configured
-2. Verify zones API endpoint is accessible
-3. Confirm TradingView alerts are active
 
 ### Issue: "Health tab shows unhealthy services"
 **Solution**:
-1. Check internet connection
-2. Verify API server is running
-3. Check database credentials
-4. Review service logs
+1. Check internet connection to cloud server
+2. Verify cloud API server is running
+3. Check database credentials on cloud server
+4. Review cloud service logs
 
 ## Configuration File
 
@@ -162,7 +154,7 @@ The dashboard uses `trade-copier/master/config.json`:
 }
 ```
 
-The `master_key` is automatically generated from your broker credentials and used for admin API authentication.
+**Note**: The `api_url` points to your cloud server. All data is fetched from there. The `master_key` is automatically generated from your broker credentials and used for admin API authentication.
 
 ## Documentation
 
@@ -181,8 +173,8 @@ For issues or questions:
 ## Next Steps
 
 1. **Test the dashboard**: Run `python launcher.py` and verify all tabs work
-2. **Verify API calls**: Test suspend/activate/extend operations
-3. **Monitor zones**: Check that TradingView zones appear in the Zones tab
-4. **Check health**: Verify all services show as healthy
+2. **Verify API calls**: Test suspend/activate/extend operations on cloud users
+3. **Check health**: Verify all cloud services show as healthy
+4. **Test trade copy**: Ensure follower monitoring works from cloud
 
 Enjoy your unified dashboard! 🚀
