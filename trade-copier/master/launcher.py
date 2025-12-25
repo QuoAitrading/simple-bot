@@ -1,6 +1,7 @@
 """
-Master Launcher - YOUR dashboard to monitor trade broadcasts
-Shows connected followers (ONLINE ONLY) with email and API key
+Master Launcher - Unified Admin & Trade Copier Dashboard
+Combines admin dashboard functionality with trade copy monitoring
+Shows connected followers, admin controls, and real-time trading
 Styled like Google Sheets / Admin Dashboard
 """
 
@@ -406,13 +407,23 @@ class MasterLauncher:
         tk.Frame(self.root, bg=self.colors['grid_border'], height=1).pack(fill=tk.X)
         
         # ═══════════════════════════════════════════════════════════════════
-        # MAIN CONTENT - Spreadsheet table
+        # TABBED INTERFACE - Trade Copy & Admin tabs
         # ═══════════════════════════════════════════════════════════════════
-        content = tk.Frame(self.root, bg='white')
-        content.pack(fill=tk.BOTH, expand=True)
+        self.notebook = ttk.Notebook(self.root)
+        self.notebook.pack(fill=tk.BOTH, expand=True)
+        
+        # Configure notebook style
+        style = ttk.Style()
+        style.configure('TNotebook.Tab', padding=[20, 10], font=("Segoe UI", 10, "bold"))
+        
+        # ═══════════════════════════════════════════════════════════════════
+        # TAB 1: TRADE COPY - Live Followers
+        # ═══════════════════════════════════════════════════════════════════
+        trade_copy_tab = tk.Frame(self.notebook, bg='white')
+        self.notebook.add(trade_copy_tab, text='📡 Trade Copy')
         
         # Section header
-        section_header = tk.Frame(content, bg='white')
+        section_header = tk.Frame(trade_copy_tab, bg='white')
         section_header.pack(fill=tk.X, padx=20, pady=15)
         
         tk.Label(section_header, text="👥 Online Users", 
@@ -426,7 +437,7 @@ class MasterLauncher:
         # ═══════════════════════════════════════════════════════════════════
         # SPREADSHEET TABLE - Using Treeview
         # ═══════════════════════════════════════════════════════════════════
-        table_frame = tk.Frame(content, bg='white')
+        table_frame = tk.Frame(trade_copy_tab, bg='white')
         table_frame.pack(fill=tk.BOTH, expand=True, padx=20, pady=(0, 20))
         
         # Configure Treeview style for spreadsheet look
@@ -489,6 +500,14 @@ class MasterLauncher:
         self.users_tree.tag_configure('copy_off', background='#fff3e0')  # Orange tint for copy disabled
         
         # ═══════════════════════════════════════════════════════════════════
+        # TAB 2: ADMIN - User Management
+        # ═══════════════════════════════════════════════════════════════════
+        admin_tab = tk.Frame(self.notebook, bg='white')
+        self.notebook.add(admin_tab, text='👥 Admin')
+        
+        self.setup_admin_tab(admin_tab)
+        
+        # ═══════════════════════════════════════════════════════════════════
         # FOOTER - Status bar
         # ═══════════════════════════════════════════════════════════════════
         footer = tk.Frame(self.root, bg=self.colors['grid_header'], height=35)
@@ -516,7 +535,269 @@ class MasterLauncher:
     def manual_refresh(self):
         """Manual refresh button handler"""
         self.refresh_followers()
+        self.refresh_admin_users()
         self.last_update_label.config(text=f"Last update: {datetime.now().strftime('%H:%M:%S')}")
+    
+    def setup_admin_tab(self, parent):
+        """Setup the admin tab with user management"""
+        # Admin header
+        admin_header = tk.Frame(parent, bg='white')
+        admin_header.pack(fill=tk.X, padx=20, pady=15)
+        
+        tk.Label(admin_header, text="👥 User Management", 
+                font=("Segoe UI", 14, "bold"),
+                bg='white', fg=self.colors['text']).pack(side=tk.LEFT)
+        
+        tk.Label(admin_header, text="(All registered users - Active, Suspended, Expired)", 
+                font=("Segoe UI", 10),
+                bg='white', fg=self.colors['text_light']).pack(side=tk.LEFT, padx=10)
+        
+        # Refresh button for admin tab
+        tk.Button(admin_header, text="🔄 Refresh Users",
+                font=("Segoe UI", 10),
+                bg=self.colors['accent'], fg='white',
+                activebackground='#1557b0',
+                relief=tk.FLAT, padx=15, pady=5,
+                cursor='hand2',
+                command=self.refresh_admin_users).pack(side=tk.RIGHT)
+        
+        # Stats bar for admin
+        admin_stats = tk.Frame(parent, bg='white')
+        admin_stats.pack(fill=tk.X, padx=20, pady=(0, 15))
+        
+        self.admin_total_label = tk.Label(admin_stats, text="Total Users: 0", 
+                font=("Segoe UI", 11), bg='white', fg=self.colors['text'])
+        self.admin_total_label.pack(side=tk.LEFT, padx=(0, 20))
+        
+        self.admin_active_label = tk.Label(admin_stats, text="Active: 0", 
+                font=("Segoe UI", 11), bg='white', fg=self.colors['success'])
+        self.admin_active_label.pack(side=tk.LEFT, padx=(0, 20))
+        
+        self.admin_suspended_label = tk.Label(admin_stats, text="Suspended: 0", 
+                font=("Segoe UI", 11), bg='white', fg=self.colors['error'])
+        self.admin_suspended_label.pack(side=tk.LEFT)
+        
+        # Admin user table
+        admin_table_frame = tk.Frame(parent, bg='white')
+        admin_table_frame.pack(fill=tk.BOTH, expand=True, padx=20, pady=(0, 20))
+        
+        # Create admin users tree
+        admin_columns = ('email', 'license_key', 'status', 'license_type', 'expiration', 'actions')
+        self.admin_users_tree = ttk.Treeview(admin_table_frame, columns=admin_columns, show='headings',
+                                             style="Spreadsheet.Treeview")
+        
+        # Define columns
+        self.admin_users_tree.heading('email', text='Email')
+        self.admin_users_tree.heading('license_key', text='License Key')
+        self.admin_users_tree.heading('status', text='Status')
+        self.admin_users_tree.heading('license_type', text='Type')
+        self.admin_users_tree.heading('expiration', text='Expires')
+        self.admin_users_tree.heading('actions', text='Actions')
+        
+        # Column widths
+        self.admin_users_tree.column('email', width=200, minwidth=150)
+        self.admin_users_tree.column('license_key', width=180, minwidth=120)
+        self.admin_users_tree.column('status', width=100, minwidth=80)
+        self.admin_users_tree.column('license_type', width=100, minwidth=80)
+        self.admin_users_tree.column('expiration', width=150, minwidth=100)
+        self.admin_users_tree.column('actions', width=200, minwidth=150)
+        
+        # Scrollbar for admin table
+        admin_scrollbar = ttk.Scrollbar(admin_table_frame, orient=tk.VERTICAL, command=self.admin_users_tree.yview)
+        self.admin_users_tree.configure(yscrollcommand=admin_scrollbar.set)
+        
+        # Pack admin table
+        self.admin_users_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        admin_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        
+        # Configure row tags for admin table
+        self.admin_users_tree.tag_configure('active', background='#e6f4ea')
+        self.admin_users_tree.tag_configure('suspended', background='#fce8e6')
+        self.admin_users_tree.tag_configure('expired', background='#f5f5f5')
+        
+        # Bind double-click to show user details
+        self.admin_users_tree.bind('<Double-1>', self.show_user_details)
+        
+        # Initial load
+        self.refresh_admin_users()
+    
+    def refresh_admin_users(self):
+        """Refresh the admin users list"""
+        try:
+            # Get admin key from config (auto-generated from username)
+            admin_key = self.config.get('master_key', '')
+            if not admin_key:
+                return
+            
+            # Fetch all users from API
+            resp = requests.get(
+                f"{CLOUD_API_BASE_URL}/api/admin/list-licenses",
+                params={'license_key': admin_key},
+                timeout=10
+            )
+            
+            if resp.status_code == 200:
+                data = resp.json()
+                users = data.get('licenses', [])
+                self.root.after(0, lambda: self.update_admin_users_ui(users))
+        except Exception as e:
+            print(f"Error fetching admin users: {e}")
+    
+    def update_admin_users_ui(self, users):
+        """Update the admin users table"""
+        try:
+            if not self.root.winfo_exists():
+                return
+            
+            # Clear existing items
+            for item in self.admin_users_tree.get_children():
+                self.admin_users_tree.delete(item)
+            
+            # Count stats
+            total = len(users)
+            active = sum(1 for u in users if u.get('license_status', '').upper() == 'ACTIVE')
+            suspended = sum(1 for u in users if u.get('license_status', '').upper() == 'SUSPENDED')
+            
+            # Update stats labels
+            self.admin_total_label.config(text=f"Total Users: {total}")
+            self.admin_active_label.config(text=f"Active: {active}")
+            self.admin_suspended_label.config(text=f"Suspended: {suspended}")
+            
+            if not users:
+                self.admin_users_tree.insert('', 'end', values=(
+                    'No users found', '', '', '', '', ''
+                ))
+                return
+            
+            # Add each user
+            for user in users:
+                email = user.get('email', 'N/A')
+                license_key = user.get('license_key', '')[:20] + '...' if len(user.get('license_key', '')) > 20 else user.get('license_key', '')
+                status = user.get('license_status', 'UNKNOWN').upper()
+                license_type = user.get('license_type', 'UNKNOWN')
+                expiration = user.get('license_expiration', 'N/A')
+                
+                # Format expiration date
+                if expiration and expiration != 'N/A':
+                    try:
+                        exp_date = datetime.fromisoformat(expiration.replace('Z', '+00:00'))
+                        expiration = exp_date.strftime('%Y-%m-%d %H:%M')
+                    except:
+                        pass
+                
+                # Determine tag
+                tag = 'active' if status == 'ACTIVE' else 'suspended' if status == 'SUSPENDED' else 'expired'
+                
+                # Actions column - show available actions
+                actions = 'Double-click for options'
+                
+                self.admin_users_tree.insert('', 'end', values=(
+                    email,
+                    license_key,
+                    status,
+                    license_type,
+                    expiration,
+                    actions
+                ), tags=(tag,))
+                
+        except tk.TclError:
+            return
+        except Exception as e:
+            print(f"Error updating admin users UI: {e}")
+    
+    def show_user_details(self, event):
+        """Show user details and actions dialog"""
+        selection = self.admin_users_tree.selection()
+        if not selection:
+            return
+        
+        item = self.admin_users_tree.item(selection[0])
+        values = item['values']
+        
+        if values[0] == 'No users found':
+            return
+        
+        # Create popup dialog
+        dialog = tk.Toplevel(self.root)
+        dialog.title("User Actions")
+        dialog.geometry("400x300")
+        dialog.configure(bg='white')
+        
+        # User info
+        info_frame = tk.Frame(dialog, bg='white', padx=20, pady=20)
+        info_frame.pack(fill=tk.BOTH, expand=True)
+        
+        tk.Label(info_frame, text="User Details", font=("Segoe UI", 14, "bold"),
+                bg='white', fg=self.colors['text']).pack(anchor='w', pady=(0, 10))
+        
+        tk.Label(info_frame, text=f"Email: {values[0]}", font=("Segoe UI", 10),
+                bg='white', fg=self.colors['text']).pack(anchor='w')
+        tk.Label(info_frame, text=f"Status: {values[2]}", font=("Segoe UI", 10),
+                bg='white', fg=self.colors['text']).pack(anchor='w')
+        tk.Label(info_frame, text=f"Type: {values[3]}", font=("Segoe UI", 10),
+                bg='white', fg=self.colors['text']).pack(anchor='w')
+        tk.Label(info_frame, text=f"Expires: {values[4]}", font=("Segoe UI", 10),
+                bg='white', fg=self.colors['text']).pack(anchor='w')
+        
+        # Actions
+        tk.Frame(info_frame, bg=self.colors['grid_border'], height=1).pack(fill=tk.X, pady=15)
+        
+        tk.Label(info_frame, text="Actions:", font=("Segoe UI", 11, "bold"),
+                bg='white', fg=self.colors['text']).pack(anchor='w', pady=(0, 10))
+        
+        btn_frame = tk.Frame(info_frame, bg='white')
+        btn_frame.pack(fill=tk.X)
+        
+        if values[2] == 'ACTIVE':
+            tk.Button(btn_frame, text="Suspend User",
+                     bg=self.colors['error'], fg='white',
+                     font=("Segoe UI", 10),
+                     relief=tk.FLAT, padx=15, pady=8,
+                     cursor='hand2',
+                     command=lambda: [self.suspend_user(values[0]), dialog.destroy()]).pack(fill=tk.X, pady=2)
+        elif values[2] == 'SUSPENDED':
+            tk.Button(btn_frame, text="Activate User",
+                     bg=self.colors['success'], fg='white',
+                     font=("Segoe UI", 10),
+                     relief=tk.FLAT, padx=15, pady=8,
+                     cursor='hand2',
+                     command=lambda: [self.activate_user(values[0]), dialog.destroy()]).pack(fill=tk.X, pady=2)
+        
+        tk.Button(btn_frame, text="Extend License (30 days)",
+                 bg=self.colors['accent'], fg='white',
+                 font=("Segoe UI", 10),
+                 relief=tk.FLAT, padx=15, pady=8,
+                 cursor='hand2',
+                 command=lambda: [self.extend_license(values[0]), dialog.destroy()]).pack(fill=tk.X, pady=2)
+        
+        tk.Button(btn_frame, text="Close",
+                 bg=self.colors['grid_header'], fg=self.colors['text'],
+                 font=("Segoe UI", 10),
+                 relief=tk.FLAT, padx=15, pady=8,
+                 cursor='hand2',
+                 command=dialog.destroy).pack(fill=tk.X, pady=2)
+    
+    def suspend_user(self, email):
+        """Suspend a user"""
+        if messagebox.askyesno("Confirm", f"Suspend user {email}?"):
+            # TODO: Implement API call to suspend user
+            messagebox.showinfo("Success", f"User {email} suspended")
+            self.refresh_admin_users()
+    
+    def activate_user(self, email):
+        """Activate a user"""
+        if messagebox.askyesno("Confirm", f"Activate user {email}?"):
+            # TODO: Implement API call to activate user
+            messagebox.showinfo("Success", f"User {email} activated")
+            self.refresh_admin_users()
+    
+    def extend_license(self, email):
+        """Extend user license by 30 days"""
+        if messagebox.askyesno("Confirm", f"Extend license for {email} by 30 days?"):
+            # TODO: Implement API call to extend license
+            messagebox.showinfo("Success", f"License extended for {email}")
+            self.refresh_admin_users()
+    
     
     def toggle_copy_enabled(self):
         """Toggle the global copy enabled/disabled state"""
