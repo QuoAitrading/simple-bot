@@ -44,13 +44,10 @@ app.config['MAX_CONTENT_LENGTH'] = 10 * 1024 * 1024  # 10MB max request size
 # Security: CORS protection - restrict to known domains
 # CORS_ORIGINS can be overridden via environment variable for flexibility
 # In production, set CORS_ORIGINS env var to exclude localhost
-_default_cors = "https://quotrading.com,https://quotrading-flask-api.azurewebsites.net"
-if os.environ.get("FLASK_ENV") == "development" or os.environ.get("FLASK_DEBUG") == "1":
-    _default_cors += ",http://localhost:5000"  # Only add localhost in dev mode
+_default_cors = "https://quotrading.com,https://quotrading-flask-api.azurewebsites.net,http://localhost:8080,http://localhost:5000"
 CORS_ORIGINS = os.environ.get("CORS_ORIGINS", _default_cors).split(",")
 CORS(app, resources={
-    r"/api/*": {"origins": CORS_ORIGINS},  # Restricted to known domains
-    r"/admin-dashboard-full.html": {"origins": ["https://quotrading-flask-api.azurewebsites.net"]}
+    r"/api/*": {"origins": "*"},  # Allow all origins for API
 })
 
 logging.basicConfig(
