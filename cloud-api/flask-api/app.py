@@ -5563,6 +5563,139 @@ def copier_validate_license():
     })
 
 
+@app.route('/api/admin/copier-users', methods=['GET'])
+def admin_copier_users():
+    """Get enhanced follower data with user license info for admin dashboard."""
+    admin_key = request.args.get('license_key') or request.args.get('admin_key')
+    if admin_key != ADMIN_API_KEY:
+        return jsonify({"error": "Unauthorized"}), 401
+    
+    conn = get_db_connection()
+    if not conn:
+        # Return basic follower data without DB enrichment
+        followers = []
+        for follower_key, follower in _connected_followers.items():
+            followers.append({
+                'license_key': follower_key,
+                'email': 'unknown@email.com',
+                'license_status': 'UNKNOWN',
+                'license_type': 'UNKNOWN',
+                'license_expiration': None,
+                'is_online': True,  # If in _connected_followers, they're online
+                'name': follower.get('name', 'Unknown'),
+                'connected_at': follower.get('connected_at'),
+                'last_heartbeat': follower.get('last_heartbeat'),
+                'copy_enabled': follower.get('copy_enabled', True),
+                'signals_received': follower.get('signals_received', 0),
+                'signals_executed': follower.get('signals_executed', 0),
+                'current_position': follower.get('current_position'),
+                'session_pnl': follower.get('metadata', {}).get('session_pnl', 0),
+                'trades_today': follower.get('metadata', {}).get('trades_executed', 0)
+            })
+        return jsonify({"users": followers})
+    
+    try:
+        with conn.cursor(cursor_factory=RealDictCursor) as cursor:
+            # Get all users with active licenses
+            cursor.execute("""
+                SELECT 
+                    license_key, email, license_type, license_status, 
+                    license_expiration, created_at, account_id,
+                    last_active, trade_count
+                FROM users
+                ORDER BY created_at DESC
+            """)
+            users = cursor.fetchall()
+            
+            # Enhance with follower copier data
+            users_list = []
+            now_utc = datetime.now(timezone.utc)
+            
+            for user in users:
+                license_key = user['license_key']
+                
+                # Check if this user is connected as a follower
+                follower = _connected_followers.get(license_key)
+                
+                if follower:
+                    # User is online - check heartbeat freshness
+                    last_hb_str = follower.get('last_heartbeat', '')
+                    is_online = False
+                    if last_hb_str:
+                        try:
+                            last_hb = datetime.fromisoformat(last_hb_str.replace('Z', '+00:00'))
+                            time_since = (now_utc - last_hb).total_seconds()
+                            is_online = time_since < 60  # Online if heartbeat within last 60 seconds
+                        except:
+                            pass
+                    
+                    # Get position and PNL data
+                    current_position = follower.get('current_position')
+                    metadata = follower.get('metadata', {})
+                    session_pnl = metadata.get('session_pnl', 0)
+                    trades_executed = metadata.get('trades_executed', 0)
+                    
+                    # Extract symbol and position from current_position
+                    symbol = current_position.get('symbol', '-') if current_position else '-'
+                    position_str = '-'
+                    if current_position and current_position.get('qty', 0) > 0:
+                        side = current_position.get('side', '')
+                        qty = current_position.get('qty', 0)
+                        position_str = f"{side} {qty}"
+                    
+                    users_list.append({
+                        'account_id': user['account_id'],
+                        'license_key': license_key,
+                        'email': user['email'],
+                        'license_status': user['license_status'],
+                        'license_type': user['license_type'],
+                        'license_expiration': format_datetime_utc(user['license_expiration']),
+                        'created_at': format_datetime_utc(user['created_at']),
+                        'is_online': is_online,
+                        'last_active': follower.get('last_heartbeat') if is_online else format_datetime_utc(user.get('last_active')),
+                        'trade_count': user.get('trade_count', 0),
+                        # Copier-specific data
+                        'bot_status': {
+                            'symbol': symbol,
+                            'session_pnl': session_pnl,
+                            'trades_today': trades_executed,
+                            'win_rate': None,  # Not tracked yet
+                            'position': position_str
+                        },
+                        'copy_enabled': follower.get('copy_enabled', True),
+                        'signals_received': follower.get('signals_received', 0),
+                        'signals_executed': follower.get('signals_executed', 0),
+                        'connected_at': follower.get('connected_at')
+                    })
+                else:
+                    # User is offline
+                    users_list.append({
+                        'account_id': user['account_id'],
+                        'license_key': license_key,
+                        'email': user['email'],
+                        'license_status': user['license_status'],
+                        'license_type': user['license_type'],
+                        'license_expiration': format_datetime_utc(user['license_expiration']),
+                        'created_at': format_datetime_utc(user['created_at']),
+                        'is_online': False,
+                        'last_active': format_datetime_utc(user.get('last_active')),
+                        'trade_count': user.get('trade_count', 0),
+                        'bot_status': None,
+                        'copy_enabled': False,
+                        'signals_received': 0,
+                        'signals_executed': 0,
+                        'connected_at': None
+                    })
+            
+            return jsonify({"users": users_list})
+            
+    except Exception as e:
+        logging.error(f"Admin copier users error: {e}")
+        return jsonify({"error": str(e)}), 500
+    finally:
+        return_connection(conn)
+
+
 # ============================================
 # COPIER WEBSOCKET HANDLERS
 # Real-time signal push for instant trade execution

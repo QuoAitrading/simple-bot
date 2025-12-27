@@ -1686,7 +1686,8 @@
 
         async function loadUsers() {
             try {
-                const response = await fetch(`${API_URL}/api/admin/users?license_key=${ADMIN_KEY}`);
+                // Use new copier-users endpoint that shows follower trade copier data
+                const response = await fetch(`${API_URL}/api/admin/copier-users?license_key=${ADMIN_KEY}`);
                 const data = await response.json();
                 allUsers = data.users;
 
