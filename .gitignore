@@ -178,3 +178,4 @@ dev/data_recorder_config.json
 !data/.gitkeep
 !launcher/.gitkeep
 *_original.csv
+discord-bot/config.json
