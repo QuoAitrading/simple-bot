@@ -1,7 +1,6 @@
 """
-Master Launcher - Unified Admin & Trade Copier Dashboard
-Combines admin dashboard functionality with trade copy monitoring
-Shows connected followers, admin controls, and real-time trading
+Master Launcher - YOUR dashboard to monitor trade broadcasts
+Shows connected followers (ONLINE ONLY) with email and API key
 Styled like Google Sheets / Admin Dashboard
 """
 
@@ -27,7 +26,7 @@ class MasterLauncher:
     
     def __init__(self):
         self.root = tk.Tk()
-        self.root.title("📊 QuoTrading AI - Admin & Trade Copy Dashboard")
+        self.root.title("📊 QuoTrading AI - Master Dashboard")
         self.root.geometry("1100x700")
         self.root.resizable(True, True)
         self.root.minsize(900, 600)
@@ -58,7 +57,6 @@ class MasterLauncher:
         self.followers = []
         self.trade_log = []
         self.copy_enabled = True  # Global toggle for signal broadcasting
-        self.admin_users_data = {}  # Store full user data including license keys
         
         # Broker/Position tracking for auto-broadcast
         self.broker = None
@@ -322,7 +320,7 @@ class MasterLauncher:
                 font=("Segoe UI", 14, "bold"), 
                 bg=self.colors['header_bg'], fg='white').pack(side=tk.LEFT)
         
-        tk.Label(header_left, text="  Admin & Trade Copy Dashboard", 
+        tk.Label(header_left, text="  Master Dashboard", 
                 font=("Segoe UI", 14), 
                 bg=self.colors['header_bg'], fg='white').pack(side=tk.LEFT)
         
@@ -408,23 +406,13 @@ class MasterLauncher:
         tk.Frame(self.root, bg=self.colors['grid_border'], height=1).pack(fill=tk.X)
         
         # ═══════════════════════════════════════════════════════════════════
-        # TABBED INTERFACE - Trade Copy & Admin tabs
+        # MAIN CONTENT - Spreadsheet table
         # ═══════════════════════════════════════════════════════════════════
-        self.notebook = ttk.Notebook(self.root)
-        self.notebook.pack(fill=tk.BOTH, expand=True)
-        
-        # Configure notebook style
-        style = ttk.Style()
-        style.configure('TNotebook.Tab', padding=[20, 10], font=("Segoe UI", 10, "bold"))
-        
-        # ═══════════════════════════════════════════════════════════════════
-        # TAB 1: TRADE COPY - Live Followers
-        # ═══════════════════════════════════════════════════════════════════
-        trade_copy_tab = tk.Frame(self.notebook, bg='white')
-        self.notebook.add(trade_copy_tab, text='📡 Trade Copy')
+        content = tk.Frame(self.root, bg='white')
+        content.pack(fill=tk.BOTH, expand=True)
         
         # Section header
-        section_header = tk.Frame(trade_copy_tab, bg='white')
+        section_header = tk.Frame(content, bg='white')
         section_header.pack(fill=tk.X, padx=20, pady=15)
         
         tk.Label(section_header, text="👥 Online Users", 
@@ -438,7 +426,7 @@ class MasterLauncher:
         # ═══════════════════════════════════════════════════════════════════
         # SPREADSHEET TABLE - Using Treeview
         # ═══════════════════════════════════════════════════════════════════
-        table_frame = tk.Frame(trade_copy_tab, bg='white')
+        table_frame = tk.Frame(content, bg='white')
         table_frame.pack(fill=tk.BOTH, expand=True, padx=20, pady=(0, 20))
         
         # Configure Treeview style for spreadsheet look
@@ -501,22 +489,6 @@ class MasterLauncher:
         self.users_tree.tag_configure('copy_off', background='#fff3e0')  # Orange tint for copy disabled
         
         # ═══════════════════════════════════════════════════════════════════
-        # TAB 2: ADMIN - User Management
-        # ═══════════════════════════════════════════════════════════════════
-        admin_tab = tk.Frame(self.notebook, bg='white')
-        self.notebook.add(admin_tab, text='👥 Admin')
-        
-        self.setup_admin_tab(admin_tab)
-        
-        # ═══════════════════════════════════════════════════════════════════
-        # TAB 3: HEALTH - System Health
-        # ═══════════════════════════════════════════════════════════════════
-        health_tab = tk.Frame(self.notebook, bg='white')
-        self.notebook.add(health_tab, text='💚 Health')
-        
-        self.setup_health_tab(health_tab)
-        
-        # ═══════════════════════════════════════════════════════════════════
         # FOOTER - Status bar
         # ═══════════════════════════════════════════════════════════════════
         footer = tk.Frame(self.root, bg=self.colors['grid_header'], height=35)
@@ -544,344 +516,7 @@ class MasterLauncher:
     def manual_refresh(self):
         """Manual refresh button handler"""
         self.refresh_followers()
-        self.refresh_admin_users()
         self.last_update_label.config(text=f"Last update: {datetime.now().strftime('%H:%M:%S')}")
-    
-    def setup_admin_tab(self, parent):
-        """Setup the admin tab with user management"""
-        # Admin header
-        admin_header = tk.Frame(parent, bg='white')
-        admin_header.pack(fill=tk.X, padx=20, pady=15)
-        
-        tk.Label(admin_header, text="👥 User Management", 
-                font=("Segoe UI", 14, "bold"),
-                bg='white', fg=self.colors['text']).pack(side=tk.LEFT)
-        
-        tk.Label(admin_header, text="(All registered users - Active, Suspended, Expired)", 
-                font=("Segoe UI", 10),
-                bg='white', fg=self.colors['text_light']).pack(side=tk.LEFT, padx=10)
-        
-        # Refresh button for admin tab
-        tk.Button(admin_header, text="🔄 Refresh Users",
-                font=("Segoe UI", 10),
-                bg=self.colors['accent'], fg='white',
-                activebackground='#1557b0',
-                relief=tk.FLAT, padx=15, pady=5,
-                cursor='hand2',
-                command=self.refresh_admin_users).pack(side=tk.RIGHT)
-        
-        # Stats bar for admin
-        admin_stats = tk.Frame(parent, bg='white')
-        admin_stats.pack(fill=tk.X, padx=20, pady=(0, 15))
-        
-        self.admin_total_label = tk.Label(admin_stats, text="Total Users: 0", 
-                font=("Segoe UI", 11), bg='white', fg=self.colors['text'])
-        self.admin_total_label.pack(side=tk.LEFT, padx=(0, 20))
-        
-        self.admin_active_label = tk.Label(admin_stats, text="Active: 0", 
-                font=("Segoe UI", 11), bg='white', fg=self.colors['success'])
-        self.admin_active_label.pack(side=tk.LEFT, padx=(0, 20))
-        
-        self.admin_suspended_label = tk.Label(admin_stats, text="Suspended: 0", 
-                font=("Segoe UI", 11), bg='white', fg=self.colors['error'])
-        self.admin_suspended_label.pack(side=tk.LEFT)
-        
-        # Admin user table
-        admin_table_frame = tk.Frame(parent, bg='white')
-        admin_table_frame.pack(fill=tk.BOTH, expand=True, padx=20, pady=(0, 20))
-        
-        # Create admin users tree
-        admin_columns = ('email', 'license_key', 'status', 'license_type', 'expiration', 'actions')
-        self.admin_users_tree = ttk.Treeview(admin_table_frame, columns=admin_columns, show='headings',
-                                             style="Spreadsheet.Treeview")
-        
-        # Define columns
-        self.admin_users_tree.heading('email', text='Email')
-        self.admin_users_tree.heading('license_key', text='License Key')
-        self.admin_users_tree.heading('status', text='Status')
-        self.admin_users_tree.heading('license_type', text='Type')
-        self.admin_users_tree.heading('expiration', text='Expires')
-        self.admin_users_tree.heading('actions', text='Actions')
-        
-        # Column widths
-        self.admin_users_tree.column('email', width=200, minwidth=150)
-        self.admin_users_tree.column('license_key', width=180, minwidth=120)
-        self.admin_users_tree.column('status', width=100, minwidth=80)
-        self.admin_users_tree.column('license_type', width=100, minwidth=80)
-        self.admin_users_tree.column('expiration', width=150, minwidth=100)
-        self.admin_users_tree.column('actions', width=200, minwidth=150)
-        
-        # Scrollbar for admin table
-        admin_scrollbar = ttk.Scrollbar(admin_table_frame, orient=tk.VERTICAL, command=self.admin_users_tree.yview)
-        self.admin_users_tree.configure(yscrollcommand=admin_scrollbar.set)
-        
-        # Pack admin table
-        self.admin_users_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        admin_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
-        
-        # Configure row tags for admin table
-        self.admin_users_tree.tag_configure('active', background='#e6f4ea')
-        self.admin_users_tree.tag_configure('suspended', background='#fce8e6')
-        self.admin_users_tree.tag_configure('expired', background='#f5f5f5')
-        
-        # Bind double-click to show user details
-        self.admin_users_tree.bind('<Double-1>', self.show_user_details)
-        
-        # Initial load
-        self.refresh_admin_users()
-    
-    def refresh_admin_users(self):
-        """Refresh the admin users list"""
-        try:
-            # Get admin key from config (auto-generated from username)
-            admin_key = self.config.get('master_key', '')
-            if not admin_key:
-                return
-            
-            # Fetch all users from API
-            resp = requests.get(
-                f"{CLOUD_API_BASE_URL}/api/admin/list-licenses",
-                params={'license_key': admin_key},
-                timeout=10
-            )
-            
-            if resp.status_code == 200:
-                data = resp.json()
-                users = data.get('licenses', [])
-                self.root.after(0, lambda: self.update_admin_users_ui(users))
-        except Exception as e:
-            print(f"Error fetching admin users: {e}")
-    
-    def update_admin_users_ui(self, users):
-        """Update the admin users table"""
-        try:
-            if not self.root.winfo_exists():
-                return
-            
-            # Clear existing items
-            for item in self.admin_users_tree.get_children():
-                self.admin_users_tree.delete(item)
-            
-            # Store user data for later reference (full license keys)
-            self.admin_users_data = {}
-            
-            # Count stats
-            total = len(users)
-            active = sum(1 for u in users if u.get('license_status', '').upper() == 'ACTIVE')
-            suspended = sum(1 for u in users if u.get('license_status', '').upper() == 'SUSPENDED')
-            
-            # Update stats labels
-            self.admin_total_label.config(text=f"Total Users: {total}")
-            self.admin_active_label.config(text=f"Active: {active}")
-            self.admin_suspended_label.config(text=f"Suspended: {suspended}")
-            
-            if not users:
-                self.admin_users_tree.insert('', 'end', values=(
-                    'No users found', '', '', '', '', ''
-                ))
-                return
-            
-            # Add each user
-            for user in users:
-                email = user.get('email', 'N/A')
-                full_license_key = user.get('license_key', '')
-                license_key_display = full_license_key[:20] + '...' if len(full_license_key) > 20 else full_license_key
-                status = user.get('license_status', 'UNKNOWN').upper()
-                license_type = user.get('license_type', 'UNKNOWN')
-                expiration = user.get('license_expiration', 'N/A')
-                
-                # Store full user data including full license key
-                self.admin_users_data[email] = {
-                    'license_key': full_license_key,
-                    'status': status,
-                    'license_type': license_type,
-                    'expiration': expiration
-                }
-                
-                # Format expiration date
-                if expiration and expiration != 'N/A':
-                    try:
-                        exp_date = datetime.fromisoformat(expiration.replace('Z', '+00:00'))
-                        expiration = exp_date.strftime('%Y-%m-%d %H:%M')
-                    except:
-                        pass
-                
-                # Determine tag
-                tag = 'active' if status == 'ACTIVE' else 'suspended' if status == 'SUSPENDED' else 'expired'
-                
-                # Actions column - show available actions
-                actions = 'Double-click for options'
-                
-                self.admin_users_tree.insert('', 'end', values=(
-                    email,
-                    license_key_display,
-                    status,
-                    license_type,
-                    expiration,
-                    actions
-                ), tags=(tag,))
-                
-        except tk.TclError:
-            return
-        except Exception as e:
-            print(f"Error updating admin users UI: {e}")
-    
-    def show_user_details(self, event):
-        """Show user details and actions dialog"""
-        selection = self.admin_users_tree.selection()
-        if not selection:
-            return
-        
-        item = self.admin_users_tree.item(selection[0])
-        values = item['values']
-        
-        if values[0] == 'No users found':
-            return
-        
-        # Create popup dialog
-        dialog = tk.Toplevel(self.root)
-        dialog.title("User Actions")
-        dialog.geometry("400x300")
-        dialog.configure(bg='white')
-        
-        # User info
-        info_frame = tk.Frame(dialog, bg='white', padx=20, pady=20)
-        info_frame.pack(fill=tk.BOTH, expand=True)
-        
-        tk.Label(info_frame, text="User Details", font=("Segoe UI", 14, "bold"),
-                bg='white', fg=self.colors['text']).pack(anchor='w', pady=(0, 10))
-        
-        tk.Label(info_frame, text=f"Email: {values[0]}", font=("Segoe UI", 10),
-                bg='white', fg=self.colors['text']).pack(anchor='w')
-        tk.Label(info_frame, text=f"Status: {values[2]}", font=("Segoe UI", 10),
-                bg='white', fg=self.colors['text']).pack(anchor='w')
-        tk.Label(info_frame, text=f"Type: {values[3]}", font=("Segoe UI", 10),
-                bg='white', fg=self.colors['text']).pack(anchor='w')
-        tk.Label(info_frame, text=f"Expires: {values[4]}", font=("Segoe UI", 10),
-                bg='white', fg=self.colors['text']).pack(anchor='w')
-        
-        # Actions
-        tk.Frame(info_frame, bg=self.colors['grid_border'], height=1).pack(fill=tk.X, pady=15)
-        
-        tk.Label(info_frame, text="Actions:", font=("Segoe UI", 11, "bold"),
-                bg='white', fg=self.colors['text']).pack(anchor='w', pady=(0, 10))
-        
-        btn_frame = tk.Frame(info_frame, bg='white')
-        btn_frame.pack(fill=tk.X)
-        
-        if values[2] == 'ACTIVE':
-            tk.Button(btn_frame, text="Suspend User",
-                     bg=self.colors['error'], fg='white',
-                     font=("Segoe UI", 10),
-                     relief=tk.FLAT, padx=15, pady=8,
-                     cursor='hand2',
-                     command=lambda: [self.suspend_user(values[0]), dialog.destroy()]).pack(fill=tk.X, pady=2)
-        elif values[2] == 'SUSPENDED':
-            tk.Button(btn_frame, text="Activate User",
-                     bg=self.colors['success'], fg='white',
-                     font=("Segoe UI", 10),
-                     relief=tk.FLAT, padx=15, pady=8,
-                     cursor='hand2',
-                     command=lambda: [self.activate_user(values[0]), dialog.destroy()]).pack(fill=tk.X, pady=2)
-        
-        tk.Button(btn_frame, text="Extend License (30 days)",
-                 bg=self.colors['accent'], fg='white',
-                 font=("Segoe UI", 10),
-                 relief=tk.FLAT, padx=15, pady=8,
-                 cursor='hand2',
-                 command=lambda: [self.extend_license(values[0]), dialog.destroy()]).pack(fill=tk.X, pady=2)
-        
-        tk.Button(btn_frame, text="Close",
-                 bg=self.colors['grid_header'], fg=self.colors['text'],
-                 font=("Segoe UI", 10),
-                 relief=tk.FLAT, padx=15, pady=8,
-                 cursor='hand2',
-                 command=dialog.destroy).pack(fill=tk.X, pady=2)
-    
-    def suspend_user(self, email):
-        """Suspend a user"""
-        if messagebox.askyesno("Confirm", f"Suspend user {email}?"):
-            try:
-                admin_key = self.config.get('master_key', '')
-                
-                # Get full license key from stored data
-                if not hasattr(self, 'admin_users_data') or email not in self.admin_users_data:
-                    messagebox.showerror("Error", "Could not find license key for user")
-                    return
-                
-                license_key = self.admin_users_data[email]['license_key']
-                
-                # Call API to suspend user
-                resp = requests.put(
-                    f"{CLOUD_API_BASE_URL}/api/admin/suspend-license/{license_key}",
-                    params={'license_key': admin_key},
-                    timeout=10
-                )
-                
-                if resp.status_code == 200:
-                    messagebox.showinfo("Success", f"User {email} suspended")
-                    self.refresh_admin_users()
-                else:
-                    messagebox.showerror("Error", f"Failed to suspend user: {resp.text}")
-            except Exception as e:
-                messagebox.showerror("Error", f"Failed to suspend user: {e}")
-    
-    def activate_user(self, email):
-        """Activate a user"""
-        if messagebox.askyesno("Confirm", f"Activate user {email}?"):
-            try:
-                admin_key = self.config.get('master_key', '')
-                
-                # Get full license key from stored data
-                if not hasattr(self, 'admin_users_data') or email not in self.admin_users_data:
-                    messagebox.showerror("Error", "Could not find license key for user")
-                    return
-                
-                license_key = self.admin_users_data[email]['license_key']
-                
-                # Call API to activate user
-                resp = requests.put(
-                    f"{CLOUD_API_BASE_URL}/api/admin/activate-license/{license_key}",
-                    params={'license_key': admin_key},
-                    timeout=10
-                )
-                
-                if resp.status_code == 200:
-                    messagebox.showinfo("Success", f"User {email} activated")
-                    self.refresh_admin_users()
-                else:
-                    messagebox.showerror("Error", f"Failed to activate user: {resp.text}")
-            except Exception as e:
-                messagebox.showerror("Error", f"Failed to activate user: {e}")
-    
-    def extend_license(self, email):
-        """Extend user license by 30 days"""
-        if messagebox.askyesno("Confirm", f"Extend license for {email} by 30 days?"):
-            try:
-                admin_key = self.config.get('master_key', '')
-                
-                # Get full license key from stored data
-                if not hasattr(self, 'admin_users_data') or email not in self.admin_users_data:
-                    messagebox.showerror("Error", "Could not find license key for user")
-                    return
-                
-                license_key = self.admin_users_data[email]['license_key']
-                
-                # Call API to extend license
-                resp = requests.put(
-                    f"{CLOUD_API_BASE_URL}/api/admin/extend-license/{license_key}",
-                    params={'license_key': admin_key, 'days': 30},
-                    timeout=10
-                )
-                
-                if resp.status_code == 200:
-                    messagebox.showinfo("Success", f"License extended for {email}")
-                    self.refresh_admin_users()
-                else:
-                    messagebox.showerror("Error", f"Failed to extend license: {resp.text}")
-            except Exception as e:
-                messagebox.showerror("Error", f"Failed to extend license: {e}")
-    
     
     def toggle_copy_enabled(self):
         """Toggle the global copy enabled/disabled state"""
@@ -1278,142 +913,6 @@ class MasterLauncher:
         timestamp = datetime.now().strftime("%H:%M:%S")
         self.trade_log.append(f"[{timestamp}] {message}")
         print(f"[{timestamp}] {message}")  # Also print to console
-    
-    
-    def setup_health_tab(self, parent):
-        """Setup the health tab with system health monitoring"""
-        # Health header
-        health_header = tk.Frame(parent, bg='white')
-        health_header.pack(fill=tk.X, padx=20, pady=15)
-        
-        tk.Label(health_header, text="💚 System Health", 
-                font=("Segoe UI", 14, "bold"),
-                bg='white', fg=self.colors['text']).pack(side=tk.LEFT)
-        
-        tk.Label(health_header, text="(API, Database, Email, Services)", 
-                font=("Segoe UI", 10),
-                bg='white', fg=self.colors['text_light']).pack(side=tk.LEFT, padx=10)
-        
-        # Refresh button
-        tk.Button(health_header, text="🔄 Check Health",
-                font=("Segoe UI", 10),
-                bg=self.colors['accent'], fg='white',
-                activebackground='#1557b0',
-                relief=tk.FLAT, padx=15, pady=5,
-                cursor='hand2',
-                command=self.refresh_health).pack(side=tk.RIGHT)
-        
-        # Health content
-        health_content = tk.Frame(parent, bg='white')
-        health_content.pack(fill=tk.BOTH, expand=True, padx=40, pady=20)
-        
-        # Overall status card
-        overall_card = tk.Frame(health_content, bg=self.colors['grid_header'], padx=20, pady=20)
-        overall_card.pack(fill=tk.X, pady=(0, 20))
-        
-        tk.Label(overall_card, text="Overall Status", 
-                font=("Segoe UI", 12, "bold"),
-                bg=self.colors['grid_header'], fg=self.colors['text']).pack(anchor='w')
-        
-        self.overall_health_label = tk.Label(overall_card, text="● Healthy", 
-                font=("Segoe UI", 18, "bold"),
-                bg=self.colors['grid_header'], fg=self.colors['success'])
-        self.overall_health_label.pack(anchor='w', pady=(10, 0))
-        
-        # Individual services
-        services_frame = tk.Frame(health_content, bg='white')
-        services_frame.pack(fill=tk.BOTH, expand=True)
-        
-        # Create health indicators for each service
-        self.health_indicators = {}
-        
-        services = [
-            ('flask_server', 'Flask Server'),
-            ('database', 'PostgreSQL Database'),
-            ('email_service', 'Email Service'),
-            ('whop_api', 'Whop API')
-        ]
-        
-        for service_id, service_name in services:
-            service_card = tk.Frame(services_frame, bg='white', pady=10)
-            service_card.pack(fill=tk.X)
-            
-            label_frame = tk.Frame(service_card, bg='white')
-            label_frame.pack(side=tk.LEFT, fill=tk.X, expand=True)
-            
-            tk.Label(label_frame, text=service_name, 
-                    font=("Segoe UI", 11, "bold"),
-                    bg='white', fg=self.colors['text']).pack(anchor='w')
-            
-            status_label = tk.Label(label_frame, text="● Checking...", 
-                    font=("Segoe UI", 10),
-                    bg='white', fg=self.colors['text_light'])
-            status_label.pack(anchor='w')
-            
-            self.health_indicators[service_id] = status_label
-            
-            # Separator
-            tk.Frame(services_frame, bg=self.colors['grid_border'], height=1).pack(fill=tk.X, pady=5)
-        
-        # Initial load
-        self.refresh_health()
-    
-    def refresh_health(self):
-        """Refresh health status from API"""
-        try:
-            admin_key = self.config.get('master_key', '')
-            resp = requests.get(
-                f"{CLOUD_API_BASE_URL}/api/admin/system-health",
-                params={'license_key': admin_key},
-                timeout=10
-            )
-            
-            if resp.status_code == 200:
-                health_data = resp.json()
-                self.root.after(0, lambda: self.update_health_ui(health_data))
-        except Exception as e:
-            print(f"Error fetching health: {e}")
-    
-    def update_health_ui(self, health_data):
-        """Update the health UI"""
-        try:
-            if not self.root.winfo_exists():
-                return
-            
-            # Update overall status
-            overall_status = health_data.get('overall_status', 'unknown')
-            if overall_status == 'healthy':
-                self.overall_health_label.config(text="● Healthy", fg=self.colors['success'])
-            elif overall_status == 'degraded':
-                self.overall_health_label.config(text="⚠ Degraded", fg=self.colors['warning'])
-            else:
-                self.overall_health_label.config(text="✗ Unhealthy", fg=self.colors['error'])
-            
-            # Update individual services
-            services = ['flask_server', 'database', 'email_service', 'whop_api']
-            for service in services:
-                if service in self.health_indicators and service in health_data:
-                    service_data = health_data[service]
-                    status = service_data.get('status', 'unknown')
-                    response_time = service_data.get('response_time_ms', 0)
-                    error = service_data.get('error')
-                    
-                    if status == 'healthy':
-                        text = f"● Healthy ({response_time:.0f}ms)"
-                        color = self.colors['success']
-                    elif status == 'degraded':
-                        text = f"⚠ Degraded ({response_time:.0f}ms)"
-                        color = self.colors['warning']
-                    else:
-                        text = f"✗ Unhealthy"
-                        if error:
-                            text += f" - {error}"
-                        color = self.colors['error']
-                    
-                    self.health_indicators[service].config(text=text, fg=color)
-        
-        except Exception as e:
-            print(f"Error updating health UI: {e}")
     
     def run(self):
         """Start the launcher"""
