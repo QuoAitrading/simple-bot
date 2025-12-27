@@ -342,7 +342,7 @@ def send_license_email(email, license_key, whop_user_id=None, whop_membership_id
                                 <a href="mailto:support@quotrading.com" style="color: #667eea; text-decoration: none;">support@quotrading.com</a>
                             </p>
                             <p style="color: #334155; font-size: 15px; line-height: 1.6; margin: 0;">
-                                <strong>💬 Discord Community:</strong> <a href="https://discord.gg/QzyfKDsa" style="color: #667eea; text-decoration: none;">Join our Discord</a> for live support and to connect with other traders
+                                <strong>💬 Discord Community:</strong> <a href="https://discord.gg/mak4h8MygE" style="color: #667eea; text-decoration: none;">Join our Discord</a> for live support and to connect with other traders
                             </p>
                         </td>
                     </tr>
