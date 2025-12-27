@@ -1,267 +1,212 @@
 #!/usr/bin/env python3
 """
-Main entry point for VWAP Bounce Bot - Production Trading Only
-
-For backtesting and development, use: python dev/run_backtest.py
+Discord Signal Bot - Generates trading signals and sends to Discord webhook
+This is the new main AI bot - signals only, no direct trading
 """
 
-import argparse
-import sys
-import os
+import asyncio
 import logging
+import requests
+import json
+import os
+from datetime import datetime
 from dotenv import load_dotenv
 
-# Determine project root directory (parent of src/)
+# Load environment variables
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-
-# Load environment variables from .env file in project root
 env_path = os.path.join(PROJECT_ROOT, '.env')
 load_dotenv(dotenv_path=env_path)
 
-# Import bot modules
-from config import load_config, log_config
-from monitoring import setup_logging, HealthChecker, HealthCheckServer, MetricsCollector, AuditLogger
+# Setup logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s | %(levelname)s | %(message)s',
+    datefmt='%H:%M:%S'
+)
+logger = logging.getLogger(__name__)
 
 
-def parse_arguments():
-    """Parse command-line arguments for production trading"""
-    parser = argparse.ArgumentParser(
-        description='VWAP Bounce Bot - Production Trading System',
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="""
-Examples:
-  # Run in live trading mode
-  python src/main.py
-  
-  # Run in dry-run mode (paper trading)
-  python src/main.py --dry-run
-  
-  # For backtesting, use the dev environment:
-  python dev/run_backtest.py --days 30
+class DiscordSignalBot:
+    """
+    Generates trading signals and posts them to Discord webhook
+    Signals are picked up by follower trade copiers to execute
+    """
+    
+    def __init__(self, webhook_url: str):
         """
-    )
-    
-    parser.add_argument(
-        '--dry-run',
-        action='store_true',
-        help='Enable dry-run mode (paper trading, no real orders)'
-    )
-    
-    # Configuration overrides
-    parser.add_argument(
-        '--symbol',
-        type=str,
-        help='Override trading symbol (default: from config)'
-    )
-    
-    parser.add_argument(
-        '--environment',
-        type=str,
-        choices=['development', 'staging', 'production'],
-        help='Environment configuration to use'
-    )
-    
-    parser.add_argument(
-        '--health-check-port',
-        type=int,
-        default=8080,
-        help='Port for health check HTTP server (default: 8080)'
-    )
-    
-    parser.add_argument(
-        '--no-health-check',
-        action='store_true',
-        help='Disable health check HTTP server'
-    )
-    
-    parser.add_argument(
-        '--log-level',
-        choices=['DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL'],
-        default='INFO',
-        help='Logging level (default: INFO)'
-    )
-    
-    return parser.parse_args()
-
-
-def run_live_trading(args, bot_config):
-    """Run live trading mode"""
-    logger = logging.getLogger('main')
-    logger.info("="*60)
-    logger.info("STARTING LIVE TRADING MODE")
-    logger.info("="*60)
-    
-    if args.dry_run:
-        logger.info("DRY-RUN MODE ENABLED (Paper Trading)")
-        bot_config.dry_run = True
-    else:
-        logger.warning("LIVE TRADING MODE - Real orders will be placed!")
+        Args:
+            webhook_url: Discord webhook URL for posting signals
+        """
+        self.webhook_url = webhook_url
+        self.signals_sent = 0
         
-        # Require confirmation for live trading
-        if not os.getenv('CONFIRM_LIVE_TRADING'):
-            logger.error("Live trading requires CONFIRM_LIVE_TRADING=1 environment variable")
-            logger.error("Set this variable to confirm you understand the risks")
+    def send_signal_to_discord(self, signal: dict):
+        """
+        Send a trading signal to Discord webhook
+        
+        Args:
+            signal: Trade signal dictionary with action, symbol, side, quantity, price, etc.
+        """
+        try:
+            # Format signal for Discord embed
+            action = signal.get('action', 'SIGNAL')
+            symbol = signal.get('symbol', 'UNKNOWN')
+            side = signal.get('side', '')
+            quantity = signal.get('quantity', 1)
+            entry_price = signal.get('entry_price', 0)
+            stop_loss = signal.get('stop_loss')
+            take_profit = signal.get('take_profit')
+            
+            # Choose color based on action
+            if action == "OPEN":
+                if side == "BUY":
+                    color = 0x34a853  # Green for long
+                else:
+                    color = 0xd93025  # Red for short
+            elif action == "CLOSE":
+                color = 0xffa500  # Orange for close
+            else:
+                color = 0x5f6368  # Gray for other
+            
+            # Build embed
+            embed = {
+                "title": f"🤖 AI TRADING SIGNAL - {action}",
+                "description": f"**{side} {quantity} {symbol}** @ ${entry_price:,.2f}",
+                "color": color,
+                "fields": [],
+                "footer": {
+                    "text": "QuoTrading AI Signal Generator"
+                },
+                "timestamp": datetime.now().isoformat()
+            }
+            
+            # Add stop loss and take profit if present
+            if stop_loss:
+                embed["fields"].append({
+                    "name": "🛑 Stop Loss",
+                    "value": f"${stop_loss:,.2f}",
+                    "inline": True
+                })
+            if take_profit:
+                embed["fields"].append({
+                    "name": "🎯 Take Profit",
+                    "value": f"${take_profit:,.2f}",
+                    "inline": True
+                })
+            
+            # Add signal metadata
+            signal_id = signal.get('signal_id', 'N/A')
+            embed["fields"].append({
+                "name": "📋 Signal ID",
+                "value": signal_id,
+                "inline": False
+            })
+            
+            # Send to Discord
+            payload = {
+                "embeds": [embed],
+                "username": "QuoTrading AI"
+            }
+            
+            response = requests.post(
+                self.webhook_url,
+                json=payload,
+                timeout=10
+            )
+            
+            if response.status_code in [200, 204]:
+                self.signals_sent += 1
+                logger.info(f"✅ Signal sent to Discord: {action} {side} {quantity} {symbol}")
+                return True
+            else:
+                logger.error(f"❌ Discord webhook failed: {response.status_code}")
+                return False
+                
+        except Exception as e:
+            logger.error(f"❌ Failed to send signal to Discord: {e}")
             return False
     
-    # Check if multiple instruments are configured
-    instruments = bot_config.instruments if hasattr(bot_config, 'instruments') else [bot_config.instrument]
-    
-    if len(instruments) > 1:
-        logger.info(f"Multi-symbol mode detected: {', '.join(instruments)}")
-        logger.info(f"Launching {len(instruments)} bot instances in parallel...")
-        return run_multi_symbol_trading(args, bot_config, instruments)
-    else:
-        # Single symbol mode
-        logger.info(f"Single-symbol mode: {instruments[0]}")
-        return run_single_symbol_bot(args, bot_config, instruments[0])
-
-
-def run_single_symbol_bot(args, bot_config, symbol):
-    """Run bot for a single symbol"""
-    logger = logging.getLogger('main')
-    
-    # Import bot modules
-    from quotrading_engine import main as bot_main, bot_status, CONFIG
-    
-    # Setup monitoring components
-    config_dict = bot_config.to_dict()
-    
-    # Initialize health checker
-    health_checker = HealthChecker(bot_status, config_dict)
-    
-    # Start health check server if enabled
-    health_server = None
-    if not args.no_health_check:
-        health_server = HealthCheckServer(health_checker, port=args.health_check_port)
-        health_server.start()
-        logger.info(f"Health check endpoint: http://localhost:{args.health_check_port}/health")
-    
-    # Initialize metrics collector
-    metrics_collector = MetricsCollector()
-    
-    # Initialize audit logger
-    audit_logger = AuditLogger()
-    
-    try:
-        # Run the bot with symbol
-        logger.info(f"Starting bot for {symbol}...")
-        bot_main(symbol_override=symbol)
+    def generate_test_signal(self, symbol="MES", side="BUY") -> dict:
+        """
+        Generate a test signal (for demonstration)
+        In production, this would be replaced with actual market analysis
         
-    except KeyboardInterrupt:
-        logger.info(f"[{symbol}] Received shutdown signal")
+        Args:
+            symbol: Trading symbol
+            side: BUY or SELL
         
-    except Exception as e:
-        logger.error(f"[{symbol}] Bot error: {e}", exc_info=True)
+        Returns:
+            Signal dictionary
+        """
+        import uuid
         
-    finally:
-        # Cleanup
-        if health_server:
-            health_server.stop()
-            
-        logger.info(f"[{symbol}] Bot shutdown complete")
-    
-    return True
-
-
-def _run_symbol_process(symbol):
-    """Process target function for each symbol (must be at module level for Windows)"""
-    # Re-import in subprocess
-    from quotrading_engine import main as bot_main
-    import logging
-    import multiprocessing
-    
-    process_logger = logging.getLogger(f'bot.{symbol}')
-    process_logger.info(f"[{symbol}] Bot process starting (PID: {multiprocessing.current_process().pid})")
-    
-    try:
-        # Run bot with this symbol
-        bot_main(symbol_override=symbol)
-    except KeyboardInterrupt:
-        process_logger.info(f"[{symbol}] Shutdown signal received")
-    except Exception as e:
-        process_logger.error(f"[{symbol}] Bot error: {e}", exc_info=True)
-    finally:
-        process_logger.info(f"[{symbol}] Bot process exiting")
-
-
-def run_multi_symbol_trading(args, bot_config, instruments):
-    """Run multiple bot instances in parallel (one per symbol)"""
-    from multiprocessing import Process
-    logger = logging.getLogger('main')
-    
-    # Create a process for each symbol
-    processes = []
-    
-    # Launch a process for each symbol
-    for symbol in instruments:
-        logger.info(f"Launching bot process for {symbol}...")
-        p = Process(
-            target=_run_symbol_process,
-            args=(symbol,),
-            name=f"Bot-{symbol}"
-        )
-        p.start()
-        processes.append((symbol, p))
-        logger.info(f"  ΓööΓöÇ {symbol} bot started (PID: {p.pid})")
-    
-    logger.info(f"\n{'='*60}")
-    logger.info(f"ALL {len(processes)} BOT INSTANCES RUNNING")
-    logger.info(f"{'='*60}")
-    for symbol, p in processes:
-        logger.info(f"  [{symbol}] PID: {p.pid}")
-    logger.info(f"{'='*60}\n")
-    
-    try:
-        # Wait for all processes
-        for symbol, p in processes:
-            p.join()
-            logger.info(f"[{symbol}] Bot process terminated (exit code: {p.exitcode})")
-    
-    except KeyboardInterrupt:
-        logger.info("\nShutdown signal received - stopping all bot instances...")
-        for symbol, p in processes:
-            if p.is_alive():
-                logger.info(f"  Terminating {symbol}...")
-                p.terminate()
-                p.join(timeout=5)
-                if p.is_alive():
-                    logger.warning(f"  Force killing {symbol}...")
-                    p.kill()
-    
-    logger.info("All bot instances stopped")
-    return True
+        # Simulate entry price
+        base_price = 6000 if symbol == "MES" else 20000
+        entry_price = base_price + (10 if side == "BUY" else -10)
+        
+        # Calculate stop loss and take profit
+        if side == "BUY":
+            stop_loss = entry_price - 20
+            take_profit = entry_price + 40
+        else:
+            stop_loss = entry_price + 20
+            take_profit = entry_price - 40
+        
+        signal = {
+            "signal_id": str(uuid.uuid4())[:8],
+            "timestamp": datetime.now().isoformat(),
+            "action": "OPEN",
+            "symbol": symbol,
+            "side": side,
+            "quantity": 1,
+            "entry_price": entry_price,
+            "stop_loss": stop_loss,
+            "take_profit": take_profit
+        }
+        
+        return signal
 
 
 def main():
-    """Main entry point for production trading"""
-    args = parse_arguments()
+    """Main entry point for Discord signal bot"""
+    print("""
+╔═══════════════════════════════════════════════════════════════════╗
+║                                                                   ║
+║      🤖 QuoTrading AI - Discord Signal Generator                 ║
+║                                                                   ║
+║      Generates trading signals and posts to Discord              ║
+║                                                                   ║
+╚═══════════════════════════════════════════════════════════════════╝
+    """)
     
-    # Load configuration for production
-    bot_config = load_config(environment=args.environment, backtest_mode=False)
+    # Get Discord webhook URL from environment
+    webhook_url = os.getenv('DISCORD_WEBHOOK_URL')
     
-    # Apply learned parameters if available (feature not yet implemented)
-    # from config import apply_learned_parameters
-    # apply_learned_parameters(bot_config)
+    if not webhook_url:
+        logger.error("❌ DISCORD_WEBHOOK_URL not set in environment variables")
+        logger.error("   Add DISCORD_WEBHOOK_URL to your .env file")
+        return
     
-    # Override symbol if specified
-    if args.symbol:
-        bot_config.instrument = args.symbol
+    # Create bot instance
+    bot = DiscordSignalBot(webhook_url)
     
-    # Setup logging
-    config_dict = bot_config.to_dict()
-    config_dict['log_directory'] = './logs'
-    logger = setup_logging(config_dict)
+    logger.info("🤖 Discord Signal Bot initialized")
+    logger.info(f"📡 Webhook URL: {webhook_url[:50]}...")
+    logger.info("\n⚠️  NOTE: This is a SIGNAL GENERATOR only")
+    logger.info("   Signals are sent to Discord for followers to copy")
+    logger.info("   No direct trading is performed by this bot\n")
     
-    # Set log level
-    logger.setLevel(getattr(logging, args.log_level))
+    # In production, this would connect to market data and generate real signals
+    # For now, we'll generate a test signal to verify the webhook works
+    logger.info("🧪 Generating test signal...")
     
-    # Log configuration
-    log_config(bot_config, logger)
+    test_signal = bot.generate_test_signal(symbol="MES", side="BUY")
+    bot.send_signal_to_discord(test_signal)
     
-    # Run live trading
-    success = run_live_trading(args, bot_config)
-    sys.exit(0 if success else 1)
+    logger.info(f"\n✅ Signals sent: {bot.signals_sent}")
+    logger.info("💡 In production, this bot would continuously analyze markets")
+    logger.info("   and generate signals based on AI analysis\n")
+    
 
-
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()
