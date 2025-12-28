@@ -2877,6 +2877,86 @@ def admin_dashboard_stats():
     finally:
         return_connection(conn)
 
+# Discord bot status tracking
+_discord_bot_status = {
+    'online': False,
+    'last_heartbeat': None,
+    'tickets_created': 0,
+    'tickets_closed': 0,
+    'active_tickets': 0,
+    'connected_servers': 0,
+    'uptime_start': None
+}
+
+@app.route('/api/discord/heartbeat', methods=['POST'])
+def discord_bot_heartbeat():
+    """Discord bot sends heartbeat to show it's online"""
+    global _discord_bot_status
+    data = request.get_json() or {}
+    
+    _discord_bot_status['online'] = True
+    _discord_bot_status['last_heartbeat'] = datetime.now(timezone.utc).isoformat()
+    _discord_bot_status['connected_servers'] = data.get('servers', 1)
+    _discord_bot_status['active_tickets'] = data.get('active_tickets', 0)
+    
+    if not _discord_bot_status['uptime_start']:
+        _discord_bot_status['uptime_start'] = datetime.now(timezone.utc).isoformat()
+    
+    return jsonify({"status": "ok"}), 200
+
+@app.route('/api/discord/ticket', methods=['POST'])
+def discord_ticket_event():
+    """Track ticket creation/closure"""
+    global _discord_bot_status
+    data = request.get_json() or {}
+    event = data.get('event', '')
+    
+    if event == 'created':
+        _discord_bot_status['tickets_created'] += 1
+        _discord_bot_status['active_tickets'] += 1
+    elif event == 'closed':
+        _discord_bot_status['tickets_closed'] += 1
+        _discord_bot_status['active_tickets'] = max(0, _discord_bot_status['active_tickets'] - 1)
+    
+    logging.info(f"Discord ticket event: {event}")
+    return jsonify({"status": "ok"}), 200
+
+@app.route('/api/admin/discord-status', methods=['GET'])
+def admin_discord_status():
+    """Get Discord bot status for admin dashboard"""
+    admin_key = request.args.get('license_key') or request.args.get('admin_key')
+    if admin_key != ADMIN_API_KEY:
+        return jsonify({"error": "Unauthorized"}), 401
+    
+    # Check if bot is still online (heartbeat within last 2 minutes)
+    is_online = False
+    if _discord_bot_status['last_heartbeat']:
+        try:
+            last_hb = datetime.fromisoformat(_discord_bot_status['last_heartbeat'].replace('Z', '+00:00'))
+            if (datetime.now(timezone.utc) - last_hb).total_seconds() < 120:
+                is_online = True
+        except:
+            pass
+    
+    # Calculate uptime
+    uptime_seconds = 0
+    if _discord_bot_status['uptime_start'] and is_online:
+        try:
+            start = datetime.fromisoformat(_discord_bot_status['uptime_start'].replace('Z', '+00:00'))
+            uptime_seconds = int((datetime.now(timezone.utc) - start).total_seconds())
+        except:
+            pass
+    
+    return jsonify({
+        "online": is_online,
+        "last_heartbeat": _discord_bot_status['last_heartbeat'],
+        "tickets_created_total": _discord_bot_status['tickets_created'],
+        "tickets_closed_total": _discord_bot_status['tickets_closed'],
+        "active_tickets": _discord_bot_status['active_tickets'],
+        "connected_servers": _discord_bot_status['connected_servers'],
+        "uptime_seconds": uptime_seconds
+    }), 200
+
 @app.route('/api/admin/users', methods=['GET'])
 def admin_list_users():
     """List all users (same as list-licenses but formatted for dashboard)"""
