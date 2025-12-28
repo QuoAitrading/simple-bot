@@ -2,6 +2,7 @@
 QuoTrading Discord Ticket Bot
 Lightweight bot for 24/7 ticket system on Azure
 Reports status to admin dashboard
+Includes HTTP server for Azure App Service
 """
 
 import discord
@@ -11,6 +12,8 @@ import asyncio
 import os
 import logging
 import aiohttp
+from aiohttp import web
+import threading
 
 # Setup logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -42,7 +45,36 @@ bot = commands.Bot(command_prefix='!', intents=intents)
 
 # Track active tickets
 active_tickets = 0
+bot_ready = False
 
+
+# ============ HTTP SERVER FOR AZURE ============
+
+async def health_handler(request):
+    """Health check endpoint for Azure."""
+    return web.json_response({
+        "status": "healthy",
+        "bot_ready": bot_ready,
+        "active_tickets": active_tickets
+    })
+
+async def home_handler(request):
+    """Home page."""
+    return web.Response(text="QuoTrading Discord Bot is running!", content_type="text/html")
+
+def run_http_server():
+    """Run HTTP server in background thread."""
+    app = web.Application()
+    app.router.add_get('/', home_handler)
+    app.router.add_get('/health', health_handler)
+    
+    port = int(os.environ.get('PORT', 8000))
+    logger.info(f"Starting HTTP server on port {port}")
+    
+    web.run_app(app, host='0.0.0.0', port=port, print=None)
+
+
+# ============ BOT FUNCTIONS ============
 
 async def send_heartbeat():
     """Send heartbeat to API to show bot is online."""
@@ -167,6 +199,7 @@ class CloseTicketView(View):
 
 @bot.event
 async def on_ready():
+    global bot_ready
     logger.info(f'✅ Bot connected as {bot.user}')
     logger.info(f'📊 Connected to {len(bot.guilds)} server(s)')
     
@@ -177,15 +210,16 @@ async def on_ready():
     # Send initial heartbeat
     await send_heartbeat()
     
+    bot_ready = True
     logger.info('🎫 Ticket system ready!')
 
 
 async def keep_alive():
-    """Periodic heartbeat to API and Azure keep-alive."""
+    """Periodic heartbeat to API."""
     while True:
         await send_heartbeat()
         logger.info("💓 Heartbeat sent")
-        await asyncio.sleep(60)  # Every 60 seconds
+        await asyncio.sleep(60)
 
 
 @bot.event
@@ -195,4 +229,10 @@ async def on_connect():
 
 if __name__ == '__main__':
     logger.info('🚀 Starting QuoTrading Ticket Bot...')
+    
+    # Start HTTP server in background thread (for Azure)
+    http_thread = threading.Thread(target=run_http_server, daemon=True)
+    http_thread.start()
+    
+    # Run Discord bot
     bot.run(TOKEN)
