@@ -55,6 +55,12 @@ logging.basicConfig(
     format='%(asctime)s - %(levelname)s - %(message)s'
 )
 
+# Health check endpoint for monitoring
+@app.route('/health')
+def health_check():
+    """Simple health check endpoint for monitoring."""
+    return jsonify({"status": "healthy", "timestamp": datetime.now(timezone.utc).isoformat()}), 200
+
 # PostgreSQL configuration
 DB_HOST = os.environ.get("DB_HOST", "quotrading-db.postgres.database.azure.com")
 DB_NAME = os.environ.get("DB_NAME", "quotrading")

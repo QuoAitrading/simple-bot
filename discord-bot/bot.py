@@ -63,6 +63,7 @@ async def update_status_message(is_online=True):
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 """
+            new_name = "🟢│server-status"
         else:
             content = f"""
 # 🔴 Service Disruption
@@ -75,8 +76,16 @@ We're experiencing issues. Working on it.
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 """
+            new_name = "🔴│server-status"
         
         await message.edit(content=content)
+        
+        # Update channel name if different (rate limited to 2 per 10 min)
+        if channel.name != new_name:
+            try:
+                await channel.edit(name=new_name)
+            except:
+                pass  # Ignore rate limit errors
     except Exception as e:
         print(f'Status update error: {e}')
 
