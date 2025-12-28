@@ -24,6 +24,7 @@ class CopierBroker:
         self.trading_suite = None
         self._contract_cache: Dict[str, str] = {}
         self.account_balance = 0.0
+        self.all_accounts = []  # List of all accounts from list_accounts()
         
     async def connect(self) -> bool:
         """Connect to TopStep broker. All SDK output is suppressed."""
@@ -75,7 +76,13 @@ class CopierBroker:
             await asyncio.sleep(0.3)
             suppress_sdk_logs()
             
-            # Get account
+            # Get ALL accounts using list_accounts() - async method
+            try:
+                self.all_accounts = await self.sdk_client.list_accounts()
+            except:
+                self.all_accounts = []
+            
+            # Get primary account for balance/id
             account = self.sdk_client.get_account_info()
             suppress_sdk_logs()
             

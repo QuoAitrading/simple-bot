@@ -404,35 +404,47 @@ class TradeCopierLauncher:
                     self.root.after(0, lambda: messagebox.showerror("Connection Failed", "Could not connect to TopStep. Check credentials."))
                     return
                 
-                # Get account info from SDK client
-                if self.broker.sdk_client:
-                    account_info = self.broker.sdk_client.get_account_info()
-                    
-                    if account_info:
-                        account_name = getattr(account_info, 'name', 'TopStep Account')
-                        current_balance = self.broker.account_balance
+                # Get ALL accounts - already fetched during broker.connect()
+                all_accounts = getattr(self.broker, 'all_accounts', [])
+                
+                if all_accounts and len(all_accounts) > 0:
+                    self.accounts = []
+                    for acc in all_accounts:
+                        acc_id = str(getattr(acc, 'id', getattr(acc, 'account_id', '')))
+                        acc_name = getattr(acc, 'name', getattr(acc, 'account_name', f'Account {acc_id}'))
+                        acc_balance = float(getattr(acc, 'balance', getattr(acc, 'equity', 0)))
                         
-                        self.accounts = [{
-                            "id": str(getattr(account_info, 'id', 'MAIN')),
-                            "name": account_name,
-                            "balance": current_balance,
+                        self.accounts.append({
+                            "id": acc_id,
+                            "name": acc_name,
+                            "balance": acc_balance,
                             "status": "connected"
-                        }]
+                        })
+                else:
+                    # Fallback to single account from get_account_info
+                    if self.broker.sdk_client:
+                        account_info = self.broker.sdk_client.get_account_info()
+                        if account_info:
+                            self.accounts = [{
+                                "id": str(getattr(account_info, 'id', 'MAIN')),
+                                "name": getattr(account_info, 'name', 'TopStep Account'),
+                                "balance": self.broker.account_balance,
+                                "status": "connected"
+                            }]
+                        else:
+                            self.accounts = [{
+                                "id": "TOPSTEP_MAIN",
+                                "name": f"TopStep ({username})",
+                                "balance": self.broker.account_balance,
+                                "status": "connected"
+                            }]
                     else:
-                        # Fallback
                         self.accounts = [{
                             "id": "TOPSTEP_MAIN",
                             "name": f"TopStep ({username})",
-                            "balance": self.broker.account_balance,
+                            "balance": 0,
                             "status": "connected"
                         }]
-                else:
-                    self.accounts = [{
-                        "id": "TOPSTEP_MAIN",
-                        "name": f"TopStep ({username})",
-                        "balance": 0,
-                        "status": "connected"
-                    }]
                 
                 self.root.after(0, self.hide_loading)
                 self.root.after(0, self.setup_account_selection_screen)
