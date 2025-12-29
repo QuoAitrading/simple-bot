@@ -1,0 +1,17 @@
+<step title="Incoming Request" date="2025-11-24T08:19:54.486" instance="7d84ad" url="/api/zipdeploy?isAsync=true" method="POST" type="request" pid="768,1,20" Accept="*/*" Host="quotrading-flask-api.scm.azurewebsites.net" User-Agent="AZURECLI/2.80.0 (MSI)" Accept-Encoding="gzip, deflate" Authorization="Bea..." Cache-Control="no-cache" Content-Type="application/octet-stream" Content-Length="28681" x-ms-client-request-id="544a0b09-c90e-11f0-a433-50bbb5629ee1" x-ms-artifact-checksum="109ead7d2c9463b1ea999e1221479c5682741a950181acc0cc310ae3e4c14e15" X-ARR-LOG-ID="544a0b09-c90e-11f0-a433-50bbb5629ee1" CLIENT-IP="69.120.241.138:49267" X-SITE-DEPLOYMENT-ID="quotrading-flask-api" WAS-DEFAULT-HOSTNAME="quotrading-flask-api.scm.azurewebsites.net" X-Forwarded-Proto="https" X-AppService-Proto="https" X-Forwarded-TlsVersion="1.3" X-WAWS-Unencoded-URL="/api/zipdeploy?isAsync=true" X-Client-IP="69.120.241.138" X-Client-Port="49267" >
+  <step title="Cleanup Xml Logs" date="2025-11-24T08:19:54.488" >
+    <step title="Cleanup Infos" date="2025-11-24T08:19:54.494" totalFiles="241" totalCleanup="81" /><!-- duration: 3ms -->
+  </step><!-- duration: 10ms -->
+  <step title="ZipPushDeploy" date="2025-11-24T08:19:54.512" >
+    <step title="ZipDeploy. Extract zip. Remote build." date="2025-11-24T08:19:54.518" /><!-- duration: 2ms -->
+    <step title="Starting PushDeployAsync" date="2025-11-24T08:19:54.523" /><!-- duration: 2ms -->
+    <step title="Writing artifact to /tmp/zipdeploy/2c0c9591-8eb8-4511-af41-85e1b89c2d94.zip" date="2025-11-24T08:19:54.534" >
+      <step title="Writing multipart request body to /tmp/zipdeploy/2c0c9591-8eb8-4511-af41-85e1b89c2d94.zip" date="2025-11-24T08:19:54.536" /><!-- duration: 2ms -->
+    </step><!-- duration: 34ms -->
+    <step title="Start deployment in the background" date="2025-11-24T08:19:54.573" >
+      <step title="Acquiring Deployment Lock" date="2025-11-24T08:19:54.590" /><!-- duration: 2ms -->
+      <step title="Acquired Deployment Lock" date="2025-11-24T08:19:54.641" /><!-- duration: 2ms -->
+    </step><!-- duration: 127ms -->
+  </step><!-- duration: 193ms -->
+  <step title="Outgoing response" date="2025-11-24T08:19:54.707" type="response" statusCode="202" statusText="Accepted" /><!-- duration: 2ms -->
+</step><!-- duration: 224ms -->

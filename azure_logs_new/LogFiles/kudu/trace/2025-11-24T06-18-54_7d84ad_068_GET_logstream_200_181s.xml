@@ -1,0 +1,8 @@
+<step title="Incoming Request" date="2025-11-24T06:18:54.224" instance="7d84ad" url="/logstream" method="GET" type="request" pid="768,1,61" Host="quotrading-flask-api.scm.azurewebsites.net" User-Agent="AZURECLI/2.80.0 (MSI)" Accept-Encoding="identity" Authorization="Bea..." x-ms-client-request-id="1950eb9f-c8fd-11f0-af46-50bbb5629ee1" X-ARR-LOG-ID="1950eb9f-c8fd-11f0-af46-50bbb5629ee1" CLIENT-IP="69.120.241.138:63126" X-SITE-DEPLOYMENT-ID="quotrading-flask-api" WAS-DEFAULT-HOSTNAME="quotrading-flask-api.scm.azurewebsites.net" X-Forwarded-Proto="https" X-AppService-Proto="https" X-Forwarded-TlsVersion="1.3" X-WAWS-Unencoded-URL="/logstream" X-Client-IP="69.120.241.138" X-Client-Port="63126" >
+  <step title="Cleanup Xml Logs" date="2025-11-24T06:18:54.225" >
+    <step title="Cleanup Infos" date="2025-11-24T06:18:54.235" totalFiles="221" totalCleanup="61" /><!-- duration: 3ms -->
+  </step><!-- duration: 14ms -->
+  <step title="LogStreamHandlerMiddleware.Invoke" date="2025-11-24T06:18:54.255" /><!-- duration: 496ms -->
+  <step title="Error occurred" date="2025-11-24T06:21:54.751" type="error" text="LogStreamManager: ProcessRequest end" /><!-- duration: 3ms -->
+  <step title="Outgoing response" date="2025-11-24T06:21:54.758" type="response" statusCode="200" statusText="OK" /><!-- duration: 2ms -->
+</step><!-- duration: 180537ms -->

@@ -1,0 +1,47 @@
+<step title="Incoming Request" date="2025-12-06T07:09:47.360" instance="c4a671" url="/api/publish?type=static&amp;path=admin-dashboard-full.html" method="POST" type="request" pid="770,1,54" Accept="*/*" Host="quotrading-flask-api.scm.azurewebsites.net" User-Agent="AZURECLI/2.80.0 (MSI)" Accept-Encoding="gzip, deflate" Authorization="Bea..." Cache-Control="no-cache" Content-Type="application/octet-stream" Cookie="ARRAffinity=c4a671a5f8662a541a877e364dbc007723397b4ed45078d3ae1254f25f96e556; ARRAffinitySameSite=c4a671a5f8662a541a877e364dbc007723397b4ed45078d3ae1254f25f96e556" Content-Length="202443" x-ms-client-request-id="81044e02-d272-11f0-854e-50bbb5629ee1" x-ms-artifact-checksum="646b10a9cf43cf2019f9fea23a21788ad09ab8af0d299c4b382822fce36185b3" X-ARR-LOG-ID="81044e02-d272-11f0-854e-50bbb5629ee1" CLIENT-IP="69.120.241.138:63819" X-SITE-DEPLOYMENT-ID="quotrading-flask-api" WAS-DEFAULT-HOSTNAME="quotrading-flask-api.scm.azurewebsites.net" X-Forwarded-Proto="https" X-AppService-Proto="https" X-Forwarded-TlsVersion="1.3" X-WAWS-Unencoded-URL="/api/publish?type=static&amp;path=admin-dashboard-full.html" X-Client-IP="69.120.241.138" X-Client-Port="63819" >
+  <step title="OneDeploy" date="2025-12-06T07:09:47.394" >
+    <step title="Starting PushDeployAsync" date="2025-12-06T07:09:47.399" /><!-- duration: 4ms -->
+    <step title="Writing artifact to /tmp/zipdeploy/admin-dashboard-full.html" date="2025-12-06T07:09:47.414" >
+      <step title="Writing multipart request body to /tmp/zipdeploy/admin-dashboard-full.html" date="2025-12-06T07:09:47.417" /><!-- duration: 2ms -->
+    </step><!-- duration: 22ms -->
+    <step title="Removing previous build artifact&apos;s manifest file" date="2025-12-06T07:09:47.441" >
+      <step title="Attempting to fetch target branch HEAD" date="2025-12-06T07:09:47.453" /><!-- duration: 3ms -->
+      <step title="Acquiring Deployment Lock" date="2025-12-06T07:09:47.460" /><!-- duration: 2ms -->
+      <step title="Acquired Deployment Lock" date="2025-12-06T07:09:47.499" /><!-- duration: 3ms -->
+      <step title="Performing fetch based deployment" date="2025-12-06T07:09:47.510" >
+        <step title="Creating temporary deployment" date="2025-12-06T07:09:47.514" /><!-- duration: 76ms -->
+        <step title="Releasing Deployment Lock" date="2025-12-06T07:09:48.770" /><!-- duration: 4ms -->
+>
+        <step title="Renaming (/tmp/zipdeploy/extracted) to (/tmp/zipdeploy/mtfltdj0.1t2)" date="2025-12-06T07:09:48.779" /><!-- duration: 6ms -->
+        <step title="Moving /tmp/zipdeploy/mtfltdj0.1t2/ to /tmp/zipdeploy/extracted/admin-dashboard-full.html" date="2025-12-06T07:09:48.792" /><!-- duration: 3ms -->
+        <step title="None repository commit" date="2025-12-06T07:09:48.799" >
+          <step title="Commit id: 20f5ea77-7778-48f5-90a1-62fafb168229" date="2025-12-06T07:09:48.802" Message="OneDeploy" AuthorName="N/A" AuthorEmail="N/A" /><!-- duration: 3ms -->
+        </step><!-- duration: 9ms -->
+        <step title="Deployment timer started" date="2025-12-06T07:09:50.813" >
+          <step title="DeploymentManager.Deploy(id:20f5ea77-7778-48f5-90a1-62fafb168229)" date="2025-12-06T07:09:50.820" >
+            <step title="Collecting changeset information" date="2025-12-06T07:09:50.829" /><!-- duration: 94ms -->
+            <step title="Updating submodules" date="2025-12-06T07:09:50.928" /><!-- duration: 1186ms -->
+            <step title="Determining deployment builder" date="2025-12-06T07:09:52.375" >
+              <step title="Builder is OneDeployBuilder" date="2025-12-06T07:09:52.393" /><!-- duration: 3ms -->
+            </step><!-- duration: 23ms -->
+            <step title="PreDeployment: context.CleanOutputPath False" date="2025-12-06T07:09:52.452" >
+              <step title="PreDeployment: context.OutputPath /home/site/wwwroot" date="2025-12-06T07:09:52.571" >
+                <step title="Building" date="2025-12-06T07:09:52.726" >
+                  <step title="Executing external process" date="2025-12-06T07:09:53.170" type="process" path="starter.sh" arguments="/opt/Kudu/Scripts/parallel_rsync.sh /tmp/zipdeploy/extracted /home/site/wwwroot 8 /tmp/ False False  " /><!-- duration: 595ms -->
+                  <step title="Modified file to trigger a restart of the app container." date="2025-12-06T07:09:54.158" /><!-- duration: 4ms -->
+                  <step title="Skip function trigger and logicapp sync because function is not enabled." date="2025-12-06T07:09:54.165" /><!-- duration: 3ms -->
+                  <step title="Purge deployment items" date="2025-12-06T07:09:55.448" >
+                    <step title="Remove 405465e8-, Success, received at 12/01/2025 10:34:16" date="2025-12-06T07:09:55.545" /><!-- duration: 3ms -->
+                  </step><!-- duration: 102ms -->
+                </step><!-- duration: 2894ms -->
+              </step><!-- duration: 3054ms -->
+              <step title="Cleaning up temp files" date="2025-12-06T07:09:55.628" /><!-- duration: 3ms -->
+              <step title="Cleaning up temp files" date="2025-12-06T07:09:55.634" /><!-- duration: 509ms -->
+              <step title="Reloading status file with latest updates" date="2025-12-06T07:09:56.168" >
+                <step title="WebHooksManager.PublishEventAsync: PostDeployment" date="2025-12-06T07:09:56.171" /><!-- duration: 26ms -->
+              </step><!-- duration: 32ms -->
+              <step title="Cleaning up temporary deployment - fetch deployment was successful" date="2025-12-06T07:09:56.204" /><!-- duration: 3ms -->
+            </step><!-- duration: 3825ms -->
+          </step><!-- duration: 5462ms -->
+          <step title="Outgoing response" date="2025-12-06T07:09:56.288" type="response" statusCode="200" statusText="OK" /><!-- duration: 3ms -->
+        </step><!-- duration: 5481ms -->

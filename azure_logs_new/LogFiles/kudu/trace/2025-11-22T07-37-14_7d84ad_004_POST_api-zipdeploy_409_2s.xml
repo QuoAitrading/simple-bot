@@ -1,0 +1,16 @@
+<step title="Incoming Request" date="2025-11-22T07:37:14.749" instance="7d84ad" url="/api/zipdeploy?isAsync=true" method="POST" type="request" pid="768,1,19" Accept="*/*" Host="quotrading-flask-api.scm.azurewebsites.net" User-Agent="AZURECLI/2.79.0 (MSI)" Accept-Encoding="gzip, deflate" Authorization="Bea..." Cache-Control="no-cache" Content-Type="application/octet-stream" Content-Length="8156" x-ms-client-request-id="0cc850c6-c776-11f0-b93c-50bbb5629ee1" x-ms-artifact-checksum="c60ae4fa1a3c739577473493aa77b8cd2acaa097c370cc65324fbb5609c223de" X-ARR-LOG-ID="0cc850c6-c776-11f0-b93c-50bbb5629ee1" CLIENT-IP="69.120.241.138:59708" X-SITE-DEPLOYMENT-ID="quotrading-flask-api" WAS-DEFAULT-HOSTNAME="quotrading-flask-api.scm.azurewebsites.net" X-Forwarded-Proto="https" X-AppService-Proto="https" X-Forwarded-TlsVersion="1.3" X-WAWS-Unencoded-URL="/api/zipdeploy?isAsync=true" X-Client-IP="69.120.241.138" X-Client-Port="59708" >
+  <step title="Cleanup Xml Logs" date="2025-11-22T07:37:14.759" /><!-- duration: 69ms -->
+  <step title="ZipPushDeploy" date="2025-11-22T07:37:15.197" >
+    <step title="ZipDeploy. Extract zip. Remote build." date="2025-11-22T07:37:15.219" /><!-- duration: 9ms -->
+    <step title="Starting PushDeployAsync" date="2025-11-22T07:37:15.239" /><!-- duration: 18ms -->
+    <step title="Writing artifact to /tmp/zipdeploy/163d7d83-4032-4ae1-aff9-46a8d06dac7c.zip" date="2025-11-22T07:37:15.338" >
+      <step title="Writing multipart request body to /tmp/zipdeploy/163d7d83-4032-4ae1-aff9-46a8d06dac7c.zip" date="2025-11-22T07:37:15.368" /><!-- duration: 30ms -->
+    </step><!-- duration: 171ms -->
+    <step title="Start deployment in the background" date="2025-11-22T07:37:15.587" >
+      <step title="Acquiring Deployment Lock" date="2025-11-22T07:37:15.687" /><!-- duration: 39ms -->
+      <step title="Cannot Acquire Deployment Lock already held" date="2025-11-22T07:37:15.959" /><!-- duration: 10ms -->
+    </step><!-- duration: 820ms -->
+    <step title="There is a deployment currently in progress. Please try again when it completes." date="2025-11-22T07:37:16.449" /><!-- duration: 10ms -->
+  </step><!-- duration: 1321ms -->
+  <step title="Outgoing response" date="2025-11-22T07:37:16.769" type="response" statusCode="409" statusText="Conflict" /><!-- duration: 10ms -->
+</step><!-- duration: 2048ms -->

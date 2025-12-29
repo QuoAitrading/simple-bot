@@ -1,0 +1,23 @@
+<step title="Incoming Request" date="2025-11-29T23:22:20.733" instance="c4a671" url="/api/zipdeploy?isAsync=true" method="POST" type="request" pid="769,1,3" Accept="*/*" Host="quotrading-flask-api.scm.azurewebsites.net" User-Agent="AZURECLI/2.80.0 (MSI)" Accept-Encoding="gzip, deflate" Authorization="Bea..." Cache-Control="no-cache" Content-Type="application/octet-stream" Content-Length="327125659" x-ms-client-request-id="30c8fb82-cd7a-11f0-b967-50bbb5629ee1" x-ms-artifact-checksum="e66613dac5b952109fc01e90bd5d0de79375bf001cffde8af60bc76cc30d5fdb" X-ARR-LOG-ID="30c8fb82-cd7a-11f0-b967-50bbb5629ee1" CLIENT-IP="69.120.241.138:57709" X-SITE-DEPLOYMENT-ID="quotrading-flask-api" WAS-DEFAULT-HOSTNAME="quotrading-flask-api.scm.azurewebsites.net" X-Forwarded-Proto="https" X-AppService-Proto="https" X-Forwarded-TlsVersion="1.3" X-WAWS-Unencoded-URL="/api/zipdeploy?isAsync=true" X-Client-IP="69.120.241.138" X-Client-Port="57709" >
+  <step title="Cleanup Xml Logs" date="2025-11-29T23:22:20.736" >
+    <step title="Cleanup Infos" date="2025-11-29T23:22:20.757" totalFiles="663" totalCleanup="503" /><!-- duration: 7ms -->
+  </step><!-- duration: 29ms -->
+  <step title="ZipPushDeploy" date="2025-11-29T23:22:20.789" >
+    <step title="ZipDeploy. Extract zip. Remote build." date="2025-11-29T23:22:20.797" /><!-- duration: 7ms -->
+    <step title="Starting PushDeployAsync" date="2025-11-29T23:22:20.812" /><!-- duration: 3ms -->
+    <step title="Writing artifact to /tmp/zipdeploy/8a32bda5-616c-4b86-b264-2c10b2e8d44b.zip" date="2025-11-29T23:22:20.826" >
+      <step title="Writing multipart request body to /tmp/zipdeploy/8a32bda5-616c-4b86-b264-2c10b2e8d44b.zip" date="2025-11-29T23:22:20.829" /><!-- duration: 7ms -->
+      <step title="Error occurred" date="2025-11-29T23:27:31.832" type="error" text="Exception in copying zip file to temp path. Exception: Microsoft.AspNetCore.Server.Kestrel.Core.BadHttpRequestException: Unexpected end of request content.
+   at Microsoft.AspNetCore.Server.Kestrel.Core.Internal.Http.Http1ContentLengthMessageBody.ReadAsyncInternal(CancellationToken cancellationToken)
+   at System.Runtime.CompilerServices.PoolingAsyncValueTaskMethodBuilder`1.StateMachineBox`1.System.Threading.Tasks.Sources.IValueTaskSource&lt;TResult&gt;.GetResult(Int16 token)
+   at System.IO.Pipelines.PipeReader.CopyToAsyncCore[TStream](TStream destination, Func`4 writeAsync, CancellationToken cancellationToken)
+   at Kudu.Services.Deployment.PushDeploymentController.CopyZipFromRequestBody(String artifactTempPath, ITracer tracer) in /tmp/KuduLite/Kudu.Services/Deployment/PushDeploymentController.cs:line 1496: Unexpected end of request content." stackTrace="   at Microsoft.AspNetCore.Server.Kestrel.Core.Internal.Http.Http1ContentLengthMessageBody.ReadAsyncInternal(CancellationToken cancellationToken)
+   at System.Runtime.CompilerServices.PoolingAsyncValueTaskMethodBuilder`1.StateMachineBox`1.System.Threading.Tasks.Sources.IValueTaskSource&lt;TResult&gt;.GetResult(Int16 token)
+   at System.IO.Pipelines.PipeReader.CopyToAsyncCore[TStream](TStream destination, Func`4 writeAsync, CancellationToken cancellationToken)
+   at Kudu.Services.Deployment.PushDeploymentController.CopyZipFromRequestBody(String artifactTempPath, ITracer tracer) in /tmp/KuduLite/Kudu.Services/Deployment/PushDeploymentController.cs:line 1496" /><!-- duration: 5ms -->
+    </step><!-- duration: 312452ms -->
+    <step title="Removing previous build artifact&apos;s manifest file" date="2025-11-29T23:27:33.288" >
+      <step title="Error occurred" date="2025-11-29T23:27:33.295" type="error" text="Request was Aborted. Deployment was cancelled" /><!-- duration: 9ms -->
+    </step><!-- duration: 23ms -->
+    <step title="Outgoing response" date="2025-11-29T23:27:33.333" type="response" statusCode="499" statusText="499" /><!-- duration: 3ms -->
+  </step><!-- duration: 312554ms -->

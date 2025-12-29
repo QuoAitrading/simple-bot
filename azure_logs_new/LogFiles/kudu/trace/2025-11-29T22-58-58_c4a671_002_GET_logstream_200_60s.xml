@@ -1,0 +1,5 @@
+<step title="Incoming Request" date="2025-11-29T22:58:58.661" instance="c4a671" url="/logstream" method="GET" type="request" pid="767,1,37" Host="quotrading-flask-api.scm.azurewebsites.net" User-Agent="AZURECLI/2.80.0 (MSI)" Accept-Encoding="identity" Authorization="Bea..." x-ms-client-request-id="f7bf9c90-cd76-11f0-b5ca-50bbb5629ee1" X-ARR-LOG-ID="f7bf9c90-cd76-11f0-b5ca-50bbb5629ee1" CLIENT-IP="69.120.241.138:52843" X-SITE-DEPLOYMENT-ID="quotrading-flask-api" WAS-DEFAULT-HOSTNAME="quotrading-flask-api.scm.azurewebsites.net" X-Forwarded-Proto="https" X-AppService-Proto="https" X-Forwarded-TlsVersion="1.3" X-WAWS-Unencoded-URL="/logstream" X-Client-IP="69.120.241.138" X-Client-Port="52843" >
+  <step title="LogStreamHandlerMiddleware.Invoke" date="2025-11-29T22:58:58.727" /><!-- duration: 307ms -->
+  <step title="Error occurred" date="2025-11-29T22:59:59.029" type="error" text="LogStreamManager: ProcessRequest end" /><!-- duration: 4ms -->
+  <step title="Outgoing response" date="2025-11-29T22:59:59.045" type="response" statusCode="200" statusText="OK" /><!-- duration: 6ms -->
+</step><!-- duration: 60403ms -->

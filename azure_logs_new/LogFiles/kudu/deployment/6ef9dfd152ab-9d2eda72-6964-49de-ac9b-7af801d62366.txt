@@ -1,0 +1,44 @@
+2025-11-29T06:26:55  Fetching changes.
+2025-11-29T06:26:55    Starting  LocalZipHandler
+2025-11-29T06:26:55    Cleaning up temp folders from previous zip deployments and extracting pushed zip file /tmp/zipdeploy/2a98484b-2d3c-4997-8a82-0be64a938911.zip (0.10 MB) to /tmp/zipdeploy/extracted
+2025-11-29T06:26:55    Exception in extracting and setting permissions on the zip file System.IO.Abstractions.FileInfoWrapper:System.IO.InvalidDataException: End of Central Directory record could not be found.
+   at System.IO.Compression.ZipArchive.ReadEndOfCentralDirectory()
+   at System.IO.Compression.ZipArchive..ctor(Stream stream, ZipArchiveMode mode, Boolean leaveOpen, Encoding entryNameEncoding)
+   at Kudu.Services.Deployment.PushDeploymentController.LocalZipFetch(IRepository repository, DeploymentInfoBase deploymentInfo, String targetBranch, ILogger logger, ITracer tracer) in /tmp/KuduLite/Kudu.Services/Deployment/PushDeploymentController.cs:line 1237
+2025-11-29T06:26:58  Updating submodules.
+2025-11-29T06:26:58  Preparing deployment for commit id 'bf02f375-e'.
+2025-11-29T06:26:59  PreDeployment: context.CleanOutputPath False
+2025-11-29T06:26:59  PreDeployment: context.OutputPath /home/site/wwwroot
+2025-11-29T06:26:59  Repository path is /tmp/zipdeploy/extracted
+2025-11-29T06:26:59  Running oryx build...
+2025-11-29T06:26:59    Command: oryx build /tmp/zipdeploy/extracted -o /home/site/wwwroot --platform python --platform-version 3.11 -p virtualenv_name=antenv --log-file /tmp/build-debug.log  -i /tmp/8de2f104ce87091 --compress-destination-dir | tee /tmp/oryx-build.log
+2025-11-29T06:27:01    Operation performed by Microsoft Oryx, https://github.com/Microsoft/Oryx
+2025-11-29T06:27:01    You can report issues at https://github.com/Microsoft/Oryx/issues
+2025-11-29T06:27:01    
+2025-11-29T06:27:01    Oryx Version: 0.2.20251022.1+bef98bc7139feefaa74be16de9d835e2c85385d4, Commit: bef98bc7139feefaa74be16de9d835e2c85385d4, ReleaseTagName: 20251022.1
+2025-11-29T06:27:01    
+2025-11-29T06:27:01    Build Operation ID: 7ea72a8c7b3f891d
+2025-11-29T06:27:01    Repository Commit : bf02f375-eef2-45f0-98d0-b7159fa68770
+2025-11-29T06:27:01    OS Type           : bullseye
+2025-11-29T06:27:01    Image Type        : githubactions
+2025-11-29T06:27:01    Error: Couldn't detect a version for the platform 'python' in the repo.
+2025-11-29T06:27:01    
+2025-11-29T06:27:01    Primary SDK Storage URL: https://oryx-cdn.microsoft.io
+2025-11-29T06:27:01    Backup SDK Storage URL: 
+2025-11-29T06:27:01    Detecting platforms...
+2025-11-29T06:27:01    External SDK provider is enabled.
+2025-11-29T06:27:01    Could not detect any platform in the source directory.
+2025-11-29T06:27:02    Error: Couldn't detect a version for the platform 'python' in the repo.
+/bin/bash -c "oryx build /tmp/zipdeploy/extracted -o /home/site/wwwroot --platform python --platform-version 3.11 -p virtualenv_name=antenv --log-file /tmp/build-debug.log  -i /tmp/8de2f104ce87091 --compress-destination-dir | tee /tmp/oryx-build.log ; exit $PIPESTATUS "
+2025-11-29T06:27:02  
+2025-11-29T06:27:02  
+2025-11-29T06:27:03  Generating summary of Oryx build
+2025-11-29T06:27:03  Parsing the build logs
+2025-11-29T06:27:03  Found 0 issue(s)
+2025-11-29T06:27:03  
+2025-11-29T06:27:03  Build Summary :
+2025-11-29T06:27:04  ===============
+2025-11-29T06:27:04  Errors (0)
+2025-11-29T06:27:04  Warnings (0)
+2025-11-29T06:27:04  
+2025-11-29T06:27:05  Deployment Failed. deployer = OneDeploy deploymentPath = OneDeploy

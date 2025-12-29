@@ -1,0 +1,18 @@
+<step title="Incoming Request" date="2025-11-24T10:36:29.732" instance="7d84ad" url="/api/zipdeploy?isAsync=true" method="POST" type="request" pid="768,1,53" Accept="*/*" Host="quotrading-flask-api.scm.azurewebsites.net" User-Agent="AZURECLI/2.80.0 (MSI)" Accept-Encoding="gzip, deflate" Authorization="Bea..." Cache-Control="no-cache" Content-Type="application/octet-stream" Content-Length="30581" x-ms-client-request-id="66937e92-c921-11f0-ba78-50bbb5629ee1" x-ms-artifact-checksum="d313dd62e22ea5c73d06931de232391790cdb2957e2e11e30b3fc0213f220c3a" X-ARR-LOG-ID="66937e92-c921-11f0-ba78-50bbb5629ee1" CLIENT-IP="69.120.241.138:62485" X-SITE-DEPLOYMENT-ID="quotrading-flask-api" WAS-DEFAULT-HOSTNAME="quotrading-flask-api.scm.azurewebsites.net" X-Forwarded-Proto="https" X-AppService-Proto="https" X-Forwarded-TlsVersion="1.3" X-WAWS-Unencoded-URL="/api/zipdeploy?isAsync=true" X-Client-IP="69.120.241.138" X-Client-Port="62485" >
+  <step title="Cleanup Xml Logs" date="2025-11-24T10:36:29.735" >
+    <step title="Cleanup Infos" date="2025-11-24T10:36:29.749" totalFiles="280" totalCleanup="120" /><!-- duration: 12ms -->
+  </step><!-- duration: 28ms -->
+  <step title="ZipPushDeploy" date="2025-11-24T10:36:29.829" >
+    <step title="ZipDeploy. Extract zip. Remote build." date="2025-11-24T10:36:29.839" /><!-- duration: 2ms -->
+    <step title="Starting PushDeployAsync" date="2025-11-24T10:36:29.845" /><!-- duration: 2ms -->
+    <step title="Writing artifact to /tmp/zipdeploy/5b67a68d-b88d-4625-8063-98c750f9cabd.zip" date="2025-11-24T10:36:29.863" >
+      <step title="Writing multipart request body to /tmp/zipdeploy/5b67a68d-b88d-4625-8063-98c750f9cabd.zip" date="2025-11-24T10:36:29.866" /><!-- duration: 5ms -->
+    </step><!-- duration: 44ms -->
+    <step title="Removing previous build artifact&apos;s manifest file" date="2025-11-24T10:36:29.911" >
+      <step title="Start deployment in the background" date="2025-11-24T10:36:29.923" >
+        <step title="Acquiring Deployment Lock" date="2025-11-24T10:36:29.934" /><!-- duration: 2ms -->
+        <step title="Acquired Deployment Lock" date="2025-11-24T10:36:29.973" /><!-- duration: 2ms -->
+      </step><!-- duration: 136ms -->
+    </step><!-- duration: 154ms -->
+    <step title="Outgoing response" date="2025-11-24T10:36:30.069" type="response" statusCode="202" statusText="Accepted" /><!-- duration: 2ms -->
+  </step><!-- duration: 244ms -->

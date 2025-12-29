@@ -3,7 +3,9 @@
 Simple, reliable API that works everywhere.
 Now with WebSocket support for real-time zone delivery.
 """
+print("DEBUG: Starting app.py imports...", flush=True)
 from flask import Flask, request, jsonify, send_from_directory
+print("DEBUG: Imported Flask", flush=True)
 from flask_cors import CORS
 from flask_socketio import SocketIO, emit, join_room, leave_room
 import os
@@ -4612,3 +4614,9 @@ def copier_ws_subscribe(data):
 def copier_ws_ping():
     """Keep-alive ping from copier client."""
     emit('pong', {'timestamp': datetime.now(timezone.utc).isoformat()})
+
+if __name__ == '__main__':
+    print("DEBUG: Starting __main__ block", flush=True)
+    port = int(os.environ.get('PORT', 8000))
+    # Using allow_unsafe_werkzeug=True for dev/debug
+    socketio.run(app, host='0.0.0.0', port=port, allow_unsafe_werkzeug=True)

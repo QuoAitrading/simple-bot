@@ -1,0 +1,11 @@
+<step title="Incoming Request" date="2025-12-15T07:25:54.724" instance="c25286" url="/api/deployments/latest" method="GET" type="request" pid="768,1,59" Accept="*/*" Host="quotrading-flask-api.scm.azurewebsites.net" User-Agent="AZURECLI/2.80.0 (MSI)" Accept-Encoding="gzip, deflate" Authorization="Bea..." x-ms-client-request-id="361a278a-d987-11f0-9864-50bbb5629ee1" X-ARR-LOG-ID="361a278a-d987-11f0-9864-50bbb5629ee1" CLIENT-IP="69.120.241.138:64910" X-SITE-DEPLOYMENT-ID="quotrading-flask-api" WAS-DEFAULT-HOSTNAME="quotrading-flask-api.scm.azurewebsites.net" X-Forwarded-Proto="https" X-AppService-Proto="https" X-Forwarded-TlsVersion="1.3" X-WAWS-Unencoded-URL="/api/deployments/latest" X-Client-IP="69.120.241.138" X-Client-Port="64910" >
+  <step title="Cleanup Xml Logs" date="2025-12-15T07:25:54.726" >
+    <step title="Cleanup Infos" date="2025-12-15T07:25:54.760" totalFiles="1190" totalCleanup="1030" /><!-- duration: 12ms -->
+  </step><!-- duration: 53ms -->
+  <step title="DeploymentService.GetResult" date="2025-12-15T07:25:54.810" >
+    <step title="DeploymentService.GetLatestDeployment" date="2025-12-15T07:25:54.825" >
+      <step title="DeploymentManager.GetResults" date="2025-12-15T07:25:54.846" /><!-- duration: 1590ms -->
+    </step><!-- duration: 1637ms -->
+  </step><!-- duration: 1670ms -->
+  <step title="Outgoing response" date="2025-12-15T07:25:56.499" type="response" statusCode="202" statusText="Accepted" /><!-- duration: 9ms -->
+</step><!-- duration: 1787ms -->

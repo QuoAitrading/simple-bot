@@ -1,0 +1,21 @@
+<step title="Incoming Request" date="2025-12-29T02:36:23.975" instance="c25286" url="/api/zipdeploy?isAsync=true" method="POST" type="request" pid="768,1,21" Accept="*/*" Host="quotrading-flask-api.scm.azurewebsites.net" User-Agent="AZURECLI/2.80.0 (MSI)" Accept-Encoding="gzip, deflate" Authorization="Bea..." Cache-Control="no-cache" Content-Type="application/octet-stream" Content-Length="73300" x-ms-client-request-id="275e3fd0-e45f-11f0-a8e8-50bbb5629ee1" x-ms-artifact-checksum="313404b901c9793f828d11bcf25a4e037a91919944fdb6c1b492fbb6879d4c45" X-ARR-LOG-ID="275e3fd0-e45f-11f0-a8e8-50bbb5629ee1" CLIENT-IP="69.120.241.138:54673" X-SITE-DEPLOYMENT-ID="quotrading-flask-api" WAS-DEFAULT-HOSTNAME="quotrading-flask-api.scm.azurewebsites.net" X-Forwarded-Proto="https" X-AppService-Proto="https" X-Forwarded-TlsVersion="1.3" X-WAWS-Unencoded-URL="/api/zipdeploy?isAsync=true" X-Client-IP="69.120.241.138" X-Client-Port="54673" >
+  <step title="Cleanup Xml Logs" date="2025-12-29T02:36:23.985" >
+    <step title="Cleanup Infos" date="2025-12-29T02:36:24.091" totalFiles="1374" totalCleanup="1214" /><!-- duration: 21ms -->
+  </step><!-- duration: 145ms -->
+  <step title="ZipPushDeploy" date="2025-12-29T02:36:24.240" >
+    <step title="ZipDeploy. Extract zip. Remote build." date="2025-12-29T02:36:24.275" /><!-- duration: 4ms -->
+    <step title="None repository commit" date="2025-12-29T02:36:24.322" >
+      <step title="Commit id: a4ced1e5-10be-4f03-9070-0790fd88f1f3" date="2025-12-29T02:36:24.326" Message="N/A" AuthorName="N/A" AuthorEmail="N/A" /><!-- duration: 5ms -->
+    </step><!-- duration: 12ms -->
+    <step title="Starting PushDeployAsync" date="2025-12-29T02:36:24.350" /><!-- duration: 12ms -->
+    <step title="Writing artifact to /tmp/zipdeploy/8432e17b-326b-4156-bd62-030dee9324ba.zip" date="2025-12-29T02:36:24.409" >
+      <step title="Writing multipart request body to /tmp/zipdeploy/8432e17b-326b-4156-bd62-030dee9324ba.zip" date="2025-12-29T02:36:24.414" /><!-- duration: 25ms -->
+    </step><!-- duration: 97ms -->
+    <step title="Removing previous build artifact&apos;s manifest file" date="2025-12-29T02:36:24.522" >
+      <step title="Start deployment in the background" date="2025-12-29T02:36:24.553" >
+        <step title="Acquiring Deployment Lock" date="2025-12-29T02:36:24.617" /><!-- duration: 29ms -->
+        <step title="Acquired Deployment Lock" date="2025-12-29T02:36:24.734" /><!-- duration: 8ms -->
+      </step><!-- duration: 367ms -->
+    </step><!-- duration: 411ms -->
+    <step title="Outgoing response" date="2025-12-29T02:36:24.966" type="response" statusCode="202" statusText="Accepted" /><!-- duration: 11ms -->
+  </step><!-- duration: 756ms -->

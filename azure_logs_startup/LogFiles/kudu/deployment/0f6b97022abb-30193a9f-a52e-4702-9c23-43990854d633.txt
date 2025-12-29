@@ -1,0 +1,179 @@
+2025-11-29T21:51:10  Fetching changes.
+2025-11-29T21:51:10    Starting  LocalZipHandler
+2025-11-29T21:51:10    Cleaning up temp folders from previous zip deployments and extracting pushed zip file /tmp/zipdeploy/fbc939c5-4177-4af9-bc10-f4c94e5bae05.zip (0.41 MB) to /tmp/zipdeploy/extracted
+2025-11-29T21:51:14  Updating submodules.
+2025-11-29T21:51:14  Preparing deployment for commit id '2c668a72-0'.
+2025-11-29T21:51:14  PreDeployment: context.CleanOutputPath False
+2025-11-29T21:51:14  PreDeployment: context.OutputPath /home/site/wwwroot
+2025-11-29T21:51:14  Repository path is /tmp/zipdeploy/extracted
+2025-11-29T21:51:15  Running oryx build...
+2025-11-29T21:51:15    Command: oryx build /tmp/zipdeploy/extracted -o /home/site/wwwroot --platform python --platform-version 3.11 -p virtualenv_name=antenv --log-file /tmp/build-debug.log  -i /tmp/8de2f916afbba5d --compress-destination-dir | tee /tmp/oryx-build.log
+2025-11-29T21:51:16    Operation performed by Microsoft Oryx, https://github.com/Microsoft/Oryx
+2025-11-29T21:51:16    You can report issues at https://github.com/Microsoft/Oryx/issues
+2025-11-29T21:51:16    
+2025-11-29T21:51:16    Oryx Version: 0.2.20251022.1+bef98bc7139feefaa74be16de9d835e2c85385d4, Commit: bef98bc7139feefaa74be16de9d835e2c85385d4, ReleaseTagName: 20251022.1
+2025-11-29T21:51:16    
+2025-11-29T21:51:16    Build Operation ID: 074af7f0caa72aef
+2025-11-29T21:51:16    Repository Commit : 2c668a72-01dd-4caf-b595-f53815842508
+2025-11-29T21:51:16    OS Type           : bullseye
+2025-11-29T21:51:16    Image Type        : githubactions
+2025-11-29T21:51:16    
+2025-11-29T21:51:16    Primary SDK Storage URL: https://oryx-cdn.microsoft.io
+2025-11-29T21:51:16    Backup SDK Storage URL: 
+2025-11-29T21:51:16    Detecting platforms...
+2025-11-29T21:51:17    External SDK provider is enabled.
+2025-11-29T21:51:17    Requesting metadata for platform python from external SDK provider
+2025-11-29T21:51:19    Requesting metadata for platform python from external SDK provider
+2025-11-29T21:51:19    Detected following platforms:
+2025-11-29T21:51:19      python: 3.11.14
+2025-11-29T21:51:19    Requesting metadata for platform python from external SDK provider
+2025-11-29T21:51:21    Version '3.11.14' of platform 'python' is not installed. Generating script to install it...
+2025-11-29T21:51:21    
+2025-11-29T21:51:21    Using intermediate directory '/tmp/8de2f916afbba5d'.
+2025-11-29T21:51:21    
+2025-11-29T21:51:21    Copying files to the intermediate directory...
+2025-11-29T21:51:21    Done in 0 sec(s).
+2025-11-29T21:51:21    
+2025-11-29T21:51:21    Source directory     : /tmp/8de2f916afbba5d
+2025-11-29T21:51:21    Destination directory: /home/site/wwwroot
+2025-11-29T21:51:21    
+2025-11-29T21:51:21    
+2025-11-29T21:51:21    Downloading and extracting 'python' version '3.11.14' to '/tmp/oryx/platforms/python/3.11.14'...
+2025-11-29T21:51:21    Detected image debian flavor: bullseye.
+2025-11-29T21:51:21    Skipping download of python version 3.11.14 as it is available in external sdk provider cache...
+2025-11-29T21:51:21    Extracting contents...
+2025-11-29T21:51:31    Successfully extracted python version 3.11.14 from external sdk provider cache...
+2025-11-29T21:51:31    Done in 10 sec(s).
+2025-11-29T21:51:31    
+2025-11-29T21:51:32    image detector file exists, platform is python..
+2025-11-29T21:51:32    OS detector file exists, OS is bullseye..
+2025-11-29T21:51:32    Python Version: /tmp/oryx/platforms/python/3.11.14/bin/python3.11
+2025-11-29T21:51:32    Creating directory for command manifest file if it does not exist
+2025-11-29T21:51:32    Removing existing manifest file
+2025-11-29T21:51:32    Python Virtual Environment: antenv
+2025-11-29T21:51:32    Creating virtual environment...
+2025-11-29T21:51:32    Executing: /tmp/oryx/platforms/python/3.11.14/bin/python3.11 -m venv antenv --copies --system-site-packages
+2025-11-29T21:51:42    Activating virtual environment...
+2025-11-29T21:51:42    Running pip install...
+2025-11-29T21:52:05    [21:51:44+0000] Collecting Flask==3.0.0 (from -r requirements.txt (line 1))
+2025-11-29T21:52:05    [21:51:44+0000]   Downloading flask-3.0.0-py3-none-any.whl.metadata (3.6 kB)
+2025-11-29T21:52:05    [21:51:44+0000] Collecting azure-storage-blob==12.19.0 (from -r requirements.txt (line 2))
+2025-11-29T21:52:05    [21:51:44+0000]   Downloading azure_storage_blob-12.19.0-py3-none-any.whl.metadata (26 kB)
+2025-11-29T21:52:05    [21:51:44+0000] Collecting psycopg2-binary==2.9.9 (from -r requirements.txt (line 3))
+2025-11-29T21:52:05    [21:51:44+0000]   Downloading psycopg2_binary-2.9.9-cp311-cp311-manylinux_2_17_x86_64.manylinux2014_x86_64.whl.metadata (4.4 kB)
+2025-11-29T21:52:05    [21:51:44+0000] Collecting gunicorn==21.2.0 (from -r requirements.txt (line 4))
+2025-11-29T21:52:05    [21:51:44+0000]   Downloading gunicorn-21.2.0-py3-none-any.whl.metadata (4.1 kB)
+2025-11-29T21:52:05    [21:51:44+0000] Collecting requests==2.32.4 (from -r requirements.txt (line 5))
+2025-11-29T21:52:05    [21:51:44+0000]   Downloading requests-2.32.4-py3-none-any.whl.metadata (4.9 kB)
+2025-11-29T21:52:05    [21:51:45+0000] Collecting numpy==1.26.4 (from -r requirements.txt (line 6))
+2025-11-29T21:52:05    [21:51:45+0000]   Downloading numpy-1.26.4-cp311-cp311-manylinux_2_17_x86_64.manylinux2014_x86_64.whl.metadata (61 kB)
+2025-11-29T21:52:05    [21:51:45+0000]      ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━���━━━━━━━━━━ 61.0/61.0 kB 4.1 MB/s eta 0:00:00
+2025-11-29T21:52:05    [21:51:45+0000] Collecting Werkzeug>=3.0.0 (from Flask==3.0.0->-r requirements.txt (line 1))
+2025-11-29T21:52:05    [21:51:45+0000]   Downloading werkzeug-3.1.4-py3-none-any.whl.metadata (4.0 kB)
+2025-11-29T21:52:05    [21:51:45+0000] Collecting Jinja2>=3.1.2 (from Flask==3.0.0->-r requirements.txt (line 1))
+2025-11-29T21:52:05    [21:51:45+0000]   Downloading jinja2-3.1.6-py3-none-any.whl.metadata (2.9 kB)
+2025-11-29T21:52:05    [21:51:45+0000] Collecting itsdangerous>=2.1.2 (from Flask==3.0.0->-r requirements.txt (line 1))
+2025-11-29T21:52:05    [21:51:45+0000]   Downloading itsdangerous-2.2.0-py3-none-any.whl.metadata (1.9 kB)
+2025-11-29T21:52:05    [21:51:45+0000] Collecting click>=8.1.3 (from Flask==3.0.0->-r requirements.txt (line 1))
+2025-11-29T21:52:05    [21:51:45+0000]   Downloading click-8.3.1-py3-none-any.whl.metadata (2.6 kB)
+2025-11-29T21:52:05    [21:51:45+0000] Collecting blinker>=1.6.2 (from Flask==3.0.0->-r requirements.txt (line 1))
+2025-11-29T21:52:05    [21:51:45+0000]   Downloading blinker-1.9.0-py3-none-any.whl.metadata (1.6 kB)
+2025-11-29T21:52:05    [21:51:45+0000] Collecting azure-core<2.0.0,>=1.28.0 (from azure-storage-blob==12.19.0->-r requirements.txt (line 2))
+2025-11-29T21:52:05    [21:51:45+0000]   Downloading azure_core-1.36.0-py3-none-any.whl.metadata (47 kB)
+2025-11-29T21:52:05    [21:51:45+0000]      ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 47.1/47.1 kB 7.8 MB/s eta 0:00:00
+2025-11-29T21:52:05    [21:51:46+0000] Collecting cryptography>=2.1.4 (from azure-storage-blob==12.19.0->-r requirements.txt (line 2))
+2025-11-29T21:52:05    [21:51:46+0000]   Downloading cryptography-46.0.3-cp311-abi3-manylinux_2_28_x86_64.whl.metadata (5.7 kB)
+2025-11-29T21:52:05    [21:51:47+0000] Collecting typing-extensions>=4.3.0 (from azure-storage-blob==12.19.0->-r requirements.txt (line 2))
+2025-11-29T21:52:06    [21:51:47+0000]   Downloading typing_extensions-4.15.0-py3-none-any.whl.metadata (3.3 kB)
+2025-11-29T21:52:06    [21:51:47+0000] Collecting isodate>=0.6.1 (from azure-storage-blob==12.19.0->-r requirements.txt (line 2))
+2025-11-29T21:52:06    [21:51:47+0000]   Downloading isodate-0.7.2-py3-none-any.whl.metadata (11 kB)
+2025-11-29T21:52:06    [21:51:47+0000] Collecting packaging (from gunicorn==21.2.0->-r requirements.txt (line 4))
+2025-11-29T21:52:06    [21:51:47+0000]   Downloading packaging-25.0-py3-none-any.whl.metadata (3.3 kB)
+2025-11-29T21:52:06    [21:51:47+0000] Collecting charset_normalizer<4,>=2 (from requests==2.32.4->-r requirements.txt (line 5))
+2025-11-29T21:52:06    [21:51:47+0000]   Downloading charset_normalizer-3.4.4-cp311-cp311-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl.metadata (37 kB)
+2025-11-29T21:52:06    [21:51:48+0000] Collecting idna<4,>=2.5 (from requests==2.32.4->-r requirements.txt (line 5))
+2025-11-29T21:52:06    [21:51:48+0000]   Downloading idna-3.11-py3-none-any.whl.metadata (8.4 kB)
+2025-11-29T21:52:06    [21:51:48+0000] Collecting urllib3<3,>=1.21.1 (from requests==2.32.4->-r requirements.txt (line 5))
+2025-11-29T21:52:06    [21:51:48+0000]   Downloading urllib3-2.5.0-py3-none-any.whl.metadata (6.5 kB)
+2025-11-29T21:52:06    [21:51:48+0000] Collecting certifi>=2017.4.17 (from requests==2.32.4->-r requirements.txt (line 5))
+2025-11-29T21:52:06    [21:51:48+0000]   Downloading certifi-2025.11.12-py3-none-any.whl.metadata (2.5 kB)
+2025-11-29T21:52:06    [21:51:48+0000] Collecting cffi>=2.0.0 (from cryptography>=2.1.4->azure-storage-blob==12.19.0->-r requirements.txt (line 2))
+2025-11-29T21:52:06    [21:51:48+0000]   Downloading cffi-2.0.0-cp311-cp311-manylinux2014_x86_64.manylinux_2_17_x86_64.whl.metadata (2.6 kB)
+2025-11-29T21:52:06    [21:51:49+0000] Collecting MarkupSafe>=2.0 (from Jinja2>=3.1.2->Flask==3.0.0->-r requirements.txt (line 1))
+2025-11-29T21:52:06    [21:51:49+0000]   Downloading markupsafe-3.0.3-cp311-cp311-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl.metadata (2.7 kB)
+2025-11-29T21:52:06    [21:51:49+0000] Collecting pycparser (from cffi>=2.0.0->cryptography>=2.1.4->azure-storage-blob==12.19.0->-r requirements.txt (line 2))
+2025-11-29T21:52:06    [21:51:49+0000]   Downloading pycparser-2.23-py3-none-any.whl.metadata (993 bytes)
+2025-11-29T21:52:06    [21:51:49+0000] Downloading flask-3.0.0-py3-none-any.whl (99 kB)
+2025-11-29T21:52:06    [21:51:49+0000]    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 99.7/99.7 kB 20.1 MB/s eta 0:00:00
+2025-11-29T21:52:06    [21:51:49+0000] Downloading azure_storage_blob-12.19.0-py3-none-any.whl (394 kB)
+2025-11-29T21:52:07    [21:51:49+0000]    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 394.2/394.2 kB 28.1 MB/s eta 0:00:00
+2025-11-29T21:52:07    [21:51:49+0000] Downloading psycopg2_binary-2.9.9-cp311-cp311-manylinux_2_17_x86_64.manylinux2014_x86_64.whl (3.0 MB)
+2025-11-29T21:52:07    [21:51:49+0000]    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 3.0/3.0 MB 46.4 MB/s eta 0:00:00
+2025-11-29T21:52:07    [21:51:49+0000] Downloading gunicorn-21.2.0-py3-none-any.whl (80 kB)
+2025-11-29T21:52:07    [21:51:49+0000]    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 80.2/80.2 kB 13.1 MB/s eta 0:00:00
+2025-11-29T21:52:07    [21:51:49+0000] Downloading requests-2.32.4-py3-none-any.whl (64 kB)
+2025-11-29T21:52:07    [21:51:49+0000]    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 64.8/64.8 kB 17.6 MB/s eta 0:00:00
+2025-11-29T21:52:07    [21:51:49+0000] Downloading numpy-1.26.4-cp311-cp311-manylinux_2_17_x86_64.manylinux2014_x86_64.whl (18.3 MB)
+2025-11-29T21:52:07    [21:51:50+0000]    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 18.3/18.3 MB 26.2 MB/s eta 0:00:00
+2025-11-29T21:52:07    [21:51:50+0000] Downloading azure_core-1.36.0-py3-none-any.whl (213 kB)
+2025-11-29T21:52:07    [21:51:50+0000]    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 213.3/213.3 kB 20.3 MB/s eta 0:00:00
+2025-11-29T21:52:07    [21:51:50+0000] Downloading blinker-1.9.0-py3-none-any.whl (8.5 kB)
+2025-11-29T21:52:07    [21:51:50+0000] Downloading certifi-2025.11.12-py3-none-any.whl (159 kB)
+2025-11-29T21:52:07    [21:51:50+0000]    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 159.4/159.4 kB 15.5 MB/s eta 0:00:00
+2025-11-29T21:52:07    [21:51:50+0000] Downloading charset_normalizer-3.4.4-cp311-cp311-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl (151 kB)
+2025-11-29T21:52:07    [21:51:50+0000]    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 151.6/151.6 kB 11.8 MB/s eta 0:00:00
+2025-11-29T21:52:07    [21:51:50+0000] Downloading click-8.3.1-py3-none-any.whl (108 kB)
+2025-11-29T21:52:07    [21:51:50+0000]    ━━━━━━���━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 108.3/108.3 kB 10.8 MB/s eta 0:00:00
+2025-11-29T21:52:07    [21:51:50+0000] Downloading cryptography-46.0.3-cp311-abi3-manylinux_2_28_x86_64.whl (4.5 MB)
+2025-11-29T21:52:07    [21:51:50+0000]    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 4.5/4.5 MB 35.6 MB/s eta 0:00:00
+2025-11-29T21:52:07    [21:51:50+0000] Downloading idna-3.11-py3-none-any.whl (71 kB)
+2025-11-29T21:52:07    [21:51:50+0000]    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 71.0/71.0 kB 3.4 MB/s eta 0:00:00
+2025-11-29T21:52:07    [21:51:50+0000] Downloading isodate-0.7.2-py3-none-any.whl (22 kB)
+2025-11-29T21:52:07    [21:51:50+0000] Downloading itsdangerous-2.2.0-py3-none-any.whl (16 kB)
+2025-11-29T21:52:07    [21:51:50+0000] Downloading jinja2-3.1.6-py3-none-any.whl (134 kB)
+2025-11-29T21:52:07    [21:51:50+0000]    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 134.9/134.9 kB 12.3 MB/s eta 0:00:00
+2025-11-29T21:52:07    [21:51:50+0000] Downloading typing_extensions-4.15.0-py3-none-any.whl (44 kB)
+2025-11-29T21:52:07    [21:51:50+0000]    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 44.6/44.6 kB 5.4 MB/s eta 0:00:00
+2025-11-29T21:52:07    [21:51:50+0000] Downloading urllib3-2.5.0-py3-none-any.whl (129 kB)
+2025-11-29T21:52:07    [21:51:50+0000]    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 129.8/129.8 kB 30.6 MB/s eta 0:00:00
+2025-11-29T21:52:07    [21:51:50+0000] Downloading werkzeug-3.1.4-py3-none-any.whl (224 kB)
+2025-11-29T21:52:07    [21:51:50+0000]    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 225.0/225.0 kB 9.6 MB/s eta 0:00:00
+2025-11-29T21:52:07    [21:51:50+0000] Downloading packaging-25.0-py3-none-any.whl (66 kB)
+2025-11-29T21:52:07    [21:51:50+0000]    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 66.5/66.5 kB 5.7 MB/s eta 0:00:00
+2025-11-29T21:52:07    [21:51:50+0000] Downloading cffi-2.0.0-cp311-cp311-manylinux2014_x86_64.manylinux_2_17_x86_64.whl (215 kB)
+2025-11-29T21:52:07    [21:51:50+0000]    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 215.6/215.6 kB 16.3 MB/s eta 0:00:00
+2025-11-29T21:52:07    [21:51:50+0000] Downloading markupsafe-3.0.3-cp311-cp311-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl (22 kB)
+2025-11-29T21:52:07    [21:51:50+0000] Downloading pycparser-2.23-py3-none-any.whl (118 kB)
+2025-11-29T21:52:07    [21:51:50+0000]    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 118.1/118.1 kB 21.9 MB/s eta 0:00:00
+2025-11-29T21:52:07    [21:51:51+0000] Installing collected packages: urllib3, typing-extensions, pycparser, psycopg2-binary, packaging, numpy, MarkupSafe, itsdangerous, isodate, idna, click, charset_normalizer, certifi, blinker, Werkzeug, requests, Jinja2, gunicorn, cffi, Flask, cryptography, azure-core, azure-storage-blob
+2025-11-29T21:52:07    [21:52:03+0000] Successfully installed Flask-3.0.0 Jinja2-3.1.6 MarkupSafe-3.0.3 Werkzeug-3.1.4 azure-core-1.36.0 azure-storage-blob-12.19.0 blinker-1.9.0 certifi-2025.11.12 cffi-2.0.0 charset_normalizer-3.4.4 click-8.3.1 cryptography-46.0.3 gunicorn-21.2.0 idna-3.11 isodate-0.7.2 itsdangerous-2.2.0 numpy-1.26.4 packaging-25.0 psycopg2-binary-2.9.9 pycparser-2.23 requests-2.32.4 typing-extensions-4.15.0 urllib3-2.5.0
+2025-11-29T21:52:07    
+2025-11-29T21:52:08    [notice] A new release of pip is available: 24.0 -> 25.3
+2025-11-29T21:52:08    [notice] To update, run: pip install --upgrade pip
+2025-11-29T21:52:08    Not a vso image, so not writing build commands
+2025-11-29T21:52:08    Preparing output...
+2025-11-29T21:52:08    
+2025-11-29T21:52:08    Copying files to destination directory '/tmp/_preCompressedDestinationDir'...
+2025-11-29T21:52:10    Done in 5 sec(s).
+2025-11-29T21:52:10    Compressing content of directory '/tmp/_preCompressedDestinationDir'...
+2025-11-29T21:52:33    Copied the compressed output to '/home/site/wwwroot'
+2025-11-29T21:52:34    
+2025-11-29T21:52:34    Removing existing manifest file
+2025-11-29T21:52:34    Creating a manifest file...
+2025-11-29T21:52:34    Manifest file created.
+2025-11-29T21:52:34    Copying .ostype to manifest output directory.
+2025-11-29T21:52:34    
+2025-11-29T21:52:34    Done in 73 sec(s).
+2025-11-29T21:52:34  Running post deployment command(s)...
+2025-11-29T21:52:35  
+2025-11-29T21:52:35  Generating summary of Oryx build
+2025-11-29T21:52:35  Parsing the build logs
+2025-11-29T21:52:35  Found 0 issue(s)
+2025-11-29T21:52:36  
+2025-11-29T21:52:36  Build Summary :
+2025-11-29T21:52:36  ===============
+2025-11-29T21:52:36  Errors (0)
+2025-11-29T21:52:36  Warnings (0)
+2025-11-29T21:52:36  
+2025-11-29T21:52:37  Triggering container recycle for OneDeploy by adding/updating restartTrigger.txt to the site root path
+2025-11-29T21:52:37  Deployment successful. deployer = OneDeploy deploymentPath = OneDeploy
