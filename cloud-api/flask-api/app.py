@@ -111,6 +111,10 @@ FROM_EMAIL = os.environ.get("FROM_EMAIL", "noreply@quotrading.com")
 # Download link for the bot EXE (Azure Blob Storage)
 BOT_DOWNLOAD_URL = os.environ.get("BOT_DOWNLOAD_URL", "https://quotradingfiles.blob.core.windows.net/bot-downloads/QuoTrading_Bot.exe")
 
+# Session management configuration
+SESSION_TIMEOUT_SECONDS = int(os.environ.get("SESSION_TIMEOUT_SECONDS", "60"))  # Default 60 seconds
+MULTI_SYMBOL_SESSIONS_ENABLED = os.environ.get("MULTI_SYMBOL_SESSIONS_ENABLED", "False").lower() == "true"
+
 # Connection pool for PostgreSQL (reuse connections)
 _db_pool = None
 
@@ -1190,6 +1194,100 @@ def validate_license(license_key: str):
         return_connection(conn)
 
 
+def ensure_active_sessions_table(conn):
+    """Ensure active_sessions table exists for multi-symbol session tracking."""
+    try:
+        with conn.cursor() as cursor:
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS active_sessions (
+                    id SERIAL PRIMARY KEY,
+                    license_key VARCHAR(255) NOT NULL,
+                    symbol VARCHAR(50) NOT NULL,
+                    device_fingerprint VARCHAR(255),
+                    last_heartbeat TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE(license_key, symbol)
+                )
+            """)
+            cursor.execute("""
+                CREATE INDEX IF NOT EXISTS idx_active_sessions_license 
+                ON active_sessions(license_key)
+            """)
+            cursor.execute("""
+                CREATE INDEX IF NOT EXISTS idx_active_sessions_heartbeat 
+                ON active_sessions(last_heartbeat)
+            """)
+            conn.commit()
+    except Exception as e:
+        logging.error(f"Error ensuring active_sessions table: {e}")
+
+
+def check_symbol_session_conflict(conn, license_key, symbol, device_fingerprint, allow_same_device=False):
+    """Check if there's an active session conflict for a specific symbol.
+    
+    Returns:
+        Tuple of (has_conflict: bool, conflict_info: dict or None)
+    """
+    try:
+        with conn.cursor() as cursor:
+            cursor.execute("""
+                SELECT device_fingerprint, last_heartbeat
+                FROM active_sessions
+                WHERE license_key = %s AND symbol = %s
+                AND last_heartbeat > NOW() - make_interval(secs => %s)
+                ORDER BY last_heartbeat DESC
+                LIMIT 1
+            """, (license_key, symbol, SESSION_TIMEOUT_SECONDS))
+            
+            result = cursor.fetchone()
+            if result:
+                stored_device, last_heartbeat = result
+                
+                # If same device and we allow same device, no conflict
+                if allow_same_device and stored_device == device_fingerprint:
+                    return False, None
+                
+                # Calculate time remaining
+                now_utc = datetime.now(timezone.utc)
+                heartbeat = last_heartbeat if last_heartbeat.tzinfo else last_heartbeat.replace(tzinfo=timezone.utc)
+                time_since_last = now_utc - heartbeat
+                seconds_remaining = max(0, SESSION_TIMEOUT_SECONDS - int(time_since_last.total_seconds()))
+                
+                return True, {
+                    'device_fingerprint': stored_device,
+                    'last_heartbeat': heartbeat,
+                    'seconds_remaining': seconds_remaining
+                }
+            
+            return False, None
+    except Exception as e:
+        logging.error(f"Error checking symbol session conflict: {e}")
+        return False, None
+
+
+def count_active_symbol_sessions(conn, license_key):
+    """Count the number of active symbol sessions for a license key.
+    
+    Returns:
+        Number of active sessions
+    """
+    try:
+        with conn.cursor() as cursor:
+            cursor.execute("""
+                SELECT COUNT(DISTINCT symbol)
+                FROM active_sessions
+                WHERE license_key = %s
+                AND last_heartbeat > NOW() - make_interval(secs => %s)
+            """, (license_key, SESSION_TIMEOUT_SECONDS))
+            
+            result = cursor.fetchone()
+            return result[0] if result else 0
+    except Exception as e:
+        logging.error(f"Error counting active symbol sessions: {e}")
+        return 0
+
+
+
 
 @app.route('/api/hello', methods=['GET'])
 def hello():
@@ -1210,6 +1308,7 @@ def hello():
     }), 200
 
 
+@app.route('/api/validate-license', methods=['POST'])
 def validate_license_endpoint():
     """
     Validate license key and check for session conflicts.
