@@ -1,3 +1,0 @@
-<step title="Startup Request" date="2025-11-22T18:00:16.271" instance="7d84ad" url="/dump" method="GET" type="request" pid="768,1,5" ScmType="LocalGit" SCM_DO_BUILD_DURING_DEPLOYMENT="true" >
-  <step title="Cleanup Xml Logs" date="2025-11-22T18:00:16.273" /><!-- duration: 7ms -->
-</step><!-- duration: 13ms -->

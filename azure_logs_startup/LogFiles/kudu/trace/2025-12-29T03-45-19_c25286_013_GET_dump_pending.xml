@@ -1,4 +1,0 @@
-<step title="Incoming Request" date="2025-12-29T03:45:19.337" instance="c25286" url="/dump" method="GET" type="request" pid="768,1,23" Host="quotrading-flask-api.scm.azurewebsites.net" User-Agent="AZURECLI/2.80.0 (MSI)" Accept-Encoding="identity" Authorization="Bea..." x-ms-client-request-id="c6cd1507-e468-11f0-ac98-50bbb5629ee1" X-ARR-LOG-ID="c6cd1507-e468-11f0-ac98-50bbb5629ee1" CLIENT-IP="69.120.241.138:65271" X-SITE-DEPLOYMENT-ID="quotrading-flask-api" WAS-DEFAULT-HOSTNAME="quotrading-flask-api.scm.azurewebsites.net" X-Forwarded-Proto="https" X-AppService-Proto="https" X-Forwarded-TlsVersion="1.3" X-WAWS-Unencoded-URL="/dump" X-Client-IP="69.120.241.138" X-Client-Port="65271" >
-  <step title="Cleanup Xml Logs" date="2025-12-29T03:45:19.342" >
-    <step title="Cleanup Infos" date="2025-12-29T03:45:19.381" totalFiles="1436" totalCleanup="1276" /><!-- duration: 10ms -->
-  </step><!-- duration: 52ms -->

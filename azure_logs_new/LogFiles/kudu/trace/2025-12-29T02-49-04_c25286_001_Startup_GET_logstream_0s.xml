@@ -1,5 +1,0 @@
-<step title="Startup Request" date="2025-12-29T02:49:04.303" instance="c25286" url="/logstream" method="GET" type="request" pid="767,1,5" ScmType="LocalGit" SCM_DO_BUILD_DURING_DEPLOYMENT="true" >
-  <step title="Cleanup Xml Logs" date="2025-12-29T02:49:04.307" >
-    <step title="Cleanup Infos" date="2025-12-29T02:49:04.348" totalFiles="1385" totalCleanup="1225" /><!-- duration: 8ms -->
-  </step><!-- duration: 53ms -->
-</step><!-- duration: 61ms -->

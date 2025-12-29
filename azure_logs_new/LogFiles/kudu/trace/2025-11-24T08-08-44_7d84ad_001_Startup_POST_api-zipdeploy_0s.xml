@@ -1,5 +1,0 @@
-<step title="Startup Request" date="2025-11-24T08:08:44.276" instance="7d84ad" url="/api/zipdeploy?isAsync=true" method="POST" type="request" pid="768,1,10" ScmType="LocalGit" SCM_DO_BUILD_DURING_DEPLOYMENT="true" >
-  <step title="Cleanup Xml Logs" date="2025-11-24T08:08:44.281" >
-    <step title="Cleanup Infos" date="2025-11-24T08:08:44.286" totalFiles="225" totalCleanup="65" /><!-- duration: 3ms -->
-  </step><!-- duration: 11ms -->
-</step><!-- duration: 18ms -->
