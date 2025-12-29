@@ -179,3 +179,19 @@ dev/data_recorder_config.json
 !launcher/.gitkeep
 *_original.csv
 discord-bot/config.json
+
+# Azure logs and deployment artifacts
+azure_logs*/
+azure_logs*.zip
+*.zip
+deploy_package.zip
+
+# Trade copier config (contains credentials)
+trade-copier/follower/config.json
+trade-copier/master/config.json
+
+# License fix report
+license_fix_report.md
+
+# Azure credentials
+azure_creds.txt

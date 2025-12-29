@@ -113,6 +113,11 @@ FROM_EMAIL = os.environ.get("FROM_EMAIL", "noreply@quotrading.com")
 # Download link for the bot EXE (Azure Blob Storage)
 BOT_DOWNLOAD_URL = os.environ.get("BOT_DOWNLOAD_URL", "https://quotradingfiles.blob.core.windows.net/bot-downloads/QuoTrading_Bot.exe")
 
+# Multi-symbol session support (allows same license on multiple symbols)
+MULTI_SYMBOL_SESSIONS_ENABLED = os.environ.get("MULTI_SYMBOL_SESSIONS_ENABLED", "true").lower() == "true"
+# Session timeout in seconds (60 = stale after 60s without heartbeat)
+SESSION_TIMEOUT_SECONDS = int(os.environ.get("SESSION_TIMEOUT_SECONDS", "60"))
+
 # Connection pool for PostgreSQL (reuse connections)
 _db_pool = None
 
@@ -1212,6 +1217,90 @@ def hello():
     }), 200
 
 
+def ensure_active_sessions_table(conn):
+    """Ensure the active_sessions table exists for multi-symbol session tracking."""
+    try:
+        with conn.cursor() as cursor:
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS active_sessions (
+                    id SERIAL PRIMARY KEY,
+                    license_key VARCHAR(50) NOT NULL,
+                    symbol VARCHAR(20) NOT NULL,
+                    device_fingerprint VARCHAR(255) NOT NULL,
+                    last_heartbeat TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+                    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+                    UNIQUE(license_key, symbol)
+                )
+            """)
+            conn.commit()
+    except Exception as e:
+        logging.error(f"Error creating active_sessions table: {e}")
+
+
+def check_symbol_session_conflict(conn, license_key, symbol, device_fingerprint, allow_same_device=True):
+    """
+    Check if there's an active session conflict for a specific symbol.
+    
+    Returns: (has_conflict: bool, conflict_info: dict or None)
+    """
+    try:
+        with conn.cursor() as cursor:
+            cursor.execute("""
+                SELECT device_fingerprint, last_heartbeat
+                FROM active_sessions
+                WHERE license_key = %s AND symbol = %s
+                AND last_heartbeat > NOW() - make_interval(secs => %s)
+            """, (license_key, symbol, SESSION_TIMEOUT_SECONDS))
+            
+            result = cursor.fetchone()
+            
+            if result:
+                stored_device = result[0]
+                last_heartbeat = result[1]
+                
+                # If same device, allow it (session takeover)
+                if allow_same_device and stored_device == device_fingerprint:
+                    return False, None
+                
+                # Calculate time remaining
+                now_utc = datetime.now(timezone.utc)
+                heartbeat = last_heartbeat if last_heartbeat.tzinfo else last_heartbeat.replace(tzinfo=timezone.utc)
+                time_since_last = now_utc - heartbeat
+                seconds_remaining = max(0, SESSION_TIMEOUT_SECONDS - int(time_since_last.total_seconds()))
+                
+                return True, {
+                    'device_fingerprint': stored_device,
+                    'last_heartbeat': last_heartbeat,
+                    'seconds_remaining': seconds_remaining
+                }
+            
+            return False, None
+            
+    except Exception as e:
+        logging.error(f"Error checking symbol session conflict: {e}")
+        return False, None
+
+
+def count_active_symbol_sessions(conn, license_key):
+    """Count the number of active symbol sessions for a license."""
+    try:
+        with conn.cursor() as cursor:
+            cursor.execute("""
+                SELECT COUNT(*)
+                FROM active_sessions
+                WHERE license_key = %s
+                AND last_heartbeat > NOW() - make_interval(secs => %s)
+            """, (license_key, SESSION_TIMEOUT_SECONDS))
+            
+            result = cursor.fetchone()
+            return result[0] if result else 0
+            
+    except Exception as e:
+        logging.error(f"Error counting symbol sessions: {e}")
+        return 0
+
+
+@app.route('/api/validate-license', methods=['POST'])
 def validate_license_endpoint():
     """
     Validate license key and check for session conflicts.
@@ -1435,6 +1524,82 @@ def validate_license_endpoint():
             "message": str(e)
         }), 500
 
+def load_experiences():
+    """Load experiences from database (placeholder)"""
+    return []
+
+
+@app.route('/api/heartbeat', methods=['POST'])
+def api_heartbeat():
+    """
+    Heartbeat endpoint to maintain session lock.
+    Called every 20 seconds by the client.
+    Sessions are considered stale after 60 seconds without a heartbeat.
+    """
+    try:
+        data = request.get_json()
+        license_key = data.get('license_key')
+        device_fingerprint = data.get('device_fingerprint')
+        symbol = data.get('symbol', 'COPIER')
+        status = data.get('status', 'online')
+        metadata = data.get('metadata', {})
+        
+        if not license_key:
+            return jsonify({"success": False, "message": "License key required"}), 400
+        if not device_fingerprint:
+            return jsonify({"success": False, "message": "Device fingerprint required"}), 400
+        
+        conn = get_db_connection()
+        if not conn:
+            return jsonify({"success": False, "message": "Database error"}), 500
+        
+        try:
+            # Ensure active_sessions table exists
+            ensure_active_sessions_table(conn)
+            
+            with conn.cursor() as cursor:
+                # Update last_heartbeat and device_fingerprint in users table
+                cursor.execute("""
+                    UPDATE users 
+                    SET last_heartbeat = %s, device_fingerprint = %s
+                    WHERE license_key = %s
+                    RETURNING license_key
+                """, (datetime.now(timezone.utc), device_fingerprint, license_key))
+                
+                result = cursor.fetchone()
+                
+                if not result:
+                    conn.rollback()
+                    return jsonify({"success": False, "message": "License not found"}), 404
+                
+                # Also upsert into active_sessions for multi-symbol support
+                cursor.execute("""
+                    INSERT INTO active_sessions (license_key, symbol, device_fingerprint, last_heartbeat)
+                    VALUES (%s, %s, %s, %s)
+                    ON CONFLICT (license_key, symbol)
+                    DO UPDATE SET device_fingerprint = EXCLUDED.device_fingerprint,
+                                  last_heartbeat = EXCLUDED.last_heartbeat
+                """, (license_key, symbol, device_fingerprint, datetime.now(timezone.utc)))
+                
+                conn.commit()
+                
+                logging.debug(f"💓 Heartbeat from {license_key[:8]}... on {symbol}")
+                
+                return jsonify({
+                    "success": True,
+                    "message": "Heartbeat received",
+                    "timestamp": datetime.now(timezone.utc).isoformat()
+                }), 200
+                
+        finally:
+            return_connection(conn)
+            
+    except Exception as e:
+        logging.error(f"Heartbeat error: {e}")
+        return jsonify({"success": False, "message": str(e)}), 500
+
+
+@app.route('/api/main', methods=['POST'])
 def main():
     """Main signal processing endpoint with license validation and session locking"""
     try:
