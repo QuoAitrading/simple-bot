@@ -1,6 +1,9 @@
 #!/bin/bash
 # Startup script for Azure App Service
 # Starts Flask API with gunicorn using eventlet workers for WebSocket support
+#
+# Note: This file should be executable. If deploying manually, run: chmod +x startup.sh
+# Azure App Service automatically handles script permissions during deployment.
 
 # Set PORT if not already set (Azure sets this automatically)
 PORT="${PORT:-8000}"
