@@ -26,8 +26,8 @@ import traceback
 app = Flask(__name__)
 
 # Initialize SocketIO for real-time zone delivery
-# async_mode='eventlet' for production, 'threading' for development
-socketio = SocketIO(app, cors_allowed_origins="*", async_mode='eventlet', logger=False, engineio_logger=False)
+# Using threading mode for Azure compatibility (works with sync gunicorn workers)
+socketio = SocketIO(app, cors_allowed_origins="*", async_mode='threading', logger=False, engineio_logger=False)
 
 # WebSocket connection tracking for dashboard metrics
 websocket_stats = {
