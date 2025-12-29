@@ -4191,7 +4191,7 @@ def init_database_if_needed():
         app.logger.warning(f"Database initialization check: {e}")
 
 @app.route('/api/health', methods=['GET'])
-def health_check():
+def api_health_check():
     """Public health check endpoint for server infrastructure monitoring"""
     health_status = {
         "timestamp": datetime.now().isoformat(),
@@ -5308,8 +5308,17 @@ def handle_unexpected_error(error):
     }), 500
 
 
-if __name__ == '__main__':
+# Initialize database when module loads (before gunicorn imports it)
+# This ensures tables exist whether running via `python app.py` or gunicorn
+try:
     init_database_if_needed()
+    logging.info("✅ Database initialization completed at module load")
+except Exception as e:
+    logging.error(f"❌ Database initialization failed: {e}")
+
+if __name__ == '__main__':
+    # This block only runs when executing `python app.py` directly
+    # When using gunicorn, the module is imported but this block is skipped
     port = int(os.environ.get('PORT', 5000))
     # Use socketio.run for WebSocket support
     socketio.run(app, host='0.0.0.0', port=port, debug=False)
