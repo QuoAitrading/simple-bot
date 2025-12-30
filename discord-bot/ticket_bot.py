@@ -235,8 +235,18 @@ class CloseTicketView(View):
             return
         
         # Check if user has permission to close (ticket creator or staff)
-        ticket_owner_name = channel.name.replace('ticket-', '')
-        is_ticket_owner = user.name.lower() == ticket_owner_name
+        # Extract user ID from channel topic to handle username changes
+        ticket_owner_id = None
+        if channel.topic and 'Support ticket for' in channel.topic:
+            # Try to extract user ID from channel permissions instead
+            for perm_target, perm_overwrite in channel.overwrites.items():
+                if isinstance(perm_target, discord.Member) and perm_target != guild.me:
+                    # Check if this member has send_messages permission (ticket creator)
+                    if perm_overwrite.send_messages:
+                        ticket_owner_id = perm_target.id
+                        break
+        
+        is_ticket_owner = (ticket_owner_id == user.id) if ticket_owner_id else False
         
         # Check if user has staff role
         is_staff = False
@@ -267,14 +277,14 @@ class CloseTicketView(View):
             # Try to send error message, but if that fails, just log it
             try:
                 await channel.send('❌ Error: Bot lacks permission to delete this channel. Please contact an administrator.')
-            except:
+            except Exception:
                 pass  # Channel send failed, already logged the main error
         except discord.HTTPException as e:
             logger.error(f"Failed to delete ticket {channel.name}: {e}")
             # Try to send error message, but if that fails, just log it
             try:
                 await channel.send(f'❌ Error deleting ticket: {e}')
-            except:
+            except Exception:
                 pass  # Channel send failed, already logged the main error
 
 import random
