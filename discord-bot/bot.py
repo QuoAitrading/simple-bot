@@ -146,7 +146,6 @@ async def on_member_join(member):
     guild = member.guild
     
     # Find welcome channel
-    channel = None
     channel = discord.utils.get(guild.text_channels, name="👋│welcome") or \
               discord.utils.get(guild.text_channels, name="welcome")
     
@@ -164,7 +163,7 @@ async def on_member_join(member):
     print(f"✅ Found welcome channel: {channel.name}")
     
     # Calculate member count with ordinal suffix
-    n = len(guild.members)
+    n = guild.member_count
     if 11 <= (n % 100) <= 13:
         suffix = 'th'
     else:
@@ -176,7 +175,6 @@ async def on_member_join(member):
     emoji_str = str(pepe) if pepe else "👋"
     
     # Send Rainbow Divider
-    import os
     current_dir = os.path.dirname(os.path.abspath(__file__))
     rainbow_path = os.path.join(current_dir, 'line-rainbow.gif')
     
