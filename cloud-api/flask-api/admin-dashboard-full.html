@@ -1598,7 +1598,7 @@
                                 <div style="display: flex; align-items: center; margin-bottom: 16px;">
                                     <div style="font-size: 32px; margin-right: 12px;">🌐</div>
                                     <div>
-                                        <div style="font-size: 18px; font-weight: 600; color: #202124;">Flask API Server</div>
+                                        <div style="font-size: 18px; font-weight: 600; color: #202124;">Admin Control Center (v2.0)</div>
                                         <div style="font-size: 14px; color: #5f6368;">Python Backend</div>
                                     </div>
                                 </div>
@@ -1894,7 +1894,7 @@
                         : `<button class="action-btn" onclick="activateUser('${user.account_id}')" style="background: #34a853; color: white; font-size: 11px; padding: 4px 8px;">▶️ Activate</button>`
                     }
                             <button class="action-btn" onclick="extendLicense('${user.account_id}')" style="background: #ea8600; color: white; font-size: 11px; padding: 4px 8px;">⏱️ Extend</button>
-                            <button class="action-btn" onclick="window.deleteUser('${user.account_id}')" style="background: #5f6368; color: white; font-size: 11px; padding: 4px 8px;">🗑️ REMOVE</button>
+                            <button class="action-btn" onclick="deleteUser('${user.account_id}')" style="background: #5f6368; color: white; font-size: 11px; padding: 4px 8px;">🗑️ REMOVE</button>
                         </div>
                     </td>
                 </tr>
@@ -2584,8 +2584,9 @@
             }
         }
 
-        // Make explicitly global
-        window.suspendUser = async function (accountId) {
+        // Make explicitly global and assign to window
+        async function suspendUser(accountId) {
+            window.suspendUser = suspendUser;
             if (!confirm(`Are you sure you want to suspend ${accountId}?`)) return;
 
             try {
@@ -2606,10 +2607,11 @@
                 console.error('Suspend error:', error);
                 alert('❌ Failed to suspend user: ' + error.message);
             }
-        };
+        }
+        window.suspendUser = suspendUser;
 
-        // Make explicitly global
-        window.activateUser = async function (accountId) {
+        // Make explicitly global and assign to window
+        async function activateUser(accountId) {
             try {
                 const response = await fetch(
                     `${API_URL}/api/admin/activate-user/${accountId}?license_key=${ADMIN_KEY}`,
@@ -2628,10 +2630,11 @@
                 console.error('Activate error:', error);
                 alert('❌ Failed to activate user: ' + error.message);
             }
-        };
+        }
+        window.activateUser = activateUser;
 
-        // Make explicitly global
-        window.extendLicense = async function (accountId) {
+        // Make explicitly global and assign to window
+        async function extendLicense(accountId) {
             const days = prompt('Extend license by how many days?', '30');
             if (!days || isNaN(days) || parseInt(days) <= 0) return;
 
@@ -2653,10 +2656,11 @@
                 console.error('Extend error:', error);
                 alert('❌ Failed to extend license: ' + error.message);
             }
-        };
+        }
+        window.extendLicense = extendLicense;
 
-        // Make explicitly global
-        window.deleteUser = async function (accountId) {
+        // Make explicitly global and assign to window
+        async function deleteUser(accountId) {
             console.log('deleteUser called for:', accountId);
 
             if (!confirm(`⚠️ Are you sure you want to DELETE user ${accountId}?\n\nThis will permanently remove:\n- User account\n- License\n- All trading data\n- Activity history\n\nThis action CANNOT be undone!`)) {
@@ -2686,7 +2690,8 @@
                 console.error('Delete error:', error);
                 alert('❌ Failed to delete user: ' + error.message);
             }
-        };
+        }
+        window.deleteUser = deleteUser;
 
         async function viewDetails(accountId) {
             console.log('viewDetails called for:', accountId);
