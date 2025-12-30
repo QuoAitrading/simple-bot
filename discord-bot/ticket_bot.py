@@ -38,9 +38,11 @@ if not TOKEN:
     raise ValueError("No bot token found! Set DISCORD_BOT_TOKEN environment variable or create config.json")
 
 # Bot setup
+# Bot setup
 intents = discord.Intents.default()
 intents.guilds = True
 intents.guild_messages = True
+intents.members = True  # Required for on_member_join
 bot = commands.Bot(command_prefix='!', intents=intents)
 
 # Track active tickets
@@ -193,8 +195,183 @@ class CloseTicketView(View):
         await send_ticket_event('closed')
         
         await asyncio.sleep(5)
-        await channel.delete()
-        logger.info(f"Ticket {channel.name} closed")
+import random
+import datetime
+
+# ============ LEVELING CONFIG ============
+# XP Curve tailored for VERY LONG TERM activity (Avg 20 XP/msg, 1 min cooldown)
+# Ranks: Quo Titles
+LEVELS = {
+    1: {"xp": 0, "title": "Quo Novice"},        # 1
+    2: {"xp": 500, "title": "Quo Trader"},       # 2
+    3: {"xp": 1500, "title": "Quo Analyst"},     # 3
+    4: {"xp": 4000, "title": "Quo Strategist"},  # 4
+    5: {"xp": 8000, "title": "Quo Executor"},    # 5
+    6: {"xp": 15000, "title": "Quo Automator"},  # 6
+    7: {"xp": 25000, "title": "Quo Predictor"},  # 7
+    8: {"xp": 40000, "title": "Quo Visionary"},  # 8
+    9: {"xp": 65000, "title": "Quo Mastermind"}, # 9
+    10: {"xp": 100000, "title": "Quo Supreme"},  # 10
+}
+ALLOWED_ROLES = ["QuaTrader", "Premium", "Server Booster", "Admin", "MOD"]
+DATA_FILE = os.path.join(os.path.dirname(__file__), 'level_data.json')
+
+# Load XP Data
+if os.path.exists(DATA_FILE):
+    try:
+        import json
+        with open(DATA_FILE, 'r') as f:
+            user_xp = json.load(f)
+    except:
+        user_xp = {}
+else:
+    user_xp = {}
+
+xp_cooldown = {}
+
+def save_xp_data():
+    try:
+        import json
+        with open(DATA_FILE, 'w') as f:
+            json.dump(user_xp, f, indent=4)
+    except Exception as e:
+        logger.error(f"Failed to save XP data: {e}")
+
+def get_level_info(xp):
+    current_level = 1
+    current_title = LEVELS[1]["title"]
+    for level, data in LEVELS.items():
+        if xp >= data["xp"]:
+            current_level = level
+            current_title = data["title"]
+    return current_level, current_title
+
+@bot.event
+async def on_message(message):
+    if message.author.bot:
+        return
+    
+    # Process commands first
+    await bot.process_commands(message)
+    
+    # Check permissions
+    can_earn = False
+    if not ALLOWED_ROLES: # If no roles defined, everyone earns
+        can_earn = True
+    else:
+        for role in message.author.roles:
+            if any(allowed.lower() in role.name.lower() for allowed in ALLOWED_ROLES):
+                can_earn = True
+                break
+            
+    if not can_earn:
+        return
+
+    user_id = str(message.author.id)
+    
+    # Cooldown (1 min)
+    now = datetime.datetime.now().timestamp()
+    if user_id in xp_cooldown:
+        if now - xp_cooldown[user_id] < 60:
+            return
+            
+    xp_cooldown[user_id] = now
+    
+    # XP logic
+    xp_gain = random.randint(15, 25)
+    
+    if user_id not in user_xp:
+        user_xp[user_id] = {"xp": 0, "level": 1}
+        
+    old_xp = user_xp[user_id]["xp"]
+    new_xp = old_xp + xp_gain
+    user_xp[user_id]["xp"] = new_xp
+    
+    # Check Level Up
+    old_level, _ = get_level_info(old_xp)
+    new_level, new_title = get_level_info(new_xp)
+    
+    if new_level > old_level:
+        channel = discord.utils.get(message.guild.text_channels, name="👋│welcome")
+        if not channel:
+            channel = message.channel
+            
+        # Send Rainbow Divider
+        current_dir = os.path.dirname(os.path.abspath(__file__))
+        rainbow_path = os.path.join(current_dir, 'line-rainbow.gif')
+        if os.path.exists(rainbow_path):
+            await channel.send(file=discord.File(rainbow_path))
+            
+        # Send Level Up Message
+        embed = discord.Embed(
+            description=f"🎉 **PROMOTION!** {message.author.mention} has been promoted to **{new_title}** (Level {new_level})! 🚀",
+            color=0xFFD700
+        )
+        await channel.send(embed=embed)
+        
+        # === ROLE ASSIGNMENT ===
+        try:
+            guild = message.guild
+            member = message.author
+            
+            # 1. Add New Role
+            new_role_obj = discord.utils.get(guild.roles, name=new_title)
+            if new_role_obj:
+                await member.add_roles(new_role_obj)
+                logger.info(f"Assigned role {new_title} to {member.name}")
+            else:
+                logger.warning(f"Role '{new_title}' not found in server!")
+
+            # 2. Remove Old Rank Roles (Cleanup)
+            # List of all rank titles
+            all_rank_titles = [data["title"] for _, data in LEVELS.items()]
+            
+            for role in member.roles:
+                if role.name in all_rank_titles and role.name != new_title:
+                    await member.remove_roles(role)
+                    
+        except Exception as e:
+            logger.error(f"Failed to assign/remove roles: {e}")
+        
+    save_xp_data()
+async def on_member_join(member):
+    """Welcome message with rainbow divider + inline emoji."""
+    guild = member.guild
+    channel = discord.utils.get(guild.text_channels, name="👋│welcome") or \
+              discord.utils.get(guild.text_channels, name="welcome")
+    
+    if not channel:
+        return
+
+    # Suffix logic
+    n = len(guild.members)
+    if 11 <= (n % 100) <= 13:
+        suffix = 'th'
+    else:
+        suffix = {1: 'st', 2: 'nd', 3: 'rd'}.get(n % 10, 'th')
+    count_str = f"{n}{suffix}"
+
+    # Get pepe (frog)
+    pepe = discord.utils.get(guild.emojis, name="pepe_dance")
+    emoji_str = str(pepe) if pepe else "👋"
+
+    # Send Rainbow Divider (Original)
+    # Ensure correct path relative to this script
+    current_dir = os.path.dirname(os.path.abspath(__file__))
+    rainbow_path = os.path.join(current_dir, 'line-rainbow.gif')
+    
+    if os.path.exists(rainbow_path):
+        await channel.send(file=discord.File(rainbow_path))
+    
+    # Send Text with Black Hole
+    black_hole = discord.utils.get(guild.emojis, name="black_hole")
+    bh_str = str(black_hole) if black_hole else "⚫"
+
+    msg_content = (
+        f"{bh_str} Hello {member.mention}, welcome to **QuoTrading**. You are the **{count_str}** member to join. {emoji_str}"
+    )
+    
+    await channel.send(content=msg_content)
 
 
 @bot.event
