@@ -494,7 +494,7 @@ async def update_status_channel():
                         async with aiohttp.ClientSession() as session:
                             async with session.get(f'{API_URL}/health', timeout=aiohttp.ClientTimeout(total=5)) as resp:
                                 is_healthy = resp.status == 200
-                    except:
+                    except Exception:
                         is_healthy = False
                     
                     # Update message with status
@@ -518,7 +518,7 @@ async def update_status_channel():
                     if current_name != new_name:
                         try:
                             await channel.edit(name=new_name)
-                        except:
+                        except discord.HTTPException:
                             pass  # May fail due to rate limits
                     
                     logger.info(f"✅ Status channel updated: {status_text}")
