@@ -2584,7 +2584,8 @@
             }
         }
 
-        async function suspendUser(accountId) {
+        // Make explicitly global
+        window.suspendUser = async function (accountId) {
             if (!confirm(`Are you sure you want to suspend ${accountId}?`)) return;
 
             try {
@@ -2605,9 +2606,10 @@
                 console.error('Suspend error:', error);
                 alert('❌ Failed to suspend user: ' + error.message);
             }
-        }
+        };
 
-        async function activateUser(accountId) {
+        // Make explicitly global
+        window.activateUser = async function (accountId) {
             try {
                 const response = await fetch(
                     `${API_URL}/api/admin/activate-user/${accountId}?license_key=${ADMIN_KEY}`,
@@ -2626,9 +2628,10 @@
                 console.error('Activate error:', error);
                 alert('❌ Failed to activate user: ' + error.message);
             }
-        }
+        };
 
-        async function extendLicense(accountId) {
+        // Make explicitly global
+        window.extendLicense = async function (accountId) {
             const days = prompt('Extend license by how many days?', '30');
             if (!days || isNaN(days) || parseInt(days) <= 0) return;
 
@@ -2650,7 +2653,7 @@
                 console.error('Extend error:', error);
                 alert('❌ Failed to extend license: ' + error.message);
             }
-        }
+        };
 
         // Make explicitly global
         window.deleteUser = async function (accountId) {
