@@ -114,6 +114,13 @@ class TicketButton(View):
     
     @discord.ui.button(label="Create ticket", style=discord.ButtonStyle.blurple, emoji="📩", custom_id="create_ticket_btn")
     async def create_ticket_button(self, interaction: discord.Interaction, button: Button):
+        # 1. Defer immediately to prevent "Interaction Failed"
+        try:
+            await interaction.response.defer(ephemeral=True)
+        except Exception as e:
+            logger.error(f"Failed to defer interaction: {e}")
+            return
+
         global active_tickets
         guild = interaction.guild
         user = interaction.user
@@ -122,64 +129,40 @@ class TicketButton(View):
             # Find or create Support category
             support_cat = discord.utils.get(guild.categories, name='『 Support 』')
             if not support_cat:
-                # Try alternate naming
                 support_cat = discord.utils.get(guild.categories, name='Support')
             
             if not support_cat:
-                # Create the category with proper permissions
                 try:
                     support_cat = await guild.create_category(
                         name='『 Support 』',
                         position=0,
                         overwrites={
                             guild.default_role: discord.PermissionOverwrite(read_messages=False),
-                            guild.me: discord.PermissionOverwrite(
-                                read_messages=True,
-                                send_messages=True,
-                                manage_channels=True,
-                                manage_permissions=True
-                            )
+                            guild.me: discord.PermissionOverwrite(read_messages=True, send_messages=True, manage_channels=True, manage_permissions=True)
                         }
                     )
-                    logger.info(f"Created Support category")
                 except discord.Forbidden:
-                    await interaction.response.send_message(
-                        '❌ Bot lacks permission to create Support category. Please contact an administrator.',
-                        ephemeral=True
-                    )
+                    await interaction.followup.send('❌ Bot lacks permission to create Support category.', ephemeral=True)
                     return
             
-            # Check if user already has an open ticket
+            # Check for existing ticket
             existing = discord.utils.get(guild.text_channels, name=f'ticket-{user.name.lower()}')
             if existing:
-                await interaction.response.send_message(
-                    f'❌ You already have an open ticket: {existing.mention}', 
-                    ephemeral=True
-                )
+                await interaction.followup.send(f'❌ You already have an open ticket: {existing.mention}', ephemeral=True)
                 return
             
-            # Create private ticket channel
-            # Permission model:
-            # - Default role: no access (hidden from everyone)
-            # - Ticket creator: read and send messages only
-            # - Bot: full management permissions (needed to delete ticket later)
-            # - Staff roles: read and send messages (to provide support)
+            # Create channel
             overwrites = {
                 guild.default_role: discord.PermissionOverwrite(read_messages=False),
-                user: discord.PermissionOverwrite(read_messages=True, send_messages=True),
-                guild.me: discord.PermissionOverwrite(
-                    read_messages=True,
-                    send_messages=True,
-                    manage_channels=True,
-                    manage_messages=True
-                )
+                user: discord.PermissionOverwrite(read_messages=True, send_messages=True, read_message_history=True),
+                guild.me: discord.PermissionOverwrite(read_messages=True, send_messages=True, read_message_history=True, manage_channels=True, manage_messages=True)
             }
             
-            # Add admin/mod roles if they exist
-            for role_name in ['Admin', 'Moderator', 'Support', 'Staff']:
+            # Admin/Mod access only
+            for role_name in ['Admin', 'Moderator']:
                 role = discord.utils.get(guild.roles, name=role_name)
                 if role:
-                    overwrites[role] = discord.PermissionOverwrite(read_messages=True, send_messages=True)
+                    overwrites[role] = discord.PermissionOverwrite(read_messages=True, send_messages=True, read_message_history=True)
             
             ticket_channel = await guild.create_text_channel(
                 name=f'ticket-{user.name.lower()}',
@@ -188,7 +171,7 @@ class TicketButton(View):
                 topic=f'Support ticket for {user.name}'
             )
             
-            # Create close button and welcome embed
+            # Setup ticket content
             close_view = CloseTicketView()
             ticket_embed = discord.Embed(
                 title="🎫 Support Ticket",
@@ -198,28 +181,15 @@ class TicketButton(View):
             ticket_embed.set_footer(text="QuoTrading Support")
             
             await ticket_channel.send(embed=ticket_embed, view=close_view)
-            await interaction.response.send_message(
-                f'✅ Ticket created! Go to {ticket_channel.mention}', 
-                ephemeral=True
-            )
+            await interaction.followup.send(f'✅ Ticket created! Go to {ticket_channel.mention}', ephemeral=True)
             
-            # Track ticket
+            # Analytics
             active_tickets += 1
-            logger.info(f"Ticket created for {user.name}")
             await send_ticket_event('created')
             
-        except discord.Forbidden as e:
-            await interaction.response.send_message(
-                '❌ Bot lacks permission to create ticket channel. Please contact an administrator.',
-                ephemeral=True
-            )
-            logger.error(f"Missing permissions to create ticket channel for {user.name}: {e}")
         except Exception as e:
-            await interaction.response.send_message(
-                f'❌ Error creating ticket: {str(e)}',
-                ephemeral=True
-            )
-            logger.error(f"Failed to create ticket for {user.name}: {e}")
+            logger.error(f"Error creating ticket: {e}")
+            await interaction.followup.send(f'❌ Error creating ticket: {str(e)}', ephemeral=True)
 
 
 class CloseTicketView(View):
@@ -230,80 +200,60 @@ class CloseTicketView(View):
     
     @discord.ui.button(label="Close Ticket", style=discord.ButtonStyle.red, emoji="🔒", custom_id="close_ticket_btn")
     async def close_ticket_button(self, interaction: discord.Interaction, button: Button):
-        global active_tickets
+        # 1. Defer immediately
+        try:
+            await interaction.response.defer(ephemeral=True)
+        except Exception as e:
+            logger.error(f"Failed to defer interaction: {e}")
+            return
+
         channel = interaction.channel
         user = interaction.user
         guild = interaction.guild
-        
-        if not channel.name.startswith('ticket-'):
-            await interaction.response.send_message('❌ This is not a ticket channel!', ephemeral=True)
-            return
-        
-        # Check if user has permission to close (ticket creator or staff)
-        # Extract ticket owner from channel permissions (user who has permissions but isn't staff/bot)
-        is_ticket_owner = False
-        
-        # Check channel permissions to find the ticket creator
-        for perm_target, perm_overwrite in channel.overwrites.items():
-            if isinstance(perm_target, discord.Member):
-                # Skip the bot
-                if perm_target == guild.me:
-                    continue
-                
-                # Check if this member has explicit permissions (not via role)
-                # and has send_messages permission
-                if perm_overwrite.send_messages:
-                    # Check if they're NOT a staff member (staff get perms via role)
-                    is_staff_member = False
-                    for role_name in ['Admin', 'Moderator', 'Support', 'Staff']:
-                        role = discord.utils.get(guild.roles, name=role_name)
-                        if role and role in perm_target.roles:
-                            is_staff_member = True
-                            break
-                    
-                    # If not staff and has explicit permissions, they're the ticket owner
-                    if not is_staff_member and perm_target.id == user.id:
-                        is_ticket_owner = True
-                        break
-        
-        # Check if user has staff role
-        is_staff = False
-        for role_name in ['Admin', 'Moderator', 'Support', 'Staff']:
-            role = discord.utils.get(guild.roles, name=role_name)
-            if role and role in user.roles:
-                is_staff = True
-                break
-        
-        if not is_ticket_owner and not is_staff:
-            await interaction.response.send_message('❌ You do not have permission to close this ticket!', ephemeral=True)
-            return
-        
-        await interaction.response.send_message('🔒 Closing ticket in 5 seconds...')
-        
-        # Track ticket close
-        active_tickets = max(0, active_tickets - 1)
-        await send_ticket_event('closed')
-        
-        await asyncio.sleep(5)
-        
-        # Try to delete the channel with error handling
+        global active_tickets
+
         try:
-            await channel.delete(reason=f'Ticket closed by {user.name}')
-            logger.info(f"Ticket {channel.name} closed by {user.name}")
-        except discord.Forbidden as e:
-            logger.error(f"Missing permissions to delete ticket {channel.name}: {e}")
-            # Try to send error message, but if that fails, just log it
+            if not channel.name.startswith('ticket-'):
+                await interaction.followup.send('❌ This is not a ticket channel!', ephemeral=True)
+                return
+            
+            # Permission Check
+            is_authorized = False
+            
+            # 1. Check if user is the ticket owner (based on specific channel overwrites)
+            # Ticket owner has explicit send_messages=True and is NOT a bot/staff role holder (usually)
+            # Simpler check: seeing if they are in the overwrites with positive permissions
+            if channel.overwrites_for(user).send_messages:
+                 is_authorized = True
+            
+            # 2. Check if user is staff (Admin/Mod)
+            if not is_authorized:
+                for role in user.roles:
+                    if role.name in ['Admin', 'Moderator', 'Support', 'Staff']:
+                        is_authorized = True
+                        break
+            
+            if not is_authorized:
+                await interaction.followup.send('❌ You permission to close this ticket.', ephemeral=True)
+                return
+
+            # Notify users in channel
+            await channel.send(f'🔒 Ticket closed by {user.mention}. Deleting in 5 seconds...')
+            await interaction.followup.send('Ticket close initiated.', ephemeral=True)
+            
+            # Analytics
+            active_tickets = max(0, active_tickets - 1)
+            await send_ticket_event('closed')
+            
+            await asyncio.sleep(5)
+            await channel.delete()
+            
+        except Exception as e:
+            logger.error(f"Error closing ticket: {e}")
             try:
-                await channel.send('❌ Error: Bot lacks permission to delete this channel. Please contact an administrator.')
-            except Exception as send_err:
-                logger.debug(f'Failed to send error message to channel: {send_err}')
-        except discord.HTTPException as e:
-            logger.error(f"Failed to delete ticket {channel.name}: {e}")
-            # Try to send error message, but if that fails, just log it
-            try:
-                await channel.send(f'❌ Error deleting ticket: {e}')
-            except Exception as send_err:
-                logger.debug(f'Failed to send error message to channel: {send_err}')
+                await interaction.followup.send(f'❌ Error closing ticket: {str(e)}', ephemeral=True)
+            except:
+                pass
 
 import random
 import datetime
