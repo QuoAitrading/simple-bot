@@ -329,7 +329,16 @@ class TradeCopierLauncher:
                     if not data.get("license_valid"):
                         err = data.get("message", "Invalid license key")
                         self.root.after(0, self.hide_loading)
-                        self.root.after(0, lambda m=err: messagebox.showerror("License Invalid", m))
+                        # Check if license is expired and show friendly message
+                        if "expired" in err.lower():
+                            self.root.after(0, lambda: messagebox.showerror(
+                                "License Expired",
+                                "Your license has expired.\n\n"
+                                "Please renew your subscription to continue using the Trade Copier.\n\n"
+                                "Visit https://whop.com/quotrading to renew."
+                            ))
+                        else:
+                            self.root.after(0, lambda m=err: messagebox.showerror("License Invalid", m))
                         return
                 elif resp.status_code == 403:
                     # Session conflict or license expired

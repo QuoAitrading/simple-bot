@@ -195,6 +195,8 @@ class CloseTicketView(View):
         await send_ticket_event('closed')
         
         await asyncio.sleep(5)
+        await channel.delete()
+
 import random
 import datetime
 

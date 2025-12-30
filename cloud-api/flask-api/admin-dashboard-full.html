@@ -1894,7 +1894,7 @@
                         : `<button class="action-btn" onclick="activateUser('${user.account_id}')" style="background: #34a853; color: white; font-size: 11px; padding: 4px 8px;">▶️ Activate</button>`
                     }
                             <button class="action-btn" onclick="extendLicense('${user.account_id}')" style="background: #ea8600; color: white; font-size: 11px; padding: 4px 8px;">⏱️ Extend</button>
-                            <button class="action-btn" onclick="deleteUser('${user.account_id}')" style="background: #5f6368; color: white; font-size: 11px; padding: 4px 8px;">🗑️ Delete</button>
+                            <button class="action-btn" onclick="window.deleteUser('${user.account_id}')" style="background: #5f6368; color: white; font-size: 11px; padding: 4px 8px;">🗑️ REMOVE</button>
                         </div>
                     </td>
                 </tr>
@@ -2652,7 +2652,8 @@
             }
         }
 
-        async function deleteUser(accountId) {
+        // Make explicitly global
+        window.deleteUser = async function (accountId) {
             console.log('deleteUser called for:', accountId);
 
             if (!confirm(`⚠️ Are you sure you want to DELETE user ${accountId}?\n\nThis will permanently remove:\n- User account\n- License\n- All trading data\n- Activity history\n\nThis action CANNOT be undone!`)) {
@@ -2663,23 +2664,18 @@
             const confirmText = prompt(`Type "DELETE" to confirm permanent deletion of ${accountId}:`, '');
             if (confirmText !== 'DELETE') {
                 alert('❌ Deletion cancelled - confirmation text did not match');
-                console.log('Delete cancelled - wrong confirmation text:', confirmText);
                 return;
             }
 
             try {
                 const url = `${API_URL}/api/admin/delete-user/${accountId}?license_key=${ADMIN_KEY}`;
-                console.log('Deleting user:', url);
 
                 const response = await fetch(url, { method: 'DELETE' });
-                console.log('Delete response status:', response.status);
-
                 const data = await response.json();
-                console.log('Delete response data:', data);
 
                 if (response.ok) {
-                    await loadDashboard();
                     alert(`✅ User ${accountId} has been permanently deleted`);
+                    await loadDashboard();
                 } else {
                     alert(`❌ Failed to delete user: ${data.detail || data.error || 'Unknown error'}`);
                 }
@@ -2687,7 +2683,7 @@
                 console.error('Delete error:', error);
                 alert('❌ Failed to delete user: ' + error.message);
             }
-        }
+        };
 
         async function viewDetails(accountId) {
             console.log('viewDetails called for:', accountId);
