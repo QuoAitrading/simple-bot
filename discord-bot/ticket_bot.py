@@ -43,6 +43,7 @@ intents = discord.Intents.default()
 intents.guilds = True
 intents.guild_messages = True
 intents.members = True  # Required for on_member_join
+intents.message_content = True # Required for commands
 bot = commands.Bot(command_prefix='!', intents=intents)
 
 # Track active tickets
@@ -180,8 +181,26 @@ class TicketButton(View):
             )
             ticket_embed.set_footer(text="QuoTrading Support")
             
-            await ticket_channel.send(embed=ticket_embed, view=close_view)
-            await interaction.followup.send(f'✅ Ticket created! Go to {ticket_channel.mention}', ephemeral=True)
+            # Add Banner
+            banner_path = os.path.join(os.path.dirname(__file__), 'banner.png')
+            file = None
+            if os.path.exists(banner_path):
+                file = discord.File(banner_path, filename="banner.png")
+                ticket_embed.set_image(url="attachment://banner.png")
+            
+            if file:
+                await ticket_channel.send(file=file, embed=ticket_embed, view=close_view)
+            else:
+                await ticket_channel.send(embed=ticket_embed, view=close_view)
+            
+            # Send hidden confirmation (private to user)
+            try:
+                await interaction.followup.send(f"✅ Ticket created: {ticket_channel.mention}", ephemeral=True)
+            except Exception as e:
+                logger.error(f"Failed to send confirmation: {e}") 
+
+ 
+            # await interaction.followup.send(f'✅ Ticket created! Go to {ticket_channel.mention}', ephemeral=True)
             
             # Analytics
             active_tickets += 1
@@ -486,6 +505,38 @@ async def keep_alive():
 @bot.event
 async def on_connect():
     bot.loop.create_task(keep_alive())
+
+
+@bot.command()
+@commands.has_permissions(administrator=True)
+async def setup_tickets(ctx):
+    """
+    Sets up the ticket system in the current channel.
+    Usage: !setup_tickets
+    """
+    # Delete command message to keep channel clean
+    try:
+        await ctx.message.delete()
+    except:
+        pass
+
+    embed = discord.Embed(
+        title="QuoTrading Support",
+        description="Click the button below to create a private support ticket.",
+        color=discord.Color.blue()
+    )
+    embed.set_footer(text="QuoTrading - Elevate Your Trading Performance")
+    
+    # Add Banner
+    banner_path = os.path.join(os.path.dirname(__file__), 'banner.png')
+    file = None
+    if os.path.exists(banner_path):
+        file = discord.File(banner_path, filename="banner.png")
+        embed.set_image(url="attachment://banner.png")
+    
+    view = TicketButton()
+    await ctx.send(file=file, embed=embed, view=view)
+    await ctx.send("Ticket system setup complete!", delete_after=5)
 
 
 if __name__ == '__main__':
