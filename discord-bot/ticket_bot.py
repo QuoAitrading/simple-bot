@@ -12,8 +12,9 @@ import asyncio
 import os
 import logging
 import aiohttp
-from aiohttp import web
 import threading
+import json
+import datetime
 import json
 import datetime
 
@@ -52,24 +53,7 @@ active_tickets = 0
 bot_ready = False
 
 
-# ============ HTTP SERVER FOR AZURE ============
 
-async def health_handler(request):
-    """Health check endpoint for Azure."""
-    return web.json_response({
-        "status": "healthy",
-        "bot_ready": bot_ready,
-        "active_tickets": active_tickets
-    })
-
-async def home_handler(request):
-    """Home page."""
-    return web.Response(text="QuoTrading Discord Bot is running!", content_type="text/html")
-
-async def start_bot_task(app):
-    """Start Discord bot in the same loop."""
-    logger.info("Starting Discord bot task...")
-    asyncio.create_task(bot.start(TOKEN))
 
 
 # ============ BOT FUNCTIONS ============
@@ -627,16 +611,7 @@ async def setup_tickets(ctx):
 
 
 if __name__ == '__main__':
-    logger.info('🚀 Starting QuoTrading Ticket Bot (Async Mode)...')
+    logger.info('🚀 Starting QuoTrading Ticket Bot...')
+    logger.info('Running in LOCAL mode')
     
-    # Setup HTTP App
-    app = web.Application()
-    app.router.add_get('/', home_handler)
-    app.router.add_get('/health', health_handler)
-    
-    # Register bot startup
-    app.on_startup.append(start_bot_task)
-    
-    # Run App (Blocking)
-    port = int(os.environ.get('PORT', 8000))
-    web.run_app(app, host='0.0.0.0', port=port)
+    bot.run(TOKEN)
