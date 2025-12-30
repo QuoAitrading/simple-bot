@@ -5,5 +5,6 @@ WORKDIR /app
 RUN pip install --no-cache-dir discord.py aiohttp
 
 COPY bot.py .
+COPY line-rainbow.gif .
 
 CMD ["python", "-u", "bot.py"]

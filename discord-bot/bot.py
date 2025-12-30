@@ -13,6 +13,7 @@ API_URL = os.environ.get('API_URL', 'https://quotrading-flask-api.azurewebsites.
 intents = discord.Intents.default()
 intents.guilds = True
 intents.message_content = True
+intents.members = True  # Required for on_member_join
 bot = commands.Bot(command_prefix='!', intents=intents)
 active_tickets = 0
 
@@ -136,6 +137,70 @@ class CloseView(View):
         await send_ticket_event('closed')
         await asyncio.sleep(3)
         await interaction.channel.delete()
+
+@bot.event
+async def on_member_join(member):
+    """Welcome message with rainbow divider for new members."""
+    print(f"👤 Member joined: {member.name} (ID: {member.id})")
+    
+    guild = member.guild
+    
+    # Find welcome channel
+    channel = None
+    channel = discord.utils.get(guild.text_channels, name="👋│welcome") or \
+              discord.utils.get(guild.text_channels, name="welcome")
+    
+    # If not found, try searching
+    if not channel:
+        for ch in guild.text_channels:
+            if "welcome" in ch.name.lower():
+                channel = ch
+                break
+    
+    if not channel:
+        print(f"❌ Could not find welcome channel in guild {guild.name}")
+        return
+    
+    print(f"✅ Found welcome channel: {channel.name}")
+    
+    # Calculate member count with ordinal suffix
+    n = len(guild.members)
+    if 11 <= (n % 100) <= 13:
+        suffix = 'th'
+    else:
+        suffix = {1: 'st', 2: 'nd', 3: 'rd'}.get(n % 10, 'th')
+    count_str = f"{n}{suffix}"
+    
+    # Get custom emojis
+    pepe = discord.utils.get(guild.emojis, name="pepe_dance")
+    emoji_str = str(pepe) if pepe else "👋"
+    
+    # Send Rainbow Divider
+    import os
+    current_dir = os.path.dirname(os.path.abspath(__file__))
+    rainbow_path = os.path.join(current_dir, 'line-rainbow.gif')
+    
+    try:
+        if os.path.exists(rainbow_path):
+            await channel.send(file=discord.File(rainbow_path))
+        else:
+            print(f"⚠️ Rainbow GIF not found at {rainbow_path}")
+    except Exception as e:
+        print(f"❌ Failed to post rainbow GIF: {e}")
+    
+    # Send welcome message with black hole emoji
+    black_hole = discord.utils.get(guild.emojis, name="black_hole")
+    bh_str = str(black_hole) if black_hole else "⚫"
+    
+    msg_content = (
+        f"{bh_str} Hello {member.mention}, welcome to **QuoTrading**. You are the **{count_str}** member to join. {emoji_str}"
+    )
+    
+    try:
+        await channel.send(content=msg_content)
+        print(f"✅ Sent welcome message to {member.name}")
+    except Exception as e:
+        print(f"❌ Failed to send welcome text: {e}")
 
 @bot.event
 async def on_ready():
