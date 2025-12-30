@@ -14,6 +14,8 @@ import logging
 import aiohttp
 from aiohttp import web
 import threading
+import json
+import datetime
 
 # Setup logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -26,7 +28,6 @@ API_URL = os.environ.get('API_URL', 'https://quotrading-flask-api.azurewebsites.
 TOKEN = os.environ.get('DISCORD_BOT_TOKEN')
 if not TOKEN:
     try:
-        import json
         config_path = os.path.join(os.path.dirname(__file__), 'config.json')
         with open(config_path, 'r', encoding='utf-8') as f:
             config = json.load(f)
@@ -501,10 +502,102 @@ async def keep_alive():
         logger.info("💓 Heartbeat sent")
         await asyncio.sleep(60)
 
+async def update_server_status():
+    """Update server status message every minute."""
+    status_config_path = os.path.join(os.path.dirname(__file__), 'status_config.json')
+    if not os.path.exists(status_config_path):
+        return
+
+    try:
+        with open(status_config_path, 'r') as f:
+            data = json.load(f)
+            channel_id = data.get('channel_id')
+            message_id = data.get('message_id')
+    except Exception as e:
+        logger.error(f"Failed to load status config: {e}")
+        return
+
+    await bot.wait_until_ready()
+    
+    channel = bot.get_channel(channel_id)
+    if not channel:
+        logger.error(f"Status channel {channel_id} not found")
+        return
+
+    try:
+        message = await channel.fetch_message(message_id)
+    except Exception as e:
+        logger.error(f"Status message {message_id} not found: {e}")
+        return
+
+    last_status = None 
+
+    while not bot.is_closed():
+        # Check API Status
+        current_status = "OFFLINE"
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(API_URL, timeout=10) as resp:
+                    # If we get a response (even 404), the server is UP. Only connection errors mean DOWN.
+                    if resp.status < 600:
+                        current_status = "ONLINE"
+        except Exception as e:
+            logger.warning(f"API Check failed: {e}")
+            current_status = "OFFLINE"
+
+        current_time = datetime.datetime.now().strftime("%b %d, %Y - %I:%M %p EST")
+        
+        if current_status == "ONLINE":
+            new_content = f"""
+# 🟢 QuoTrading Server Online
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+**Last Checked:** {current_time}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+"""
+            emoji = "🟢"
+        else:
+            new_content = f"""
+# 🔴 QuoTrading Server Offline
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+**Last Checked:** {current_time}
+**Status:** CONNECTION LOST with API
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+"""
+            emoji = "🔴"
+
+        # Update Message
+        try:
+            # Always update if content differs (includes timestamp updates)
+            if message.content.strip() != new_content.strip():
+                await message.edit(content=new_content)
+                logger.debug("Updated server status message")
+        except Exception as e:
+            logger.error(f"Failed to edit status message: {e}")
+
+        # Update Channel Name (Only if status CHANGED to avoid rate limits)
+        if last_status is not None and current_status != last_status:
+            try:
+                new_name = f"{emoji}│server-status"
+                if channel.name != new_name:
+                    await channel.edit(name=new_name)
+                    logger.info(f"Updated status channel name to {new_name}")
+            except Exception as e:
+                logger.error(f"Failed to rename status channel: {e}")
+        
+        last_status = current_status
+        await asyncio.sleep(60)
+
 
 @bot.event
 async def on_connect():
     bot.loop.create_task(keep_alive())
+    bot.loop.create_task(update_server_status())
 
 
 @bot.command()
