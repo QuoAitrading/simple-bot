@@ -203,12 +203,12 @@ class TicketButton(View):
             logger.info(f"Ticket created for {user.name}")
             await send_ticket_event('created')
             
-        except discord.Forbidden:
+        except discord.Forbidden as e:
             await interaction.response.send_message(
-                '❌ Bot lacks permission to create ticket channels. Please contact an administrator.',
+                '❌ Bot lacks permission to create ticket channel. Please contact an administrator.',
                 ephemeral=True
             )
-            logger.error(f"Missing permissions to create ticket for {user.name}")
+            logger.error(f"Missing permissions to create ticket channel for {user.name}: {e}")
         except Exception as e:
             await interaction.response.send_message(
                 f'❌ Error creating ticket: {str(e)}',
@@ -262,12 +262,20 @@ class CloseTicketView(View):
         try:
             await channel.delete(reason=f'Ticket closed by {user.name}')
             logger.info(f"Ticket {channel.name} closed by {user.name}")
-        except discord.Forbidden:
-            logger.error(f"Missing permissions to delete ticket {channel.name}")
-            await channel.send('❌ Error: Bot lacks permission to delete this channel. Please contact an administrator.')
+        except discord.Forbidden as e:
+            logger.error(f"Missing permissions to delete ticket {channel.name}: {e}")
+            # Try to send error message, but if that fails, just log it
+            try:
+                await channel.send('❌ Error: Bot lacks permission to delete this channel. Please contact an administrator.')
+            except:
+                pass  # Channel send failed, already logged the main error
         except discord.HTTPException as e:
             logger.error(f"Failed to delete ticket {channel.name}: {e}")
-            await channel.send(f'❌ Error deleting ticket: {e}')
+            # Try to send error message, but if that fails, just log it
+            try:
+                await channel.send(f'❌ Error deleting ticket: {e}')
+            except:
+                pass  # Channel send failed, already logged the main error
 
 import random
 import datetime
