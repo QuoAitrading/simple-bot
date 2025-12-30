@@ -159,6 +159,11 @@ class TicketButton(View):
                 return
             
             # Create private ticket channel
+            # Permission model:
+            # - Default role: no access (hidden from everyone)
+            # - Ticket creator: read and send messages only
+            # - Bot: full management permissions (needed to delete ticket later)
+            # - Staff roles: read and send messages (to provide support)
             overwrites = {
                 guild.default_role: discord.PermissionOverwrite(read_messages=False),
                 user: discord.PermissionOverwrite(read_messages=True, send_messages=True),
@@ -235,18 +240,31 @@ class CloseTicketView(View):
             return
         
         # Check if user has permission to close (ticket creator or staff)
-        # Extract user ID from channel topic to handle username changes
-        ticket_owner_id = None
-        if channel.topic and 'Support ticket for' in channel.topic:
-            # Try to extract user ID from channel permissions instead
-            for perm_target, perm_overwrite in channel.overwrites.items():
-                if isinstance(perm_target, discord.Member) and perm_target != guild.me:
-                    # Check if this member has send_messages permission (ticket creator)
-                    if perm_overwrite.send_messages:
-                        ticket_owner_id = perm_target.id
-                        break
+        # Extract ticket owner from channel permissions (user who has permissions but isn't staff/bot)
+        is_ticket_owner = False
         
-        is_ticket_owner = (ticket_owner_id == user.id) if ticket_owner_id else False
+        # Check channel permissions to find the ticket creator
+        for perm_target, perm_overwrite in channel.overwrites.items():
+            if isinstance(perm_target, discord.Member):
+                # Skip the bot
+                if perm_target == guild.me:
+                    continue
+                
+                # Check if this member has explicit permissions (not via role)
+                # and has send_messages permission
+                if perm_overwrite.send_messages:
+                    # Check if they're NOT a staff member (staff get perms via role)
+                    is_staff_member = False
+                    for role_name in ['Admin', 'Moderator', 'Support', 'Staff']:
+                        role = discord.utils.get(guild.roles, name=role_name)
+                        if role and role in perm_target.roles:
+                            is_staff_member = True
+                            break
+                    
+                    # If not staff and has explicit permissions, they're the ticket owner
+                    if not is_staff_member and perm_target.id == user.id:
+                        is_ticket_owner = True
+                        break
         
         # Check if user has staff role
         is_staff = False
@@ -277,15 +295,15 @@ class CloseTicketView(View):
             # Try to send error message, but if that fails, just log it
             try:
                 await channel.send('❌ Error: Bot lacks permission to delete this channel. Please contact an administrator.')
-            except Exception:
-                pass  # Channel send failed, already logged the main error
+            except Exception as send_err:
+                logger.debug(f'Failed to send error message to channel: {send_err}')
         except discord.HTTPException as e:
             logger.error(f"Failed to delete ticket {channel.name}: {e}")
             # Try to send error message, but if that fails, just log it
             try:
                 await channel.send(f'❌ Error deleting ticket: {e}')
-            except Exception:
-                pass  # Channel send failed, already logged the main error
+            except Exception as send_err:
+                logger.debug(f'Failed to send error message to channel: {send_err}')
 
 import random
 import datetime
