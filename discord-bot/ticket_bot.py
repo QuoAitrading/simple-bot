@@ -16,6 +16,7 @@ from aiohttp import web
 import json
 import datetime
 import random
+import pytz
 
 # Setup logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -32,13 +33,12 @@ if not TOKEN:
         with open(config_path, 'r', encoding='utf-8') as f:
             config = json.load(f)
         TOKEN = config.get('bot_token')
-    except:
+    except Exception:
         pass
 
 if not TOKEN:
     raise ValueError("No bot token found! Set DISCORD_BOT_TOKEN environment variable or create config.json")
 
-# Bot setup
 # Bot setup
 intents = discord.Intents.default()
 intents.guilds = True
@@ -257,7 +257,7 @@ class CloseTicketView(View):
             logger.error(f"Error closing ticket: {e}")
             try:
                 await interaction.followup.send(f'❌ Error closing ticket: {str(e)}', ephemeral=True)
-            except:
+            except discord.HTTPException:
                 pass
 
 # ============ LEVELING CONFIG ============
@@ -283,7 +283,7 @@ if os.path.exists(DATA_FILE):
     try:
         with open(DATA_FILE, 'r') as f:
             user_xp = json.load(f)
-    except:
+    except Exception:
         user_xp = {}
 else:
     user_xp = {}
@@ -486,8 +486,12 @@ async def update_status_channel():
                 try:
                     message = await channel.fetch_message(message_id)
                     
-                    # Check API health
-                    now_str = datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%d %H:%M:%S UTC')
+                    # Check API health - use Eastern Time
+                    eastern = pytz.timezone('US/Eastern')
+                    now_et = datetime.datetime.now(eastern)
+                    # Determine if EST or EDT
+                    tz_abbr = 'EST' if now_et.dst() == datetime.timedelta(0) else 'EDT'
+                    now_str = now_et.strftime(f'%Y-%m-%d %I:%M:%S %p {tz_abbr}')
                     
                     # Try to ping API
                     try:
