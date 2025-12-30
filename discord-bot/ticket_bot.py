@@ -118,59 +118,103 @@ class TicketButton(View):
         guild = interaction.guild
         user = interaction.user
         
-        # Find or create Support category
-        support_cat = discord.utils.get(guild.categories, name='『 Support 』')
-        if not support_cat:
-            support_cat = await guild.create_category(name='『 Support 』', position=0)
-        
-        # Check if user already has an open ticket
-        existing = discord.utils.get(guild.text_channels, name=f'ticket-{user.name.lower()}')
-        if existing:
+        try:
+            # Find or create Support category
+            support_cat = discord.utils.get(guild.categories, name='『 Support 』')
+            if not support_cat:
+                # Try alternate naming
+                support_cat = discord.utils.get(guild.categories, name='Support')
+            
+            if not support_cat:
+                # Create the category with proper permissions
+                try:
+                    support_cat = await guild.create_category(
+                        name='『 Support 』',
+                        position=0,
+                        overwrites={
+                            guild.default_role: discord.PermissionOverwrite(read_messages=False),
+                            guild.me: discord.PermissionOverwrite(
+                                read_messages=True,
+                                send_messages=True,
+                                manage_channels=True,
+                                manage_permissions=True
+                            )
+                        }
+                    )
+                    logger.info(f"Created Support category")
+                except discord.Forbidden:
+                    await interaction.response.send_message(
+                        '❌ Bot lacks permission to create Support category. Please contact an administrator.',
+                        ephemeral=True
+                    )
+                    return
+            
+            # Check if user already has an open ticket
+            existing = discord.utils.get(guild.text_channels, name=f'ticket-{user.name.lower()}')
+            if existing:
+                await interaction.response.send_message(
+                    f'❌ You already have an open ticket: {existing.mention}', 
+                    ephemeral=True
+                )
+                return
+            
+            # Create private ticket channel
+            overwrites = {
+                guild.default_role: discord.PermissionOverwrite(read_messages=False),
+                user: discord.PermissionOverwrite(read_messages=True, send_messages=True),
+                guild.me: discord.PermissionOverwrite(
+                    read_messages=True,
+                    send_messages=True,
+                    manage_channels=True,
+                    manage_messages=True
+                )
+            }
+            
+            # Add admin/mod roles if they exist
+            for role_name in ['Admin', 'Moderator', 'Support', 'Staff']:
+                role = discord.utils.get(guild.roles, name=role_name)
+                if role:
+                    overwrites[role] = discord.PermissionOverwrite(read_messages=True, send_messages=True)
+            
+            ticket_channel = await guild.create_text_channel(
+                name=f'ticket-{user.name.lower()}',
+                category=support_cat,
+                overwrites=overwrites,
+                topic=f'Support ticket for {user.name}'
+            )
+            
+            # Create close button and welcome embed
+            close_view = CloseTicketView()
+            ticket_embed = discord.Embed(
+                title="🎫 Support Ticket",
+                description=f"Welcome {user.mention}!\n\nA staff member will assist you shortly.\n\n**Please describe your issue below.**",
+                color=discord.Color.green()
+            )
+            ticket_embed.set_footer(text="QuoTrading Support")
+            
+            await ticket_channel.send(embed=ticket_embed, view=close_view)
             await interaction.response.send_message(
-                f'❌ You already have an open ticket: {existing.mention}', 
+                f'✅ Ticket created! Go to {ticket_channel.mention}', 
                 ephemeral=True
             )
-            return
-        
-        # Create private ticket channel
-        overwrites = {
-            guild.default_role: discord.PermissionOverwrite(read_messages=False),
-            user: discord.PermissionOverwrite(read_messages=True, send_messages=True),
-            guild.me: discord.PermissionOverwrite(read_messages=True, send_messages=True)
-        }
-        
-        # Add admin/mod roles if they exist
-        for role_name in ['Admin', 'Moderator', 'Support', 'Staff']:
-            role = discord.utils.get(guild.roles, name=role_name)
-            if role:
-                overwrites[role] = discord.PermissionOverwrite(read_messages=True, send_messages=True)
-        
-        ticket_channel = await guild.create_text_channel(
-            name=f'ticket-{user.name.lower()}',
-            category=support_cat,
-            overwrites=overwrites,
-            topic=f'Support ticket for {user.name}'
-        )
-        
-        # Create close button and welcome embed
-        close_view = CloseTicketView()
-        ticket_embed = discord.Embed(
-            title="🎫 Support Ticket",
-            description=f"Welcome {user.mention}!\n\nA staff member will assist you shortly.\n\n**Please describe your issue below.**",
-            color=discord.Color.green()
-        )
-        ticket_embed.set_footer(text="QuoTrading Support")
-        
-        await ticket_channel.send(embed=ticket_embed, view=close_view)
-        await interaction.response.send_message(
-            f'✅ Ticket created! Go to {ticket_channel.mention}', 
-            ephemeral=True
-        )
-        
-        # Track ticket
-        active_tickets += 1
-        logger.info(f"Ticket created for {user.name}")
-        await send_ticket_event('created')
+            
+            # Track ticket
+            active_tickets += 1
+            logger.info(f"Ticket created for {user.name}")
+            await send_ticket_event('created')
+            
+        except discord.Forbidden:
+            await interaction.response.send_message(
+                '❌ Bot lacks permission to create ticket channels. Please contact an administrator.',
+                ephemeral=True
+            )
+            logger.error(f"Missing permissions to create ticket for {user.name}")
+        except Exception as e:
+            await interaction.response.send_message(
+                f'❌ Error creating ticket: {str(e)}',
+                ephemeral=True
+            )
+            logger.error(f"Failed to create ticket for {user.name}: {e}")
 
 
 class CloseTicketView(View):
@@ -183,9 +227,27 @@ class CloseTicketView(View):
     async def close_ticket_button(self, interaction: discord.Interaction, button: Button):
         global active_tickets
         channel = interaction.channel
+        user = interaction.user
+        guild = interaction.guild
         
         if not channel.name.startswith('ticket-'):
             await interaction.response.send_message('❌ This is not a ticket channel!', ephemeral=True)
+            return
+        
+        # Check if user has permission to close (ticket creator or staff)
+        ticket_owner_name = channel.name.replace('ticket-', '')
+        is_ticket_owner = user.name.lower() == ticket_owner_name
+        
+        # Check if user has staff role
+        is_staff = False
+        for role_name in ['Admin', 'Moderator', 'Support', 'Staff']:
+            role = discord.utils.get(guild.roles, name=role_name)
+            if role and role in user.roles:
+                is_staff = True
+                break
+        
+        if not is_ticket_owner and not is_staff:
+            await interaction.response.send_message('❌ You do not have permission to close this ticket!', ephemeral=True)
             return
         
         await interaction.response.send_message('🔒 Closing ticket in 5 seconds...')
@@ -195,7 +257,17 @@ class CloseTicketView(View):
         await send_ticket_event('closed')
         
         await asyncio.sleep(5)
-        await channel.delete()
+        
+        # Try to delete the channel with error handling
+        try:
+            await channel.delete(reason=f'Ticket closed by {user.name}')
+            logger.info(f"Ticket {channel.name} closed by {user.name}")
+        except discord.Forbidden:
+            logger.error(f"Missing permissions to delete ticket {channel.name}")
+            await channel.send('❌ Error: Bot lacks permission to delete this channel. Please contact an administrator.')
+        except discord.HTTPException as e:
+            logger.error(f"Failed to delete ticket {channel.name}: {e}")
+            await channel.send(f'❌ Error deleting ticket: {e}')
 
 import random
 import datetime
