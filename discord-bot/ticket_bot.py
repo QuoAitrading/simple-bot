@@ -13,6 +13,9 @@ import os
 import logging
 import aiohttp
 from aiohttp import web
+import json
+import datetime
+import random
 
 # Setup logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -25,7 +28,6 @@ API_URL = os.environ.get('API_URL', 'https://quotrading-flask-api.azurewebsites.
 TOKEN = os.environ.get('DISCORD_BOT_TOKEN')
 if not TOKEN:
     try:
-        import json
         config_path = os.path.join(os.path.dirname(__file__), 'config.json')
         with open(config_path, 'r', encoding='utf-8') as f:
             config = json.load(f)
@@ -258,9 +260,6 @@ class CloseTicketView(View):
             except:
                 pass
 
-import random
-import datetime
-
 # ============ LEVELING CONFIG ============
 # XP Curve tailored for VERY LONG TERM activity (Avg 20 XP/msg, 1 min cooldown)
 # Ranks: Quo Titles
@@ -282,7 +281,6 @@ DATA_FILE = os.path.join(os.path.dirname(__file__), 'level_data.json')
 # Load XP Data
 if os.path.exists(DATA_FILE):
     try:
-        import json
         with open(DATA_FILE, 'r') as f:
             user_xp = json.load(f)
     except:
@@ -294,7 +292,6 @@ xp_cooldown = {}
 
 def save_xp_data():
     try:
-        import json
         with open(DATA_FILE, 'w') as f:
             json.dump(user_xp, f, indent=4)
     except Exception as e:
@@ -475,7 +472,6 @@ async def update_status_channel():
     
     try:
         with open(config_path, 'r') as f:
-            import json
             status_config = json.load(f)
         channel_id = status_config.get('channel_id')
         message_id = status_config.get('message_id')
@@ -491,7 +487,6 @@ async def update_status_channel():
                     message = await channel.fetch_message(message_id)
                     
                     # Check API health
-                    import datetime
                     now_str = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S UTC')
                     
                     # Try to ping API
