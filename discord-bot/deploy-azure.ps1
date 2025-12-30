@@ -16,7 +16,7 @@ $Location = "eastus"
 
 # Create webapp if it doesn't exist
 Write-Host "Creating/updating Azure Web App..." -ForegroundColor Green
-az webapp up --name $AppName --resource-group $ResourceGroup --runtime "PYTHON:3.12" --sku B1
+az webapp up --name $AppName --resource-group $ResourceGroup --runtime "PYTHON:3.11" --sku B1
 
 # Set the bot token as environment variable
 $configPath = Join-Path $PSScriptRoot "config.json"
@@ -29,8 +29,17 @@ if (Test-Path $configPath) {
 }
 
 # Set startup command
-az webapp config set --name $AppName --resource-group $ResourceGroup --startup-file "python ticket_bot.py"
+Write-Host "Configuring startup command..." -ForegroundColor Green
+az webapp config set --name $AppName --resource-group $ResourceGroup --startup-file "start.sh"
+
+# Enable always on to prevent the app from sleeping
+Write-Host "Enabling Always On..." -ForegroundColor Green
+az webapp config set --name $AppName --resource-group $ResourceGroup --always-on true
+
+# Set web.config for proper Azure integration
+Write-Host "Ensuring web.config is deployed..." -ForegroundColor Green
 
 Write-Host ""
 Write-Host "Done! Discord bot deployed to Azure." -ForegroundColor Green
 Write-Host "Check logs: az webapp log tail --name $AppName --resource-group $ResourceGroup" -ForegroundColor Yellow
+Write-Host "Check status: https://$AppName.azurewebsites.net/health" -ForegroundColor Yellow

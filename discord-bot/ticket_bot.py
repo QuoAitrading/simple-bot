@@ -13,7 +13,6 @@ import os
 import logging
 import aiohttp
 from aiohttp import web
-import threading
 
 # Setup logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -64,8 +63,8 @@ async def home_handler(request):
     """Home page."""
     return web.Response(text="QuoTrading Discord Bot is running!", content_type="text/html")
 
-def run_http_server():
-    """Run HTTP server in background thread."""
+async def run_http_server():
+    """Run HTTP server for Azure App Service health checks."""
     app = web.Application()
     app.router.add_get('/', home_handler)
     app.router.add_get('/health', health_handler)
@@ -73,7 +72,11 @@ def run_http_server():
     port = int(os.environ.get('PORT', 8000))
     logger.info(f"Starting HTTP server on port {port}")
     
-    web.run_app(app, host='0.0.0.0', port=port, print=None)
+    runner = web.AppRunner(app)
+    await runner.setup()
+    site = web.TCPSite(runner, '0.0.0.0', port)
+    await site.start()
+    logger.info(f"✅ HTTP server running on port {port}")
 
 
 # ============ BOT FUNCTIONS ============
@@ -234,7 +237,7 @@ class CloseTicketView(View):
                         break
             
             if not is_authorized:
-                await interaction.followup.send('❌ You permission to close this ticket.', ephemeral=True)
+                await interaction.followup.send('❌ You don\'t have permission to close this ticket.', ephemeral=True)
                 return
 
             # Notify users in channel
@@ -460,8 +463,83 @@ async def on_member_join(member):
         logger.error(f"❌ Failed to send welcome text: {e}")
 
 
+async def update_status_channel():
+    """Update server status channel with health indicator every 5 minutes."""
+    await bot.wait_until_ready()
+    
+    # Load status config
+    config_path = os.path.join(os.path.dirname(__file__), 'status_config.json')
+    if not os.path.exists(config_path):
+        logger.warning("status_config.json not found - status updates disabled")
+        return
+    
+    try:
+        with open(config_path, 'r') as f:
+            import json
+            status_config = json.load(f)
+        channel_id = status_config.get('channel_id')
+        message_id = status_config.get('message_id')
+    except Exception as e:
+        logger.error(f"Failed to load status config: {e}")
+        return
+    
+    while not bot.is_closed():
+        try:
+            channel = bot.get_channel(channel_id)
+            if channel:
+                try:
+                    message = await channel.fetch_message(message_id)
+                    
+                    # Check API health
+                    import datetime
+                    now_str = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S UTC')
+                    
+                    # Try to ping API
+                    try:
+                        async with aiohttp.ClientSession() as session:
+                            async with session.get(f'{API_URL}/health', timeout=aiohttp.ClientTimeout(total=5)) as resp:
+                                is_healthy = resp.status == 200
+                    except:
+                        is_healthy = False
+                    
+                    # Update message with status
+                    status_emoji = "🟢" if is_healthy else "🔴"
+                    status_text = "All Systems Operational" if is_healthy else "⚠️ System Issues Detected"
+                    
+                    new_content = f"""
+# {status_emoji} {status_text}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+**Last Checked:** {now_str}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+"""
+                    await message.edit(content=new_content)
+                    
+                    # Update channel name if health changed
+                    current_name = channel.name
+                    new_name = f"{status_emoji}│server-status"
+                    if current_name != new_name:
+                        try:
+                            await channel.edit(name=new_name)
+                        except:
+                            pass  # May fail due to rate limits
+                    
+                    logger.info(f"✅ Status channel updated: {status_text}")
+                except discord.NotFound:
+                    logger.error("Status message not found")
+                except Exception as e:
+                    logger.error(f"Failed to update status message: {e}")
+        except Exception as e:
+            logger.error(f"Status channel update error: {e}")
+        
+        await asyncio.sleep(300)  # Update every 5 minutes
+
+
 @bot.event
 async def on_ready():
+    global bot_ready
     logger.info(f'📊 Connected to {len(bot.guilds)} server(s)')
     
     # Register persistent views so buttons work after restart
@@ -470,6 +548,9 @@ async def on_ready():
     
     # Send initial heartbeat
     await send_heartbeat()
+    
+    # Start status channel updater
+    bot.loop.create_task(update_status_channel())
     
     bot_ready = True
     logger.info('🎫 Ticket system ready!')
@@ -480,20 +561,18 @@ async def keep_alive():
     while True:
         await send_heartbeat()
         logger.info("💓 Heartbeat sent")
-        await asyncio.sleep(60)
+        await asyncio.sleep(300)  # 5 minutes = 300 seconds
 
 
 @bot.event
 async def on_connect():
+    """Start background tasks when bot connects."""
     bot.loop.create_task(keep_alive())
+    bot.loop.create_task(run_http_server())
 
 
 if __name__ == '__main__':
     logger.info('🚀 Starting QuoTrading Ticket Bot...')
     
-    # Start HTTP server in background thread (for Azure)
-    http_thread = threading.Thread(target=run_http_server, daemon=True)
-    http_thread.start()
-    
-    # Run Discord bot
+    # Run Discord bot (HTTP server will start in on_connect event)
     bot.run(TOKEN)
