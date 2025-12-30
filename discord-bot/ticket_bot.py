@@ -489,9 +489,7 @@ async def update_status_channel():
                     # Check API health - use Eastern Time
                     eastern = pytz.timezone('US/Eastern')
                     now_et = datetime.datetime.now(eastern)
-                    # Determine if EST or EDT
-                    tz_abbr = 'EST' if now_et.dst() == datetime.timedelta(0) else 'EDT'
-                    now_str = now_et.strftime(f'%Y-%m-%d %I:%M:%S %p {tz_abbr}')
+                    now_str = now_et.strftime('%Y-%m-%d %I:%M:%S %p %Z')
                     
                     # Try to ping API
                     try:
