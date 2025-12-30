@@ -467,7 +467,7 @@ async def update_status_channel():
     # Load status config
     config_path = os.path.join(os.path.dirname(__file__), 'status_config.json')
     if not os.path.exists(config_path):
-        logger.warning("status_config.json not found - status updates disabled")
+        logger.warning(f"status_config.json not found at {config_path} - status updates disabled. Run setup_status.py to create it.")
         return
     
     try:
@@ -487,7 +487,7 @@ async def update_status_channel():
                     message = await channel.fetch_message(message_id)
                     
                     # Check API health
-                    now_str = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S UTC')
+                    now_str = datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%d %H:%M:%S UTC')
                     
                     # Try to ping API
                     try:
