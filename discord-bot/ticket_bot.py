@@ -334,14 +334,31 @@ async def on_message(message):
             logger.error(f"Failed to assign/remove roles: {e}")
         
     save_xp_data()
+@bot.event
 async def on_member_join(member):
     """Welcome message with rainbow divider + inline emoji."""
+    logger.info(f"👤 Member joined: {member.name} (ID: {member.id})")
+    
     guild = member.guild
+    
+    # 1. Smart Channel Search
+    channel = None
+    # Try exact matches first
     channel = discord.utils.get(guild.text_channels, name="👋│welcome") or \
               discord.utils.get(guild.text_channels, name="welcome")
     
+    # If not found, try searching
     if not channel:
+        for ch in guild.text_channels:
+            if "welcome" in ch.name.lower():
+                channel = ch
+                break
+    
+    if not channel:
+        logger.error(f"❌ Could not find ANY welcome channel in guild {guild.name}")
         return
+
+    logger.info(f"✅ Found welcome channel: {channel.name}")
 
     # Suffix logic
     n = len(guild.members)
@@ -360,8 +377,13 @@ async def on_member_join(member):
     current_dir = os.path.dirname(os.path.abspath(__file__))
     rainbow_path = os.path.join(current_dir, 'line-rainbow.gif')
     
-    if os.path.exists(rainbow_path):
-        await channel.send(file=discord.File(rainbow_path))
+    try:
+        if os.path.exists(rainbow_path):
+            await channel.send(file=discord.File(rainbow_path))
+        else:
+            logger.warning(f"⚠️ Rainbow GIF not found at {rainbow_path}")
+    except Exception as e:
+        logger.error(f"❌ Failed to post GIF: {e}")
     
     # Send Text with Black Hole
     black_hole = discord.utils.get(guild.emojis, name="black_hole")
@@ -371,13 +393,15 @@ async def on_member_join(member):
         f"{bh_str} Hello {member.mention}, welcome to **QuoTrading**. You are the **{count_str}** member to join. {emoji_str}"
     )
     
-    await channel.send(content=msg_content)
+    try:
+        await channel.send(content=msg_content)
+        logger.info(f"✅ Sent welcome message to {member.name}")
+    except Exception as e:
+        logger.error(f"❌ Failed to send welcome text: {e}")
 
 
 @bot.event
 async def on_ready():
-    global bot_ready
-    logger.info(f'✅ Bot connected as {bot.user}')
     logger.info(f'📊 Connected to {len(bot.guilds)} server(s)')
     
     # Register persistent views so buttons work after restart
