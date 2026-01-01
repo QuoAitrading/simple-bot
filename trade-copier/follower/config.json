@@ -5,29 +5,17 @@
   "broker": "TopStep",
   "copy_enabled": true,
   "broker_type": "Prop Firm",
-  "broker_username": "lorenzod1823@gmail.com",
-  "broker_token": "psCdvt+Y5nU2p17z2DM2RZc9x62mBGhXic0KsHoYUdI=",
+  "broker_username": "brooklong@yahoo.com",
+  "broker_token": "uVoMJOu5bd6DAl2943V1CSO7jX5oHGvoAXTBtV2SCCs=",
   "quotrading_api_key": "W26J-7KUO-004K-R4QL",
   "remember_credentials": true,
   "selected_account_ids": [
-    "15680795",
-    "16016264",
-    "16105891",
-    "16209730",
-    "16209790"
+    "16280604"
   ],
   "selected_account_names": [
-    "150KTC-V2-449300-84957229",
-    "150KTC-V2-449300-53762282",
-    "150KTC-V2-449300-79298073",
-    "150KTC-V2-449300-51968985",
-    "150KTC-V2-449300-34094333"
+    "150KTC-V2-465019-79514411"
   ],
   "selected_account_balances": [
-    155440.18,
-    153313.63,
-    151242.48,
-    150000.0,
     150000.0
   ]
 }

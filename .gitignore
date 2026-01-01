@@ -183,7 +183,12 @@ discord-bot/config.json
 # Azure logs and deployment artifacts
 azure_logs*/
 azure_logs*.zip
+app_logs/
+error_logs/
+latest_logs/
+new_logs/
 *.zip
+deploy_*.zip
 deploy_package.zip
 
 # Trade copier config (contains credentials)
@@ -195,3 +200,4 @@ license_fix_report.md
 
 # Azure credentials
 azure_creds.txt
+discord-bot/utils/config.json

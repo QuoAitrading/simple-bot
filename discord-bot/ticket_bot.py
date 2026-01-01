@@ -1,8 +1,7 @@
+
 """
 QuoTrading Discord Ticket Bot
-Lightweight bot for 24/7 ticket system on Azure
-Reports status to admin dashboard
-Includes HTTP server for Azure App Service
+Includes Tickets, Leveling, and Status
 """
 
 import discord
@@ -15,17 +14,16 @@ import aiohttp
 import threading
 import json
 import datetime
-import json
-import datetime
+import random
 
 # Setup logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-# API URL for heartbeat reporting
+# API URL forheartbeat reporting
 API_URL = os.environ.get('API_URL', 'https://quotrading-flask-api.azurewebsites.net')
 
-# Get token from environment variable (for Azure) or config file (for local)
+# Get token
 TOKEN = os.environ.get('DISCORD_BOT_TOKEN')
 if not TOKEN:
     try:
@@ -37,29 +35,184 @@ if not TOKEN:
         pass
 
 if not TOKEN:
-    raise ValueError("No bot token found! Set DISCORD_BOT_TOKEN environment variable or create config.json")
+    raise ValueError("No bot token found!")
 
-# Bot setup
 # Bot setup
 intents = discord.Intents.default()
 intents.guilds = True
 intents.guild_messages = True
-intents.members = True  # Required for on_member_join
-intents.message_content = True # Required for commands
+intents.members = True
+intents.message_content = True
 bot = commands.Bot(command_prefix='!', intents=intents)
 
 # Track active tickets
 active_tickets = 0
 bot_ready = False
 
+# ============ LEVELING SYSTEM ============
+XP_FILE = os.path.join(os.path.dirname(__file__), 'xp_data.json')
+XP_COOLDOWN = {}  # Track last XP gain per user
+XP_COOLDOWN_SECONDS = 5  # 5 seconds anti-spam
 
+# Level thresholds and role names (Level 1-10)
+# ~1 year to reach max assuming ~50-100 msgs/day
+LEVEL_ROLES = {
+    1: {"name": "Quo Novice", "xp": 0},
+    2: {"name": "Quo Trader", "xp": 1000},
+    3: {"name": "Quo Tactician", "xp": 3000},
+    4: {"name": "Quo Strategist", "xp": 6000},
+    5: {"name": "Quo Executor", "xp": 10000},
+    6: {"name": "Quo Automator", "xp": 15000},
+    7: {"name": "Quo Predictor", "xp": 21000},
+    8: {"name": "Quo Visionary", "xp": 28000},
+    9: {"name": "Quo Mastermind", "xp": 36000},
+    10: {"name": "Quo Supreme", "xp": 45000}
+}
 
+def load_xp():
+    if os.path.exists(XP_FILE):
+        try:
+            with open(XP_FILE, 'r') as f:
+                return json.load(f)
+        except:
+            return {}
+    return {}
+
+def save_xp(data):
+    with open(XP_FILE, 'w') as f:
+        json.dump(data, f, indent=4)
+
+def get_level(xp: int) -> int:
+    """Calculate level based on XP."""
+    level = 1
+    for lvl, info in LEVEL_ROLES.items():
+        if xp >= info["xp"]:
+            level = lvl
+    return level
+
+def get_role_for_level(level: int) -> str:
+    """Get role name for a level."""
+    return LEVEL_ROLES.get(level, {}).get("name", "Quo Novice")
+
+async def check_level_up(member: discord.Member, old_xp: int, new_xp: int):
+    """Check if member leveled up and assign new role."""
+    old_level = get_level(old_xp)
+    new_level = get_level(new_xp)
+    
+    if new_level > old_level:
+        guild = member.guild
+        
+        # Remove old level roles
+        for lvl, info in LEVEL_ROLES.items():
+            old_role = discord.utils.get(guild.roles, name=info["name"])
+            if old_role and old_role in member.roles:
+                try:
+                    await member.remove_role(old_role)
+                except:
+                    pass
+        
+        # Add new role
+        new_role_name = get_role_for_level(new_level)
+        new_role = discord.utils.get(guild.roles, name=new_role_name)
+        if new_role:
+            try:
+                await member.add_role(new_role)
+            except:
+                pass
+        
+        # Announce in welcome channel
+        welcome_ch = discord.utils.find(lambda c: "welcome" in c.name.lower(), guild.text_channels)
+        if welcome_ch:
+            try:
+                embed = discord.Embed(
+                    title="🎉 LEVEL UP!",
+                    description=f"{member.mention} just reached **Level {new_level}**!",
+                    color=discord.Color.gold()
+                )
+                embed.add_field(name="New Rank", value=f"🏆 **{new_role_name}**", inline=False)
+                embed.set_thumbnail(url=member.display_avatar.url if member.display_avatar else None)
+                await welcome_ch.send(embed=embed)
+            except:
+                pass
+        
+        return True
+    return False
+
+@bot.event
+async def on_message(message):
+    # Ignore bots
+    if message.author.bot:
+        return
+    
+    # Process commands first
+    await bot.process_commands(message)
+    
+    # Only give XP to premium members (Quo Member role)
+    member = message.author
+    if not isinstance(member, discord.Member):
+        return
+    
+    # Check if user has premium role
+    has_premium = discord.utils.get(member.roles, name="Quo Member") or \
+                  discord.utils.get(member.roles, name="Quo Exclusive")
+    if not has_premium:
+        return
+    
+    # Cooldown check (5 sec anti-spam)
+    user_id = str(member.id)
+    now = datetime.datetime.now().timestamp()
+    last_xp = XP_COOLDOWN.get(user_id, 0)
+    
+    if now - last_xp < XP_COOLDOWN_SECONDS:
+        return  # Still on cooldown
+    
+    XP_COOLDOWN[user_id] = now
+    
+    # Give 1 XP per message
+    xp_gain = 1
+    
+    data = load_xp()
+    old_xp = data.get(user_id, 0)
+    new_xp = old_xp + xp_gain
+    data[user_id] = new_xp
+    save_xp(data)
+    
+    # Check for level up
+    await check_level_up(member, old_xp, new_xp)
+
+@bot.command()
+async def rank(ctx):
+    """Check your current rank and XP."""
+    user_id = str(ctx.author.id)
+    data = load_xp()
+    xp = data.get(user_id, 0)
+    level = get_level(xp)
+    role_name = get_role_for_level(level)
+    
+    # Calculate XP to next level
+    next_level = level + 1
+    if next_level <= 10:
+        next_xp = LEVEL_ROLES[next_level]["xp"]
+        xp_needed = next_xp - xp
+        progress = f"{xp}/{next_xp} XP (Need {xp_needed} more)"
+    else:
+        progress = f"{xp} XP (MAX LEVEL)"
+    
+    embed = discord.Embed(
+        title=f"📊 {ctx.author.display_name}'s Rank",
+        color=discord.Color.blue()
+    )
+    embed.add_field(name="Level", value=f"**{level}**/10", inline=True)
+    embed.add_field(name="Rank", value=f"🏆 {role_name}", inline=True)
+    embed.add_field(name="Progress", value=progress, inline=False)
+    embed.set_thumbnail(url=ctx.author.display_avatar.url if ctx.author.display_avatar else None)
+    
+    await ctx.send(embed=embed)
 
 
 # ============ BOT FUNCTIONS ============
 
 async def send_heartbeat():
-    """Send heartbeat to API to show bot is online."""
     global active_tickets
     try:
         async with aiohttp.ClientSession() as session:
@@ -68,37 +221,29 @@ async def send_heartbeat():
                 'active_tickets': active_tickets
             }) as resp:
                 if resp.status == 200:
-                    logger.debug("Heartbeat sent successfully")
+                    logger.debug("Heartbeat sent")
     except Exception as e:
         logger.debug(f"Heartbeat failed: {e}")
 
-
 async def send_ticket_event(event: str):
-    """Send ticket event to API."""
     try:
         async with aiohttp.ClientSession() as session:
             async with session.post(f'{API_URL}/api/discord/ticket', json={
                 'event': event
             }) as resp:
-                if resp.status == 200:
-                    logger.info(f"Ticket event '{event}' reported")
-    except Exception as e:
-        logger.debug(f"Ticket event failed: {e}")
-
+                pass
+    except:
+        pass
 
 class TicketButton(View):
-    """Persistent button for creating tickets."""
-    
     def __init__(self):
         super().__init__(timeout=None)
     
     @discord.ui.button(label="Create ticket", style=discord.ButtonStyle.blurple, emoji="📩", custom_id="create_ticket_btn")
     async def create_ticket_button(self, interaction: discord.Interaction, button: Button):
-        # 1. Defer immediately to prevent "Interaction Failed"
         try:
             await interaction.response.defer(ephemeral=True)
-        except Exception as e:
-            logger.error(f"Failed to defer interaction: {e}")
+        except:
             return
 
         global active_tickets
@@ -106,43 +251,32 @@ class TicketButton(View):
         user = interaction.user
         
         try:
-            # Find or create Support category
             support_cat = discord.utils.get(guild.categories, name='『 Support 』')
             if not support_cat:
                 support_cat = discord.utils.get(guild.categories, name='Support')
             
             if not support_cat:
                 try:
-                    support_cat = await guild.create_category(
-                        name='『 Support 』',
-                        position=0,
-                        overwrites={
-                            guild.default_role: discord.PermissionOverwrite(read_messages=False),
-                            guild.me: discord.PermissionOverwrite(read_messages=True, send_messages=True, manage_channels=True, manage_permissions=True)
-                        }
-                    )
-                except discord.Forbidden:
-                    await interaction.followup.send('❌ Bot lacks permission to create Support category.', ephemeral=True)
+                    support_cat = await guild.create_category(name='『 Support 』')
+                except:
+                    await interaction.followup.send('❌ Bot lacks permission.', ephemeral=True)
                     return
             
-            # Check for existing ticket
             existing = discord.utils.get(guild.text_channels, name=f'ticket-{user.name.lower()}')
             if existing:
                 await interaction.followup.send(f'❌ You already have an open ticket: {existing.mention}', ephemeral=True)
                 return
             
-            # Create channel
             overwrites = {
                 guild.default_role: discord.PermissionOverwrite(read_messages=False),
-                user: discord.PermissionOverwrite(read_messages=True, send_messages=True, read_message_history=True),
-                guild.me: discord.PermissionOverwrite(read_messages=True, send_messages=True, read_message_history=True, manage_channels=True, manage_messages=True)
+                user: discord.PermissionOverwrite(read_messages=True, send_messages=True),
+                guild.me: discord.PermissionOverwrite(read_messages=True, send_messages=True)
             }
             
-            # Admin/Mod access only
             for role_name in ['Admin', 'Moderator']:
                 role = discord.utils.get(guild.roles, name=role_name)
                 if role:
-                    overwrites[role] = discord.PermissionOverwrite(read_messages=True, send_messages=True, read_message_history=True)
+                    overwrites[role] = discord.PermissionOverwrite(read_messages=True, send_messages=True)
             
             ticket_channel = await guild.create_text_channel(
                 name=f'ticket-{user.name.lower()}',
@@ -151,7 +285,6 @@ class TicketButton(View):
                 topic=f'Support ticket for {user.name}'
             )
             
-            # Setup ticket content
             close_view = CloseTicketView()
             ticket_embed = discord.Embed(
                 title="🎫 Support Ticket",
@@ -160,86 +293,35 @@ class TicketButton(View):
             )
             ticket_embed.set_footer(text="QuoTrading Support")
             
-            # Add Banner
-            banner_path = os.path.join(os.path.dirname(__file__), 'banner.png')
-            file = None
-            if os.path.exists(banner_path):
-                file = discord.File(banner_path, filename="banner.png")
-                ticket_embed.set_image(url="attachment://banner.png")
+            await ticket_channel.send(embed=ticket_embed, view=close_view)
+            await interaction.followup.send(f"✅ Ticket created: {ticket_channel.mention}", ephemeral=True)
             
-            if file:
-                await ticket_channel.send(file=file, embed=ticket_embed, view=close_view)
-            else:
-                await ticket_channel.send(embed=ticket_embed, view=close_view)
-            
-            # Send hidden confirmation (private to user)
-            try:
-                await interaction.followup.send(f"✅ Ticket created: {ticket_channel.mention}", ephemeral=True)
-            except Exception as e:
-                logger.error(f"Failed to send confirmation: {e}") 
-
- 
-            # await interaction.followup.send(f'✅ Ticket created! Go to {ticket_channel.mention}', ephemeral=True)
-            
-            # Analytics
             active_tickets += 1
             await send_ticket_event('created')
             
         except Exception as e:
             logger.error(f"Error creating ticket: {e}")
-            await interaction.followup.send(f'❌ Error creating ticket: {str(e)}', ephemeral=True)
-
+            await interaction.followup.send(f'❌ Error: {str(e)}', ephemeral=True)
 
 class CloseTicketView(View):
-    """Button to close a ticket."""
-    
     def __init__(self):
         super().__init__(timeout=None)
     
     @discord.ui.button(label="Close Ticket", style=discord.ButtonStyle.red, emoji="🔒", custom_id="close_ticket_btn")
     async def close_ticket_button(self, interaction: discord.Interaction, button: Button):
-        # 1. Defer immediately
         try:
             await interaction.response.defer(ephemeral=True)
-        except Exception as e:
-            logger.error(f"Failed to defer interaction: {e}")
+        except:
             return
 
         channel = interaction.channel
-        user = interaction.user
-        guild = interaction.guild
         global active_tickets
 
         try:
             if not channel.name.startswith('ticket-'):
-                await interaction.followup.send('❌ This is not a ticket channel!', ephemeral=True)
                 return
             
-            # Permission Check
-            is_authorized = False
-            
-            # 1. Check if user is the ticket owner (based on specific channel overwrites)
-            # Ticket owner has explicit send_messages=True and is NOT a bot/staff role holder (usually)
-            # Simpler check: seeing if they are in the overwrites with positive permissions
-            if channel.overwrites_for(user).send_messages:
-                 is_authorized = True
-            
-            # 2. Check if user is staff (Admin/Mod)
-            if not is_authorized:
-                for role in user.roles:
-                    if role.name in ['Admin', 'Moderator', 'Support', 'Staff']:
-                        is_authorized = True
-                        break
-            
-            if not is_authorized:
-                await interaction.followup.send('❌ You permission to close this ticket.', ephemeral=True)
-                return
-
-            # Notify users in channel
-            await channel.send(f'🔒 Ticket closed by {user.mention}. Deleting in 5 seconds...')
-            await interaction.followup.send('Ticket close initiated.', ephemeral=True)
-            
-            # Analytics
+            await channel.send(f'🔒 Ticket closed by {interaction.user.mention}. Deleting in 5 seconds...')
             active_tickets = max(0, active_tickets - 1)
             await send_ticket_event('closed')
             
@@ -248,36 +330,25 @@ class CloseTicketView(View):
             
         except Exception as e:
             logger.error(f"Error closing ticket: {e}")
-            try:
-                await interaction.followup.send(f'❌ Error closing ticket: {str(e)}', ephemeral=True)
-            except:
-                pass
-
-import random
-import datetime
 
 # ============ LEVELING CONFIG ============
-# XP Curve tailored for VERY LONG TERM activity (Avg 20 XP/msg, 1 min cooldown)
-# Ranks: Quo Titles
 LEVELS = {
-    1: {"xp": 0, "title": "Quo Novice"},        # 1
-    2: {"xp": 500, "title": "Quo Trader"},       # 2
-    3: {"xp": 1500, "title": "Quo Analyst"},     # 3
-    4: {"xp": 4000, "title": "Quo Strategist"},  # 4
-    5: {"xp": 8000, "title": "Quo Executor"},    # 5
-    6: {"xp": 15000, "title": "Quo Automator"},  # 6
-    7: {"xp": 25000, "title": "Quo Predictor"},  # 7
-    8: {"xp": 40000, "title": "Quo Visionary"},  # 8
-    9: {"xp": 65000, "title": "Quo Mastermind"}, # 9
-    10: {"xp": 100000, "title": "Quo Supreme"},  # 10
+    1: {"xp": 0, "title": "Quo Novice"},
+    2: {"xp": 500, "title": "Quo Trader"},
+    3: {"xp": 1500, "title": "Quo Analyst"},
+    4: {"xp": 4000, "title": "Quo Strategist"},
+    5: {"xp": 8000, "title": "Quo Executor"},
+    6: {"xp": 15000, "title": "Quo Automator"},
+    7: {"xp": 25000, "title": "Quo Predictor"},
+    8: {"xp": 40000, "title": "Quo Visionary"},
+    9: {"xp": 65000, "title": "Quo Mastermind"},
+    10: {"xp": 100000, "title": "Quo Supreme"},
 }
 ALLOWED_ROLES = ["QuaTrader", "Premium", "Server Booster", "Admin", "MOD"]
 DATA_FILE = os.path.join(os.path.dirname(__file__), 'level_data.json')
 
-# Load XP Data
 if os.path.exists(DATA_FILE):
     try:
-        import json
         with open(DATA_FILE, 'r') as f:
             user_xp = json.load(f)
     except:
@@ -289,7 +360,6 @@ xp_cooldown = {}
 
 def save_xp_data():
     try:
-        import json
         with open(DATA_FILE, 'w') as f:
             json.dump(user_xp, f, indent=4)
     except Exception as e:
@@ -309,12 +379,10 @@ async def on_message(message):
     if message.author.bot:
         return
     
-    # Process commands first
     await bot.process_commands(message)
     
-    # Check permissions
     can_earn = False
-    if not ALLOWED_ROLES: # If no roles defined, everyone earns
+    if not ALLOWED_ROLES:
         can_earn = True
     else:
         for role in message.author.roles:
@@ -326,16 +394,12 @@ async def on_message(message):
         return
 
     user_id = str(message.author.id)
-    
-    # Cooldown (1 min)
     now = datetime.datetime.now().timestamp()
     if user_id in xp_cooldown:
         if now - xp_cooldown[user_id] < 60:
             return
             
     xp_cooldown[user_id] = now
-    
-    # XP logic
     xp_gain = random.randint(15, 25)
     
     if user_id not in user_xp:
@@ -345,67 +409,42 @@ async def on_message(message):
     new_xp = old_xp + xp_gain
     user_xp[user_id]["xp"] = new_xp
     
-    # Check Level Up
     old_level, _ = get_level_info(old_xp)
     new_level, new_title = get_level_info(new_xp)
     
     if new_level > old_level:
-        channel = discord.utils.get(message.guild.text_channels, name="👋│welcome")
-        if not channel:
-            channel = message.channel
-            
-        # Send Rainbow Divider
+        channel = discord.utils.get(message.guild.text_channels, name="👋│welcome") or message.channel
+        
         current_dir = os.path.dirname(os.path.abspath(__file__))
         rainbow_path = os.path.join(current_dir, 'line-rainbow.gif')
         if os.path.exists(rainbow_path):
             await channel.send(file=discord.File(rainbow_path))
             
-        # Send Level Up Message
         embed = discord.Embed(
             description=f"🎉 **PROMOTION!** {message.author.mention} has been promoted to **{new_title}** (Level {new_level})! 🚀",
             color=0xFFD700
         )
         await channel.send(embed=embed)
         
-        # === ROLE ASSIGNMENT ===
         try:
-            guild = message.guild
-            member = message.author
-            
-            # 1. Add New Role
-            new_role_obj = discord.utils.get(guild.roles, name=new_title)
+            new_role_obj = discord.utils.get(message.guild.roles, name=new_title)
             if new_role_obj:
-                await member.add_roles(new_role_obj)
-                logger.info(f"Assigned role {new_title} to {member.name}")
-            else:
-                logger.warning(f"Role '{new_title}' not found in server!")
-
-            # 2. Remove Old Rank Roles (Cleanup)
-            # List of all rank titles
-            all_rank_titles = [data["title"] for _, data in LEVELS.items()]
+                await message.author.add_roles(new_role_obj)
             
-            for role in member.roles:
+            all_rank_titles = [data["title"] for _, data in LEVELS.items()]
+            for role in message.author.roles:
                 if role.name in all_rank_titles and role.name != new_title:
-                    await member.remove_roles(role)
-                    
+                    await message.author.remove_roles(role)
         except Exception as e:
-            logger.error(f"Failed to assign/remove roles: {e}")
+            logger.error(f"Role error: {e}")
         
     save_xp_data()
+
 @bot.event
 async def on_member_join(member):
-    """Welcome message with rainbow divider + inline emoji."""
-    logger.info(f"👤 Member joined: {member.name} (ID: {member.id})")
-    
     guild = member.guild
+    channel = discord.utils.get(guild.text_channels, name="👋│welcome")
     
-    # 1. Smart Channel Search
-    channel = None
-    # Try exact matches first
-    channel = discord.utils.get(guild.text_channels, name="👋│welcome") or \
-              discord.utils.get(guild.text_channels, name="welcome")
-    
-    # If not found, try searching
     if not channel:
         for ch in guild.text_channels:
             if "welcome" in ch.name.lower():
@@ -413,75 +452,39 @@ async def on_member_join(member):
                 break
     
     if not channel:
-        logger.error(f"❌ Could not find ANY welcome channel in guild {guild.name}")
         return
 
-    logger.info(f"✅ Found welcome channel: {channel.name}")
-
-    # Suffix logic
     n = len(guild.members)
-    if 11 <= (n % 100) <= 13:
-        suffix = 'th'
-    else:
-        suffix = {1: 'st', 2: 'nd', 3: 'rd'}.get(n % 10, 'th')
-    count_str = f"{n}{suffix}"
-
-    # Get pepe (frog)
+    count_str = f"{n}th" # simplified suffix logic
+    
     pepe = discord.utils.get(guild.emojis, name="pepe_dance")
     emoji_str = str(pepe) if pepe else "👋"
 
-    # Send Rainbow Divider (Original)
-    # Ensure correct path relative to this script
     current_dir = os.path.dirname(os.path.abspath(__file__))
     rainbow_path = os.path.join(current_dir, 'line-rainbow.gif')
     
     try:
         if os.path.exists(rainbow_path):
             await channel.send(file=discord.File(rainbow_path))
-        else:
-            logger.warning(f"⚠️ Rainbow GIF not found at {rainbow_path}")
-    except Exception as e:
-        logger.error(f"❌ Failed to post GIF: {e}")
+    except:
+        pass
     
-    # Send Text with Black Hole
     black_hole = discord.utils.get(guild.emojis, name="black_hole")
     bh_str = str(black_hole) if black_hole else "⚫"
 
-    msg_content = (
-        f"{bh_str} Hello {member.mention}, welcome to **QuoTrading**. You are the **{count_str}** member to join. {emoji_str}"
-    )
+    msg_content = f"{bh_str} Hello {member.mention}, welcome to **QuoTrading**. You are the **{count_str}** member to join. {emoji_str}"
     
     try:
         await channel.send(content=msg_content)
-        logger.info(f"✅ Sent welcome message to {member.name}")
-    except Exception as e:
-        logger.error(f"❌ Failed to send welcome text: {e}")
-
-
-@bot.event
-async def on_ready():
-    logger.info(f'📊 Connected to {len(bot.guilds)} server(s)')
-    
-    # Register persistent views so buttons work after restart
-    bot.add_view(TicketButton())
-    bot.add_view(CloseTicketView())
-    
-    # Send initial heartbeat
-    await send_heartbeat()
-    
-    bot_ready = True
-    logger.info('🎫 Ticket system ready!')
-
+    except:
+        pass
 
 async def keep_alive():
-    """Periodic heartbeat to API."""
     while True:
         await send_heartbeat()
-        logger.info("💓 Heartbeat sent")
         await asyncio.sleep(60)
 
 async def update_server_status():
-    """Update server status message every minute."""
     status_config_path = os.path.join(os.path.dirname(__file__), 'status_config.json')
     if not os.path.exists(status_config_path):
         return
@@ -491,36 +494,29 @@ async def update_server_status():
             data = json.load(f)
             channel_id = data.get('channel_id')
             message_id = data.get('message_id')
-    except Exception as e:
-        logger.error(f"Failed to load status config: {e}")
+    except:
         return
 
     await bot.wait_until_ready()
-    
     channel = bot.get_channel(channel_id)
     if not channel:
-        logger.error(f"Status channel {channel_id} not found")
         return
 
     try:
         message = await channel.fetch_message(message_id)
-    except Exception as e:
-        logger.error(f"Status message {message_id} not found: {e}")
+    except:
         return
 
     last_status = None 
 
     while not bot.is_closed():
-        # Check API Status
         current_status = "OFFLINE"
         try:
             async with aiohttp.ClientSession() as session:
                 async with session.get(API_URL, timeout=10) as resp:
-                    # If we get a response (even 404), the server is UP. Only connection errors mean DOWN.
                     if resp.status < 600:
                         current_status = "ONLINE"
-        except Exception as e:
-            logger.warning(f"API Check failed: {e}")
+        except:
             current_status = "OFFLINE"
 
         current_time = datetime.datetime.now().strftime("%b %d, %Y - %I:%M %p EST")
@@ -549,69 +545,37 @@ async def update_server_status():
 """
             emoji = "🔴"
 
-        # Update Message
         try:
-            # Always update if content differs (includes timestamp updates)
             if message.content.strip() != new_content.strip():
                 await message.edit(content=new_content)
-                logger.debug("Updated server status message")
-        except Exception as e:
-            logger.error(f"Failed to edit status message: {e}")
+        except:
+            pass
 
-        # Update Channel Name (Only if status CHANGED to avoid rate limits)
         if last_status is not None and current_status != last_status:
             try:
                 new_name = f"{emoji}│server-status"
                 if channel.name != new_name:
                     await channel.edit(name=new_name)
-                    logger.info(f"Updated status channel name to {new_name}")
-            except Exception as e:
-                logger.error(f"Failed to rename status channel: {e}")
+            except:
+                pass
         
         last_status = current_status
         await asyncio.sleep(60)
-
 
 @bot.event
 async def on_connect():
     bot.loop.create_task(keep_alive())
     bot.loop.create_task(update_server_status())
+    # Leveling is handled via on_message event
 
-
-@bot.command()
-@commands.has_permissions(administrator=True)
-async def setup_tickets(ctx):
-    """
-    Sets up the ticket system in the current channel.
-    Usage: !setup_tickets
-    """
-    # Delete command message to keep channel clean
-    try:
-        await ctx.message.delete()
-    except:
-        pass
-
-    embed = discord.Embed(
-        title="QuoTrading Support",
-        description="Click the button below to create a private support ticket.",
-        color=discord.Color.blue()
-    )
-    embed.set_footer(text="QuoTrading - Elevate Your Trading Performance")
-    
-    # Add Banner
-    banner_path = os.path.join(os.path.dirname(__file__), 'banner.png')
-    file = None
-    if os.path.exists(banner_path):
-        file = discord.File(banner_path, filename="banner.png")
-        embed.set_image(url="attachment://banner.png")
-    
-    view = TicketButton()
-    await ctx.send(file=file, embed=embed, view=view)
-    await ctx.send("Ticket system setup complete!", delete_after=5)
-
+@bot.event
+async def on_ready():
+    logger.info(f'📊 Connected to {len(bot.guilds)} server(s)')
+    bot.add_view(TicketButton())
+    bot.add_view(CloseTicketView())
+    await send_heartbeat()
+    logger.info('🎫 Ticket system ready!')
 
 if __name__ == '__main__':
     logger.info('🚀 Starting QuoTrading Ticket Bot...')
-    logger.info('Running in LOCAL mode')
-    
     bot.run(TOKEN)
