@@ -138,9 +138,38 @@ async def check_level_up(member: discord.Member, old_xp: int, new_xp: int):
         return True
     return False
 
+# Channel keyword -> Alert Role to ping
+AUTO_PING_MAPPING = {
+    "chelsc": "Chelsc Alerts",
+    "waxui": "Waxui Alerts",
+    "top-hat-options": "TopHat Options Alerts",
+    "top-hat-crypto": "TopHat Crypto Alerts",
+    "top-hat-sports": "TopHat Sports Alerts",
+    "kingscat": "Kingscat Alerts",
+}
+
 @bot.event
 async def on_message(message):
-    # Ignore bots
+    # Always ignore own messages
+    if message.author == bot.user:
+        return
+
+    # === AUTO PING ALERT ROLE ===
+    if isinstance(message.channel, discord.TextChannel):
+        for ch_keyword, role_name in AUTO_PING_MAPPING.items():
+            if ch_keyword in message.channel.name.lower():
+                # Check if specific analyst/bot (optional, but good for safety)
+                # For now, we trust the channel permissions prevent randoms from posting
+                
+                role = discord.utils.get(message.guild.roles, name=role_name)
+                if role:
+                    try:
+                        await message.channel.send(f"{role.mention}")
+                    except:
+                        pass
+                break
+
+    # Ignore bots for commands/XP
     if message.author.bot:
         return
     
@@ -208,6 +237,28 @@ async def rank(ctx):
     embed.set_thumbnail(url=ctx.author.display_avatar.url if ctx.author.display_avatar else None)
     
     await ctx.send(embed=embed)
+
+
+# ============ MEMBER COUNTER ============
+
+async def update_member_count(guild):
+    """Update the member count voice channel."""
+    for ch in guild.voice_channels:
+        if "member count" in ch.name.lower():
+            new_name = f"Member Count: {guild.member_count}"
+            if ch.name != new_name:
+                try:
+                    await ch.edit(name=new_name)
+                except:
+                    pass
+            break
+
+# Note: on_member_join is defined later with welcome message + member count update
+
+@bot.event
+async def on_member_remove(member):
+    """Update member count when someone leaves."""
+    await update_member_count(member.guild)
 
 
 # ============ BOT FUNCTIONS ============
@@ -443,6 +494,11 @@ async def on_message(message):
 @bot.event
 async def on_member_join(member):
     guild = member.guild
+    
+    # Update member count voice channel
+    await update_member_count(guild)
+    
+    # Send welcome message
     channel = discord.utils.get(guild.text_channels, name="👋│welcome")
     
     if not channel:
@@ -561,6 +617,167 @@ async def update_server_status():
         
         last_status = current_status
         await asyncio.sleep(60)
+
+# ============ ANALYST ALERT REACTION ROLES ============
+# Organized by category
+
+ALERT_CATEGORIES = {
+    "OPTIONS ALERTS": {
+        "💎": ("Chelsc Alerts", "Options Trading"),
+        "🍭": ("Waxui Alerts", "Day/Swing Trader"),
+        "🎩": ("TopHat Options Alerts", "Scalper & Swing"),
+    },
+    "FUTURES ALERTS": {
+        "👑": ("Kingscat Alerts", "Technical Analysis AM/PM"),
+    },
+    "CRYPTO ALERTS": {
+        "🎓": ("TopHat Crypto Alerts", "Crypto Signals"),
+    },
+    "SPORTS BETTING": {
+        "🧢": ("TopHat Sports Alerts", "Sports Picks"),
+    },
+}
+
+# Flatten for reaction handling
+ALERT_ROLES_CONFIG = {}
+for category, alerts in ALERT_CATEGORIES.items():
+    ALERT_ROLES_CONFIG.update(alerts)
+
+# Store the reaction role message ID
+ALERT_CONFIG_FILE = os.path.join(os.path.dirname(__file__), 'alert_config.json')
+
+def load_alert_config():
+    if os.path.exists(ALERT_CONFIG_FILE):
+        try:
+            with open(ALERT_CONFIG_FILE, 'r') as f:
+                return json.load(f)
+        except:
+            return {}
+    return {}
+
+def save_alert_config(data):
+    with open(ALERT_CONFIG_FILE, 'w') as f:
+        json.dump(data, f, indent=4)
+
+
+@bot.command()
+@commands.has_permissions(administrator=True)
+async def setup_alerts(ctx):
+    """Create the analyst alert subscription message. Admin only."""
+    guild = ctx.guild
+    
+    # Create alert roles if they don't exist
+    for emoji, (alert_role_name, description) in ALERT_ROLES_CONFIG.items():
+        role = discord.utils.get(guild.roles, name=alert_role_name)
+        if not role:
+            role = await guild.create_role(
+                name=alert_role_name,
+                mentionable=True,
+                color=discord.Color.orange()
+            )
+            logger.info(f"Created role: {alert_role_name}")
+    
+    # Build the message
+    message_content = """# 🔔 CHOOSE YOUR ANALYSTS
+*Click an emoji to get notifications when that analyst posts!*
+
+◆ React to subscribe to an analyst's alerts
+◆ Remove reaction to unsubscribe
+
+"""
+    
+    # Add each category
+    for category_name, alerts in ALERT_CATEGORIES.items():
+        message_content += f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+        message_content += f"**{category_name}**\n\n"
+        
+        for emoji, (alert_role_name, description) in alerts.items():
+            role = discord.utils.get(guild.roles, name=alert_role_name)
+            if role:
+                message_content += f"{emoji} {role.mention}  ({description})\n\n"
+            else:
+                message_content += f"{emoji} @{alert_role_name}  ({description})\n\n"
+    
+    message_content += "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    
+    # Send the message
+    msg = await ctx.send(message_content)
+    
+    # Add reactions
+    for emoji in ALERT_ROLES_CONFIG.keys():
+        await msg.add_reaction(emoji)
+    
+    # Save message ID for persistence
+    config = load_alert_config()
+    config['message_id'] = msg.id
+    config['channel_id'] = ctx.channel.id
+    save_alert_config(config)
+    
+    logger.info(f"Alert selector created in #{ctx.channel.name}")
+
+
+@bot.event
+async def on_raw_reaction_add(payload):
+    """Handle reaction adds for alert roles."""
+    if payload.user_id == bot.user.id:
+        return
+    
+    config = load_alert_config()
+    if not config.get('message_id') or payload.message_id != config['message_id']:
+        return
+    
+    emoji = str(payload.emoji)
+    if emoji not in ALERT_ROLES_CONFIG:
+        return
+    
+    guild = bot.get_guild(payload.guild_id)
+    if not guild:
+        return
+    
+    member = guild.get_member(payload.user_id)
+    if not member:
+        return
+    
+    alert_role_name = ALERT_ROLES_CONFIG[emoji][0]
+    role = discord.utils.get(guild.roles, name=alert_role_name)
+    
+    if role and role not in member.roles:
+        try:
+            await member.add_roles(role)
+            logger.info(f"Added {alert_role_name} to {member.name}")
+        except Exception as e:
+            logger.error(f"Failed to add role: {e}")
+
+
+@bot.event
+async def on_raw_reaction_remove(payload):
+    """Handle reaction removes for alert roles."""
+    config = load_alert_config()
+    if not config.get('message_id') or payload.message_id != config['message_id']:
+        return
+    
+    emoji = str(payload.emoji)
+    if emoji not in ALERT_ROLES_CONFIG:
+        return
+    
+    guild = bot.get_guild(payload.guild_id)
+    if not guild:
+        return
+    
+    member = guild.get_member(payload.user_id)
+    if not member:
+        return
+    
+    alert_role_name = ALERT_ROLES_CONFIG[emoji][0]
+    role = discord.utils.get(guild.roles, name=alert_role_name)
+    
+    if role and role in member.roles:
+        try:
+            await member.remove_roles(role)
+            logger.info(f"Removed {alert_role_name} from {member.name}")
+        except Exception as e:
+            logger.error(f"Failed to remove role: {e}")
+
 
 @bot.event
 async def on_connect():
